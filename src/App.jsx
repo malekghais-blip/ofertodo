@@ -244,8 +244,17 @@ function priceBreakdown(product, qty) {
 //  NAV
 // ═══════════════════════════════════════════════════════════════
 function NavBar() {
-  const { view, setView, cart, user, setUser, setShowLogin, setShowCart } = useApp();
+  const { view, setView, cart, cartPulse, user, setUser, setShowLogin, setShowCart } = useApp();
   const cartCount = cart.reduce((s, i) => s + i.qty, 0);
+  const [bounce, setBounce] = useState(false);
+
+  useEffect(() => {
+    if (cartPulse > 0) {
+      setBounce(true);
+      const t = setTimeout(() => setBounce(false), 500);
+      return () => clearTimeout(t);
+    }
+  }, [cartPulse]);
 
   return (
     <nav className="oft-nav" style={S.nav}>
@@ -260,7 +269,7 @@ function NavBar() {
         {user?.es_admin && <span onClick={() => setView("admin")} style={{ fontWeight: 600, fontSize: 14, cursor: "pointer", color: view === "admin" ? RED : BLACK }}>Admin</span>}
       </div>
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-        <button style={{ ...S.btnOutline, position: "relative", display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 12px" }} onClick={() => setShowCart(true)}>
+        <button className={bounce ? "oft-cart-bounce oft-btn-press" : "oft-btn-press"} style={{ ...S.btnOutline, position: "relative", display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 12px" }} onClick={() => setShowCart(true)}>
           <ShoppingCart size={16} strokeWidth={2.2} /> <span className="oft-btn-text-hide">Pedido</span> {cartCount > 0 && <span style={{ background: RED, color: WHITE, borderRadius: "50%", fontSize: 10, fontWeight: 800, width: 18, height: 18, display: "inline-flex", alignItems: "center", justifyContent: "center" }}>{cartCount}</span>}
         </button>
         {user
@@ -322,10 +331,14 @@ function HomeView() {
 
       {/* DESTACADOS */}
       {featured.length > 0 && (
-        <div style={S.section}>
+        <div className="oft-section" style={S.section}>
           <div style={S.sectionTitle}><span style={{ color: RED }}>▮</span> Productos <span style={{ color: RED }}>Destacados</span></div>
-          <div style={S.prodGrid}>
-            {featured.map(p => <ProductCard key={p.id} product={p} />)}
+          <div className="oft-prod-grid" style={S.prodGrid}>
+            {featured.map((p, i) => (
+              <div key={p.id} className="oft-prod-anim" style={{ animationDelay: `${Math.min(i * 0.08, 0.5)}s` }}>
+                <ProductCard product={p} />
+              </div>
+            ))}
           </div>
         </div>
       )}
@@ -373,46 +386,72 @@ function HomeView() {
 function ProductCard({ product }) {
   const { addToCart, showToast } = useApp();
   const [qty, setQty] = useState(12);
+  const [added, setAdded] = useState(false);
   const total = calcPrice(product, qty);
   const imgUrl = product.imagen_url || null;
+  const btnRef = useRef(null);
 
-  const handleAdd = () => {
+  const handleAdd = (e) => {
     addToCart(product, qty);
     showToast(`${product.nombre} agregado al pedido`);
+    // feedback visual en el botón
+    setAdded(true);
+    setTimeout(() => setAdded(false), 1100);
+    // animación "volar al carrito": clona la imagen y la lanza
+    try {
+      const card = e.currentTarget.closest("[data-prod-card]");
+      const img = card?.querySelector("[data-prod-img]");
+      const cartBtn = document.querySelector(".oft-nav button");
+      if (img && cartBtn) {
+        const r1 = img.getBoundingClientRect();
+        const r2 = cartBtn.getBoundingClientRect();
+        const fly = img.cloneNode(true);
+        fly.className = "oft-fly";
+        fly.style.left = r1.left + "px";
+        fly.style.top = r1.top + "px";
+        fly.style.width = r1.width + "px";
+        fly.style.height = r1.height + "px";
+        fly.style.borderRadius = "12px";
+        fly.style.setProperty("--fly-x", (r2.left - r1.left) + "px");
+        fly.style.setProperty("--fly-y", (r2.top - r1.top) + "px");
+        document.body.appendChild(fly);
+        setTimeout(() => fly.remove(), 750);
+      }
+    } catch(err) {}
   };
 
   return (
-    <div style={S.prodCard}>
-      <div style={{ background: GRAY, aspectRatio: "1 / 1", width: "100%", display: "flex", alignItems: "center", justifyContent: "center", position: "relative", overflow: "hidden" }}>
+    <div data-prod-card className="oft-card-hover" style={S.prodCard}>
+      <div data-prod-img style={{ background: GRAY, aspectRatio: "1 / 1", width: "100%", display: "flex", alignItems: "center", justifyContent: "center", position: "relative", overflow: "hidden" }}>
         {imgUrl
           ? <img src={imgUrl} alt={product.nombre} style={{ width: "100%", height: "100%", objectFit: "contain" }} />
           : <Package size={56} color={GRAY3} strokeWidth={1.3} />
         }
         {product.badge && <span style={{ position: "absolute", top: 10, left: 10, background: RED, color: WHITE, fontSize: 10, fontWeight: 800, padding: "3px 8px", borderRadius: 4, display: "inline-flex", alignItems: "center", gap: 4 }}><Sparkles size={11} /> {product.badge}</span>}
       </div>
-      <div style={{ padding: 16 }}>
+      <div className="oft-prod-body" style={{ padding: 16 }}>
         <div style={{ fontSize: 11, color: GRAY3, fontWeight: 600, marginBottom: 4 }}>REF: {product.referencia}</div>
         <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 6 }}>{product.nombre}</div>
         <div style={{ fontSize: 13, color: GRAY3, marginBottom: 12, lineHeight: 1.4 }}>{product.descripcion}</div>
         {/* TABLA DE PRECIOS REFERENCIA */}
-        <div style={S.priceTable}>
-          <div style={S.priceRow}>
-            <span style={{ color: GRAY3 }}>1–5 piezas</span>
+        <div className="oft-price-table" style={S.priceTable}>
+          <div className="oft-price-row" style={S.priceRow}>
+            <span className="oft-price-label" style={{ color: GRAY3 }}>1–5 piezas</span>
             <span style={{ fontWeight: 800 }}>${Number(product.precio_pieza).toFixed(2)} c/u</span>
           </div>
-          <div style={S.priceRow}>
-            <span style={{ color: GRAY3 }}>Media docena (6)</span>
-            <span style={{ fontWeight: 800 }}>${Number(product.precio_media_docena).toFixed(2)} paquete</span>
+          <div className="oft-price-row" style={S.priceRow}>
+            <span className="oft-price-label" style={{ color: GRAY3 }}>Media docena (6)</span>
+            <span style={{ fontWeight: 800 }}>${Number(product.precio_media_docena).toFixed(2)}</span>
           </div>
-          <div style={{ ...S.priceRow, borderTop: `1px solid ${GRAY2}`, marginTop: 4, paddingTop: 6 }}>
+          <div className="oft-price-row" style={{ ...S.priceRow, borderTop: `1px solid ${GRAY2}`, marginTop: 4, paddingTop: 6 }}>
             <span style={{ fontWeight: 700 }}>Docena (12)</span>
-            <span style={{ fontWeight: 900, color: RED, fontSize: 15 }}>${Number(product.precio_docena).toFixed(2)} paquete</span>
+            <span className="oft-price-big" style={{ fontWeight: 900, color: RED, fontSize: 15 }}>${Number(product.precio_docena).toFixed(2)}</span>
           </div>
         </div>
 
         {/* SELECTOR DE CANTIDAD + TOTAL CALCULADO */}
         <div style={{ marginBottom: 8 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+          <div className="oft-qty-row" style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
             <span style={{ fontSize: 13, fontWeight: 600 }}>Cantidad:</span>
             <select
               value={qty}
@@ -421,16 +460,18 @@ function ProductCard({ product }) {
             >
               {[1,2,3,4,5,6,7,8,9,10,11,12,18,24,36,48].map(n => <option key={n} value={n}>{n}</option>)}
             </select>
-            <span style={{ fontSize: 15, color: RED, fontWeight: 900 }}>${Number(total).toFixed(2)}</span>
+            <span style={{ fontSize: 16, color: RED, fontWeight: 900 }}>${Number(total).toFixed(2)}</span>
           </div>
           {/* DESGLOSE DEL CÁLCULO */}
-          <div style={{ fontSize: 11, color: GRAY3, background: GRAY, borderRadius: 6, padding: "5px 10px", display: "flex", alignItems: "center", gap: 5 }}>
+          <div style={{ fontSize: 11, color: GRAY3, background: GRAY, borderRadius: 6, padding: "6px 10px", display: "flex", alignItems: "center", gap: 5 }}>
             <Sparkles size={12} /> {priceBreakdown(product, qty)}
           </div>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
-          <button style={{ ...S.btnRed, flex: 1, justifyContent: "center" }} onClick={handleAdd}><Plus size={15} strokeWidth={2.5} /> Agregar al pedido</button>
-          <button style={S.btnWA} onClick={() => window.open(`https://wa.me/${WA_NUMBER}?text=Hola%20Ofertodo%2C%20me%20interesa:%20${encodeURIComponent(product.nombre)}`, "_blank")}><MessageCircle size={16} /></button>
+          <button ref={btnRef} className="oft-btn-press" style={{ ...S.btnRed, flex: 1, justifyContent: "center", background: added ? "#25D366" : RED, transition: "background 0.3s" }} onClick={handleAdd}>
+            {added ? <><CheckCircle2 size={16} className="oft-check-pop" /> ¡Agregado!</> : <><Plus size={15} strokeWidth={2.5} /> Agregar al pedido</>}
+          </button>
+          <button className="oft-btn-press" style={S.btnWA} onClick={() => window.open(`https://wa.me/${WA_NUMBER}?text=Hola%20Ofertodo%2C%20me%20interesa:%20${encodeURIComponent(product.nombre)}`, "_blank")}><MessageCircle size={16} /></button>
         </div>
       </div>
     </div>
@@ -461,12 +502,12 @@ function CatalogoView() {
         <input style={{ ...S.input, paddingLeft: 36, marginBottom: 0 }} placeholder="Buscar producto o referencia..." value={search} onChange={e => setSearch(e.target.value)} />
       </div>
       <div className="oft-cat-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))", gap: 10, marginTop: 16, marginBottom: 28 }}>
-        <div onClick={() => setCatFilter(0)} style={{ border: `2px solid ${catFilter === 0 ? RED : GRAY2}`, borderRadius: 10, padding: "14px 8px", textAlign: "center", cursor: "pointer", background: catFilter === 0 ? "#FFF5F5" : WHITE }}>
+        <div className="oft-cat-chip" onClick={() => setCatFilter(0)} style={{ border: `2px solid ${catFilter === 0 ? RED : GRAY2}`, borderRadius: 10, padding: "14px 8px", textAlign: "center", cursor: "pointer", background: catFilter === 0 ? "#FFF5F5" : WHITE }}>
           <div style={{ display: "flex", justifyContent: "center", marginBottom: 4 }}><LayoutGrid size={22} color={catFilter === 0 ? RED : BLACK} strokeWidth={1.8} /></div>
           <div style={{ fontSize: 12, fontWeight: 700 }}>Todo</div>
         </div>
         {categories.map(c => (
-          <div key={c.id} onClick={() => setCatFilter(c.id)} style={{ border: `2px solid ${catFilter === c.id ? RED : GRAY2}`, borderRadius: 10, padding: "14px 8px", textAlign: "center", cursor: "pointer", background: catFilter === c.id ? "#FFF5F5" : WHITE }}>
+          <div key={c.id} className="oft-cat-chip" onClick={() => setCatFilter(c.id)} style={{ border: `2px solid ${catFilter === c.id ? RED : GRAY2}`, borderRadius: 10, padding: "14px 8px", textAlign: "center", cursor: "pointer", background: catFilter === c.id ? "#FFF5F5" : WHITE }}>
             <div style={{ display: "flex", justifyContent: "center", marginBottom: 4 }}><CategoryIcon cat={c} size={22} color={catFilter === c.id ? RED : BLACK} /></div>
             <div style={{ fontSize: 12, fontWeight: 700 }}>{c.nombre}</div>
           </div>
@@ -474,7 +515,13 @@ function CatalogoView() {
       </div>
       {filtered.length === 0
         ? <div style={{ textAlign: "center", padding: "60px 0", color: GRAY3 }}><Search size={48} strokeWidth={1.3} style={{ margin: "0 auto 12px" }} /><p>No se encontraron productos</p></div>
-        : <div className="oft-prod-grid" style={S.prodGrid}>{filtered.map(p => <ProductCard key={p.id} product={p} />)}</div>
+        : <div key={catFilter + "-" + search} className="oft-prod-grid" style={S.prodGrid}>
+            {filtered.map((p, i) => (
+              <div key={p.id} className="oft-prod-anim" style={{ animationDelay: `${Math.min(i * 0.05, 0.4)}s` }}>
+                <ProductCard product={p} />
+              </div>
+            ))}
+          </div>
       }
     </div>
   );
@@ -1567,12 +1614,14 @@ export default function App() {
 
   const showToast = (msg) => { setToastMsg(msg); setTimeout(() => setToastMsg(""), 3000); };
 
+  const [cartPulse, setCartPulse] = useState(0);
   const addToCart = (product, qty) => {
     setCart(prev => {
       const existing = prev.find(i => i.product.id === product.id);
       if (existing) return prev.map(i => i.product.id === product.id ? { ...i, qty: i.qty + qty } : i);
       return [...prev, { product, qty }];
     });
+    setCartPulse(p => p + 1); // dispara animación del carrito
   };
 
   // Cargar datos de Supabase al iniciar
@@ -1620,7 +1669,7 @@ export default function App() {
   }, []);
 
   const isAdmin = view === "admin";
-  const ctx = { view, setView, cart, setCart, addToCart, user, setUser, showLogin, setShowLogin, showRegister, setShowRegister, showCart, setShowCart, products, setProducts, categories, setCategories, empresas, setEmpresas, sucursales, setSucursales, loading, showToast };
+  const ctx = { view, setView, cart, setCart, addToCart, cartPulse, user, setUser, showLogin, setShowLogin, showRegister, setShowRegister, showCart, setShowCart, products, setProducts, categories, setCategories, empresas, setEmpresas, sucursales, setSucursales, loading, showToast };
 
   return (
     <AppCtx.Provider value={ctx}>
@@ -1630,6 +1679,25 @@ export default function App() {
         * { box-sizing: border-box; }
         html, body { margin: 0; padding: 0; overflow-x: hidden; max-width: 100%; }
         img { max-width: 100%; }
+
+        /* ── ANIMACIONES ── */
+        @keyframes fadeInUp { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes popIn { 0% { opacity: 0; transform: scale(0.92); } 60% { opacity: 1; transform: scale(1.02); } 100% { transform: scale(1); } }
+        @keyframes cartBounce { 0%,100% { transform: scale(1); } 30% { transform: scale(1.35); } 60% { transform: scale(0.9); } }
+        @keyframes flyToCart { 0% { opacity: 1; transform: scale(1) translate(0,0); } 100% { opacity: 0; transform: scale(0.3) translate(var(--fly-x), var(--fly-y)); } }
+        @keyframes checkPop { 0% { opacity: 0; transform: scale(0.4); } 50% { opacity: 1; transform: scale(1.15); } 100% { opacity: 0; transform: scale(1); } }
+        @keyframes badgePulse { 0% { box-shadow: 0 0 0 0 rgba(227,30,36,0.5); } 100% { box-shadow: 0 0 0 10px rgba(227,30,36,0); } }
+
+        .oft-prod-anim { animation: fadeInUp 0.45s ease both; }
+        .oft-cart-bounce { animation: cartBounce 0.5s ease; }
+        .oft-fly { position: fixed; z-index: 9999; pointer-events: none; animation: flyToCart 0.7s cubic-bezier(0.5,-0.3,0.7,1) forwards; }
+        .oft-check-pop { animation: checkPop 0.9s ease forwards; }
+        .oft-btn-press:active { transform: scale(0.94); }
+        .oft-card-hover { transition: transform 0.18s ease, box-shadow 0.18s ease; }
+        .oft-card-hover:hover { transform: translateY(-4px); box-shadow: 0 10px 28px rgba(0,0,0,0.12); }
+        .oft-cat-chip { transition: transform 0.15s ease, background 0.2s ease, border-color 0.2s ease; }
+        .oft-cat-chip:active { transform: scale(0.95); }
+
         @media (max-width: 768px) {
           .oft-nav { padding: 0 14px !important; }
           .oft-nav-links { gap: 14px !important; font-size: 13px !important; }
@@ -1646,15 +1714,23 @@ export default function App() {
           .oft-dash-grid-2 { grid-template-columns: 1fr !important; }
           .oft-btn-text-hide { display: none !important; }
           .oft-modal { padding: 22px 18px !important; max-width: 100% !important; border-radius: 16px !important; }
-          .oft-prod-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)) !important; gap: 12px !important; }
+          .oft-prod-grid { grid-template-columns: 1fr 1fr !important; gap: 12px !important; }
           .oft-cat-grid { grid-template-columns: repeat(3, 1fr) !important; }
           table { font-size: 12px !important; }
           .oft-overlay { align-items: flex-end !important; padding: 0 !important; }
           .oft-modal-sheet { border-radius: 18px 18px 0 0 !important; max-width: 100% !important; max-height: 92vh !important; }
+          /* PRECIOS más legibles en celular */
+          .oft-price-table { padding: 12px 12px !important; }
+          .oft-price-row { font-size: 13px !important; padding: 5px 0 !important; gap: 8px !important; line-height: 1.3 !important; }
+          .oft-price-row span { white-space: nowrap !important; }
+          .oft-price-big { font-size: 15px !important; }
+          .oft-qty-row { flex-wrap: wrap !important; gap: 8px !important; }
         }
         @media (max-width: 420px) {
           .oft-cat-grid { grid-template-columns: repeat(2, 1fr) !important; }
           .oft-prod-grid { grid-template-columns: 1fr 1fr !important; gap: 10px !important; }
+          .oft-prod-body { padding: 12px !important; }
+          .oft-price-label { font-size: 12px !important; }
         }
       `}</style>
       <div style={S.app}>
