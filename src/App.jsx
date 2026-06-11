@@ -81,6 +81,17 @@ const RED = "#E31E24", RED_D = "#B01519", BLACK = "#111", GRAY = "#F5F5F5", GRAY
 const AppCtx = createContext(null);
 const useApp = () => useContext(AppCtx);
 
+// ─── HOOK RESPONSIVE ────────────────────────────────────────────
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(typeof window !== "undefined" ? window.innerWidth <= 768 : false);
+  useEffect(() => {
+    const onResize = () => setIsMobile(window.innerWidth <= 768);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+  return isMobile;
+}
+
 // ─── ORDEN ESTADOS ──────────────────────────────────────────────
 const ORDER_STATUS = ["Pedido realizado", "Empacando pedido...", "Listo para envío", "Pedido enviado"];
 const STATUS_COLORS = [
@@ -236,24 +247,24 @@ function NavBar() {
   const cartCount = cart.reduce((s, i) => s + i.qty, 0);
 
   return (
-    <nav style={S.nav}>
+    <nav className="oft-nav" style={S.nav}>
       <Logo onClick={() => setView("home")} />
-      <div style={{ display: "flex", gap: 24, alignItems: "center" }}>
+      <div className="oft-nav-links" style={{ display: "flex", gap: 24, alignItems: "center" }}>
         {["home","catalogo"].map(v => (
-          <span key={v} onClick={() => setView(v)} style={{ fontWeight: 600, fontSize: 14, cursor: "pointer", color: view === v ? RED : BLACK, borderBottom: view === v ? `2px solid ${RED}` : "2px solid transparent", paddingBottom: 2 }}>
+          <span key={v} onClick={() => setView(v)} style={{ fontWeight: 600, fontSize: 14, cursor: "pointer", color: view === v ? RED : BLACK, borderBottom: view === v ? `2px solid ${RED}` : "2px solid transparent", paddingBottom: 2, whiteSpace: "nowrap" }}>
             {v === "home" ? "Inicio" : "Catálogo"}
           </span>
         ))}
-        {user && <span onClick={() => setView("dashboard")} style={{ fontWeight: 600, fontSize: 14, cursor: "pointer", color: view === "dashboard" ? RED : BLACK }}>Mi Cuenta</span>}
+        {user && <span onClick={() => setView("dashboard")} style={{ fontWeight: 600, fontSize: 14, cursor: "pointer", color: view === "dashboard" ? RED : BLACK, whiteSpace: "nowrap" }}>Mi Cuenta</span>}
         {user?.es_admin && <span onClick={() => setView("admin")} style={{ fontWeight: 600, fontSize: 14, cursor: "pointer", color: view === "admin" ? RED : BLACK }}>Admin</span>}
       </div>
-      <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-        <button style={{ ...S.btnOutline, position: "relative", display: "inline-flex", alignItems: "center", gap: 6 }} onClick={() => setShowCart(true)}>
-          <ShoppingCart size={16} strokeWidth={2.2} /> Pedido {cartCount > 0 && <span style={{ background: RED, color: WHITE, borderRadius: "50%", fontSize: 10, fontWeight: 800, width: 18, height: 18, display: "inline-flex", alignItems: "center", justifyContent: "center", marginLeft: 4 }}>{cartCount}</span>}
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <button style={{ ...S.btnOutline, position: "relative", display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 12px" }} onClick={() => setShowCart(true)}>
+          <ShoppingCart size={16} strokeWidth={2.2} /> <span className="oft-btn-text-hide">Pedido</span> {cartCount > 0 && <span style={{ background: RED, color: WHITE, borderRadius: "50%", fontSize: 10, fontWeight: 800, width: 18, height: 18, display: "inline-flex", alignItems: "center", justifyContent: "center" }}>{cartCount}</span>}
         </button>
         {user
-          ? <button style={{ ...S.btnBlack, display: "inline-flex", alignItems: "center", gap: 6 }} onClick={() => { setUser(null); setView("home"); }}><LogOut size={15} strokeWidth={2.2} /> Salir</button>
-          : <button style={{ ...S.btnRed, display: "inline-flex", alignItems: "center", gap: 6 }} onClick={() => setShowLogin(true)}><User size={15} strokeWidth={2.2} /> Iniciar sesión</button>
+          ? <button style={{ ...S.btnBlack, display: "inline-flex", alignItems: "center", gap: 6, padding: "10px 12px" }} onClick={() => { setUser(null); setView("home"); }}><LogOut size={15} strokeWidth={2.2} /> <span className="oft-btn-text-hide">Salir</span></button>
+          : <button style={{ ...S.btnRed, display: "inline-flex", alignItems: "center", gap: 6, padding: "10px 12px" }} onClick={() => setShowLogin(true)}><User size={15} strokeWidth={2.2} /> <span className="oft-btn-text-hide">Entrar</span></button>
         }
       </div>
     </nav>
@@ -270,11 +281,11 @@ function HomeView() {
   return (
     <>
       {/* HERO */}
-      <div style={{ background: `linear-gradient(135deg, ${BLACK} 0%, #2a0000 60%, #1a0000 100%)`, color: WHITE, padding: "64px 24px", textAlign: "center" }}>
+      <div className="oft-hero" style={{ background: `linear-gradient(135deg, ${BLACK} 0%, #2a0000 60%, #1a0000 100%)`, color: WHITE, padding: "64px 24px", textAlign: "center" }}>
         <div style={{ background: RED, color: WHITE, fontSize: 11, fontWeight: 800, letterSpacing: 2, padding: "4px 14px", borderRadius: 4, display: "inline-flex", alignItems: "center", gap: 6, marginBottom: 18, textTransform: "uppercase" }}>
           <Zap size={12} strokeWidth={2.5} /> Distribuidora Mayorista · Panamá
         </div>
-        <h1 style={{ fontSize: 44, fontWeight: 900, lineHeight: 1.1, marginBottom: 16, letterSpacing: -1 }}>
+        <h1 className="oft-hero-title" style={{ fontSize: 44, fontWeight: 900, lineHeight: 1.1, marginBottom: 16, letterSpacing: -1 }}>
           Precios al mayor<br /><span style={{ color: RED }}>sin complicaciones</span>
         </h1>
         <p style={{ color: "#ccc", fontSize: 16, marginBottom: 36, maxWidth: 480, margin: "0 auto 36px" }}>
@@ -289,16 +300,16 @@ function HomeView() {
       </div>
 
       {/* INFO BAR */}
-      <div style={{ background: RED, color: WHITE, padding: "10px 24px", display: "flex", gap: 32, justifyContent: "center", flexWrap: "wrap", fontSize: 13, fontWeight: 600 }}>
+      <div className="oft-infobar" style={{ background: RED, color: WHITE, padding: "10px 24px", display: "flex", gap: 32, justifyContent: "center", flexWrap: "wrap", fontSize: 13, fontWeight: 600 }}>
         <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Package size={15} strokeWidth={2.2} /> Pedido mínimo: 1 docena</span>
         <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Truck size={15} strokeWidth={2.2} /> Envíos a todo Panamá</span>
         <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><MessageCircle size={15} strokeWidth={2.2} /> WhatsApp disponible</span>
       </div>
 
       {/* CATEGORÍAS */}
-      <div style={{ ...S.section, paddingBottom: 0 }}>
+      <div className="oft-section" style={{ ...S.section, paddingBottom: 0 }}>
         <div style={S.sectionTitle}><span style={{ color: RED }}>▮</span> Categorías</div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(130px, 1fr))", gap: 12 }}>
+        <div className="oft-cat-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(130px, 1fr))", gap: 12 }}>
           {categories.map(c => (
             <div key={c.id} onClick={() => setView("catalogo")} style={{ background: WHITE, border: `2px solid ${GRAY2}`, borderRadius: 12, padding: "18px 10px", textAlign: "center", cursor: "pointer" }}>
               <div style={{ marginBottom: 6, display: "flex", justifyContent: "center" }}><CategoryIcon cat={c} size={30} /></div>
@@ -442,13 +453,13 @@ function CatalogoView() {
   if (loading) return <Spinner />;
 
   return (
-    <div style={S.section}>
+    <div className="oft-section" style={S.section}>
       <div style={S.sectionTitle}><span style={{ color: RED }}>▮</span> Catálogo <span style={{ color: RED }}>de Productos</span></div>
       <div style={{ position: "relative", maxWidth: 400, marginBottom: 24 }}>
         <Search size={16} color={GRAY3} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)" }} />
         <input style={{ ...S.input, paddingLeft: 36, marginBottom: 0 }} placeholder="Buscar producto o referencia..." value={search} onChange={e => setSearch(e.target.value)} />
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))", gap: 10, marginTop: 16, marginBottom: 28 }}>
+      <div className="oft-cat-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))", gap: 10, marginTop: 16, marginBottom: 28 }}>
         <div onClick={() => setCatFilter(0)} style={{ border: `2px solid ${catFilter === 0 ? RED : GRAY2}`, borderRadius: 10, padding: "14px 8px", textAlign: "center", cursor: "pointer", background: catFilter === 0 ? "#FFF5F5" : WHITE }}>
           <div style={{ display: "flex", justifyContent: "center", marginBottom: 4 }}><LayoutGrid size={22} color={catFilter === 0 ? RED : BLACK} strokeWidth={1.8} /></div>
           <div style={{ fontSize: 12, fontWeight: 700 }}>Todo</div>
@@ -462,7 +473,7 @@ function CatalogoView() {
       </div>
       {filtered.length === 0
         ? <div style={{ textAlign: "center", padding: "60px 0", color: GRAY3 }}><Search size={48} strokeWidth={1.3} style={{ margin: "0 auto 12px" }} /><p>No se encontraron productos</p></div>
-        : <div style={S.prodGrid}>{filtered.map(p => <ProductCard key={p.id} product={p} />)}</div>
+        : <div className="oft-prod-grid" style={S.prodGrid}>{filtered.map(p => <ProductCard key={p.id} product={p} />)}</div>
       }
     </div>
   );
@@ -476,8 +487,8 @@ function CartModal() {
   const total = cart.reduce((s, i) => s + calcPrice(i.product, i.qty), 0);
 
   return (
-    <div style={S.overlay} onClick={() => setShowCart(false)}>
-      <div style={{ ...S.modal, maxWidth: 520 }} onClick={e => e.stopPropagation()}>
+    <div className="oft-overlay" style={S.overlay} onClick={() => setShowCart(false)}>
+      <div className="oft-modal-sheet" style={{ ...S.modal, maxWidth: 520 }} onClick={e => e.stopPropagation()}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
           <div style={{ fontSize: 20, fontWeight: 800, display: "flex", alignItems: "center", gap: 8 }}><ShoppingCart size={20} /> Tu Pedido</div>
           <button onClick={() => setShowCart(false)} style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}><X size={22} /></button>
@@ -539,8 +550,8 @@ function LoginModal() {
   };
 
   return (
-    <div style={S.overlay} onClick={() => setShowLogin(false)}>
-      <div style={S.modal} onClick={e => e.stopPropagation()}>
+    <div className="oft-overlay" style={S.overlay} onClick={() => setShowLogin(false)}>
+      <div className="oft-modal-sheet oft-modal" style={S.modal} onClick={e => e.stopPropagation()}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}><Logo /><button onClick={() => setShowLogin(false)} style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}><X size={22} /></button></div>
         <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 24 }}>Iniciar sesión</div>
         <label style={S.label}>Correo electrónico</label>
@@ -580,8 +591,8 @@ function RegisterModal() {
   };
 
   return (
-    <div style={S.overlay} onClick={() => setShowRegister(false)}>
-      <div style={S.modal} onClick={e => e.stopPropagation()}>
+    <div className="oft-overlay" style={S.overlay} onClick={() => setShowRegister(false)}>
+      <div className="oft-modal-sheet oft-modal" style={S.modal} onClick={e => e.stopPropagation()}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}><Logo /><button onClick={() => setShowRegister(false)} style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}><X size={22} /></button></div>
         <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 24 }}>Crear cuenta</div>
         {[["nombre","Nombre completo","Tu nombre completo"],["telefono","WhatsApp / Celular","+507 0000-0000"],["email","Correo electrónico","tu@email.com"],["pass","Contraseña","Mínimo 6 caracteres"]].map(([k,l,ph]) => (
@@ -635,7 +646,7 @@ function CheckoutView() {
   );
 
   return (
-    <div style={{ ...S.section, maxWidth: 620 }}>
+    <div className="oft-section" style={{ ...S.section, maxWidth: 620 }}>
       <div style={S.sectionTitle}>Finalizar Pedido</div>
       <div style={{ background: WHITE, borderRadius: 12, padding: 24, marginBottom: 16, border: `1px solid ${GRAY2}` }}>
         <div style={{ fontWeight: 800, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}><Package size={18} /> Resumen</div>
@@ -698,7 +709,7 @@ function DashboardView() {
   if (loading) return <Spinner />;
 
   return (
-    <div style={S.section}>
+    <div className="oft-section" style={S.section}>
       <div style={S.sectionTitle}>Mi Cuenta — <span style={{ color: GRAY3, fontWeight: 500, fontSize: 16 }}>{user?.nombre}</span></div>
       <div style={{ display: "flex", gap: 16, marginBottom: 32, flexWrap: "wrap" }}>
         {[[Package, orders.length, "Pedidos totales"], [CheckCircle2, orders.filter(o => o.estado === 3).length, "Entregados"], [RefreshCw, orders.filter(o => o.estado < 3).length, "En proceso"]].map(([Icon,num,label]) => (
@@ -976,18 +987,18 @@ function AdminView() {
 
   return (
     <div style={{ display: "flex", minHeight: "100vh" }}>
-      <div style={{ background: BLACK, color: WHITE, width: 220, minHeight: "100vh", padding: "24px 0", position: "fixed", top: 0, left: 0, zIndex: 90 }}>
-        <div style={{ padding: "0 20px 24px", borderBottom: "1px solid #333" }}><Logo /><div style={{ fontSize: 11, color: "#aaa", marginTop: 4, display: "flex", alignItems: "center", gap: 5 }}><Zap size={11} /> Panel Administrador</div></div>
-        <div style={{ padding: "16px 0" }}>
+      <div className="oft-admin-sidebar" style={{ background: BLACK, color: WHITE, width: 220, minHeight: "100vh", padding: "24px 0", position: "fixed", top: 0, left: 0, zIndex: 90 }}>
+        <div className="oft-admin-brand" style={{ padding: "0 20px 24px", borderBottom: "1px solid #333" }}><Logo /><div style={{ fontSize: 11, color: "#aaa", marginTop: 4, display: "flex", alignItems: "center", gap: 5 }}><Zap size={11} /> Panel Administrador</div></div>
+        <div className="oft-admin-tabs" style={{ padding: "16px 0" }}>
           {tabs.map(([k,l,Icon]) => (
-            <div key={k} onClick={() => setTab(k)} style={{ padding: "12px 24px", cursor: "pointer", fontWeight: 600, fontSize: 14, color: tab === k ? WHITE : "#aaa", background: tab === k ? RED : "transparent", borderLeft: tab === k ? "3px solid white" : "3px solid transparent", display: "flex", alignItems: "center", gap: 10 }}>
+            <div key={k} className={"oft-admin-tab" + (tab === k ? " active" : "")} onClick={() => setTab(k)} style={{ padding: "12px 24px", cursor: "pointer", fontWeight: 600, fontSize: 14, color: tab === k ? WHITE : "#aaa", background: tab === k ? RED : "transparent", borderLeft: tab === k ? "3px solid white" : "3px solid transparent", display: "flex", alignItems: "center", gap: 10 }}>
               <Icon size={17} strokeWidth={2} /> {l}
             </div>
           ))}
         </div>
       </div>
 
-      <div style={{ marginLeft: 220, padding: "32px", minHeight: "100vh", background: GRAY, flex: 1 }}>
+      <div className="oft-admin-main" style={{ marginLeft: 220, padding: "32px", minHeight: "100vh", background: GRAY, flex: 1 }}>
 
         {/* ═══════════ DASHBOARD ═══════════ */}
         {tab === "dashboard" && (
@@ -1018,7 +1029,7 @@ function AdminView() {
                 </div>
 
                 {/* GRÁFICO DE INGRESOS + MEJORES PRODUCTOS */}
-                <div style={{ display: "grid", gridTemplateColumns: "1.6fr 1fr", gap: 16, marginBottom: 28 }}>
+                <div className="oft-dash-grid-2" style={{ display: "grid", gridTemplateColumns: "1.6fr 1fr", gap: 16, marginBottom: 28 }}>
                   {/* GRÁFICO INGRESOS */}
                   <div style={{ background: WHITE, borderRadius: 14, padding: 24, border: `1px solid ${GRAY2}` }}>
                     <div style={{ fontWeight: 800, marginBottom: 4, display: "flex", alignItems: "center", gap: 8 }}><TrendingUp size={18} color={RED} /> Estadística de Ingresos</div>
@@ -1372,7 +1383,39 @@ export default function App() {
 
   return (
     <AppCtx.Provider value={ctx}>
-      <style>{`@keyframes spin { to { transform: rotate(360deg); } } .spin { animation: spin 0.8s linear infinite; }`}</style>
+      <style>{`
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .spin { animation: spin 0.8s linear infinite; }
+        * { box-sizing: border-box; }
+        html, body { margin: 0; padding: 0; overflow-x: hidden; max-width: 100%; }
+        img { max-width: 100%; }
+        @media (max-width: 768px) {
+          .oft-nav { padding: 0 14px !important; }
+          .oft-nav-links { gap: 14px !important; font-size: 13px !important; }
+          .oft-hero-title { font-size: 30px !important; }
+          .oft-hero { padding: 40px 18px !important; }
+          .oft-section { padding: 28px 16px !important; }
+          .oft-infobar { gap: 14px !important; font-size: 11px !important; padding: 10px 14px !important; }
+          .oft-admin-main { margin-left: 0 !important; padding: 18px 14px 80px !important; }
+          .oft-admin-sidebar { position: fixed !important; bottom: 0 !important; top: auto !important; left: 0 !important; right: 0 !important; width: 100% !important; min-height: auto !important; height: 64px !important; flex-direction: row !important; padding: 0 !important; z-index: 200 !important; border-top: 2px solid ${RED}; }
+          .oft-admin-brand { display: none !important; }
+          .oft-admin-tabs { display: flex !important; flex-direction: row !important; padding: 0 !important; width: 100%; justify-content: space-around; }
+          .oft-admin-tab { flex-direction: column !important; gap: 3px !important; padding: 8px 4px !important; font-size: 10px !important; border-left: none !important; border-top: 3px solid transparent; text-align: center; flex: 1; justify-content: center; }
+          .oft-admin-tab.active { border-left: none !important; border-top: 3px solid white !important; }
+          .oft-dash-grid-2 { grid-template-columns: 1fr !important; }
+          .oft-btn-text-hide { display: none !important; }
+          .oft-modal { padding: 22px 18px !important; max-width: 100% !important; border-radius: 16px !important; }
+          .oft-prod-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)) !important; gap: 12px !important; }
+          .oft-cat-grid { grid-template-columns: repeat(3, 1fr) !important; }
+          table { font-size: 12px !important; }
+          .oft-overlay { align-items: flex-end !important; padding: 0 !important; }
+          .oft-modal-sheet { border-radius: 18px 18px 0 0 !important; max-width: 100% !important; max-height: 92vh !important; }
+        }
+        @media (max-width: 420px) {
+          .oft-cat-grid { grid-template-columns: repeat(2, 1fr) !important; }
+          .oft-prod-grid { grid-template-columns: 1fr 1fr !important; gap: 10px !important; }
+        }
+      `}</style>
       <div style={S.app}>
         {!isAdmin && <NavBar />}
         {view === "home" && <HomeView />}
@@ -1394,3 +1437,4 @@ export default function App() {
     </AppCtx.Provider>
   );
 }
+
