@@ -384,7 +384,7 @@ function HomeView() {
 //  PRODUCT CARD
 // ═══════════════════════════════════════════════════════════════
 function ProductCard({ product }) {
-  const { addToCart, showToast } = useApp();
+  const { addToCart, showToast, setQuickView } = useApp();
   const [qty, setQty] = useState(12);
   const [added, setAdded] = useState(false);
   const total = calcPrice(product, qty);
@@ -422,16 +422,17 @@ function ProductCard({ product }) {
 
   return (
     <div data-prod-card className="oft-card-hover" style={S.prodCard}>
-      <div data-prod-img style={{ background: GRAY, aspectRatio: "1 / 1", width: "100%", display: "flex", alignItems: "center", justifyContent: "center", position: "relative", overflow: "hidden" }}>
+      <div data-prod-img onClick={() => setQuickView(product)} title="Ver detalle" style={{ background: GRAY, aspectRatio: "1 / 1", width: "100%", display: "flex", alignItems: "center", justifyContent: "center", position: "relative", overflow: "hidden", cursor: "pointer" }}>
         {imgUrl
           ? <img src={imgUrl} alt={product.nombre} style={{ width: "100%", height: "100%", objectFit: "contain" }} />
           : <Package size={56} color={GRAY3} strokeWidth={1.3} />
         }
         {product.badge && <span style={{ position: "absolute", top: 10, left: 10, background: RED, color: WHITE, fontSize: 10, fontWeight: 800, padding: "3px 8px", borderRadius: 4, display: "inline-flex", alignItems: "center", gap: 4 }}><Sparkles size={11} /> {product.badge}</span>}
+        <span style={{ position: "absolute", bottom: 8, right: 8, background: "rgba(0,0,0,0.55)", color: WHITE, fontSize: 10, fontWeight: 700, padding: "3px 8px", borderRadius: 12, display: "inline-flex", alignItems: "center", gap: 4 }}><Search size={11} /> Ver</span>
       </div>
       <div className="oft-prod-body" style={{ padding: 16 }}>
         <div style={{ fontSize: 11, color: GRAY3, fontWeight: 600, marginBottom: 4 }}>REF: {product.referencia}</div>
-        <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 6 }}>{product.nombre}</div>
+        <div onClick={() => setQuickView(product)} style={{ fontSize: 15, fontWeight: 800, marginBottom: 6, cursor: "pointer" }}>{product.nombre}</div>
         <div style={{ fontSize: 13, color: GRAY3, marginBottom: 12, lineHeight: 1.4 }}>{product.descripcion}</div>
         {/* TABLA DE PRECIOS REFERENCIA */}
         <div className="oft-price-table" style={S.priceTable}>
@@ -523,6 +524,91 @@ function CatalogoView() {
             ))}
           </div>
       }
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  MODAL DE DETALLE DEL PRODUCTO (Quick View)
+// ═══════════════════════════════════════════════════════════════
+function ProductModal() {
+  const { quickView: product, setQuickView, addToCart, showToast } = useApp();
+  const [qty, setQty] = useState(12);
+  const [added, setAdded] = useState(false);
+
+  useEffect(() => { setQty(12); setAdded(false); }, [product]);
+
+  if (!product) return null;
+  const total = calcPrice(product, qty);
+  const imgUrl = product.imagen_url || null;
+
+  const handleAdd = () => {
+    addToCart(product, qty);
+    showToast(`${product.nombre} agregado al pedido`);
+    setAdded(true);
+    setTimeout(() => setAdded(false), 1100);
+  };
+
+  return (
+    <div className="oft-overlay" style={S.overlay} onClick={() => setQuickView(null)}>
+      <div className="oft-modal-sheet oft-qv-pop" style={{ ...S.modal, maxWidth: 560, padding: 0, overflow: "hidden" }} onClick={e => e.stopPropagation()}>
+        {/* BOTÓN CERRAR */}
+        <button onClick={() => setQuickView(null)} style={{ position: "absolute", top: 14, right: 14, background: "rgba(255,255,255,0.9)", border: "none", borderRadius: "50%", width: 36, height: 36, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 5, boxShadow: "0 2px 8px rgba(0,0,0,0.15)" }}>
+          <X size={20} />
+        </button>
+
+        {/* IMAGEN GRANDE */}
+        <div style={{ background: GRAY, aspectRatio: "1 / 1", width: "100%", maxHeight: 320, display: "flex", alignItems: "center", justifyContent: "center", position: "relative", overflow: "hidden" }}>
+          {imgUrl
+            ? <img src={imgUrl} alt={product.nombre} style={{ width: "100%", height: "100%", objectFit: "contain" }} />
+            : <Package size={80} color={GRAY3} strokeWidth={1.2} />
+          }
+          {product.badge && <span style={{ position: "absolute", top: 14, left: 14, background: RED, color: WHITE, fontSize: 11, fontWeight: 800, padding: "4px 10px", borderRadius: 4, display: "inline-flex", alignItems: "center", gap: 4 }}><Sparkles size={12} /> {product.badge}</span>}
+        </div>
+
+        {/* CONTENIDO */}
+        <div style={{ padding: 24, maxHeight: "50vh", overflowY: "auto" }}>
+          <div style={{ fontSize: 12, color: GRAY3, fontWeight: 600, marginBottom: 4 }}>REF: {product.referencia}</div>
+          <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 8 }}>{product.nombre}</div>
+          {product.descripcion && <div style={{ fontSize: 14, color: GRAY3, marginBottom: 16, lineHeight: 1.5 }}>{product.descripcion}</div>}
+
+          {/* PRECIOS */}
+          <div style={{ ...S.priceTable, padding: "14px 16px" }}>
+            <div style={{ ...S.priceRow, fontSize: 14 }}>
+              <span style={{ color: GRAY3 }}>1–5 piezas</span>
+              <span style={{ fontWeight: 800 }}>${Number(product.precio_pieza).toFixed(2)} c/u</span>
+            </div>
+            <div style={{ ...S.priceRow, fontSize: 14 }}>
+              <span style={{ color: GRAY3 }}>Media docena (6)</span>
+              <span style={{ fontWeight: 800 }}>${Number(product.precio_media_docena).toFixed(2)}</span>
+            </div>
+            <div style={{ ...S.priceRow, fontSize: 14, borderTop: `1px solid ${GRAY2}`, marginTop: 6, paddingTop: 8 }}>
+              <span style={{ fontWeight: 700 }}>Docena (12)</span>
+              <span style={{ fontWeight: 900, color: RED, fontSize: 17 }}>${Number(product.precio_docena).toFixed(2)}</span>
+            </div>
+          </div>
+
+          {/* CANTIDAD + TOTAL */}
+          <div style={{ display: "flex", alignItems: "center", gap: 12, margin: "16px 0" }}>
+            <span style={{ fontSize: 14, fontWeight: 600 }}>Cantidad:</span>
+            <select value={qty} onChange={e => setQty(Number(e.target.value))} style={{ border: `1.5px solid ${GRAY2}`, borderRadius: 8, padding: "8px 12px", fontSize: 14, fontFamily: "inherit" }}>
+              {[1,2,3,4,5,6,7,8,9,10,11,12,18,24,36,48].map(n => <option key={n} value={n}>{n}</option>)}
+            </select>
+            <span style={{ fontSize: 20, color: RED, fontWeight: 900, marginLeft: "auto" }}>${Number(total).toFixed(2)}</span>
+          </div>
+          <div style={{ fontSize: 12, color: GRAY3, background: GRAY, borderRadius: 8, padding: "8px 12px", display: "flex", alignItems: "center", gap: 6, marginBottom: 16 }}>
+            <Sparkles size={13} /> {priceBreakdown(product, qty)}
+          </div>
+
+          {/* BOTONES */}
+          <div style={{ display: "flex", gap: 10 }}>
+            <button className="oft-btn-press" style={{ ...S.btnRed, flex: 1, justifyContent: "center", padding: 14, fontSize: 15, background: added ? "#25D366" : RED, transition: "background 0.3s" }} onClick={handleAdd}>
+              {added ? <><CheckCircle2 size={17} className="oft-check-pop" /> ¡Agregado!</> : <><Plus size={16} strokeWidth={2.5} /> Agregar al pedido</>}
+            </button>
+            <button className="oft-btn-press" style={{ ...S.btnWA, padding: "14px 16px" }} onClick={() => window.open(`https://wa.me/${WA_NUMBER}?text=Hola%20Ofertodo%2C%20me%20interesa:%20${encodeURIComponent(product.nombre)}`, "_blank")}><MessageCircle size={18} /></button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1652,6 +1738,7 @@ export default function App() {
   const [showLogin, setShowLogin] = useState(false);
   const [showRegister, setShowRegister] = useState(false);
   const [showCart, setShowCart] = useState(false);
+  const [quickView, setQuickView] = useState(null); // producto a mostrar en detalle
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]);
   const [empresas, setEmpresas] = useState([]);
@@ -1716,7 +1803,7 @@ export default function App() {
   }, []);
 
   const isAdmin = view === "admin";
-  const ctx = { view, setView, cart, setCart, addToCart, cartPulse, user, setUser, showLogin, setShowLogin, showRegister, setShowRegister, showCart, setShowCart, products, setProducts, categories, setCategories, empresas, setEmpresas, sucursales, setSucursales, loading, showToast };
+  const ctx = { view, setView, cart, setCart, addToCart, cartPulse, user, setUser, showLogin, setShowLogin, showRegister, setShowRegister, showCart, setShowCart, quickView, setQuickView, products, setProducts, categories, setCategories, empresas, setEmpresas, sucursales, setSucursales, loading, showToast };
 
   return (
     <AppCtx.Provider value={ctx}>
@@ -1736,6 +1823,8 @@ export default function App() {
         @keyframes badgePulse { 0% { box-shadow: 0 0 0 0 rgba(227,30,36,0.5); } 100% { box-shadow: 0 0 0 10px rgba(227,30,36,0); } }
         @keyframes toastIn { from { opacity: 0; transform: translateX(-50%) translateY(-16px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
         .oft-toast-in { animation: toastIn 0.3s ease both; }
+        @keyframes qvPop { 0% { opacity: 0; transform: scale(0.88); } 100% { opacity: 1; transform: scale(1); } }
+        .oft-qv-pop { animation: qvPop 0.28s cubic-bezier(0.34,1.4,0.5,1) both; }
 
         .oft-prod-anim { animation: fadeInUp 0.45s ease both; }
         .oft-cart-bounce { animation: cartBounce 0.5s ease; }
@@ -1797,6 +1886,7 @@ export default function App() {
         {showCart && <CartModal />}
         {showLogin && <LoginModal />}
         {showRegister && <RegisterModal />}
+        {quickView && <ProductModal />}
         {!isAdmin && <FloatingCart />}
         <Toast msg={toastMsg} />
       </div>
