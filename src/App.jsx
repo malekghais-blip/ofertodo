@@ -137,7 +137,7 @@ const S = {
   section: { padding: "48px 24px", maxWidth: 1200, margin: "0 auto" },
   sectionTitle: { fontSize: 22, fontWeight: 800, marginBottom: 24 },
   prodGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 20 },
-  prodCard: { background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 16, overflow: "hidden", boxShadow: "0 2px 8px rgba(0,0,0,0.04)" },
+  prodCard: { background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 16, overflow: "hidden", boxShadow: "0 2px 8px rgba(0,0,0,0.04)", minWidth: 0, width: "100%" },
   priceTable: { background: GRAY, borderRadius: 8, padding: "10px 12px", marginBottom: 14 },
   priceRow: { display: "flex", justifyContent: "space-between", fontSize: 13, padding: "3px 0" },
   table: { width: "100%", borderCollapse: "collapse", background: WHITE, borderRadius: 12, overflow: "hidden" },
@@ -1085,11 +1085,44 @@ function AdminView() {
     return Object.values(map).sort((a, b) => b.cantidad - a.cantidad).slice(0, 5);
   })();
 
+  // ── MENSAJES DE WHATSAPP POR ESTADO ────────────────────────────
+  const buildStatusMessage = (order, status) => {
+    const nombre = order.nombre_cliente || "Cliente";
+    const codigo = order.codigo;
+    const envio = order.empresa_envio_nombre ? `\n🚚 Envío: ${order.empresa_envio_nombre}${order.sucursal_nombre ? ` - ${order.sucursal_nombre}` : ""}` : "";
+    const mensajes = [
+      `¡Hola ${nombre}! 👋\n\nTu pedido *${codigo}* en Ofertodo ha sido *recibido* ✅\n\nEstamos procesándolo y pronto comenzaremos a empacarlo.${envio}\n\n¡Gracias por tu compra! 🛍️`,
+      `¡Hola ${nombre}! 📦\n\nTu pedido *${codigo}* ya está siendo *empacado* con cuidado.\n\nTe avisaremos cuando esté listo para envío.${envio}\n\n¡Gracias por tu paciencia! 🙌`,
+      `¡Hola ${nombre}! ✅\n\n¡Buenas noticias! Tu pedido *${codigo}* está *listo para envío* 🎉\n\nPronto será despachado.${envio}\n\n¡Ya casi lo tienes! 🚀`,
+      `¡Hola ${nombre}! 🚚\n\nTu pedido *${codigo}* ha sido *enviado* 📨\n\nYa va en camino hacia ti.${envio}\n\n¡Gracias por comprar en Ofertodo! ❤️`,
+    ];
+    return mensajes[status] || "";
+  };
+
+  const notifyWhatsApp = (order, status) => {
+    if (!order.telefono) {
+      alert("Este pedido no tiene número de WhatsApp del cliente, no se puede notificar.");
+      return;
+    }
+    // Limpia el número: solo dígitos
+    let phone = String(order.telefono).replace(/\D/g, "");
+    // Si no tiene código de país (Panamá = 507) y parece local, lo agrega
+    if (phone.length === 8) phone = "507" + phone;
+    const msg = buildStatusMessage(order, status);
+    window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, "_blank");
+  };
+
   const handleStatusChange = async (orderId, newStatus) => {
+    const order = orders.find(o => o.id === orderId);
     try {
       await sb.patch("pedidos", orderId, { estado: newStatus });
       setOrders(orders.map(o => o.id === orderId ? { ...o, estado: newStatus } : o));
       showToast("Estado actualizado");
+      // Notificación semi-automática por WhatsApp
+      if (order) {
+        const ok = confirm(`Estado actualizado a "${ORDER_STATUS[newStatus]}".\n\n¿Notificar al cliente por WhatsApp?`);
+        if (ok) notifyWhatsApp({ ...order, estado: newStatus }, newStatus);
+      }
     } catch(e) { alert("Error al actualizar estado"); }
   };
 
@@ -1431,7 +1464,7 @@ function AdminView() {
             {loadingData ? <Spinner /> : (
               <div style={{ background: WHITE, borderRadius: 12, overflow: "auto" }}>
                 <table style={S.table}>
-                  <thead><tr>{["#Pedido","Cliente","Teléfono","Envío","Total","Estado","Cambiar"].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
+                  <thead><tr>{["#Pedido","Cliente","Teléfono","Envío","Total","Estado","Cambiar","Avisar"].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
                   <tbody>
                     {orders.map(o => (
                       <tr key={o.id}>
@@ -1449,6 +1482,11 @@ function AdminView() {
                           <select value={o.estado} onChange={e => handleStatusChange(o.id, Number(e.target.value))} style={{ border: `1.5px solid ${GRAY2}`, borderRadius: 6, padding: "6px 10px", fontSize: 13, fontFamily: "inherit" }}>
                             {ORDER_STATUS.map((s,i) => <option key={i} value={i}>{s}</option>)}
                           </select>
+                        </td>
+                        <td style={S.td}>
+                          <button onClick={() => notifyWhatsApp(o, o.estado)} title="Enviar notificación por WhatsApp" style={{ ...S.btnWA, padding: "6px 10px", fontSize: 12 }}>
+                            <MessageCircle size={14} /> Avisar
+                          </button>
                         </td>
                       </tr>
                     ))}
@@ -1852,22 +1890,27 @@ export default function App() {
           .oft-dash-grid-2 { grid-template-columns: 1fr !important; }
           .oft-btn-text-hide { display: none !important; }
           .oft-modal { padding: 22px 18px !important; max-width: 100% !important; border-radius: 16px !important; }
-          .oft-prod-grid { grid-template-columns: 1fr 1fr !important; gap: 12px !important; }
+          .oft-prod-grid { grid-template-columns: 1fr 1fr !important; gap: 10px !important; width: 100% !important; }
+          .oft-prod-grid > * { min-width: 0 !important; }
+          .oft-prod-grid > * > div { min-width: 0 !important; }
           .oft-cat-grid { grid-template-columns: repeat(3, 1fr) !important; }
           table { font-size: 12px !important; }
           .oft-overlay { align-items: flex-end !important; padding: 0 !important; }
           .oft-modal-sheet { border-radius: 18px 18px 0 0 !important; max-width: 100% !important; max-height: 92vh !important; }
           /* PRECIOS más legibles en celular */
-          .oft-price-table { padding: 12px 12px !important; }          .oft-price-row { font-size: 13px !important; padding: 5px 0 !important; gap: 8px !important; line-height: 1.3 !important; }
-          .oft-price-row span { white-space: nowrap !important; }
-          .oft-price-big { font-size: 15px !important; }
-          .oft-qty-row { flex-wrap: wrap !important; gap: 8px !important; }
+          .oft-prod-body { padding: 12px !important; }
+          .oft-price-table { padding: 10px 10px !important; }
+          .oft-price-row { font-size: 12px !important; padding: 4px 0 !important; gap: 6px !important; line-height: 1.25 !important; }
+          .oft-price-label { font-size: 12px !important; }
+          .oft-price-big { font-size: 14px !important; }
+          .oft-qty-row { flex-wrap: wrap !important; gap: 6px !important; }
         }
         @media (max-width: 420px) {
           .oft-cat-grid { grid-template-columns: repeat(2, 1fr) !important; }
-          .oft-prod-grid { grid-template-columns: 1fr 1fr !important; gap: 10px !important; }
-          .oft-prod-body { padding: 12px !important; }
-          .oft-price-label { font-size: 12px !important; }
+          .oft-prod-grid { gap: 8px !important; }
+          .oft-prod-body { padding: 10px !important; }
+          .oft-price-row { font-size: 11px !important; }
+          .oft-price-label { font-size: 11px !important; }
         }
       `}</style>
       <div style={S.app}>
