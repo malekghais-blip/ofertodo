@@ -528,6 +528,53 @@ function CatalogoView() {
 }
 
 // ═══════════════════════════════════════════════════════════════
+//  CARRITO FLOTANTE (FAB)
+// ═══════════════════════════════════════════════════════════════
+function FloatingCart() {
+  const { cart, cartPulse, setShowCart, view } = useApp();
+  const [bounce, setBounce] = useState(false);
+  const cartCount = cart.reduce((s, i) => s + i.qty, 0);
+  const total = cart.reduce((s, i) => s + calcPrice(i.product, i.qty), 0);
+
+  useEffect(() => {
+    if (cartPulse > 0) {
+      setBounce(true);
+      const t = setTimeout(() => setBounce(false), 500);
+      return () => clearTimeout(t);
+    }
+  }, [cartPulse]);
+
+  // Solo se muestra navegando catálogo/inicio y con productos
+  if (cartCount === 0 || !["home", "catalogo"].includes(view)) return null;
+
+  return (
+    <div
+      onClick={() => setShowCart(true)}
+      className={bounce ? "oft-cart-bounce" : ""}
+      style={{
+        position: "fixed", bottom: 24, right: 24, zIndex: 150,
+        background: RED, color: WHITE, borderRadius: 50,
+        padding: "14px 20px", cursor: "pointer",
+        display: "flex", alignItems: "center", gap: 12,
+        boxShadow: "0 8px 24px rgba(227,30,36,0.4)",
+        fontWeight: 800,
+      }}
+    >
+      <div style={{ position: "relative", display: "flex" }}>
+        <ShoppingCart size={24} strokeWidth={2.2} />
+        <span style={{ position: "absolute", top: -8, right: -10, background: WHITE, color: RED, borderRadius: "50%", fontSize: 11, fontWeight: 900, minWidth: 20, height: 20, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 4px", border: `2px solid ${RED}` }}>
+          {cartCount}
+        </span>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.1 }}>
+        <span style={{ fontSize: 11, opacity: 0.85, fontWeight: 600 }}>Ver pedido</span>
+        <span style={{ fontSize: 16 }}>${total.toFixed(2)}</span>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
 //  CART MODAL
 // ═══════════════════════════════════════════════════════════════
 function CartModal() {
@@ -1720,8 +1767,7 @@ export default function App() {
           .oft-overlay { align-items: flex-end !important; padding: 0 !important; }
           .oft-modal-sheet { border-radius: 18px 18px 0 0 !important; max-width: 100% !important; max-height: 92vh !important; }
           /* PRECIOS más legibles en celular */
-          .oft-price-table { padding: 12px 12px !important; }
-          .oft-price-row { font-size: 13px !important; padding: 5px 0 !important; gap: 8px !important; line-height: 1.3 !important; }
+          .oft-price-table { padding: 12px 12px !important; }          .oft-price-row { font-size: 13px !important; padding: 5px 0 !important; gap: 8px !important; line-height: 1.3 !important; }
           .oft-price-row span { white-space: nowrap !important; }
           .oft-price-big { font-size: 15px !important; }
           .oft-qty-row { flex-wrap: wrap !important; gap: 8px !important; }
@@ -1749,6 +1795,7 @@ export default function App() {
         {showCart && <CartModal />}
         {showLogin && <LoginModal />}
         {showRegister && <RegisterModal />}
+        {!isAdmin && <FloatingCart />}
         <Toast msg={toastMsg} />
       </div>
     </AppCtx.Provider>
