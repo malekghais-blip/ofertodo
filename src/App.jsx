@@ -5,7 +5,8 @@ import {
   Plus, Pencil, Upload, RefreshCw, ChevronDown, ChevronUp, LogOut, User,
   Shirt, Footprints, Watch, Sparkles, ClipboardList, Image as ImageIcon,
   FileSpreadsheet, FolderPlus, Zap, Lock, Users, BarChart3, DollarSign,
-  TrendingUp, Wallet, ShoppingBag, Pencil as PencilIcon, Save
+  TrendingUp, Wallet, ShoppingBag, Pencil as PencilIcon, Save,
+  Building2, MapPin as MapPinIcon, Send
 } from "lucide-react";
 
 // ════════════════════════════════════════════════════════════════
@@ -611,16 +612,29 @@ function RegisterModal() {
 //  CHECKOUT
 // ═══════════════════════════════════════════════════════════════
 function CheckoutView() {
-  const { cart, setCart, user, setView, showToast } = useApp();
+  const { cart, setCart, user, setView, showToast, empresas, sucursales } = useApp();
   const [address, setAddress] = useState(""), [notes, setNotes] = useState(""), [loading, setLoading] = useState(false), [placed, setPlaced] = useState(null);
+  const [empresaId, setEmpresaId] = useState(null);
+  const [sucursalId, setSucursalId] = useState(null);
   const total = cart.reduce((s, i) => s + calcPrice(i.product, i.qty), 0);
 
+  const empresasActivas = empresas.filter(e => e.activa !== false);
+  const sucursalesEmpresa = sucursales.filter(s => s.empresa_id === empresaId && s.activa !== false);
+  const empresaSel = empresas.find(e => e.id === empresaId);
+  const sucursalSel = sucursales.find(s => s.id === sucursalId);
+
   const handlePlace = async () => {
-    if (!address) { alert("Por favor ingresa tu dirección de entrega."); return; }
+    if (!empresaId) { alert("Por favor elige una empresa de envío."); return; }
+    if (sucursalesEmpresa.length > 0 && !sucursalId) { alert("Por favor elige una sucursal."); return; }
     setLoading(true);
     try {
       const codigo = `OFT-${Date.now().toString().slice(-6)}`;
-      const pedido = await sb.post("pedidos", { codigo, usuario_id: user.id, nombre_cliente: user.nombre, telefono: user.telefono, direccion: address, notas: notes, total, estado: 0 });
+      const pedido = await sb.post("pedidos", {
+        codigo, usuario_id: user.id, nombre_cliente: user.nombre, telefono: user.telefono,
+        direccion: address, notas: notes, total, estado: 0,
+        empresa_envio_id: empresaId, empresa_envio_nombre: empresaSel?.nombre || "",
+        sucursal_id: sucursalId, sucursal_nombre: sucursalSel?.nombre || "",
+      });
       const pedidoId = pedido[0].id;
       for (const item of cart) {
         await sb.post("pedido_items", { pedido_id: pedidoId, producto_id: item.product.id, nombre_producto: item.product.nombre, cantidad: item.qty, precio_unitario: item.product.precio_pieza, subtotal: calcPrice(item.product, item.qty) });
@@ -628,20 +642,21 @@ function CheckoutView() {
       setPlaced(codigo);
       setCart([]);
       showToast("¡Pedido realizado con éxito!");
-    } catch(e) { alert("Error al guardar el pedido. Verifica tu conexión."); }
+    } catch(e) { alert("Error al guardar el pedido: " + e.message); }
     setLoading(false);
   };
 
   if (placed) return (
-    <div style={{ ...S.section, textAlign: "center", maxWidth: 500 }}>
+    <div className="oft-section" style={{ ...S.section, textAlign: "center", maxWidth: 500 }}>
       <div style={{ display: "flex", justifyContent: "center", marginBottom: 12 }}><CheckCircle2 size={64} color={RED} strokeWidth={1.5} /></div>
       <h2 style={{ fontSize: 24, fontWeight: 900 }}>¡Pedido realizado!</h2>
-      <p style={{ color: GRAY3 }}>Nos pondremos en contacto para coordinar el envío.</p>
+      <p style={{ color: GRAY3 }}>Sigue el estado de tu pedido desde "Mi Cuenta".</p>
       <div style={{ background: GRAY, borderRadius: 12, padding: 20, margin: "20px 0", textAlign: "left" }}>
         <div style={{ fontWeight: 800, marginBottom: 8 }}>Número: <span style={{ color: RED }}>{placed}</span></div>
         <StatusBadge index={0} />
+        {empresaSel && <div style={{ marginTop: 10, fontSize: 13, color: GRAY3, display: "flex", alignItems: "center", gap: 6 }}><Truck size={14} /> {empresaSel.nombre}{sucursalSel ? ` · ${sucursalSel.nombre}` : ""}</div>}
       </div>
-      <button style={{ ...S.btnRed, justifyContent: "center", margin: "0 auto" }} onClick={() => setView("dashboard")}>Ver mis pedidos</button>
+      <button style={{ ...S.btnRed, justifyContent: "center", margin: "0 auto" }} onClick={() => setView("dashboard")}>Ver estado de mi pedido</button>
     </div>
   );
 
@@ -660,15 +675,69 @@ function CheckoutView() {
           <span>Total</span><span style={{ color: RED }}>${total.toFixed(2)}</span>
         </div>
       </div>
+
+      {/* EMPRESA DE ENVÍO */}
       <div style={{ background: WHITE, borderRadius: 12, padding: 24, marginBottom: 16, border: `1px solid ${GRAY2}` }}>
-        <div style={{ fontWeight: 800, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}><MapPin size={18} /> Información de envío</div>
+        <div style={{ fontWeight: 800, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}><Truck size={18} /> Empresa de envío *</div>
+        {empresasActivas.length === 0 ? (
+          <div style={{ background: GRAY, borderRadius: 8, padding: 14, fontSize: 13, color: GRAY3 }}>No hay empresas de envío disponibles. Contáctanos por WhatsApp para coordinar.</div>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            {empresasActivas.map(emp => (
+              <div key={emp.id}
+                onClick={() => { setEmpresaId(emp.id); setSucursalId(null); }}
+                style={{ border: `2px solid ${empresaId === emp.id ? RED : GRAY2}`, background: empresaId === emp.id ? "#FFF5F5" : WHITE, borderRadius: 10, padding: 14, cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 8, textAlign: "center" }}
+              >
+                {emp.logo_url
+                  ? <img src={emp.logo_url} alt={emp.nombre} style={{ height: 36, objectFit: "contain" }} />
+                  : <Building2 size={30} color={empresaId === emp.id ? RED : GRAY3} strokeWidth={1.6} />
+                }
+                <span style={{ fontWeight: 700, fontSize: 13 }}>{emp.nombre}</span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* SUCURSAL */}
+        {empresaId && sucursalesEmpresa.length > 0 && (
+          <div style={{ marginTop: 18 }}>
+            <label style={S.label}>Elige la sucursal de {empresaSel?.nombre} *</label>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {sucursalesEmpresa.map(suc => (
+                <div key={suc.id}
+                  onClick={() => setSucursalId(suc.id)}
+                  style={{ border: `2px solid ${sucursalId === suc.id ? RED : GRAY2}`, background: sucursalId === suc.id ? "#FFF5F5" : WHITE, borderRadius: 10, padding: "12px 14px", cursor: "pointer", display: "flex", alignItems: "center", gap: 12 }}
+                >
+                  <MapPinIcon size={18} color={sucursalId === suc.id ? RED : GRAY3} />
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 700, fontSize: 14 }}>{suc.nombre}</div>
+                    {suc.direccion && <div style={{ fontSize: 12, color: GRAY3 }}>{suc.direccion}</div>}
+                    {suc.telefono && <div style={{ fontSize: 12, color: GRAY3 }}>Tel: {suc.telefono}</div>}
+                  </div>
+                  {sucursalId === suc.id && <CheckCircle2 size={18} color={RED} />}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        {empresaId && sucursalesEmpresa.length === 0 && (
+          <div style={{ marginTop: 14, fontSize: 13, color: GRAY3, background: GRAY, borderRadius: 8, padding: 12 }}>
+            Esta empresa aún no tiene sucursales registradas. Coordinaremos los detalles por WhatsApp.
+          </div>
+        )}
+      </div>
+
+      {/* DIRECCIÓN / NOTAS */}
+      <div style={{ background: WHITE, borderRadius: 12, padding: 24, marginBottom: 16, border: `1px solid ${GRAY2}` }}>
+        <div style={{ fontWeight: 800, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}><MapPin size={18} /> Datos adicionales</div>
         <label style={S.label}>Nombre</label>
         <input style={S.input} value={user?.nombre || ""} readOnly />
-        <label style={S.label}>Dirección de entrega *</label>
-        <input style={S.input} placeholder="Ej: Colón, Barrio Norte, casa #12..." value={address} onChange={e => setAddress(e.target.value)} />
+        <label style={S.label}>Dirección o referencia (opcional)</label>
+        <input style={S.input} placeholder="Ej: cerca del parque central..." value={address} onChange={e => setAddress(e.target.value)} />
         <label style={S.label}>Notas (tallas, colores, referencias)</label>
         <input style={S.input} placeholder="Opcional..." value={notes} onChange={e => setNotes(e.target.value)} />
       </div>
+
       <div style={{ background: WHITE, borderRadius: 12, padding: 24, marginBottom: 20, border: `1px solid ${GRAY2}` }}>
         <div style={{ fontWeight: 800, marginBottom: 10, display: "flex", alignItems: "center", gap: 8 }}><CreditCard size={18} /> Pago</div>
         <div style={{ background: GRAY, borderRadius: 8, padding: 14, fontSize: 14, color: GRAY3 }}>
@@ -746,7 +815,8 @@ function DashboardView() {
                             return <span key={i} style={{ ...STATUS_COLORS[i], padding: "4px 10px", borderRadius: 20, fontSize: 12, fontWeight: 700, opacity: i <= o.estado ? 1 : 0.3, border: i === o.estado ? `2px solid ${RED}` : "2px solid transparent", display: "inline-flex", alignItems: "center", gap: 5 }}><SIcon size={12} /> {s}</span>;
                           })}
                         </div>
-                        <div style={{ marginTop: 12, fontSize: 12, color: GRAY3, display: "flex", alignItems: "center", gap: 6 }}><MapPin size={13} /> Dirección: {o.direccion}</div>
+                        <div style={{ marginTop: 12, fontSize: 12, color: GRAY3, display: "flex", alignItems: "center", gap: 6 }}><MapPin size={13} /> Dirección: {o.direccion || "—"}</div>
+                        {o.empresa_envio_nombre && <div style={{ marginTop: 6, fontSize: 12, color: GRAY3, display: "flex", alignItems: "center", gap: 6 }}><Truck size={13} /> Envío: {o.empresa_envio_nombre}{o.sucursal_nombre ? ` · ${o.sucursal_nombre}` : ""}</div>}
                       </div>
                     </td>
                   </tr>
@@ -764,7 +834,7 @@ function DashboardView() {
 //  ADMIN PANEL
 // ═══════════════════════════════════════════════════════════════
 function AdminView() {
-  const { products, setProducts, categories, setCategories, showToast } = useApp();
+  const { products, setProducts, categories, setCategories, empresas, setEmpresas, sucursales, setSucursales, showToast } = useApp();
   const [tab, setTab] = useState("dashboard");
   const [orders, setOrders] = useState([]);
   const [users, setUsers] = useState([]);
@@ -975,11 +1045,76 @@ function AdminView() {
     } catch(e) { alert("Error: " + e.message); }
   };
 
+  // ── EMPRESAS DE ENVÍO ──────────────────────────────────────────
+  const [newEmpresa, setNewEmpresa] = useState("");
+  const [empUploading, setEmpUploading] = useState(null);
+  const [sucForm, setSucForm] = useState({}); // { [empresaId]: { nombre, direccion, telefono } }
+  const empLogoRef = useRef(null);
+
+  const handleAddEmpresa = async () => {
+    if (!newEmpresa.trim()) return;
+    try {
+      const saved = await sb.post("empresas_envio", { nombre: newEmpresa.trim(), activa: true });
+      setEmpresas(prev => [...prev, saved[0]]);
+      setNewEmpresa("");
+      showToast("Empresa agregada");
+    } catch(e) { alert("Error: " + e.message); }
+  };
+
+  const handleDeleteEmpresa = async (emp) => {
+    if (!confirm(`¿Eliminar "${emp.nombre}" y todas sus sucursales?`)) return;
+    try {
+      await sb.delete("empresas_envio", emp.id);
+      setEmpresas(prev => prev.filter(e => e.id !== emp.id));
+      setSucursales(prev => prev.filter(s => s.empresa_id !== emp.id));
+      showToast("Empresa eliminada");
+    } catch(e) { alert("Error: " + e.message); }
+  };
+
+  const handleEmpLogoUpload = async (e, emp) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setEmpUploading(emp.id);
+    try {
+      const cleanName = file.name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9.\-_]/g, "_");
+      const path = `${Date.now()}_${cleanName}`;
+      await sb.upload("empresas", path, file);
+      const url = `${sb.publicUrl("empresas", path)}?t=${Date.now()}`;
+      await sb.patch("empresas_envio", emp.id, { logo_url: url });
+      setEmpresas(prev => prev.map(x => x.id === emp.id ? { ...x, logo_url: url } : x));
+      showToast("Logo actualizado");
+    } catch(err) {
+      alert("Error subiendo logo: " + err.message + "\n\nVerifica que el bucket 'empresas' exista y sea público.");
+    }
+    setEmpUploading(null);
+  };
+
+  const handleAddSucursal = async (empId) => {
+    const form = sucForm[empId] || {};
+    if (!form.nombre?.trim()) { alert("Escribe el nombre de la sucursal."); return; }
+    try {
+      const saved = await sb.post("sucursales", { empresa_id: empId, nombre: form.nombre.trim(), direccion: form.direccion || "", telefono: form.telefono || "", activa: true });
+      setSucursales(prev => [...prev, saved[0]]);
+      setSucForm(prev => ({ ...prev, [empId]: { nombre: "", direccion: "", telefono: "" } }));
+      showToast("Sucursal agregada");
+    } catch(e) { alert("Error: " + e.message); }
+  };
+
+  const handleDeleteSucursal = async (suc) => {
+    if (!confirm(`¿Eliminar la sucursal "${suc.nombre}"?`)) return;
+    try {
+      await sb.delete("sucursales", suc.id);
+      setSucursales(prev => prev.filter(s => s.id !== suc.id));
+      showToast("Sucursal eliminada");
+    } catch(e) { alert("Error: " + e.message); }
+  };
+
   const tabs = [
     ["dashboard", "Dashboard", BarChart3],
     ["orders", "Pedidos", Package],
     ["products", "Productos", Tag],
     ["categories", "Categorías", FolderOpen],
+    ["shipping", "Envíos", Truck],
     ["users", "Clientes", Users],
   ];
 
@@ -1116,13 +1251,18 @@ function AdminView() {
             {loadingData ? <Spinner /> : (
               <div style={{ background: WHITE, borderRadius: 12, overflow: "auto" }}>
                 <table style={S.table}>
-                  <thead><tr>{["#Pedido","Cliente","Teléfono","Total","Estado","Cambiar"].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
+                  <thead><tr>{["#Pedido","Cliente","Teléfono","Envío","Total","Estado","Cambiar"].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
                   <tbody>
                     {orders.map(o => (
                       <tr key={o.id}>
                         <td style={{ ...S.td, fontWeight: 700, color: RED }}>{o.codigo}</td>
                         <td style={S.td}>{o.nombre_cliente}</td>
                         <td style={S.td}>{o.telefono}</td>
+                        <td style={S.td}>
+                          {o.empresa_envio_nombre
+                            ? <span style={{ fontSize: 12 }}>{o.empresa_envio_nombre}{o.sucursal_nombre ? <><br /><span style={{ color: GRAY3 }}>{o.sucursal_nombre}</span></> : ""}</span>
+                            : <span style={{ color: GRAY3 }}>—</span>}
+                        </td>
                         <td style={{ ...S.td, fontWeight: 700 }}>{money(o.total)}</td>
                         <td style={S.td}><StatusBadge index={o.estado} /></td>
                         <td style={S.td}>
@@ -1279,6 +1419,96 @@ function AdminView() {
           </>
         )}
 
+        {/* ═══════════ ENVÍOS ═══════════ */}
+        {tab === "shipping" && (
+          <>
+            <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 24, display: "flex", alignItems: "center", gap: 10 }}><Truck size={24} color={RED} /> Empresas de Envío</div>
+
+            {/* AGREGAR EMPRESA */}
+            <div style={{ background: WHITE, borderRadius: 16, padding: 20, marginBottom: 20, border: `1px solid ${GRAY2}`, display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap" }}>
+              <div style={{ flex: 1, minWidth: 200 }}>
+                <label style={S.label}>Nueva empresa de envío</label>
+                <input style={{ ...S.input, marginBottom: 0 }} placeholder="Ej: Servientrega, Transportes Ferguson..." value={newEmpresa} onChange={e => setNewEmpresa(e.target.value)} onKeyDown={e => e.key === "Enter" && handleAddEmpresa()} />
+              </div>
+              <button style={{ ...S.btnRed, display: "inline-flex", alignItems: "center", gap: 6, height: 42 }} onClick={handleAddEmpresa}><Plus size={16} /> Agregar empresa</button>
+            </div>
+
+            {empresas.length === 0 ? (
+              <div style={{ textAlign: "center", padding: "40px 0", color: GRAY3 }}><Truck size={48} strokeWidth={1.3} style={{ margin: "0 auto 12px" }} /><p>Aún no hay empresas de envío</p></div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                {empresas.map(emp => {
+                  const sucs = sucursales.filter(s => s.empresa_id === emp.id);
+                  const form = sucForm[emp.id] || { nombre: "", direccion: "", telefono: "" };
+                  return (
+                    <div key={emp.id} style={{ background: WHITE, borderRadius: 14, padding: 20, border: `1px solid ${GRAY2}` }}>
+                      {/* CABECERA EMPRESA */}
+                      <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 16, flexWrap: "wrap" }}>
+                        <div
+                          onClick={() => { empLogoRef.current.dataset.empId = emp.id; empLogoRef.current?.click(); }}
+                          style={{ width: 64, height: 64, borderRadius: 10, border: `2px dashed ${GRAY2}`, display: "flex", alignItems: "center", justifyContent: "center", background: GRAY, cursor: "pointer", flexShrink: 0 }}
+                          title="Subir logo"
+                        >
+                          {empUploading === emp.id ? <RefreshCw size={22} className="spin" color={GRAY3} />
+                            : emp.logo_url ? <img src={emp.logo_url} alt={emp.nombre} style={{ width: "100%", height: "100%", objectFit: "contain", borderRadius: 8 }} />
+                            : <Building2 size={28} color={GRAY3} strokeWidth={1.6} />}
+                        </div>
+                        <div style={{ flex: 1, minWidth: 120 }}>
+                          <div style={{ fontWeight: 800, fontSize: 16 }}>{emp.nombre}</div>
+                          <div style={{ fontSize: 12, color: GRAY3 }}>{sucs.length} sucursal(es) · Click en el logo para cambiarlo</div>
+                        </div>
+                        <button onClick={() => handleDeleteEmpresa(emp)} style={{ background: "none", border: `1px solid ${RED}`, color: RED, borderRadius: 8, padding: "6px 12px", fontSize: 13, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 5 }}><Trash2 size={14} /> Eliminar</button>
+                      </div>
+
+                      {/* SUCURSALES */}
+                      <div style={{ background: GRAY, borderRadius: 10, padding: 16 }}>
+                        <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 12, display: "flex", alignItems: "center", gap: 6 }}><MapPinIcon size={15} /> Sucursales</div>
+                        {sucs.length > 0 && (
+                          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
+                            {sucs.map(suc => (
+                              <div key={suc.id} style={{ background: WHITE, borderRadius: 8, padding: "10px 12px", display: "flex", alignItems: "center", gap: 10 }}>
+                                <MapPinIcon size={16} color={RED} />
+                                <div style={{ flex: 1 }}>
+                                  <div style={{ fontWeight: 700, fontSize: 13 }}>{suc.nombre}</div>
+                                  {(suc.direccion || suc.telefono) && <div style={{ fontSize: 11, color: GRAY3 }}>{suc.direccion}{suc.direccion && suc.telefono ? " · " : ""}{suc.telefono ? `Tel: ${suc.telefono}` : ""}</div>}
+                                </div>
+                                <button onClick={() => handleDeleteSucursal(suc)} style={{ background: "none", border: "none", color: RED, cursor: "pointer", display: "flex" }}><Trash2 size={15} /></button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {/* FORM NUEVA SUCURSAL */}
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr auto", gap: 8, alignItems: "end" }} className="oft-dash-grid-2">
+                          <div>
+                            <label style={{ ...S.label, fontSize: 11 }}>Nombre sucursal *</label>
+                            <input style={{ ...S.input, marginBottom: 0 }} placeholder="Ej: Sucursal Centro" value={form.nombre} onChange={e => setSucForm(prev => ({ ...prev, [emp.id]: { ...form, nombre: e.target.value } }))} />
+                          </div>
+                          <div>
+                            <label style={{ ...S.label, fontSize: 11 }}>Dirección</label>
+                            <input style={{ ...S.input, marginBottom: 0 }} placeholder="Dirección" value={form.direccion} onChange={e => setSucForm(prev => ({ ...prev, [emp.id]: { ...form, direccion: e.target.value } }))} />
+                          </div>
+                          <div>
+                            <label style={{ ...S.label, fontSize: 11 }}>Teléfono</label>
+                            <input style={{ ...S.input, marginBottom: 0 }} placeholder="Teléfono" value={form.telefono} onChange={e => setSucForm(prev => ({ ...prev, [emp.id]: { ...form, telefono: e.target.value } }))} />
+                          </div>
+                          <button style={{ ...S.btnRed, height: 42, display: "inline-flex", alignItems: "center", gap: 5, whiteSpace: "nowrap" }} onClick={() => handleAddSucursal(emp.id)}><Plus size={15} /> Sucursal</button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            {/* input oculto para logo de empresa */}
+            <input ref={empLogoRef} type="file" accept="image/*" style={{ display: "none" }} onChange={(e) => {
+              const empId = Number(e.target.dataset.empId);
+              const emp = empresas.find(x => x.id === empId);
+              if (emp) handleEmpLogoUpload(e, emp);
+              e.target.value = "";
+            }} />
+          </>
+        )}
+
         {/* ═══════════ CLIENTES ═══════════ */}
         {tab === "users" && (
           <>
@@ -1330,6 +1560,8 @@ export default function App() {
   const [showCart, setShowCart] = useState(false);
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]);
+  const [empresas, setEmpresas] = useState([]);
+  const [sucursales, setSucursales] = useState([]);
   const [loading, setLoading] = useState(true);
   const [toastMsg, setToastMsg] = useState("");
 
@@ -1353,6 +1585,15 @@ export default function App() {
         ]);
         setCategories(cats);
         setProducts(prods);
+        // Empresas de envío y sucursales (no críticas, si fallan se ignoran)
+        try {
+          const [emps, sucs] = await Promise.all([
+            sb.get("empresas_envio", "?order=id"),
+            sb.get("sucursales", "?order=id"),
+          ]);
+          setEmpresas(emps);
+          setSucursales(sucs);
+        } catch(e2) { console.warn("Empresas de envío no cargadas:", e2.message); }
       } catch(e) {
         console.warn("⚠️ Supabase no configurado. Usando datos demo.", e.message);
         // DATOS DEMO cuando Supabase no está configurado
@@ -1379,7 +1620,7 @@ export default function App() {
   }, []);
 
   const isAdmin = view === "admin";
-  const ctx = { view, setView, cart, setCart, addToCart, user, setUser, showLogin, setShowLogin, showRegister, setShowRegister, showCart, setShowCart, products, setProducts, categories, setCategories, loading, showToast };
+  const ctx = { view, setView, cart, setCart, addToCart, user, setUser, showLogin, setShowLogin, showRegister, setShowRegister, showCart, setShowCart, products, setProducts, categories, setCategories, empresas, setEmpresas, sucursales, setSucursales, loading, showToast };
 
   return (
     <AppCtx.Provider value={ctx}>
@@ -1437,4 +1678,3 @@ export default function App() {
     </AppCtx.Provider>
   );
 }
-
