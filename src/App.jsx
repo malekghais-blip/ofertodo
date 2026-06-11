@@ -144,7 +144,7 @@ const S = {
   th: { background: BLACK, color: WHITE, padding: "12px 16px", textAlign: "left", fontSize: 13, fontWeight: 700 },
   td: { padding: "12px 16px", fontSize: 13, borderBottom: `1px solid ${GRAY2}` },
   statCard: { background: WHITE, borderRadius: 12, padding: "20px 24px", flex: 1, minWidth: 140, border: `1px solid ${GRAY2}` },
-  toast: { position: "fixed", bottom: 24, right: 24, background: BLACK, color: WHITE, padding: "12px 20px", borderRadius: 10, fontWeight: 600, fontSize: 14, zIndex: 999, boxShadow: "0 4px 20px rgba(0,0,0,0.3)" },
+  toast: { position: "fixed", top: 76, left: "50%", transform: "translateX(-50%)", background: BLACK, color: WHITE, padding: "10px 16px", borderRadius: 24, fontWeight: 600, fontSize: 13, zIndex: 999, boxShadow: "0 4px 20px rgba(0,0,0,0.3)", maxWidth: "88vw", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
   spinner: { border: `3px solid ${GRAY2}`, borderTop: `3px solid ${RED}`, borderRadius: "50%", width: 32, height: 32, animation: "spin 0.8s linear infinite", margin: "60px auto" },
 };
 
@@ -162,7 +162,7 @@ function Logo({ onClick }) {
 
 function Toast({ msg }) {
   if (!msg) return null;
-  return <div style={{ ...S.toast, display: "flex", alignItems: "center", gap: 8 }}><CheckCircle2 size={16} /> {msg}</div>;
+  return <div className="oft-toast-in" style={{ ...S.toast, display: "flex", alignItems: "center", gap: 8 }}><CheckCircle2 size={16} style={{ flexShrink: 0 }} /> {msg}</div>;
 }
 
 function Spinner() {
@@ -1734,6 +1734,8 @@ export default function App() {
         @keyframes flyToCart { 0% { opacity: 1; transform: scale(1) translate(0,0); } 100% { opacity: 0; transform: scale(0.3) translate(var(--fly-x), var(--fly-y)); } }
         @keyframes checkPop { 0% { opacity: 0; transform: scale(0.4); } 50% { opacity: 1; transform: scale(1.15); } 100% { opacity: 0; transform: scale(1); } }
         @keyframes badgePulse { 0% { box-shadow: 0 0 0 0 rgba(227,30,36,0.5); } 100% { box-shadow: 0 0 0 10px rgba(227,30,36,0); } }
+        @keyframes toastIn { from { opacity: 0; transform: translateX(-50%) translateY(-16px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
+        .oft-toast-in { animation: toastIn 0.3s ease both; }
 
         .oft-prod-anim { animation: fadeInUp 0.45s ease both; }
         .oft-cart-bounce { animation: cartBounce 0.5s ease; }
