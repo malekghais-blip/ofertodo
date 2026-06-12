@@ -935,77 +935,243 @@ function CheckoutView() {
 //  DASHBOARD CLIENTE
 // ═══════════════════════════════════════════════════════════════
 function DashboardView() {
-  const { user } = useApp();
+  const { user, products } = useApp();
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState(null);
 
+  const loadOrders = async () => {
+    try {
+      const data = await sb.get("pedidos", `?usuario_id=eq.${user.id}&order=created_at.desc`);
+      const withItems = await Promise.all(data.map(async o => {
+        const items = await sb.get("pedido_items", `?pedido_id=eq.${o.id}`);
+        return { ...o, items };
+      }));
+      setOrders(withItems);
+    } catch(e) { console.error(e); }
+    setLoading(false);
+  };
+
   useEffect(() => {
-    const load = async () => {
-      try {
-        const data = await sb.get("pedidos", `?usuario_id=eq.${user.id}&order=created_at.desc`);
-        const withItems = await Promise.all(data.map(async o => {
-          const items = await sb.get("pedido_items", `?pedido_id=eq.${o.id}`);
-          return { ...o, items };
-        }));
-        setOrders(withItems);
-      } catch(e) { console.error(e); }
-      setLoading(false);
-    };
-    if (user?.id) load();
+    if (user?.id) loadOrders();
+    // refresco en vivo cada 30s para ver cambios de estado
+    const interval = setInterval(() => { if (user?.id) loadOrders(); }, 30000);
+    return () => clearInterval(interval);
   }, [user]);
 
   if (loading) return <Spinner />;
 
+  const money = (n) => "$" + Number(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const activos = orders.filter(o => o.estado < 3);
+  const entregados = orders.filter(o => o.estado === 3);
+
+  // Busca imagen de producto por id
+  const prodImg = (pid) => products.find(p => p.id === pid)?.imagen_url || null;
+
   return (
     <div className="oft-section" style={S.section}>
-      <div style={S.sectionTitle}>Mi Cuenta — <span style={{ color: GRAY3, fontWeight: 500, fontSize: 16 }}>{user?.nombre}</span></div>
-      <div style={{ display: "flex", gap: 16, marginBottom: 32, flexWrap: "wrap" }}>
-        {[[Package, orders.length, "Pedidos totales"], [CheckCircle2, orders.filter(o => o.estado === 3).length, "Entregados"], [RefreshCw, orders.filter(o => o.estado < 3).length, "En proceso"]].map(([Icon,num,label]) => (
-          <div key={label} style={S.statCard}><Icon size={22} color={RED} strokeWidth={1.8} /><div style={{ fontSize: 32, fontWeight: 900, color: RED }}>{num}</div><div style={{ fontSize: 13, color: GRAY3 }}>{label}</div></div>
+      {/* CABECERA */}
+      <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 28 }}>
+        <div style={{ width: 54, height: 54, borderRadius: "50%", background: `linear-gradient(135deg, ${RED}, ${RED_D})`, display: "flex", alignItems: "center", justifyContent: "center", color: WHITE, flexShrink: 0 }}>
+          <User size={26} strokeWidth={2} />
+        </div>
+        <div>
+          <div style={{ fontSize: 22, fontWeight: 900 }}>Hola, {user?.nombre?.split(" ")[0] || "Cliente"} 👋</div>
+          <div style={{ fontSize: 13, color: GRAY3 }}>Bienvenido a tu cuenta</div>
+        </div>
+      </div>
+
+      {/* MÉTRICAS */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 14, marginBottom: 32 }} className="oft-prod-anim">
+        {[[Package, orders.length, "Pedidos totales", RED], [RefreshCw, activos.length, "En proceso", "#856404"], [CheckCircle2, entregados.length, "Entregados", "#155724"]].map(([Icon,num,label,color]) => (
+          <div key={label} style={{ background: WHITE, borderRadius: 14, padding: 20, border: `1px solid ${GRAY2}` }}>
+            <div style={{ background: color + "15", borderRadius: 10, padding: 8, display: "inline-flex", marginBottom: 8 }}><Icon size={22} color={color} strokeWidth={2} /></div>
+            <div style={{ fontSize: 30, fontWeight: 900, color }}>{num}</div>
+            <div style={{ fontSize: 13, color: GRAY3 }}>{label}</div>
+          </div>
         ))}
       </div>
-      <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 16 }}>Mis Pedidos</div>
-      {orders.length === 0
-        ? <div style={{ textAlign: "center", padding: "40px 0", color: GRAY3 }}><Package size={48} strokeWidth={1.3} style={{ margin: "0 auto 12px" }} /><p>Aún no tienes pedidos</p></div>
-        : <div style={{ background: WHITE, borderRadius: 12, overflow: "hidden", border: `1px solid ${GRAY2}` }}>
-          <table style={S.table}>
-            <thead><tr>{["Pedido","Fecha","Total","Estado",""].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
-            <tbody>
-              {orders.map(o => [
-                <tr key={o.id} style={{ cursor: "pointer" }} onClick={() => setSelected(selected === o.id ? null : o.id)}>
-                  <td style={{ ...S.td, fontWeight: 700, color: RED }}>{o.codigo}</td>
-                  <td style={S.td}>{new Date(o.created_at).toLocaleDateString()}</td>
-                  <td style={{ ...S.td, fontWeight: 700 }}>${Number(o.total).toFixed(2)}</td>
-                  <td style={S.td}><StatusBadge index={o.estado} /></td>
-                  <td style={S.td}>{selected === o.id ? <ChevronUp size={16} /> : <ChevronDown size={16} />}</td>
-                </tr>,
-                selected === o.id && (
-                  <tr key={o.id+"_d"}>
-                    <td colSpan={5} style={{ ...S.td, background: GRAY }}>
-                      <div style={{ padding: 8 }}>
-                        <div style={{ fontWeight: 700, marginBottom: 10 }}>Productos:</div>
-                        {(o.items || []).map((item, i) => (
-                          <div key={i} style={{ fontSize: 13, marginBottom: 6, display: "flex", alignItems: "center", gap: 6 }}><Package size={14} color={GRAY3} /> {item.nombre_producto} × {item.cantidad} — ${Number(item.subtotal).toFixed(2)}</div>
-                        ))}
-                        <div style={{ fontWeight: 700, marginTop: 14, marginBottom: 8 }}>Estado del envío:</div>
-                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                          {ORDER_STATUS.map((s, i) => {
-                            const SIcon = STATUS_ICONS[i];
-                            return <span key={i} style={{ ...STATUS_COLORS[i], padding: "4px 10px", borderRadius: 20, fontSize: 12, fontWeight: 700, opacity: i <= o.estado ? 1 : 0.3, border: i === o.estado ? `2px solid ${RED}` : "2px solid transparent", display: "inline-flex", alignItems: "center", gap: 5 }}><SIcon size={12} /> {s}</span>;
-                          })}
-                        </div>
-                        <div style={{ marginTop: 12, fontSize: 12, color: GRAY3, display: "flex", alignItems: "center", gap: 6 }}><MapPin size={13} /> Dirección: {o.direccion || "—"}</div>
-                        {o.empresa_envio_nombre && <div style={{ marginTop: 6, fontSize: 12, color: GRAY3, display: "flex", alignItems: "center", gap: 6 }}><Truck size={13} /> Envío: {o.empresa_envio_nombre}{o.sucursal_nombre ? ` · ${o.sucursal_nombre}` : ""}</div>}
-                      </div>
-                    </td>
-                  </tr>
-                )
-              ])}
-            </tbody>
-          </table>
+
+      {orders.length === 0 ? (
+        <div style={{ textAlign: "center", padding: "50px 0", color: GRAY3 }}>
+          <Package size={56} strokeWidth={1.2} style={{ margin: "0 auto 14px" }} />
+          <p style={{ fontWeight: 700, fontSize: 16, color: BLACK }}>Aún no tienes pedidos</p>
+          <p style={{ fontSize: 14 }}>Explora el catálogo y haz tu primer pedido</p>
         </div>
-      }
+      ) : (
+        <>
+          {/* SEGUIMIENTO EN VIVO (pedidos activos) */}
+          {activos.length > 0 && (
+            <div style={{ marginBottom: 36 }}>
+              <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}>
+                <span className="oft-live-dot" style={{ width: 10, height: 10, borderRadius: "50%", background: "#22c55e", display: "inline-block" }} />
+                Seguimiento en vivo
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                {activos.map(o => (
+                  <div key={o.id} className="oft-prod-anim" style={{ background: WHITE, borderRadius: 16, padding: 22, border: `1px solid ${GRAY2}`, boxShadow: "0 2px 10px rgba(0,0,0,0.04)" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20, flexWrap: "wrap", gap: 8 }}>
+                      <div>
+                        <div style={{ fontWeight: 900, fontSize: 17, color: RED }}>{o.codigo}</div>
+                        <div style={{ fontSize: 12, color: GRAY3 }}>{new Date(o.created_at).toLocaleDateString("es-PA", { day: "2-digit", month: "long", year: "numeric" })}</div>
+                      </div>
+                      <div style={{ fontWeight: 900, fontSize: 18 }}>{money(o.total)}</div>
+                    </div>
+
+                    {/* BARRA DE PROGRESO ANIMADA */}
+                    <ProgressTracker estado={o.estado} />
+
+                    {/* INFO ENVÍO */}
+                    {o.empresa_envio_nombre && (
+                      <div style={{ marginTop: 18, fontSize: 13, color: GRAY3, display: "flex", alignItems: "center", gap: 6, background: GRAY, borderRadius: 8, padding: "10px 12px" }}>
+                        <Truck size={15} color={RED} /> {o.empresa_envio_nombre}{o.sucursal_nombre ? ` · ${o.sucursal_nombre}` : ""}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* HISTORIAL DE COMPRAS */}
+          <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}><ClipboardList size={20} color={RED} /> Historial de compras</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {orders.map(o => {
+              const isOpen = selected === o.id;
+              return (
+                <div key={o.id} className="oft-card-hover" style={{ background: WHITE, borderRadius: 14, border: `1px solid ${isOpen ? RED : GRAY2}`, overflow: "hidden", transition: "border-color 0.2s" }}>
+                  {/* CABECERA CLICKEABLE */}
+                  <div onClick={() => setSelected(isOpen ? null : o.id)} style={{ padding: 16, display: "flex", alignItems: "center", gap: 14, cursor: "pointer" }}>
+                    {/* miniaturas de productos */}
+                    <div style={{ display: "flex", flexShrink: 0 }}>
+                      {(o.items || []).slice(0, 3).map((item, i) => {
+                        const img = prodImg(item.producto_id);
+                        return (
+                          <div key={i} style={{ width: 44, height: 44, borderRadius: 10, background: GRAY, border: `2px solid ${WHITE}`, marginLeft: i > 0 ? -12 : 0, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", boxShadow: "0 1px 4px rgba(0,0,0,0.1)" }}>
+                            {img ? <img src={img} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <Package size={18} color={GRAY3} />}
+                          </div>
+                        );
+                      })}
+                      {(o.items || []).length > 3 && (
+                        <div style={{ width: 44, height: 44, borderRadius: 10, background: BLACK, color: WHITE, border: `2px solid ${WHITE}`, marginLeft: -12, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 800 }}>
+                          +{(o.items).length - 3}
+                        </div>
+                      )}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 800, fontSize: 15, color: RED }}>{o.codigo}</div>
+                      <div style={{ fontSize: 12, color: GRAY3 }}>{new Date(o.created_at).toLocaleDateString("es-PA", { day: "2-digit", month: "short", year: "numeric" })} · {(o.items || []).length} producto(s)</div>
+                    </div>
+                    <div style={{ textAlign: "right", flexShrink: 0 }}>
+                      <div style={{ fontWeight: 900, fontSize: 15 }}>{money(o.total)}</div>
+                      <div style={{ marginTop: 4 }}><StatusBadge index={o.estado} /></div>
+                    </div>
+                    <div style={{ flexShrink: 0 }}>{isOpen ? <ChevronUp size={18} color={GRAY3} /> : <ChevronDown size={18} color={GRAY3} />}</div>
+                  </div>
+
+                  {/* DETALLE EXPANDIBLE */}
+                  {isOpen && (
+                    <div className="oft-detail-open" style={{ borderTop: `1px solid ${GRAY2}`, padding: 16, background: "#FAFAFA" }}>
+                      {/* progreso */}
+                      <ProgressTracker estado={o.estado} compact />
+
+                      {/* productos con imagen */}
+                      <div style={{ fontWeight: 700, fontSize: 14, margin: "18px 0 10px" }}>Productos</div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                        {(o.items || []).map((item, i) => {
+                          const img = prodImg(item.producto_id);
+                          return (
+                            <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, background: WHITE, borderRadius: 10, padding: 10, border: `1px solid ${GRAY2}` }}>
+                              <div style={{ width: 48, height: 48, borderRadius: 8, background: GRAY, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", flexShrink: 0 }}>
+                                {img ? <img src={img} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <Package size={20} color={GRAY3} />}
+                              </div>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ fontWeight: 700, fontSize: 14 }}>{item.nombre_producto}</div>
+                                <div style={{ fontSize: 12, color: GRAY3 }}>Cantidad: {item.cantidad}</div>
+                              </div>
+                              <div style={{ fontWeight: 800, fontSize: 14, color: RED }}>{money(item.subtotal)}</div>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {/* resumen */}
+                      <div style={{ marginTop: 16, background: WHITE, borderRadius: 10, padding: 14, border: `1px solid ${GRAY2}` }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 8 }}>
+                          <span style={{ color: GRAY3, display: "flex", alignItems: "center", gap: 6 }}><ClipboardList size={14} /> Fecha</span>
+                          <span style={{ fontWeight: 600 }}>{new Date(o.created_at).toLocaleDateString("es-PA", { day: "2-digit", month: "long", year: "numeric" })}</span>
+                        </div>
+                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 8 }}>
+                          <span style={{ color: GRAY3, display: "flex", alignItems: "center", gap: 6 }}><RefreshCw size={14} /> Estado</span>
+                          <StatusBadge index={o.estado} />
+                        </div>
+                        {o.empresa_envio_nombre && (
+                          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 8 }}>
+                            <span style={{ color: GRAY3, display: "flex", alignItems: "center", gap: 6 }}><Truck size={14} /> Envío</span>
+                            <span style={{ fontWeight: 600, textAlign: "right" }}>{o.empresa_envio_nombre}{o.sucursal_nombre ? <><br /><span style={{ fontSize: 11, color: GRAY3 }}>{o.sucursal_nombre}</span></> : ""}</span>
+                          </div>
+                        )}
+                        {o.direccion && (
+                          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 8 }}>
+                            <span style={{ color: GRAY3, display: "flex", alignItems: "center", gap: 6 }}><MapPin size={14} /> Dirección</span>
+                            <span style={{ fontWeight: 600, textAlign: "right", maxWidth: "60%" }}>{o.direccion}</span>
+                          </div>
+                        )}
+                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 16, fontWeight: 900, borderTop: `1px solid ${GRAY2}`, marginTop: 10, paddingTop: 10 }}>
+                          <span>Total</span><span style={{ color: RED }}>{money(o.total)}</span>
+                        </div>
+                      </div>
+
+                      {/* botón repetir / consultar */}
+                      <button style={{ ...S.btnWA, width: "100%", justifyContent: "center", marginTop: 14, padding: 12 }}
+                        onClick={() => window.open(`https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(`Hola Ofertodo, quiero consultar sobre mi pedido ${o.codigo}`)}`, "_blank")}>
+                        <MessageCircle size={16} /> Consultar este pedido
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ─── BARRA DE PROGRESO DEL PEDIDO ───────────────────────────────
+function ProgressTracker({ estado, compact }) {
+  const pct = (estado / (ORDER_STATUS.length - 1)) * 100;
+  return (
+    <div>
+      <div style={{ position: "relative", display: "flex", justifyContent: "space-between", marginTop: compact ? 8 : 4 }}>
+        {/* línea base */}
+        <div style={{ position: "absolute", top: 18, left: 18, right: 18, height: 4, background: GRAY2, borderRadius: 2, zIndex: 0 }} />
+        {/* línea de progreso animada */}
+        <div className="oft-progress-fill" style={{ position: "absolute", top: 18, left: 18, height: 4, background: `linear-gradient(90deg, ${RED}, ${RED_D})`, borderRadius: 2, zIndex: 1, width: `calc((100% - 36px) * ${pct / 100})` }} />
+        {/* pasos */}
+        {ORDER_STATUS.map((s, i) => {
+          const SIcon = STATUS_ICONS[i];
+          const done = i <= estado;
+          const current = i === estado;
+          return (
+            <div key={i} style={{ display: "flex", flexDirection: "column", alignItems: "center", zIndex: 2, flex: 1, position: "relative" }}>
+              <div className={current ? "oft-step-pulse" : ""} style={{
+                width: 36, height: 36, borderRadius: "50%",
+                background: done ? `linear-gradient(135deg, ${RED}, ${RED_D})` : WHITE,
+                border: done ? "none" : `2px solid ${GRAY2}`,
+                color: done ? WHITE : GRAY3,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                transition: "all 0.4s ease",
+                boxShadow: current ? `0 0 0 4px ${RED}25` : "none",
+              }}>
+                <SIcon size={17} strokeWidth={2.2} />
+              </div>
+              <div style={{ fontSize: 9.5, fontWeight: done ? 700 : 500, color: done ? BLACK : GRAY3, marginTop: 6, textAlign: "center", lineHeight: 1.2, maxWidth: 70 }}>{s}</div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -1863,6 +2029,14 @@ export default function App() {
         .oft-toast-in { animation: toastIn 0.3s ease both; }
         @keyframes qvPop { 0% { opacity: 0; transform: scale(0.88); } 100% { opacity: 1; transform: scale(1); } }
         .oft-qv-pop { animation: qvPop 0.28s cubic-bezier(0.34,1.4,0.5,1) both; }
+        @keyframes liveDot { 0%,100% { opacity: 1; box-shadow: 0 0 0 0 rgba(34,197,94,0.5); } 50% { opacity: 0.6; box-shadow: 0 0 0 6px rgba(34,197,94,0); } }
+        .oft-live-dot { animation: liveDot 1.5s ease-in-out infinite; }
+        @keyframes stepPulse { 0%,100% { box-shadow: 0 0 0 4px rgba(227,30,36,0.18); } 50% { box-shadow: 0 0 0 8px rgba(227,30,36,0.05); } }
+        .oft-step-pulse { animation: stepPulse 1.6s ease-in-out infinite; }
+        @keyframes progressGrow { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+        .oft-progress-fill { transform-origin: left; animation: progressGrow 0.8s ease both; }
+        @keyframes detailOpen { from { opacity: 0; max-height: 0; } to { opacity: 1; max-height: 2000px; } }
+        .oft-detail-open { animation: detailOpen 0.4s ease both; overflow: hidden; }
 
         .oft-prod-anim { animation: fadeInUp 0.45s ease both; }
         .oft-cart-bounce { animation: cartBounce 0.5s ease; }
