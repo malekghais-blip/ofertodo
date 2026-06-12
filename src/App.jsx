@@ -1197,6 +1197,19 @@ function AdminView() {
   const [prodForm, setProdForm] = useState(emptyProd);
   const fileInputRef = useRef(null);
   const catFileRef = useRef(null);
+  // Carga masiva CON imágenes (crea borradores)
+  const [showBulkImg, setShowBulkImg] = useState(false);
+  const [bulkImgCat, setBulkImgCat] = useState(categories[0]?.id || 1);
+  const [bulkImgLoading, setBulkImgLoading] = useState(false);
+  const [bulkImgProgress, setBulkImgProgress] = useState({ done: 0, total: 0 });
+  const bulkImgRef = useRef(null);
+  // Edición masiva (selección por checkboxes)
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [showBulkEdit, setShowBulkEdit] = useState(false);
+  const [bulkEditLoading, setBulkEditLoading] = useState(false);
+  const emptyBulkEdit = { nombre: "", precio_pieza: "", precio_media_docena: "", precio_docena: "", badge: "", descripcion: "", activo: "" };
+  const [bulkEdit, setBulkEdit] = useState(emptyBulkEdit);
 
   // Carga pedidos y usuarios al entrar
   useEffect(() => {
@@ -1400,6 +1413,79 @@ function AdminView() {
     setProducts(prev => [...prev, ...newItems]);
     setBulkLoading(false); setBulkText(""); setShowBulk(false);
     showToast(`${ok} producto(s) agregados${err > 0 ? `, ${err} con error` : ""}`);
+  };
+
+  // ── CARGA MASIVA CON IMÁGENES (crea borradores) ────────────────
+  const handleBulkImageUpload = async (e) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+    setBulkImgLoading(true);
+    setBulkImgProgress({ done: 0, total: files.length });
+    const newItems = [];
+    let ok = 0, err = 0;
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      try {
+        const cleanName = file.name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9.\-_]/g, "_");
+        const path = `${Date.now()}_${i}_${cleanName}`;
+        await sb.upload("productos", path, file);
+        const url = `${sb.publicUrl("productos", path)}?t=${Date.now()}`;
+        // Nombre por defecto desde el nombre del archivo (sin extensión)
+        const baseName = file.name.replace(/\.[^.]+$/, "").replace(/[_\-]+/g, " ").trim();
+        const saved = await sb.post("productos", {
+          referencia: "", nombre: baseName || "Producto sin nombre", descripcion: "",
+          categoria_id: Number(bulkImgCat) || categories[0]?.id || 1,
+          precio_pieza: 0, precio_media_docena: 0, precio_docena: 0,
+          badge: "", activo: false, imagen_url: url, // borrador (inactivo)
+        });
+        newItems.push(saved[0]); ok++;
+      } catch(e2) { err++; console.error(e2); }
+      setBulkImgProgress({ done: i + 1, total: files.length });
+    }
+    setProducts(prev => [...prev, ...newItems]);
+    setBulkImgLoading(false);
+    setShowBulkImg(false);
+    e.target.value = "";
+    showToast(`${ok} borrador(es) creados con imagen. Ahora edita sus datos.`);
+    // Activa modo selección y filtra a los recién creados para editar
+    setTab("products");
+  };
+
+  // ── EDICIÓN MASIVA ─────────────────────────────────────────────
+  const toggleSelect = (id) => {
+    setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  };
+  const selectAll = () => {
+    if (selectedIds.length === products.length) setSelectedIds([]);
+    else setSelectedIds(products.map(p => p.id));
+  };
+  const handleBulkEdit = async () => {
+    if (selectedIds.length === 0) { alert("Selecciona al menos un producto."); return; }
+    // Solo aplica los campos que tienen valor (los vacíos no se tocan)
+    const patch = {};
+    if (bulkEdit.nombre !== "") patch.nombre = bulkEdit.nombre;
+    if (bulkEdit.precio_pieza !== "") patch.precio_pieza = Number(bulkEdit.precio_pieza);
+    if (bulkEdit.precio_media_docena !== "") patch.precio_media_docena = Number(bulkEdit.precio_media_docena);
+    if (bulkEdit.precio_docena !== "") patch.precio_docena = Number(bulkEdit.precio_docena);
+    if (bulkEdit.badge !== "") patch.badge = bulkEdit.badge;
+    if (bulkEdit.descripcion !== "") patch.descripcion = bulkEdit.descripcion;
+    if (bulkEdit.activo !== "") patch.activo = bulkEdit.activo === "1";
+    if (Object.keys(patch).length === 0) { alert("Llena al menos un campo para aplicar."); return; }
+    setBulkEditLoading(true);
+    let ok = 0, err = 0;
+    for (const id of selectedIds) {
+      try {
+        const updated = await sb.patch("productos", id, patch);
+        setProducts(prev => prev.map(p => p.id === id ? updated[0] : p));
+        ok++;
+      } catch(e) { err++; }
+    }
+    setBulkEditLoading(false);
+    setShowBulkEdit(false);
+    setBulkEdit(emptyBulkEdit);
+    setSelectedIds([]);
+    setSelectMode(false);
+    showToast(`${ok} producto(s) editados${err > 0 ? `, ${err} con error` : ""}`);
   };
 
   // ── CATEGORÍAS ─────────────────────────────────────────────────
@@ -1628,7 +1714,7 @@ function AdminView() {
               ))}
             </div>
             {loadingData ? <Spinner /> : (
-              <div style={{ background: WHITE, borderRadius: 12, overflow: "auto" }}>
+              <div className="oft-table-wrap" style={{ background: WHITE, borderRadius: 12, overflow: "auto" }}>
                 <table style={S.table}>
                   <thead><tr>{["#Pedido","Cliente","Teléfono","Envío","Total","Estado","Cambiar","Avisar"].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
                   <tbody>
@@ -1666,17 +1752,70 @@ function AdminView() {
         {/* ═══════════ PRODUCTOS ═══════════ */}
         {tab === "products" && (
           <>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24, flexWrap: "wrap", gap: 12 }}>
+            <div className="oft-admin-head" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, flexWrap: "wrap", gap: 12 }}>
               <div style={{ fontSize: 22, fontWeight: 900, display: "flex", alignItems: "center", gap: 10 }}><Tag size={24} color={RED} /> Productos</div>
-              <div style={{ display: "flex", gap: 10 }}>
-                <button style={{ ...S.btnOutline, display: "inline-flex", alignItems: "center", gap: 6 }} onClick={() => { setShowBulk(!showBulk); setShowProdForm(false); }}>
-                  <FileSpreadsheet size={16} /> Carga masiva
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button style={{ ...S.btnRed, display: "inline-flex", alignItems: "center", gap: 6 }} onClick={() => { setShowBulkImg(!showBulkImg); setShowBulk(false); setShowProdForm(false); }}>
+                  <ImageIcon size={16} /> Cargar fotos
                 </button>
-                <button style={{ ...S.btnRed, display: "inline-flex", alignItems: "center", gap: 6 }} onClick={openNewProduct}>
-                  <Plus size={16} strokeWidth={2.5} /> Nuevo producto
+                <button style={{ ...S.btnOutline, display: "inline-flex", alignItems: "center", gap: 6 }} onClick={() => { setShowBulk(!showBulk); setShowBulkImg(false); setShowProdForm(false); }}>
+                  <FileSpreadsheet size={16} /> Texto (CSV)
+                </button>
+                <button style={{ ...S.btnOutline, display: "inline-flex", alignItems: "center", gap: 6, borderColor: selectMode ? RED : GRAY2, color: selectMode ? RED : BLACK }} onClick={() => { setSelectMode(!selectMode); setSelectedIds([]); }}>
+                  <CheckCircle2 size={16} /> {selectMode ? "Cancelar selección" : "Seleccionar"}
+                </button>
+                <button style={{ ...S.btnBlack, display: "inline-flex", alignItems: "center", gap: 6 }} onClick={openNewProduct}>
+                  <Plus size={16} strokeWidth={2.5} /> Nuevo
                 </button>
               </div>
             </div>
+
+            {/* BARRA DE EDICIÓN MASIVA (cuando hay seleccionados) */}
+            {selectMode && (
+              <div style={{ background: "#FFF5F5", border: `2px solid ${RED}`, borderRadius: 12, padding: "12px 16px", marginBottom: 16, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                <span style={{ fontWeight: 700, fontSize: 14 }}>{selectedIds.length} seleccionado(s)</span>
+                <button style={{ ...S.btnOutline, padding: "6px 12px", fontSize: 13 }} onClick={selectAll}>
+                  {selectedIds.length === products.length ? "Quitar todos" : "Seleccionar todos"}
+                </button>
+                <button style={{ ...S.btnRed, padding: "6px 12px", fontSize: 13, display: "inline-flex", alignItems: "center", gap: 6, opacity: selectedIds.length === 0 ? 0.5 : 1 }} disabled={selectedIds.length === 0} onClick={() => setShowBulkEdit(true)}>
+                  <PencilIcon size={14} /> Editar seleccionados
+                </button>
+              </div>
+            )}
+
+            {/* CARGA MASIVA CON IMÁGENES */}
+            {showBulkImg && (
+              <div style={{ background: WHITE, borderRadius: 16, padding: 24, marginBottom: 24, border: `2px solid ${RED}` }}>
+                <div style={{ fontWeight: 800, marginBottom: 8, display: "flex", alignItems: "center", gap: 8 }}><ImageIcon size={18} color={RED} /> Cargar productos desde fotos</div>
+                <p style={{ fontSize: 13, color: GRAY3, marginBottom: 16 }}>
+                  Selecciona varias fotos desde tu celular. Se creará un <strong>producto borrador</strong> por cada foto. Luego editas sus datos (nombre, precios, etc.).
+                </p>
+                <label style={S.label}>Categoría para estos productos</label>
+                <select style={{ ...S.input }} value={bulkImgCat} onChange={e => setBulkImgCat(Number(e.target.value))}>
+                  {categories.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                </select>
+
+                {bulkImgLoading ? (
+                  <div style={{ textAlign: "center", padding: 24 }}>
+                    <RefreshCw size={28} className="spin" color={RED} style={{ marginBottom: 10 }} />
+                    <div style={{ fontWeight: 700 }}>Subiendo {bulkImgProgress.done} de {bulkImgProgress.total}...</div>
+                    <div style={{ background: GRAY2, borderRadius: 10, height: 8, marginTop: 12, overflow: "hidden" }}>
+                      <div style={{ background: RED, height: "100%", width: `${(bulkImgProgress.done / Math.max(bulkImgProgress.total,1)) * 100}%`, transition: "width 0.3s" }} />
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <div onClick={() => bulkImgRef.current?.click()} style={{ border: `2px dashed ${RED}`, borderRadius: 12, padding: 30, textAlign: "center", cursor: "pointer", marginBottom: 14, background: "#FFF5F5" }}>
+                      <input ref={bulkImgRef} type="file" accept="image/*" multiple onChange={handleBulkImageUpload} style={{ display: "none" }} />
+                      <ImageIcon size={40} color={RED} strokeWidth={1.4} style={{ marginBottom: 8 }} />
+                      <div style={{ fontWeight: 700, fontSize: 15 }}>Toca para seleccionar fotos</div>
+                      <div style={{ fontSize: 12, color: GRAY3, marginTop: 4 }}>Puedes elegir varias a la vez</div>
+                    </div>
+                    <button style={S.btnOutline} onClick={() => setShowBulkImg(false)}>Cancelar</button>
+                  </>
+                )}
+              </div>
+            )}
 
             {showBulk && (
               <div style={{ background: WHITE, borderRadius: 16, padding: 24, marginBottom: 24, border: `1px solid ${GRAY2}` }}>
@@ -1701,7 +1840,7 @@ function AdminView() {
                 <div style={{ fontWeight: 800, marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}>
                   {editingId ? <><PencilIcon size={18} color={RED} /> Editar producto</> : <><Plus size={18} color={RED} /> Nuevo producto</>}
                 </div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                <div className="oft-form-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                   {[["referencia","Referencia"],["nombre","Nombre del producto"],["precio_pieza","Precio x pieza ($)"],["precio_media_docena","Precio x media docena ($)"],["precio_docena","Precio x docena ($)"],["badge","Badge (NUEVO, OFERTA, etc)"]].map(([k,l]) => (
                     <div key={k}><label style={S.label}>{l}</label><input style={S.input} value={prodForm[k]} onChange={e => setProdForm({...prodForm,[k]:e.target.value})} /></div>
                   ))}
@@ -1734,22 +1873,29 @@ function AdminView() {
               </div>
             )}
 
-            <div style={{ background: WHITE, borderRadius: 12, overflow: "auto" }}>
+            <div className="oft-table-wrap" style={{ background: WHITE, borderRadius: 12, overflow: "auto" }}>
               <table style={S.table}>
-                <thead><tr>{["Foto","Ref","Producto","Categoría","x1","x6","x12","Estado","Acciones"].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
+                <thead><tr>{[...(selectMode ? ["✓"] : []), "Foto","Ref","Producto","Categoría","x1","x6","x12","Estado","Acciones"].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
                 <tbody>
-                  {products.map(p => (
-                    <tr key={p.id}>
+                  {products.map(p => {
+                    const isSel = selectedIds.includes(p.id);
+                    return (
+                    <tr key={p.id} style={{ background: isSel ? "#FFF5F5" : "transparent" }}>
+                      {selectMode && (
+                        <td style={S.td}>
+                          <input type="checkbox" checked={isSel} onChange={() => toggleSelect(p.id)} style={{ width: 18, height: 18, accentColor: RED, cursor: "pointer" }} />
+                        </td>
+                      )}
                       <td style={S.td}>
                         {p.imagen_url ? <img src={p.imagen_url} style={{ width: 36, height: 36, borderRadius: 6, objectFit: "cover" }} /> : <div style={{ width: 36, height: 36, borderRadius: 6, background: GRAY, display: "flex", alignItems: "center", justifyContent: "center" }}><Package size={16} color={GRAY3} /></div>}
                       </td>
-                      <td style={{ ...S.td, fontWeight: 700 }}>{p.referencia}</td>
+                      <td style={{ ...S.td, fontWeight: 700 }}>{p.referencia || "—"}</td>
                       <td style={S.td}>{p.nombre}</td>
                       <td style={S.td}>{categories.find(c=>c.id===p.categoria_id)?.nombre || "-"}</td>
                       <td style={S.td}>${p.precio_pieza}</td>
                       <td style={S.td}>${p.precio_media_docena}</td>
                       <td style={{ ...S.td, fontWeight: 700, color: RED }}>${p.precio_docena}</td>
-                      <td style={S.td}><span style={{ background: p.activo ? "#D4EDDA" : GRAY2, color: p.activo ? "#155724" : BLACK, padding: "3px 8px", borderRadius: 12, fontSize: 12, fontWeight: 700 }}>{p.activo ? "Activo" : "Inactivo"}</span></td>
+                      <td style={S.td}><span style={{ background: p.activo ? "#D4EDDA" : GRAY2, color: p.activo ? "#155724" : BLACK, padding: "3px 8px", borderRadius: 12, fontSize: 12, fontWeight: 700 }}>{p.activo ? "Activo" : "Borrador"}</span></td>
                       <td style={S.td}>
                         <div style={{ display: "flex", gap: 6 }}>
                           <button onClick={() => openEditProduct(p)} style={{ background: "none", border: `1px solid ${BLACK}`, color: BLACK, borderRadius: 6, padding: "4px 8px", fontSize: 12, cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}><PencilIcon size={13} /> Editar</button>
@@ -1758,10 +1904,47 @@ function AdminView() {
                         </div>
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
+
+            {/* MODAL DE EDICIÓN MASIVA */}
+            {showBulkEdit && (
+              <div className="oft-overlay" style={S.overlay} onClick={() => setShowBulkEdit(false)}>
+                <div className="oft-modal-sheet oft-qv-pop" style={{ ...S.modal, maxWidth: 520 }} onClick={e => e.stopPropagation()}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                    <div style={{ fontSize: 18, fontWeight: 800, display: "flex", alignItems: "center", gap: 8 }}><PencilIcon size={18} color={RED} /> Editar {selectedIds.length} producto(s)</div>
+                    <button onClick={() => setShowBulkEdit(false)} style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}><X size={22} /></button>
+                  </div>
+                  <p style={{ fontSize: 13, color: GRAY3, marginBottom: 16 }}>Solo se cambian los campos que llenes. Los vacíos se quedan igual.</p>
+                  <label style={S.label}>Nombre del producto</label>
+                  <input style={S.input} placeholder="(dejar vacío para no cambiar)" value={bulkEdit.nombre} onChange={e => setBulkEdit({...bulkEdit, nombre: e.target.value})} />
+                  <div className="oft-form-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+                    <div><label style={S.label}>Precio pieza</label><input style={S.input} placeholder="—" value={bulkEdit.precio_pieza} onChange={e => setBulkEdit({...bulkEdit, precio_pieza: e.target.value})} /></div>
+                    <div><label style={S.label}>Media docena</label><input style={S.input} placeholder="—" value={bulkEdit.precio_media_docena} onChange={e => setBulkEdit({...bulkEdit, precio_media_docena: e.target.value})} /></div>
+                    <div><label style={S.label}>Docena</label><input style={S.input} placeholder="—" value={bulkEdit.precio_docena} onChange={e => setBulkEdit({...bulkEdit, precio_docena: e.target.value})} /></div>
+                  </div>
+                  <label style={S.label}>Badge</label>
+                  <input style={S.input} placeholder="NUEVO, OFERTA... (vacío = no cambiar)" value={bulkEdit.badge} onChange={e => setBulkEdit({...bulkEdit, badge: e.target.value})} />
+                  <label style={S.label}>Descripción</label>
+                  <input style={S.input} placeholder="(dejar vacío para no cambiar)" value={bulkEdit.descripcion} onChange={e => setBulkEdit({...bulkEdit, descripcion: e.target.value})} />
+                  <label style={S.label}>Estado</label>
+                  <select style={S.input} value={bulkEdit.activo} onChange={e => setBulkEdit({...bulkEdit, activo: e.target.value})}>
+                    <option value="">No cambiar</option>
+                    <option value="1">Activo (visible)</option>
+                    <option value="0">Borrador (oculto)</option>
+                  </select>
+                  <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
+                    <button style={{ ...S.btnRed, flex: 1, justifyContent: "center", opacity: bulkEditLoading ? 0.7 : 1, display: "inline-flex", alignItems: "center", gap: 6 }} onClick={handleBulkEdit} disabled={bulkEditLoading}>
+                      <Save size={16} /> {bulkEditLoading ? "Guardando..." : "Aplicar cambios"}
+                    </button>
+                    <button style={S.btnOutline} onClick={() => setShowBulkEdit(false)}>Cancelar</button>
+                  </div>
+                </div>
+              </div>
+            )}
           </>
         )}
 
@@ -1903,7 +2086,7 @@ function AdminView() {
               ))}
             </div>
             {loadingData ? <Spinner /> : (
-              <div style={{ background: WHITE, borderRadius: 12, overflow: "auto" }}>
+              <div className="oft-table-wrap" style={{ background: WHITE, borderRadius: 12, overflow: "auto" }}>
                 <table style={S.table}>
                   <thead><tr>{["Nombre","Email","WhatsApp","Pedidos","Registrado"].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
                   <tbody>
@@ -2063,6 +2246,13 @@ export default function App() {
           .oft-admin-tab.active { border-left: none !important; border-top: 3px solid white !important; }
           .oft-dash-grid-2 { grid-template-columns: 1fr !important; }
           .oft-btn-text-hide { display: none !important; }
+          /* Admin: tablas con scroll horizontal y formularios apilados */
+          .oft-admin-main table { min-width: 540px; }
+          .oft-table-wrap { overflow-x: auto !important; -webkit-overflow-scrolling: touch; border-radius: 12px; }
+          .oft-form-grid { grid-template-columns: 1fr !important; }
+          .oft-admin-head { flex-direction: column !important; align-items: stretch !important; gap: 12px !important; }
+          .oft-admin-head > div:last-child { display: flex; gap: 8px; flex-wrap: wrap; }
+          .oft-admin-head button { flex: 1; justify-content: center; }
           .oft-modal { padding: 22px 18px !important; max-width: 100% !important; border-radius: 16px !important; }
           .oft-prod-grid { grid-template-columns: 1fr 1fr !important; gap: 10px !important; width: 100% !important; }
           .oft-prod-grid > * { min-width: 0 !important; }
