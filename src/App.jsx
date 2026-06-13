@@ -2226,6 +2226,10 @@ export default function App() {
         * { box-sizing: border-box; }
         html, body { margin: 0; padding: 0; overflow-x: hidden; max-width: 100%; }
         img { max-width: 100%; }
+        /* Evita el zoom automático del celular al tocar campos (iOS hace zoom si la fuente es <16px) */
+        @media (max-width: 768px) {
+          input, select, textarea { font-size: 16px !important; }
+        }
 
         /* ── ANIMACIONES ── */
         @keyframes fadeInUp { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
