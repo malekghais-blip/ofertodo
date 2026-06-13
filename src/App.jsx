@@ -443,7 +443,7 @@ function QtySelector({ product, pres, setPres, count, setCount, size = "normal" 
 
   const presentaciones = [
     { key: "pieza", label: "Pieza", precio: Number(product.precio_pieza), porPieza: Number(product.precio_pieza) },
-    { key: "media", label: "½ Docena", precio: Number(product.precio_media_docena), porPieza: Number(product.precio_media_docena) / 6 },
+    { key: "media", label: "½ Doc", precio: Number(product.precio_media_docena), porPieza: Number(product.precio_media_docena) / 6 },
     { key: "docena", label: "Docena", precio: Number(product.precio_docena), porPieza: Number(product.precio_docena) / 12 },
   ];
 
@@ -466,8 +466,8 @@ function QtySelector({ product, pres, setPres, count, setCount, size = "normal" 
                 minWidth: 0, width: "100%", boxSizing: "border-box",
               }}
             >
-              <div className="oft-pres-label" style={{ fontSize: big ? 12 : 11, fontWeight: 800, color: active ? RED : BLACK, textAlign: "center", width: "100%", lineHeight: 1.1 }}>{p.label}</div>
-              <div className="oft-pres-price" style={{ fontSize: big ? 15 : 13, fontWeight: 900, color: active ? RED : BLACK, textAlign: "center", width: "100%", lineHeight: 1.1, whiteSpace: "nowrap" }}>${p.precio.toFixed(2)}</div>
+              <div className="oft-pres-label" style={{ fontSize: big ? 12 : 11, fontWeight: 800, color: active ? RED : BLACK, textAlign: "center", width: "100%", lineHeight: 1.2, whiteSpace: "nowrap" }}>{p.label}</div>
+              <div className="oft-pres-price" style={{ fontSize: big ? 15 : 13, fontWeight: 900, color: active ? RED : BLACK, textAlign: "center", width: "100%", lineHeight: 1.2, whiteSpace: "nowrap" }}>${p.precio.toFixed(2)}</div>
             </button>
           );
         })}
