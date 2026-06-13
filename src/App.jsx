@@ -434,9 +434,9 @@ function QtySelector({ product, pres, setPres, count, setCount, size = "normal" 
   const numFont = big ? 24 : 20;
 
   const presentaciones = [
-    { key: "pieza", label: "Por pieza", precio: Number(product.precio_pieza) },
-    { key: "media", label: "½ docena", precio: Number(product.precio_media_docena) },
-    { key: "docena", label: "Docena", precio: Number(product.precio_docena) },
+    { key: "pieza", label: "Pieza", precio: Number(product.precio_pieza), porPieza: Number(product.precio_pieza) },
+    { key: "media", label: "½ Docena", precio: Number(product.precio_media_docena), porPieza: Number(product.precio_media_docena) / 6 },
+    { key: "docena", label: "Docena", precio: Number(product.precio_docena), porPieza: Number(product.precio_docena) / 12 },
   ];
 
   return (
@@ -450,15 +450,16 @@ function QtySelector({ product, pres, setPres, count, setCount, size = "normal" 
               onClick={() => { setPres(p.key); setCount(1); triggerBump(); }}
               className="oft-pres-chip oft-btn-press"
               style={{
-                padding: big ? "10px 6px" : "8px 4px", borderRadius: 10,
+                padding: big ? "10px 4px" : "8px 3px", borderRadius: 10,
                 border: `2px solid ${active ? RED : GRAY2}`,
                 background: active ? "#FFF5F5" : WHITE,
                 cursor: "pointer", transition: "all 0.18s", textAlign: "center",
-                minWidth: 0, overflow: "hidden",
+                minWidth: 0,
               }}
             >
-              <div className="oft-pres-label" style={{ fontSize: big ? 12 : 11, fontWeight: 800, color: active ? RED : BLACK, whiteSpace: "nowrap" }}>{p.label}</div>
-              <div className="oft-pres-price" style={{ fontSize: big ? 13 : 12, fontWeight: 900, color: active ? RED : GRAY3, marginTop: 2, whiteSpace: "nowrap" }}>${p.precio.toFixed(2)}</div>
+              <div className="oft-pres-label" style={{ fontSize: big ? 12 : 11, fontWeight: 800, color: active ? RED : BLACK }}>{p.label}</div>
+              <div className="oft-pres-price" style={{ fontSize: big ? 14 : 13, fontWeight: 900, color: active ? RED : BLACK, marginTop: 3 }}>${p.precio.toFixed(2)}</div>
+              <div className="oft-pres-unit" style={{ fontSize: big ? 10 : 9, fontWeight: 600, color: GRAY3, marginTop: 1 }}>${p.porPieza.toFixed(2)}/pza</div>
             </button>
           );
         })}
@@ -2380,9 +2381,10 @@ export default function App() {
           .oft-price-big { font-size: 14px !important; }
           .oft-qty-row { flex-wrap: wrap !important; gap: 6px !important; }
           /* Bloques de presentación compactos en celular */
-          .oft-pres-chip { padding: 7px 2px !important; }
+          .oft-pres-chip { padding: 8px 2px !important; }
           .oft-pres-label { font-size: 10px !important; }
-          .oft-pres-price { font-size: 11px !important; }
+          .oft-pres-price { font-size: 12px !important; }
+          .oft-pres-unit { font-size: 9px !important; }
           .oft-pres-grid { gap: 5px !important; }
         }
         @media (max-width: 420px) {
