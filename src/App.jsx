@@ -794,6 +794,8 @@ function RegisterModal() {
 function CheckoutView() {
   const { cart, setCart, user, setView, showToast, empresas, sucursales } = useApp();
   const [address, setAddress] = useState(""), [notes, setNotes] = useState(""), [loading, setLoading] = useState(false), [placed, setPlaced] = useState(null);
+  const [nombre, setNombre] = useState(user?.nombre || "");
+  const [telefono, setTelefono] = useState(user?.telefono || "");
   const [empresaId, setEmpresaId] = useState(null);
   const [sucursalId, setSucursalId] = useState(null);
   const total = cart.reduce((s, i) => s + calcPrice(i.product, i.qty), 0);
@@ -804,13 +806,14 @@ function CheckoutView() {
   const sucursalSel = sucursales.find(s => s.id === sucursalId);
 
   const handlePlace = async () => {
+    if (!nombre.trim()) { alert("Por favor escribe tu nombre."); return; }
     if (!empresaId) { alert("Por favor elige una empresa de envío."); return; }
     if (sucursalesEmpresa.length > 0 && !sucursalId) { alert("Por favor elige una sucursal."); return; }
     setLoading(true);
     try {
       const codigo = `OFT-${Date.now().toString().slice(-6)}`;
       const pedido = await sb.post("pedidos", {
-        codigo, usuario_id: user.id, nombre_cliente: user.nombre, telefono: user.telefono,
+        codigo, usuario_id: user.id, nombre_cliente: nombre, telefono: telefono,
         direccion: address, notas: notes, total, estado: 0,
         empresa_envio_id: empresaId, empresa_envio_nombre: empresaSel?.nombre || "",
         sucursal_id: sucursalId, sucursal_nombre: sucursalSel?.nombre || "",
@@ -910,8 +913,10 @@ function CheckoutView() {
       {/* DIRECCIÓN / NOTAS */}
       <div style={{ background: WHITE, borderRadius: 12, padding: 24, marginBottom: 16, border: `1px solid ${GRAY2}` }}>
         <div style={{ fontWeight: 800, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}><MapPin size={18} /> Datos adicionales</div>
-        <label style={S.label}>Nombre</label>
-        <input style={S.input} value={user?.nombre || ""} readOnly />
+        <label style={S.label}>Nombre *</label>
+        <input style={S.input} placeholder="Tu nombre" value={nombre} onChange={e => setNombre(e.target.value)} />
+        <label style={S.label}>WhatsApp / Teléfono</label>
+        <input style={S.input} placeholder="Ej: 6720-0474" value={telefono} onChange={e => setTelefono(e.target.value)} />
         <label style={S.label}>Dirección o referencia (opcional)</label>
         <input style={S.input} placeholder="Ej: cerca del parque central..." value={address} onChange={e => setAddress(e.target.value)} />
         <label style={S.label}>Notas (tallas, colores, referencias)</label>
@@ -941,21 +946,42 @@ function DashboardView() {
   const [selected, setSelected] = useState(null);
 
   const loadOrders = async () => {
+    if (!user?.id) { setLoading(false); return; }
     try {
       const data = await sb.get("pedidos", `?usuario_id=eq.${user.id}&order=created_at.desc`);
-      const withItems = await Promise.all(data.map(async o => {
-        const items = await sb.get("pedido_items", `?pedido_id=eq.${o.id}`);
-        return { ...o, items };
+      const withItems = await Promise.all((data || []).map(async o => {
+        try {
+          const items = await sb.get("pedido_items", `?pedido_id=eq.${o.id}`);
+          return { ...o, items: items || [] };
+        } catch(e) {
+          return { ...o, items: [] }; // si fallan los items, igual mostramos el pedido
+        }
       }));
       setOrders(withItems);
-    } catch(e) { console.error(e); }
-    setLoading(false);
+    } catch(e) {
+      console.error("Error cargando pedidos:", e);
+      setOrders([]); // muestra "sin pedidos" en vez de quedarse cargando
+    } finally {
+      setLoading(false); // SIEMPRE quita el spinner pase lo que pase
+    }
   };
 
   useEffect(() => {
-    if (user?.id) loadOrders();
-    // refresco en vivo cada 30s para ver cambios de estado
-    const interval = setInterval(() => { if (user?.id) loadOrders(); }, 30000);
+    loadOrders();
+    // refresco en vivo cada 30s (no muestra spinner, solo actualiza datos)
+    const interval = setInterval(() => {
+      if (user?.id) {
+        sb.get("pedidos", `?usuario_id=eq.${user.id}&order=created_at.desc`)
+          .then(async data => {
+            const withItems = await Promise.all((data || []).map(async o => {
+              try { const items = await sb.get("pedido_items", `?pedido_id=eq.${o.id}`); return { ...o, items: items || [] }; }
+              catch { return { ...o, items: [] }; }
+            }));
+            setOrders(withItems);
+          })
+          .catch(() => {});
+      }
+    }, 30000);
     return () => clearInterval(interval);
   }, [user]);
 
