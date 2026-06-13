@@ -442,7 +442,7 @@ function QtySelector({ product, pres, setPres, count, setCount, size = "normal" 
   return (
     <div>
       {/* SELECTOR DE PRESENTACIÓN */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6, marginBottom: 12 }}>
+      <div className="oft-pres-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6, marginBottom: 12 }}>
         {presentaciones.map(p => {
           const active = pres === p.key;
           return (
@@ -450,14 +450,15 @@ function QtySelector({ product, pres, setPres, count, setCount, size = "normal" 
               onClick={() => { setPres(p.key); setCount(1); triggerBump(); }}
               className="oft-pres-chip oft-btn-press"
               style={{
-                padding: big ? "10px 6px" : "8px 5px", borderRadius: 10,
+                padding: big ? "10px 6px" : "8px 4px", borderRadius: 10,
                 border: `2px solid ${active ? RED : GRAY2}`,
                 background: active ? "#FFF5F5" : WHITE,
                 cursor: "pointer", transition: "all 0.18s", textAlign: "center",
+                minWidth: 0, overflow: "hidden",
               }}
             >
-              <div style={{ fontSize: big ? 12 : 11, fontWeight: 800, color: active ? RED : BLACK }}>{p.label}</div>
-              <div style={{ fontSize: big ? 13 : 12, fontWeight: 900, color: active ? RED : GRAY3, marginTop: 2 }}>${p.precio.toFixed(2)}</div>
+              <div className="oft-pres-label" style={{ fontSize: big ? 12 : 11, fontWeight: 800, color: active ? RED : BLACK, whiteSpace: "nowrap" }}>{p.label}</div>
+              <div className="oft-pres-price" style={{ fontSize: big ? 13 : 12, fontWeight: 900, color: active ? RED : GRAY3, marginTop: 2, whiteSpace: "nowrap" }}>${p.precio.toFixed(2)}</div>
             </button>
           );
         })}
@@ -2378,6 +2379,11 @@ export default function App() {
           .oft-price-label { font-size: 12px !important; }
           .oft-price-big { font-size: 14px !important; }
           .oft-qty-row { flex-wrap: wrap !important; gap: 6px !important; }
+          /* Bloques de presentación compactos en celular */
+          .oft-pres-chip { padding: 7px 2px !important; }
+          .oft-pres-label { font-size: 10px !important; }
+          .oft-pres-price { font-size: 11px !important; }
+          .oft-pres-grid { gap: 5px !important; }
         }
         @media (max-width: 420px) {
           .oft-cat-grid { grid-template-columns: repeat(2, 1fr) !important; }
