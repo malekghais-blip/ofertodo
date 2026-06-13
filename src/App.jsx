@@ -558,7 +558,7 @@ function ProductCard({ product }) {
         {/* SELECTOR DE PRESENTACIÓN + CANTIDAD + TOTAL */}
         <div style={{ marginBottom: 10 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-            <span style={{ fontSize: 13, fontWeight: 700 }}>Elige presentación</span>
+            <span style={{ fontSize: 13, fontWeight: 700 }}>Elige como comprar</span>
             <span style={{ fontSize: 18, color: RED, fontWeight: 900 }}>${Number(total).toFixed(2)}</span>
           </div>
           <QtySelector product={product} pres={pres} setPres={setPres} count={count} setCount={setCount} />
@@ -675,7 +675,7 @@ function ProductModal() {
           {/* SELECTOR DE PRESENTACIÓN + CANTIDAD + TOTAL */}
           <div style={{ background: GRAY, borderRadius: 12, padding: 16, margin: "8px 0 16px" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-              <span style={{ fontSize: 15, fontWeight: 700 }}>Elige presentación</span>
+              <span style={{ fontSize: 15, fontWeight: 700 }}>Elige como comprar</span>
               <span style={{ fontSize: 24, color: RED, fontWeight: 900 }}>${Number(total).toFixed(2)}</span>
             </div>
             <QtySelector product={product} pres={pres} setPres={setPres} count={count} setCount={setCount} size="big" />
