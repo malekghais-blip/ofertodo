@@ -241,8 +241,49 @@ function priceBreakdown(product, qty) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  NAV
+//  PRESENTACIONES (pieza / media docena / docena)
 // ═══════════════════════════════════════════════════════════════
+// pres: "pieza" | "media" | "docena"  ·  count: cuántos de esa presentación
+const PRES_PIEZAS = { pieza: 1, media: 6, docena: 12 };
+
+function presLabel(pres) {
+  return pres === "pieza" ? "pieza" : pres === "media" ? "½ docena" : "docena";
+}
+function presLabelPlural(pres, count) {
+  if (pres === "pieza") return count === 1 ? "pieza" : "piezas";
+  if (pres === "media") return count === 1 ? "½ docena" : "½ docenas";
+  return count === 1 ? "docena" : "docenas";
+}
+// Precio unitario de cada presentación
+function presUnitPrice(product, pres) {
+  if (pres === "pieza")  return Number(product.precio_pieza);
+  if (pres === "media")  return Number(product.precio_media_docena);
+  return Number(product.precio_docena);
+}
+// Total de piezas según presentación y cantidad de paquetes
+function presToPiezas(pres, count) {
+  return (PRES_PIEZAS[pres] || 1) * count;
+}
+// Precio total = precio unitario de la presentación × cantidad de paquetes
+function presTotal(product, pres, count) {
+  return presUnitPrice(product, pres) * count;
+}
+// Texto descriptivo del desglose
+function presBreakdown(pres, count) {
+  return `${count} ${presLabelPlural(pres, count)} = ${presToPiezas(pres, count)} pieza${presToPiezas(pres, count) > 1 ? "s" : ""}`;
+}
+
+// Precio total de un item del carrito (soporta presentación o cantidad libre)
+function cartItemTotal(item) {
+  if (item.pres) return presTotal(item.product, item.pres, item.count || 1);
+  return calcPrice(item.product, item.qty); // compatibilidad con items viejos
+}
+function cartItemLabel(item) {
+  if (item.pres) return `${item.count} ${presLabelPlural(item.pres, item.count)} · ${item.qty} pzs`;
+  return `${item.qty} pzs`;
+}
+
+
 function NavBar() {
   const { view, setView, cart, cartPulse, user, setUser, setShowLogin, setShowCart } = useApp();
   const cartCount = cart.reduce((s, i) => s + i.qty, 0);
@@ -381,74 +422,68 @@ function HomeView() {
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  SELECTOR DE CANTIDAD ANIMADO
+//  SELECTOR DE PRESENTACIÓN + CANTIDAD ANIMADO
 // ═══════════════════════════════════════════════════════════════
-function QtySelector({ qty, setQty, size = "normal" }) {
+function QtySelector({ product, pres, setPres, count, setCount, size = "normal" }) {
   const [bump, setBump] = useState(false);
   const triggerBump = () => { setBump(true); setTimeout(() => setBump(false), 280); };
-  const change = (delta) => {
-    setQty(prev => {
-      const next = Math.max(1, prev + delta);
-      return next;
-    });
-    triggerBump();
-  };
-  const setTo = (n) => { setQty(n); triggerBump(); };
+  const change = (delta) => { setCount(prev => Math.max(1, prev + delta)); triggerBump(); };
 
   const big = size === "big";
-  const btnSize = big ? 42 : 34;
-  const numFont = big ? 22 : 18;
+  const btnSize = big ? 42 : 36;
+  const numFont = big ? 24 : 20;
 
-  // Atajos rápidos
-  const shortcuts = [
-    { label: "½ doc", val: 6 },
-    { label: "1 doc", val: 12 },
-    { label: "2 doc", val: 24 },
+  const presentaciones = [
+    { key: "pieza", label: "Por pieza", precio: Number(product.precio_pieza) },
+    { key: "media", label: "½ docena", precio: Number(product.precio_media_docena) },
+    { key: "docena", label: "Docena", precio: Number(product.precio_docena) },
   ];
 
   return (
     <div>
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        {/* Botón menos */}
+      {/* SELECTOR DE PRESENTACIÓN */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6, marginBottom: 12 }}>
+        {presentaciones.map(p => {
+          const active = pres === p.key;
+          return (
+            <button key={p.key}
+              onClick={() => { setPres(p.key); setCount(1); triggerBump(); }}
+              className="oft-pres-chip oft-btn-press"
+              style={{
+                padding: big ? "10px 6px" : "8px 5px", borderRadius: 10,
+                border: `2px solid ${active ? RED : GRAY2}`,
+                background: active ? "#FFF5F5" : WHITE,
+                cursor: "pointer", transition: "all 0.18s", textAlign: "center",
+              }}
+            >
+              <div style={{ fontSize: big ? 12 : 11, fontWeight: 800, color: active ? RED : BLACK }}>{p.label}</div>
+              <div style={{ fontSize: big ? 13 : 12, fontWeight: 900, color: active ? RED : GRAY3, marginTop: 2 }}>${p.precio.toFixed(2)}</div>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* CONTADOR DE CANTIDAD */}
+      <div style={{ display: "flex", alignItems: "center", gap: 10, background: WHITE, border: `1.5px solid ${GRAY2}`, borderRadius: 12, padding: big ? 8 : 6 }}>
         <button
           onClick={() => change(-1)}
           className="oft-qty-btn oft-btn-press"
-          style={{ width: btnSize, height: btnSize, borderRadius: 10, border: `2px solid ${GRAY2}`, background: WHITE, color: qty <= 1 ? GRAY3 : BLACK, fontSize: 20, fontWeight: 700, cursor: qty <= 1 ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, lineHeight: 1 }}
-          disabled={qty <= 1}
+          style={{ width: btnSize, height: btnSize, borderRadius: 10, border: `2px solid ${GRAY2}`, background: WHITE, color: count <= 1 ? GRAY3 : BLACK, fontSize: 20, fontWeight: 700, cursor: count <= 1 ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, lineHeight: 1 }}
+          disabled={count <= 1}
           aria-label="Quitar uno"
         >−</button>
 
-        {/* Número central */}
         <div style={{ flex: 1, textAlign: "center", minWidth: 0 }}>
-          <div className={bump ? "oft-qty-bump" : ""} style={{ fontSize: numFont, fontWeight: 900, color: BLACK, lineHeight: 1 }}>
-            {qty}
-          </div>
-          <div style={{ fontSize: 10, color: GRAY3, fontWeight: 600, marginTop: 2 }}>
-            {qty === 1 ? "pieza" : "piezas"}
-          </div>
+          <div className={bump ? "oft-qty-bump" : ""} style={{ fontSize: numFont, fontWeight: 900, color: BLACK, lineHeight: 1 }}>{count}</div>
+          <div style={{ fontSize: 10, color: GRAY3, fontWeight: 600, marginTop: 2 }}>{presLabelPlural(pres, count)}</div>
         </div>
 
-        {/* Botón más */}
         <button
           onClick={() => change(1)}
           className="oft-qty-btn oft-btn-press"
           style={{ width: btnSize, height: btnSize, borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${RED}, ${RED_D})`, color: WHITE, fontSize: 20, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, lineHeight: 1, boxShadow: "0 2px 8px rgba(227,30,36,0.3)" }}
           aria-label="Agregar uno"
         >+</button>
-      </div>
-
-      {/* Atajos rápidos */}
-      <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
-        {shortcuts.map(s => {
-          const active = qty === s.val;
-          return (
-            <button key={s.val}
-              onClick={() => setTo(s.val)}
-              className="oft-qty-chip oft-btn-press"
-              style={{ flex: 1, padding: "5px 4px", borderRadius: 8, border: `1.5px solid ${active ? RED : GRAY2}`, background: active ? "#FFF5F5" : WHITE, color: active ? RED : GRAY3, fontSize: 11, fontWeight: 700, cursor: "pointer", transition: "all 0.15s" }}
-            >{s.label}</button>
-          );
-        })}
       </div>
     </div>
   );
@@ -459,14 +494,16 @@ function QtySelector({ qty, setQty, size = "normal" }) {
 // ═══════════════════════════════════════════════════════════════
 function ProductCard({ product }) {
   const { addToCart, showToast, setQuickView } = useApp();
-  const [qty, setQty] = useState(12);
+  const [pres, setPres] = useState("docena");
+  const [count, setCount] = useState(1);
   const [added, setAdded] = useState(false);
-  const total = calcPrice(product, qty);
+  const total = presTotal(product, pres, count);
   const imgUrl = product.imagen_url || null;
   const btnRef = useRef(null);
 
   const handleAdd = (e) => {
-    addToCart(product, qty);
+    const piezas = presToPiezas(pres, count);
+    addToCart(product, piezas, pres, count);
     showToast(`${product.nombre} agregado al pedido`);
     // feedback visual en el botón
     setAdded(true);
@@ -508,32 +545,16 @@ function ProductCard({ product }) {
         <div style={{ fontSize: 11, color: GRAY3, fontWeight: 600, marginBottom: 4 }}>REF: {product.referencia}</div>
         <div onClick={() => setQuickView(product)} style={{ fontSize: 15, fontWeight: 800, marginBottom: 6, cursor: "pointer" }}>{product.nombre}</div>
         <div style={{ fontSize: 13, color: GRAY3, marginBottom: 12, lineHeight: 1.4 }}>{product.descripcion}</div>
-        {/* TABLA DE PRECIOS REFERENCIA */}
-        <div className="oft-price-table" style={S.priceTable}>
-          <div className="oft-price-row" style={S.priceRow}>
-            <span className="oft-price-label" style={{ color: GRAY3 }}>1–5 piezas</span>
-            <span style={{ fontWeight: 800 }}>${Number(product.precio_pieza).toFixed(2)} c/u</span>
-          </div>
-          <div className="oft-price-row" style={S.priceRow}>
-            <span className="oft-price-label" style={{ color: GRAY3 }}>Media docena (6)</span>
-            <span style={{ fontWeight: 800 }}>${Number(product.precio_media_docena).toFixed(2)}</span>
-          </div>
-          <div className="oft-price-row" style={{ ...S.priceRow, borderTop: `1px solid ${GRAY2}`, marginTop: 4, paddingTop: 6 }}>
-            <span style={{ fontWeight: 700 }}>Docena (12)</span>
-            <span className="oft-price-big" style={{ fontWeight: 900, color: RED, fontSize: 15 }}>${Number(product.precio_docena).toFixed(2)}</span>
-          </div>
-        </div>
-
-        {/* SELECTOR DE CANTIDAD + TOTAL CALCULADO */}
+        {/* SELECTOR DE PRESENTACIÓN + CANTIDAD + TOTAL */}
         <div style={{ marginBottom: 10 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-            <span style={{ fontSize: 13, fontWeight: 700 }}>Cantidad</span>
+            <span style={{ fontSize: 13, fontWeight: 700 }}>Elige presentación</span>
             <span style={{ fontSize: 18, color: RED, fontWeight: 900 }}>${Number(total).toFixed(2)}</span>
           </div>
-          <QtySelector qty={qty} setQty={setQty} />
-          {/* DESGLOSE DEL CÁLCULO */}
+          <QtySelector product={product} pres={pres} setPres={setPres} count={count} setCount={setCount} />
+          {/* DESGLOSE */}
           <div style={{ fontSize: 11, color: GRAY3, background: GRAY, borderRadius: 6, padding: "6px 10px", display: "flex", alignItems: "center", gap: 5, marginTop: 8 }}>
-            <Sparkles size={12} /> {priceBreakdown(product, qty)}
+            <Sparkles size={12} /> {presBreakdown(pres, count)}
           </div>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
@@ -601,17 +622,18 @@ function CatalogoView() {
 // ═══════════════════════════════════════════════════════════════
 function ProductModal() {
   const { quickView: product, setQuickView, addToCart, showToast } = useApp();
-  const [qty, setQty] = useState(12);
+  const [pres, setPres] = useState("docena");
+  const [count, setCount] = useState(1);
   const [added, setAdded] = useState(false);
 
-  useEffect(() => { setQty(12); setAdded(false); }, [product]);
+  useEffect(() => { setPres("docena"); setCount(1); setAdded(false); }, [product]);
 
   if (!product) return null;
-  const total = calcPrice(product, qty);
+  const total = presTotal(product, pres, count);
   const imgUrl = product.imagen_url || null;
 
   const handleAdd = () => {
-    addToCart(product, qty);
+    addToCart(product, presToPiezas(pres, count), pres, count);
     showToast(`${product.nombre} agregado al pedido`);
     setAdded(true);
     setTimeout(() => setAdded(false), 1100);
@@ -640,32 +662,16 @@ function ProductModal() {
           <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 8 }}>{product.nombre}</div>
           {product.descripcion && <div style={{ fontSize: 14, color: GRAY3, marginBottom: 16, lineHeight: 1.5 }}>{product.descripcion}</div>}
 
-          {/* PRECIOS */}
-          <div style={{ ...S.priceTable, padding: "14px 16px" }}>
-            <div style={{ ...S.priceRow, fontSize: 14 }}>
-              <span style={{ color: GRAY3 }}>1–5 piezas</span>
-              <span style={{ fontWeight: 800 }}>${Number(product.precio_pieza).toFixed(2)} c/u</span>
-            </div>
-            <div style={{ ...S.priceRow, fontSize: 14 }}>
-              <span style={{ color: GRAY3 }}>Media docena (6)</span>
-              <span style={{ fontWeight: 800 }}>${Number(product.precio_media_docena).toFixed(2)}</span>
-            </div>
-            <div style={{ ...S.priceRow, fontSize: 14, borderTop: `1px solid ${GRAY2}`, marginTop: 6, paddingTop: 8 }}>
-              <span style={{ fontWeight: 700 }}>Docena (12)</span>
-              <span style={{ fontWeight: 900, color: RED, fontSize: 17 }}>${Number(product.precio_docena).toFixed(2)}</span>
-            </div>
-          </div>
-
-          {/* CANTIDAD + TOTAL */}
-          <div style={{ background: GRAY, borderRadius: 12, padding: 16, margin: "16px 0" }}>
+          {/* SELECTOR DE PRESENTACIÓN + CANTIDAD + TOTAL */}
+          <div style={{ background: GRAY, borderRadius: 12, padding: 16, margin: "8px 0 16px" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-              <span style={{ fontSize: 15, fontWeight: 700 }}>Cantidad</span>
+              <span style={{ fontSize: 15, fontWeight: 700 }}>Elige presentación</span>
               <span style={{ fontSize: 24, color: RED, fontWeight: 900 }}>${Number(total).toFixed(2)}</span>
             </div>
-            <QtySelector qty={qty} setQty={setQty} size="big" />
-          </div>
-          <div style={{ fontSize: 12, color: GRAY3, background: GRAY, borderRadius: 8, padding: "8px 12px", display: "flex", alignItems: "center", gap: 6, marginBottom: 16 }}>
-            <Sparkles size={13} /> {priceBreakdown(product, qty)}
+            <QtySelector product={product} pres={pres} setPres={setPres} count={count} setCount={setCount} size="big" />
+            <div style={{ fontSize: 12, color: GRAY3, background: WHITE, borderRadius: 8, padding: "8px 12px", display: "flex", alignItems: "center", gap: 6, marginTop: 12 }}>
+              <Sparkles size={13} /> {presBreakdown(pres, count)}
+            </div>
           </div>
 
           {/* BOTONES */}
@@ -688,7 +694,7 @@ function FloatingCart() {
   const { cart, cartPulse, setShowCart, view } = useApp();
   const [bounce, setBounce] = useState(false);
   const cartCount = cart.reduce((s, i) => s + i.qty, 0);
-  const total = cart.reduce((s, i) => s + calcPrice(i.product, i.qty), 0);
+  const total = cart.reduce((s, i) => s + cartItemTotal(i), 0);
 
   useEffect(() => {
     if (cartPulse > 0) {
@@ -733,7 +739,7 @@ function FloatingCart() {
 // ═══════════════════════════════════════════════════════════════
 function CartModal() {
   const { cart, setCart, setShowCart, user, setShowLogin, setView } = useApp();
-  const total = cart.reduce((s, i) => s + calcPrice(i.product, i.qty), 0);
+  const total = cart.reduce((s, i) => s + cartItemTotal(i), 0);
 
   return (
     <div className="oft-overlay" style={S.overlay} onClick={() => setShowCart(false)}>
@@ -753,7 +759,7 @@ function CartModal() {
                 }
                 <div style={{ flex: 1 }}>
                   <div style={{ fontWeight: 700, fontSize: 14 }}>{item.product.nombre}</div>
-                  <div style={{ fontSize: 12, color: GRAY3 }}>Cant: {item.qty} · ${calcPrice(item.product, item.qty).toFixed(2)}</div>
+                  <div style={{ fontSize: 12, color: GRAY3 }}>{cartItemLabel(item)} · ${cartItemTotal(item).toFixed(2)}</div>
                 </div>
                 <button onClick={() => setCart(cart.filter((_, i) => i !== idx))} style={{ background: "none", border: "none", color: RED, cursor: "pointer", display: "flex" }}><Trash2 size={18} /></button>
               </div>
@@ -866,7 +872,7 @@ function CheckoutView() {
   const [telefono, setTelefono] = useState(user?.telefono || "");
   const [empresaId, setEmpresaId] = useState(null);
   const [sucursalId, setSucursalId] = useState(null);
-  const total = cart.reduce((s, i) => s + calcPrice(i.product, i.qty), 0);
+  const total = cart.reduce((s, i) => s + cartItemTotal(i), 0);
 
   const empresasActivas = empresas.filter(e => e.activa !== false);
   const sucursalesEmpresa = sucursales.filter(s => s.empresa_id === empresaId && s.activa !== false);
@@ -888,7 +894,7 @@ function CheckoutView() {
       });
       const pedidoId = pedido[0].id;
       for (const item of cart) {
-        await sb.post("pedido_items", { pedido_id: pedidoId, producto_id: item.product.id, nombre_producto: item.product.nombre, cantidad: item.qty, precio_unitario: item.product.precio_pieza, subtotal: calcPrice(item.product, item.qty) });
+        await sb.post("pedido_items", { pedido_id: pedidoId, producto_id: item.product.id, nombre_producto: item.product.nombre, cantidad: item.qty, precio_unitario: item.product.precio_pieza, subtotal: cartItemTotal(item) });
       }
       setPlaced(codigo);
       setCart([]);
@@ -918,8 +924,8 @@ function CheckoutView() {
         <div style={{ fontWeight: 800, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}><Package size={18} /> Resumen</div>
         {cart.map((item, idx) => (
           <div key={idx} style={{ display: "flex", justifyContent: "space-between", fontSize: 14, padding: "6px 0", borderBottom: `1px solid ${GRAY2}` }}>
-            <span>{item.product.nombre} × {item.qty}</span>
-            <span style={{ fontWeight: 700 }}>${calcPrice(item.product, item.qty).toFixed(2)}</span>
+            <span>{item.product.nombre} <span style={{ color: GRAY3, fontSize: 12 }}>({cartItemLabel(item)})</span></span>
+            <span style={{ fontWeight: 700 }}>${cartItemTotal(item).toFixed(2)}</span>
           </div>
         ))}
         <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 900, fontSize: 18, marginTop: 14 }}>
@@ -2230,11 +2236,12 @@ export default function App() {
   const showToast = (msg) => { setToastMsg(msg); setTimeout(() => setToastMsg(""), 3000); };
 
   const [cartPulse, setCartPulse] = useState(0);
-  const addToCart = (product, qty) => {
+  const addToCart = (product, qty, pres = "pieza", count = qty) => {
     setCart(prev => {
-      const existing = prev.find(i => i.product.id === product.id);
-      if (existing) return prev.map(i => i.product.id === product.id ? { ...i, qty: i.qty + qty } : i);
-      return [...prev, { product, qty }];
+      // mismo producto Y misma presentación = se suman; si no, entrada nueva
+      const existing = prev.find(i => i.product.id === product.id && i.pres === pres);
+      if (existing) return prev.map(i => (i.product.id === product.id && i.pres === pres) ? { ...i, qty: i.qty + qty, count: (i.count || 0) + count } : i);
+      return [...prev, { product, qty, pres, count }];
     });
     setCartPulse(p => p + 1); // dispara animación del carrito
   };
