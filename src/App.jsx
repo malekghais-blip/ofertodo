@@ -450,7 +450,7 @@ function QtySelector({ product, pres, setPres, count, setCount, size = "normal" 
   return (
     <div>
       {/* SELECTOR DE PRESENTACIÓN */}
-      <div className="oft-pres-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6, marginBottom: 12 }}>
+      <div className="oft-pres-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6, marginBottom: 12, alignItems: "stretch" }}>
         {presentaciones.map(p => {
           const active = pres === p.key;
           return (
@@ -458,16 +458,16 @@ function QtySelector({ product, pres, setPres, count, setCount, size = "normal" 
               onClick={() => { setPres(p.key); setCount(1); triggerBump(); }}
               className="oft-pres-chip oft-btn-press"
               style={{
-                padding: big ? "12px 4px" : "10px 3px", borderRadius: 10,
+                padding: big ? "12px 4px" : "10px 2px", borderRadius: 10,
                 border: `2px solid ${active ? RED : GRAY2}`,
                 background: active ? "#FFF5F5" : WHITE,
                 cursor: "pointer", transition: "all 0.18s",
-                display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-                minWidth: 0,
+                display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 4,
+                minWidth: 0, width: "100%", boxSizing: "border-box",
               }}
             >
-              <div className="oft-pres-label" style={{ fontSize: big ? 12 : 11, fontWeight: 800, color: active ? RED : BLACK, textAlign: "center" }}>{p.label}</div>
-              <div className="oft-pres-price" style={{ fontSize: big ? 15 : 13, fontWeight: 900, color: active ? RED : BLACK, marginTop: 4, textAlign: "center" }}>${p.precio.toFixed(2)}</div>
+              <div className="oft-pres-label" style={{ fontSize: big ? 12 : 11, fontWeight: 800, color: active ? RED : BLACK, textAlign: "center", width: "100%", lineHeight: 1.1 }}>{p.label}</div>
+              <div className="oft-pres-price" style={{ fontSize: big ? 15 : 13, fontWeight: 900, color: active ? RED : BLACK, textAlign: "center", width: "100%", lineHeight: 1.1, whiteSpace: "nowrap" }}>${p.precio.toFixed(2)}</div>
             </button>
           );
         })}
@@ -2388,11 +2388,11 @@ export default function App() {
           .oft-price-label { font-size: 12px !important; }
           .oft-price-big { font-size: 14px !important; }
           .oft-qty-row { flex-wrap: wrap !important; gap: 6px !important; }
-          /* Bloques de presentación compactos en celular */
-          .oft-pres-chip { padding: 10px 2px !important; }
-          .oft-pres-label { font-size: 10.5px !important; }
-          .oft-pres-price { font-size: 13px !important; }
-          .oft-pres-grid { gap: 5px !important; }
+          /* Bloques de presentación: iguales y sin desbordar en celular */
+          .oft-pres-chip { padding: 9px 1px !important; }
+          .oft-pres-label { font-size: 10px !important; }
+          .oft-pres-price { font-size: 11.5px !important; }
+          .oft-pres-grid { gap: 4px !important; }
         }
         @media (max-width: 420px) {
           .oft-cat-grid { grid-template-columns: repeat(2, 1fr) !important; }
