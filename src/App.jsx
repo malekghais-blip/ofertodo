@@ -381,6 +381,80 @@ function HomeView() {
 }
 
 // ═══════════════════════════════════════════════════════════════
+//  SELECTOR DE CANTIDAD ANIMADO
+// ═══════════════════════════════════════════════════════════════
+function QtySelector({ qty, setQty, size = "normal" }) {
+  const [bump, setBump] = useState(false);
+  const triggerBump = () => { setBump(true); setTimeout(() => setBump(false), 280); };
+  const change = (delta) => {
+    setQty(prev => {
+      const next = Math.max(1, prev + delta);
+      return next;
+    });
+    triggerBump();
+  };
+  const setTo = (n) => { setQty(n); triggerBump(); };
+
+  const big = size === "big";
+  const btnSize = big ? 42 : 34;
+  const numFont = big ? 22 : 18;
+
+  // Atajos rápidos
+  const shortcuts = [
+    { label: "½ doc", val: 6 },
+    { label: "1 doc", val: 12 },
+    { label: "2 doc", val: 24 },
+  ];
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        {/* Botón menos */}
+        <button
+          onClick={() => change(-1)}
+          className="oft-qty-btn oft-btn-press"
+          style={{ width: btnSize, height: btnSize, borderRadius: 10, border: `2px solid ${GRAY2}`, background: WHITE, color: qty <= 1 ? GRAY3 : BLACK, fontSize: 20, fontWeight: 700, cursor: qty <= 1 ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, lineHeight: 1 }}
+          disabled={qty <= 1}
+          aria-label="Quitar uno"
+        >−</button>
+
+        {/* Número central */}
+        <div style={{ flex: 1, textAlign: "center", minWidth: 0 }}>
+          <div className={bump ? "oft-qty-bump" : ""} style={{ fontSize: numFont, fontWeight: 900, color: BLACK, lineHeight: 1 }}>
+            {qty}
+          </div>
+          <div style={{ fontSize: 10, color: GRAY3, fontWeight: 600, marginTop: 2 }}>
+            {qty === 1 ? "pieza" : "piezas"}
+          </div>
+        </div>
+
+        {/* Botón más */}
+        <button
+          onClick={() => change(1)}
+          className="oft-qty-btn oft-btn-press"
+          style={{ width: btnSize, height: btnSize, borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${RED}, ${RED_D})`, color: WHITE, fontSize: 20, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, lineHeight: 1, boxShadow: "0 2px 8px rgba(227,30,36,0.3)" }}
+          aria-label="Agregar uno"
+        >+</button>
+      </div>
+
+      {/* Atajos rápidos */}
+      <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+        {shortcuts.map(s => {
+          const active = qty === s.val;
+          return (
+            <button key={s.val}
+              onClick={() => setTo(s.val)}
+              className="oft-qty-chip oft-btn-press"
+              style={{ flex: 1, padding: "5px 4px", borderRadius: 8, border: `1.5px solid ${active ? RED : GRAY2}`, background: active ? "#FFF5F5" : WHITE, color: active ? RED : GRAY3, fontSize: 11, fontWeight: 700, cursor: "pointer", transition: "all 0.15s" }}
+            >{s.label}</button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
 //  PRODUCT CARD
 // ═══════════════════════════════════════════════════════════════
 function ProductCard({ product }) {
@@ -451,20 +525,14 @@ function ProductCard({ product }) {
         </div>
 
         {/* SELECTOR DE CANTIDAD + TOTAL CALCULADO */}
-        <div style={{ marginBottom: 8 }}>
-          <div className="oft-qty-row" style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
-            <span style={{ fontSize: 13, fontWeight: 600 }}>Cantidad:</span>
-            <select
-              value={qty}
-              onChange={e => setQty(Number(e.target.value))}
-              style={{ border: `1.5px solid ${GRAY2}`, borderRadius: 6, padding: "5px 10px", fontSize: 13, fontFamily: "inherit" }}
-            >
-              {[1,2,3,4,5,6,7,8,9,10,11,12,18,24,36,48].map(n => <option key={n} value={n}>{n}</option>)}
-            </select>
-            <span style={{ fontSize: 16, color: RED, fontWeight: 900 }}>${Number(total).toFixed(2)}</span>
+        <div style={{ marginBottom: 10 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+            <span style={{ fontSize: 13, fontWeight: 700 }}>Cantidad</span>
+            <span style={{ fontSize: 18, color: RED, fontWeight: 900 }}>${Number(total).toFixed(2)}</span>
           </div>
+          <QtySelector qty={qty} setQty={setQty} />
           {/* DESGLOSE DEL CÁLCULO */}
-          <div style={{ fontSize: 11, color: GRAY3, background: GRAY, borderRadius: 6, padding: "6px 10px", display: "flex", alignItems: "center", gap: 5 }}>
+          <div style={{ fontSize: 11, color: GRAY3, background: GRAY, borderRadius: 6, padding: "6px 10px", display: "flex", alignItems: "center", gap: 5, marginTop: 8 }}>
             <Sparkles size={12} /> {priceBreakdown(product, qty)}
           </div>
         </div>
@@ -589,12 +657,12 @@ function ProductModal() {
           </div>
 
           {/* CANTIDAD + TOTAL */}
-          <div style={{ display: "flex", alignItems: "center", gap: 12, margin: "16px 0" }}>
-            <span style={{ fontSize: 14, fontWeight: 600 }}>Cantidad:</span>
-            <select value={qty} onChange={e => setQty(Number(e.target.value))} style={{ border: `1.5px solid ${GRAY2}`, borderRadius: 8, padding: "8px 12px", fontSize: 14, fontFamily: "inherit" }}>
-              {[1,2,3,4,5,6,7,8,9,10,11,12,18,24,36,48].map(n => <option key={n} value={n}>{n}</option>)}
-            </select>
-            <span style={{ fontSize: 20, color: RED, fontWeight: 900, marginLeft: "auto" }}>${Number(total).toFixed(2)}</span>
+          <div style={{ background: GRAY, borderRadius: 12, padding: 16, margin: "16px 0" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <span style={{ fontSize: 15, fontWeight: 700 }}>Cantidad</span>
+              <span style={{ fontSize: 24, color: RED, fontWeight: 900 }}>${Number(total).toFixed(2)}</span>
+            </div>
+            <QtySelector qty={qty} setQty={setQty} size="big" />
           </div>
           <div style={{ fontSize: 12, color: GRAY3, background: GRAY, borderRadius: 8, padding: "8px 12px", display: "flex", alignItems: "center", gap: 6, marginBottom: 16 }}>
             <Sparkles size={13} /> {priceBreakdown(product, qty)}
@@ -2242,6 +2310,11 @@ export default function App() {
         .oft-toast-in { animation: toastIn 0.3s ease both; }
         @keyframes qvPop { 0% { opacity: 0; transform: scale(0.88); } 100% { opacity: 1; transform: scale(1); } }
         .oft-qv-pop { animation: qvPop 0.28s cubic-bezier(0.34,1.4,0.5,1) both; }
+        @keyframes qtyBump { 0% { transform: scale(1); } 40% { transform: scale(1.3); color: ${RED}; } 100% { transform: scale(1); } }
+        .oft-qty-bump { animation: qtyBump 0.28s ease; }
+        .oft-qty-btn { transition: transform 0.12s ease, box-shadow 0.15s ease; }
+        .oft-qty-btn:active { transform: scale(0.88); }
+        .oft-qty-chip:active { transform: scale(0.93); }
         @keyframes liveDot { 0%,100% { opacity: 1; box-shadow: 0 0 0 0 rgba(34,197,94,0.5); } 50% { opacity: 0.6; box-shadow: 0 0 0 6px rgba(34,197,94,0); } }
         .oft-live-dot { animation: liveDot 1.5s ease-in-out infinite; }
         @keyframes stepPulse { 0%,100% { box-shadow: 0 0 0 4px rgba(227,30,36,0.18); } 50% { box-shadow: 0 0 0 8px rgba(227,30,36,0.05); } }
