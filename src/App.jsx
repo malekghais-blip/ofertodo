@@ -268,9 +268,17 @@ function presToPiezas(pres, count) {
 function presTotal(product, pres, count) {
   return presUnitPrice(product, pres) * count;
 }
-// Texto descriptivo del desglose
-function presBreakdown(pres, count) {
-  return `${count} ${presLabelPlural(pres, count)} = ${presToPiezas(pres, count)} pieza${presToPiezas(pres, count) > 1 ? "s" : ""}`;
+// Texto descriptivo del desglose (incluye precio por pieza)
+function presBreakdown(pres, count, product) {
+  const piezas = presToPiezas(pres, count);
+  let porPieza = "";
+  if (product) {
+    const unit = pres === "pieza" ? Number(product.precio_pieza)
+      : pres === "media" ? Number(product.precio_media_docena) / 6
+      : Number(product.precio_docena) / 12;
+    porPieza = ` · $${unit.toFixed(2)} por pieza`;
+  }
+  return `${count} ${presLabelPlural(pres, count)} = ${piezas} pieza${piezas > 1 ? "s" : ""}${porPieza}`;
 }
 
 // Precio total de un item del carrito (soporta presentación o cantidad libre)
@@ -450,16 +458,16 @@ function QtySelector({ product, pres, setPres, count, setCount, size = "normal" 
               onClick={() => { setPres(p.key); setCount(1); triggerBump(); }}
               className="oft-pres-chip oft-btn-press"
               style={{
-                padding: big ? "10px 4px" : "8px 3px", borderRadius: 10,
+                padding: big ? "12px 4px" : "10px 3px", borderRadius: 10,
                 border: `2px solid ${active ? RED : GRAY2}`,
                 background: active ? "#FFF5F5" : WHITE,
-                cursor: "pointer", transition: "all 0.18s", textAlign: "center",
+                cursor: "pointer", transition: "all 0.18s",
+                display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
                 minWidth: 0,
               }}
             >
-              <div className="oft-pres-label" style={{ fontSize: big ? 12 : 11, fontWeight: 800, color: active ? RED : BLACK }}>{p.label}</div>
-              <div className="oft-pres-price" style={{ fontSize: big ? 14 : 13, fontWeight: 900, color: active ? RED : BLACK, marginTop: 3 }}>${p.precio.toFixed(2)}</div>
-              <div className="oft-pres-unit" style={{ fontSize: big ? 10 : 9, fontWeight: 600, color: GRAY3, marginTop: 1 }}>${p.porPieza.toFixed(2)}/pza</div>
+              <div className="oft-pres-label" style={{ fontSize: big ? 12 : 11, fontWeight: 800, color: active ? RED : BLACK, textAlign: "center" }}>{p.label}</div>
+              <div className="oft-pres-price" style={{ fontSize: big ? 15 : 13, fontWeight: 900, color: active ? RED : BLACK, marginTop: 4, textAlign: "center" }}>${p.precio.toFixed(2)}</div>
             </button>
           );
         })}
@@ -556,7 +564,7 @@ function ProductCard({ product }) {
           <QtySelector product={product} pres={pres} setPres={setPres} count={count} setCount={setCount} />
           {/* DESGLOSE */}
           <div style={{ fontSize: 11, color: GRAY3, background: GRAY, borderRadius: 6, padding: "6px 10px", display: "flex", alignItems: "center", gap: 5, marginTop: 8 }}>
-            <Sparkles size={12} /> {presBreakdown(pres, count)}
+            <Sparkles size={12} /> {presBreakdown(pres, count, product)}
           </div>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
@@ -672,7 +680,7 @@ function ProductModal() {
             </div>
             <QtySelector product={product} pres={pres} setPres={setPres} count={count} setCount={setCount} size="big" />
             <div style={{ fontSize: 12, color: GRAY3, background: WHITE, borderRadius: 8, padding: "8px 12px", display: "flex", alignItems: "center", gap: 6, marginTop: 12 }}>
-              <Sparkles size={13} /> {presBreakdown(pres, count)}
+              <Sparkles size={13} /> {presBreakdown(pres, count, product)}
             </div>
           </div>
 
@@ -2381,10 +2389,9 @@ export default function App() {
           .oft-price-big { font-size: 14px !important; }
           .oft-qty-row { flex-wrap: wrap !important; gap: 6px !important; }
           /* Bloques de presentación compactos en celular */
-          .oft-pres-chip { padding: 8px 2px !important; }
-          .oft-pres-label { font-size: 10px !important; }
-          .oft-pres-price { font-size: 12px !important; }
-          .oft-pres-unit { font-size: 9px !important; }
+          .oft-pres-chip { padding: 10px 2px !important; }
+          .oft-pres-label { font-size: 10.5px !important; }
+          .oft-pres-price { font-size: 13px !important; }
           .oft-pres-grid { gap: 5px !important; }
         }
         @media (max-width: 420px) {
