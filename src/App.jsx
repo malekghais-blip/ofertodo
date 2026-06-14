@@ -1823,16 +1823,21 @@ function AdminView() {
     load();
   }, []);
 
-  // ── MÉTRICAS ───────────────────────────────────────────────────
-  const ingresoTotal = orders.reduce((s, o) => s + Number(o.total || 0), 0);
-  const ordenesTotal = orders.length;
+  // ── SEPARAR PEDIDOS REALES DE COTIZACIONES ─────────────────────
+  // Las cotizaciones NO cuentan como ventas ni en métricas
+  const cotizaciones = orders.filter(o => o.tipo === "cotizacion");
+  const pedidosReales = orders.filter(o => o.tipo !== "cotizacion");
+
+  // ── MÉTRICAS (solo pedidos reales) ─────────────────────────────
+  const ingresoTotal = pedidosReales.reduce((s, o) => s + Number(o.total || 0), 0);
+  const ordenesTotal = pedidosReales.length;
   const clientesTotal = users.length;
-  const balance = orders.filter(o => o.estado === 3).reduce((s, o) => s + Number(o.total || 0), 0); // entregados = cobrado
+  const balance = pedidosReales.filter(o => o.estado === 3).reduce((s, o) => s + Number(o.total || 0), 0); // entregados = cobrado
 
   // Ingresos por día (últimos 7 registros con pedidos)
   const ingresosPorFecha = (() => {
     const map = {};
-    orders.forEach(o => {
+    pedidosReales.forEach(o => {
       const d = new Date(o.created_at).toLocaleDateString("es-PA", { day: "2-digit", month: "2-digit" });
       if (!map[d]) map[d] = { fecha: d, ingreso: 0, ordenes: 0 };
       map[d].ingreso += Number(o.total || 0);
@@ -1842,10 +1847,10 @@ function AdminView() {
   })();
   const maxIngreso = Math.max(...ingresosPorFecha.map(d => d.ingreso), 1);
 
-  // Mejores productos (por cantidad vendida)
+  // Mejores productos (por cantidad vendida, solo pedidos reales)
   const mejoresProductos = (() => {
     const map = {};
-    orders.forEach(o => (o.items || []).forEach(it => {
+    pedidosReales.forEach(o => (o.items || []).forEach(it => {
       const key = it.nombre_producto;
       if (!map[key]) map[key] = { nombre: key, cantidad: 0, ingreso: 0, producto_id: it.producto_id };
       map[key].cantidad += Number(it.cantidad || 0);
@@ -2290,9 +2295,9 @@ function AdminView() {
                 {/* ÓRDENES RECIENTES */}
                 <div style={{ background: WHITE, borderRadius: 14, padding: 24, border: `1px solid ${GRAY2}` }}>
                   <div style={{ fontWeight: 800, marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}><ClipboardList size={18} color={RED} /> Órdenes Recientes</div>
-                  {orders.length === 0 ? (
+                  {pedidosReales.length === 0 ? (
                     <div style={{ textAlign: "center", padding: 30, color: GRAY3, fontSize: 13 }}>Aún no hay órdenes</div>
-                  ) : orders.slice(0, 5).map(o => {
+                  ) : pedidosReales.slice(0, 5).map(o => {
                     const firstItem = (o.items || [])[0];
                     const prod = firstItem ? products.find(p => p.id === firstItem.producto_id) : null;
                     return (
@@ -2311,6 +2316,32 @@ function AdminView() {
                     );
                   })}
                 </div>
+
+                {/* COTIZACIONES RECIENTES */}
+                <div style={{ background: WHITE, borderRadius: 14, padding: 24, border: `1px solid ${GRAY2}`, marginTop: 24 }}>
+                  <div style={{ fontWeight: 800, marginBottom: 4, display: "flex", alignItems: "center", gap: 8 }}><FileText size={18} color="#856404" /> Cotizaciones Recientes</div>
+                  <div style={{ fontSize: 12, color: GRAY3, marginBottom: 16 }}>Las cotizaciones no cuentan como ventas</div>
+                  {cotizaciones.length === 0 ? (
+                    <div style={{ textAlign: "center", padding: 30, color: GRAY3, fontSize: 13 }}>Aún no hay cotizaciones</div>
+                  ) : cotizaciones.slice(0, 5).map(o => {
+                    const firstItem = (o.items || [])[0];
+                    const prod = firstItem ? products.find(p => p.id === firstItem.producto_id) : null;
+                    return (
+                      <div key={o.id} style={{ display: "flex", alignItems: "center", gap: 14, padding: "12px 0", borderBottom: `1px solid ${GRAY2}` }}>
+                        {prod?.imagen_url
+                          ? <img src={prod.imagen_url} style={{ width: 44, height: 44, borderRadius: 8, objectFit: "cover" }} />
+                          : <div style={{ width: 44, height: 44, borderRadius: 8, background: GRAY, display: "flex", alignItems: "center", justifyContent: "center" }}><FileText size={20} color={GRAY3} /></div>
+                        }
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontWeight: 700, fontSize: 14 }}>{o.codigo} · {o.nombre_cliente}</div>
+                          <div style={{ fontSize: 12, color: GRAY3 }}>{(o.items || []).length} producto(s) · {new Date(o.created_at).toLocaleDateString()}</div>
+                        </div>
+                        <div style={{ fontWeight: 800, color: "#856404" }}>{money(o.total)}</div>
+                        <span style={{ background: "#FFF3CD", color: "#856404", padding: "3px 10px", borderRadius: 12, fontSize: 11, fontWeight: 700 }}>Cotización</span>
+                      </div>
+                    );
+                  })}
+                </div>
               </>
             )}
           </>
@@ -2321,7 +2352,7 @@ function AdminView() {
           <>
             <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 24, display: "flex", alignItems: "center", gap: 10 }}><Package size={24} color={RED} /> Pedidos Recibidos</div>
             <div style={{ display: "flex", gap: 16, marginBottom: 28, flexWrap: "wrap" }}>
-              {[["Total",orders.length,RED,ClipboardList],["En proceso",orders.filter(o=>o.estado<3).length,"#856404",RefreshCw],["Entregados",orders.filter(o=>o.estado===3).length,"#155724",CheckCircle2]].map(([l,n,c,Icon]) => (
+              {[["Total",pedidosReales.length,RED,ClipboardList],["En proceso",pedidosReales.filter(o=>o.estado<3).length,"#856404",RefreshCw],["Entregados",pedidosReales.filter(o=>o.estado===3).length,"#155724",CheckCircle2]].map(([l,n,c,Icon]) => (
                 <div key={l} style={S.statCard}><Icon size={20} color={c} strokeWidth={1.8} /><div style={{ fontSize: 28, fontWeight: 900, color: c }}>{n}</div><div style={{ fontSize: 13, color: GRAY3 }}>{l}</div></div>
               ))}
             </div>
@@ -2332,7 +2363,7 @@ function AdminView() {
                 <table style={S.table}>
                   <thead><tr>{["#Pedido","Cliente","Teléfono","Envío","Total","Estado","Cambiar","Avisar"].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
                   <tbody>
-                    {orders.map(o => (
+                    {pedidosReales.map(o => (
                       <tr key={o.id}>
                         <td style={{ ...S.td, fontWeight: 700, color: RED }}>{o.codigo}</td>
                         <td style={S.td}>{o.nombre_cliente}</td>
@@ -2362,9 +2393,9 @@ function AdminView() {
 
               {/* TARJETAS (solo celular) */}
               <div className="oft-only-mobile" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                {orders.length === 0 ? (
+                {pedidosReales.length === 0 ? (
                   <div style={{ textAlign: "center", padding: 30, color: GRAY3 }}>No hay pedidos aún</div>
-                ) : orders.map(o => (
+                ) : pedidosReales.map(o => (
                   <div key={o.id} style={{ background: WHITE, borderRadius: 14, border: `1px solid ${GRAY2}`, padding: 16 }}>
                     {/* Cabecera */}
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
