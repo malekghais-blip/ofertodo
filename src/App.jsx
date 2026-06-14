@@ -1320,6 +1320,8 @@ function AdminView() {
   const [selectedIds, setSelectedIds] = useState([]);
   const [showBulkEdit, setShowBulkEdit] = useState(false);
   const [bulkEditLoading, setBulkEditLoading] = useState(false);
+  const [showBulkDelete, setShowBulkDelete] = useState(false);
+  const [bulkDeleteLoading, setBulkDeleteLoading] = useState(false);
   const emptyBulkEdit = { nombre: "", precio_pieza: "", precio_media_docena: "", precio_docena: "", badge: "", descripcion: "", activo: "" };
   const [bulkEdit, setBulkEdit] = useState(emptyBulkEdit);
 
@@ -1600,6 +1602,24 @@ function AdminView() {
     showToast(`${ok} producto(s) editados${err > 0 ? `, ${err} con error` : ""}`);
   };
 
+  // ── ELIMINACIÓN MASIVA (con confirmación) ──────────────────────
+  const handleBulkDelete = async () => {
+    setBulkDeleteLoading(true);
+    let ok = 0, err = 0;
+    for (const id of selectedIds) {
+      try {
+        await sb.delete("productos", id);
+        ok++;
+      } catch(e) { err++; }
+    }
+    setProducts(prev => prev.filter(p => !selectedIds.includes(p.id)));
+    setBulkDeleteLoading(false);
+    setShowBulkDelete(false);
+    setSelectedIds([]);
+    setSelectMode(false);
+    showToast(`${ok} producto(s) eliminados${err > 0 ? `, ${err} con error` : ""}`);
+  };
+
   // ── CATEGORÍAS ─────────────────────────────────────────────────
   const handleAddCategory = async () => {
     if (!newCatName.trim()) return;
@@ -1826,7 +1846,9 @@ function AdminView() {
               ))}
             </div>
             {loadingData ? <Spinner /> : (
-              <div className="oft-table-wrap" style={{ background: WHITE, borderRadius: 12, overflow: "auto" }}>
+              <>
+              {/* TABLA (solo escritorio) */}
+              <div className="oft-table-wrap oft-only-desktop" style={{ background: WHITE, borderRadius: 12, overflow: "auto" }}>
                 <table style={S.table}>
                   <thead><tr>{["#Pedido","Cliente","Teléfono","Envío","Total","Estado","Cambiar","Avisar"].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
                   <tbody>
@@ -1857,6 +1879,47 @@ function AdminView() {
                   </tbody>
                 </table>
               </div>
+
+              {/* TARJETAS (solo celular) */}
+              <div className="oft-only-mobile" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                {orders.length === 0 ? (
+                  <div style={{ textAlign: "center", padding: 30, color: GRAY3 }}>No hay pedidos aún</div>
+                ) : orders.map(o => (
+                  <div key={o.id} style={{ background: WHITE, borderRadius: 14, border: `1px solid ${GRAY2}`, padding: 16 }}>
+                    {/* Cabecera */}
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
+                      <div>
+                        <div style={{ fontWeight: 900, fontSize: 16, color: RED }}>{o.codigo}</div>
+                        <div style={{ fontSize: 14, fontWeight: 700, marginTop: 2 }}>{o.nombre_cliente}</div>
+                        <div style={{ fontSize: 12, color: GRAY3 }}>{o.telefono}</div>
+                      </div>
+                      <div style={{ textAlign: "right" }}>
+                        <div style={{ fontWeight: 900, fontSize: 18 }}>{money(o.total)}</div>
+                        <div style={{ marginTop: 4 }}><StatusBadge index={o.estado} /></div>
+                      </div>
+                    </div>
+
+                    {/* Envío */}
+                    {o.empresa_envio_nombre && (
+                      <div style={{ fontSize: 12, color: GRAY3, background: GRAY, borderRadius: 8, padding: "8px 10px", marginBottom: 12, display: "flex", alignItems: "center", gap: 6 }}>
+                        <Truck size={14} color={RED} /> {o.empresa_envio_nombre}{o.sucursal_nombre ? ` · ${o.sucursal_nombre}` : ""}
+                      </div>
+                    )}
+
+                    {/* Cambiar estado */}
+                    <label style={{ fontSize: 12, fontWeight: 700, color: GRAY3, display: "block", marginBottom: 4 }}>Cambiar estado:</label>
+                    <select value={o.estado} onChange={e => handleStatusChange(o.id, Number(e.target.value))} style={{ width: "100%", border: `1.5px solid ${GRAY2}`, borderRadius: 8, padding: "10px 12px", fontSize: 14, fontFamily: "inherit", marginBottom: 10 }}>
+                      {ORDER_STATUS.map((s,i) => <option key={i} value={i}>{s}</option>)}
+                    </select>
+
+                    {/* Avisar */}
+                    <button onClick={() => notifyWhatsApp(o, o.estado)} style={{ ...S.btnWA, width: "100%", justifyContent: "center", padding: 12 }}>
+                      <MessageCircle size={16} /> Avisar al cliente por WhatsApp
+                    </button>
+                  </div>
+                ))}
+              </div>
+              </>
             )}
           </>
         )}
@@ -1891,6 +1954,9 @@ function AdminView() {
                 </button>
                 <button style={{ ...S.btnRed, padding: "6px 12px", fontSize: 13, display: "inline-flex", alignItems: "center", gap: 6, opacity: selectedIds.length === 0 ? 0.5 : 1 }} disabled={selectedIds.length === 0} onClick={() => setShowBulkEdit(true)}>
                   <PencilIcon size={14} /> Editar seleccionados
+                </button>
+                <button style={{ background: selectedIds.length === 0 ? GRAY3 : RED, color: WHITE, border: "none", borderRadius: 8, padding: "6px 12px", fontSize: 13, fontWeight: 700, cursor: selectedIds.length === 0 ? "not-allowed" : "pointer", display: "inline-flex", alignItems: "center", gap: 6, opacity: selectedIds.length === 0 ? 0.5 : 1 }} disabled={selectedIds.length === 0} onClick={() => setShowBulkDelete(true)}>
+                  <Trash2 size={14} /> Eliminar seleccionados
                 </button>
               </div>
             )}
@@ -2070,6 +2136,27 @@ function AdminView() {
                 );
               })}
             </div>
+
+            {/* MODAL DE CONFIRMACIÓN DE ELIMINACIÓN MASIVA */}
+            {showBulkDelete && (
+              <div className="oft-overlay" style={S.overlay} onClick={() => setShowBulkDelete(false)}>
+                <div className="oft-modal-sheet oft-qv-pop" style={{ ...S.modal, maxWidth: 420, textAlign: "center" }} onClick={e => e.stopPropagation()}>
+                  <div style={{ width: 64, height: 64, borderRadius: "50%", background: "#FFF5F5", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
+                    <Trash2 size={30} color={RED} />
+                  </div>
+                  <div style={{ fontSize: 19, fontWeight: 900, marginBottom: 8 }}>¿Eliminar {selectedIds.length} producto(s)?</div>
+                  <p style={{ fontSize: 14, color: GRAY3, marginBottom: 22, lineHeight: 1.5 }}>
+                    Esta acción <strong>no se puede deshacer</strong>. Los productos seleccionados se borrarán permanentemente del catálogo.
+                  </p>
+                  <div style={{ display: "flex", gap: 10 }}>
+                    <button style={{ ...S.btnOutline, flex: 1, justifyContent: "center", padding: 14 }} onClick={() => setShowBulkDelete(false)}>Cancelar</button>
+                    <button style={{ flex: 1, background: RED, color: WHITE, border: "none", borderRadius: 10, padding: 14, fontSize: 15, fontWeight: 800, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6, opacity: bulkDeleteLoading ? 0.7 : 1 }} onClick={handleBulkDelete} disabled={bulkDeleteLoading}>
+                      <Trash2 size={16} /> {bulkDeleteLoading ? "Eliminando..." : "Sí, eliminar"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* MODAL DE EDICIÓN MASIVA */}
             {showBulkEdit && (
