@@ -1985,7 +1985,8 @@ function AdminView() {
               </div>
             )}
 
-            <div className="oft-table-wrap" style={{ background: WHITE, borderRadius: 12, overflow: "auto" }}>
+            {/* TABLA (solo escritorio) */}
+            <div className="oft-table-wrap oft-only-desktop" style={{ background: WHITE, borderRadius: 12, overflow: "auto" }}>
               <table style={S.table}>
                 <thead><tr>{[...(selectMode ? ["✓"] : []), "Foto","Ref","Producto","Categoría","x1","x6","x12","Estado","Acciones"].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
                 <tbody>
@@ -2020,6 +2021,54 @@ function AdminView() {
                   })}
                 </tbody>
               </table>
+            </div>
+
+            {/* TARJETAS (solo celular) */}
+            <div className="oft-only-mobile" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              {products.map(p => {
+                const isSel = selectedIds.includes(p.id);
+                return (
+                  <div key={p.id} style={{ background: WHITE, borderRadius: 14, border: `2px solid ${isSel ? RED : GRAY2}`, padding: 14 }}>
+                    <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+                      {selectMode && (
+                        <input type="checkbox" checked={isSel} onChange={() => toggleSelect(p.id)} style={{ width: 22, height: 22, accentColor: RED, cursor: "pointer", flexShrink: 0, marginTop: 2 }} />
+                      )}
+                      {p.imagen_url
+                        ? <img src={p.imagen_url} style={{ width: 60, height: 60, borderRadius: 10, objectFit: "cover", flexShrink: 0 }} />
+                        : <div style={{ width: 60, height: 60, borderRadius: 10, background: GRAY, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Package size={24} color={GRAY3} /></div>
+                      }
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: 800, fontSize: 15, lineHeight: 1.2, marginBottom: 2 }}>{p.nombre}</div>
+                        <div style={{ fontSize: 12, color: GRAY3 }}>REF: {p.referencia || "—"} · {categories.find(c=>c.id===p.categoria_id)?.nombre || "-"}</div>
+                        <span style={{ display: "inline-block", marginTop: 6, background: p.activo ? "#D4EDDA" : GRAY2, color: p.activo ? "#155724" : BLACK, padding: "2px 10px", borderRadius: 12, fontSize: 11, fontWeight: 700 }}>{p.activo ? "Activo" : "Borrador"}</span>
+                      </div>
+                    </div>
+
+                    {/* Precios */}
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, margin: "12px 0", background: GRAY, borderRadius: 10, padding: 10 }}>
+                      <div style={{ textAlign: "center" }}>
+                        <div style={{ fontSize: 10, color: GRAY3, fontWeight: 600 }}>Pieza</div>
+                        <div style={{ fontSize: 14, fontWeight: 800 }}>${p.precio_pieza}</div>
+                      </div>
+                      <div style={{ textAlign: "center", borderLeft: `1px solid ${GRAY2}`, borderRight: `1px solid ${GRAY2}` }}>
+                        <div style={{ fontSize: 10, color: GRAY3, fontWeight: 600 }}>½ Doc</div>
+                        <div style={{ fontSize: 14, fontWeight: 800 }}>${p.precio_media_docena}</div>
+                      </div>
+                      <div style={{ textAlign: "center" }}>
+                        <div style={{ fontSize: 10, color: GRAY3, fontWeight: 600 }}>Docena</div>
+                        <div style={{ fontSize: 14, fontWeight: 900, color: RED }}>${p.precio_docena}</div>
+                      </div>
+                    </div>
+
+                    {/* Acciones */}
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button onClick={() => openEditProduct(p)} style={{ flex: 1, background: BLACK, color: WHITE, border: "none", borderRadius: 8, padding: "10px", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}><PencilIcon size={15} /> Editar</button>
+                      <button onClick={() => handleToggle(p)} style={{ ...S.btnOutline, padding: "10px 14px", fontSize: 13 }}>{p.activo ? "Ocultar" : "Mostrar"}</button>
+                      <button onClick={() => handleDelete(p)} style={{ background: "none", border: `1.5px solid ${RED}`, color: RED, borderRadius: 8, padding: "10px 12px", cursor: "pointer", display: "flex", alignItems: "center" }}><Trash2 size={16} /></button>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
 
             {/* MODAL DE EDICIÓN MASIVA */}
@@ -2313,6 +2362,13 @@ export default function App() {
         * { box-sizing: border-box; }
         html, body { margin: 0; padding: 0; overflow-x: hidden; max-width: 100%; }
         img { max-width: 100%; }
+        /* Mostrar/ocultar según dispositivo */
+        .oft-only-mobile { display: none; }
+        .oft-only-desktop { display: block; }
+        @media (max-width: 768px) {
+          .oft-only-mobile { display: flex; }
+          .oft-only-desktop { display: none !important; }
+        }
         /* Evita el zoom automático del celular al tocar campos (iOS hace zoom si la fuente es <16px) */
         @media (max-width: 768px) {
           input, select, textarea { font-size: 16px !important; }
