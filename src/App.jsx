@@ -1300,6 +1300,8 @@ function CrearPedidoView() {
   const [empresaId, setEmpresaId] = useState(null);
   const [sucursalId, setSucursalId] = useState(null);
   const [tipo, setTipo] = useState("pedido"); // 'pedido' | 'cotizacion'
+  const [descuento, setDescuento] = useState(""); // porcentaje
+  const [envio, setEnvio] = useState(""); // costo de envío
   const [saving, setSaving] = useState(false);
   const [invoice, setInvoice] = useState(null); // datos de la factura generada
 
@@ -1313,7 +1315,11 @@ function CrearPedidoView() {
     ? products.filter(p => (p.nombre + " " + (p.referencia || "")).toLowerCase().includes(search.toLowerCase())).slice(0, 6)
     : [];
 
-  const total = items.reduce((s, it) => s + presTotal(it.product, it.pres, it.count), 0);
+  const subtotal = items.reduce((s, it) => s + presTotal(it.product, it.pres, it.count), 0);
+  const descPct = Math.min(Math.max(Number(descuento) || 0, 0), 100);
+  const descMonto = subtotal * (descPct / 100);
+  const costoEnvio = Number(envio) || 0;
+  const total = subtotal - descMonto + costoEnvio;
 
   const addItem = (product) => {
     setItems(prev => {
@@ -1373,7 +1379,7 @@ function CrearPedidoView() {
           precioUnit: presUnitPrice(it.product, it.pres),
           subtotal: presTotal(it.product, it.pres, it.count),
         })),
-        total,
+        subtotal, descPct, descMonto, costoEnvio, total,
       });
       showToast(tipo === "cotizacion" ? "Cotización creada" : "Pedido creado");
     } catch(e) { alert("Error al crear: " + e.message); }
@@ -1382,7 +1388,7 @@ function CrearPedidoView() {
 
   const resetForm = () => {
     setItems([]); setCliente({ nombre: "", telefono: "", direccion: "" }); setNotas("");
-    setEmpresaId(null); setSucursalId(null); setTipo("pedido"); setInvoice(null);
+    setEmpresaId(null); setSucursalId(null); setTipo("pedido"); setDescuento(""); setEnvio(""); setInvoice(null);
   };
 
   return (
@@ -1458,8 +1464,35 @@ function CrearPedidoView() {
                   </div>
                 </div>
               ))}
-              <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 900, fontSize: 18, paddingTop: 10, borderTop: `2px solid ${GRAY2}` }}>
-                <span>Total</span><span style={{ color: RED }}>{money(total)}</span>
+              {/* DESCUENTO Y ENVÍO */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, paddingTop: 10, borderTop: `1px solid ${GRAY2}` }}>
+                <div>
+                  <label style={{ ...S.label, fontSize: 11 }}>Descuento (%)</label>
+                  <input style={{ ...S.input, marginBottom: 0 }} type="number" min="0" max="100" placeholder="0" value={descuento} onChange={e => setDescuento(e.target.value)} />
+                </div>
+                <div>
+                  <label style={{ ...S.label, fontSize: 11 }}>Costo de envío ($)</label>
+                  <input style={{ ...S.input, marginBottom: 0 }} type="number" min="0" placeholder="0.00" value={envio} onChange={e => setEnvio(e.target.value)} />
+                </div>
+              </div>
+              {/* RESUMEN */}
+              <div style={{ display: "flex", flexDirection: "column", gap: 4, paddingTop: 10, borderTop: `1px solid ${GRAY2}`, fontSize: 14 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", color: GRAY3 }}>
+                  <span>Subtotal</span><span>{money(subtotal)}</span>
+                </div>
+                {descPct > 0 && (
+                  <div style={{ display: "flex", justifyContent: "space-between", color: "#155724" }}>
+                    <span>Descuento ({descPct}%)</span><span>−{money(descMonto)}</span>
+                  </div>
+                )}
+                {costoEnvio > 0 && (
+                  <div style={{ display: "flex", justifyContent: "space-between", color: GRAY3 }}>
+                    <span>Envío</span><span>+{money(costoEnvio)}</span>
+                  </div>
+                )}
+                <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 900, fontSize: 18, marginTop: 4 }}>
+                  <span>Total</span><span style={{ color: RED }}>{money(total)}</span>
+                </div>
               </div>
             </div>
           )}
@@ -1518,11 +1551,50 @@ function InvoiceModal({ invoice, onClose }) {
   const money = (n) => "$" + Number(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const esCot = invoice.tipo === "cotizacion";
 
+  // Renderiza la factura a un ancho fijo (640px) fuera de pantalla,
+  // así el PDF/imagen nunca sale cortado en celular.
+  const renderCanvas = async () => {
+    const source = ref.current;
+    const clone = source.cloneNode(true);
+    const holder = document.createElement("div");
+    holder.style.position = "fixed";
+    holder.style.left = "-10000px";
+    holder.style.top = "0";
+    holder.style.width = "640px";
+    holder.style.background = "#ffffff";
+    clone.style.width = "640px";
+    clone.style.maxWidth = "640px";
+    holder.appendChild(clone);
+    document.body.appendChild(holder);
+    try {
+      const canvas = await window.html2canvas(clone, { scale: 2, backgroundColor: "#ffffff", useCORS: true, width: 640, windowWidth: 640 });
+      return canvas;
+    } finally {
+      document.body.removeChild(holder);
+    }
+  };
+
+  const isMobile = typeof window !== "undefined" && window.innerWidth <= 768;
+
   const downloadPNG = async () => {
     if (!window.html2canvas) { alert("Cargando generador de imagen, intenta de nuevo en unos segundos."); return; }
     setBusy(true);
     try {
-      const canvas = await window.html2canvas(ref.current, { scale: 2, backgroundColor: "#ffffff", useCORS: true });
+      const canvas = await renderCanvas();
+      // En celular: intenta usar "Compartir" para guardar en la galería/fotos
+      const blob = await new Promise(res => canvas.toBlob(res, "image/png"));
+      const file = new File([blob], `${invoice.codigo}.png`, { type: "image/png" });
+      if (isMobile && navigator.canShare && navigator.canShare({ files: [file] })) {
+        try {
+          await navigator.share({ files: [file], title: invoice.codigo });
+          setBusy(false);
+          return;
+        } catch(shareErr) {
+          // si el usuario cancela el compartir, caemos a descarga normal
+          if (shareErr.name === "AbortError") { setBusy(false); return; }
+        }
+      }
+      // Descarga normal (escritorio o si no hay compartir)
       const link = document.createElement("a");
       link.download = `${invoice.codigo}.png`;
       link.href = canvas.toDataURL("image/png");
@@ -1535,14 +1607,24 @@ function InvoiceModal({ invoice, onClose }) {
     if (!window.html2canvas || !window.jspdf) { alert("Cargando generador de PDF, intenta de nuevo en unos segundos."); return; }
     setBusy(true);
     try {
-      const canvas = await window.html2canvas(ref.current, { scale: 2, backgroundColor: "#ffffff", useCORS: true });
+      const canvas = await renderCanvas();
       const imgData = canvas.toDataURL("image/png");
       const { jsPDF } = window.jspdf;
       const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
-      const pageW = 210;
-      const imgW = pageW - 20;
+      const pageW = 210, pageH = 297, margin = 10;
+      const imgW = pageW - margin * 2;
       const imgH = (canvas.height * imgW) / canvas.width;
-      pdf.addImage(imgData, "PNG", 10, 10, imgW, imgH);
+      // Si la factura es más alta que una página, la parte en varias páginas
+      let heightLeft = imgH;
+      let position = margin;
+      pdf.addImage(imgData, "PNG", margin, position, imgW, imgH);
+      heightLeft -= (pageH - margin * 2);
+      while (heightLeft > 0) {
+        pdf.addPage();
+        position = margin - (imgH - heightLeft);
+        pdf.addImage(imgData, "PNG", margin, position, imgW, imgH);
+        heightLeft -= (pageH - margin * 2);
+      }
       pdf.save(`${invoice.codigo}.pdf`);
     } catch(e) { alert("Error generando PDF: " + e.message); }
     setBusy(false);
@@ -1625,8 +1707,25 @@ function InvoiceModal({ invoice, onClose }) {
 
             {/* Total */}
             <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 16 }}>
-              <div style={{ minWidth: 200 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", padding: "10px 12px", background: RED, color: WHITE, borderRadius: 8, fontWeight: 900, fontSize: 16 }}>
+              <div style={{ minWidth: 240 }}>
+                {(invoice.descMonto > 0 || invoice.costoEnvio > 0) && (
+                  <>
+                    <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 12px", fontSize: 13, color: GRAY3 }}>
+                      <span>Subtotal</span><span>{money(invoice.subtotal)}</span>
+                    </div>
+                    {invoice.descMonto > 0 && (
+                      <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 12px", fontSize: 13, color: "#155724" }}>
+                        <span>Descuento ({invoice.descPct}%)</span><span>−{money(invoice.descMonto)}</span>
+                      </div>
+                    )}
+                    {invoice.costoEnvio > 0 && (
+                      <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 12px", fontSize: 13, color: GRAY3 }}>
+                        <span>Envío</span><span>+{money(invoice.costoEnvio)}</span>
+                      </div>
+                    )}
+                  </>
+                )}
+                <div style={{ display: "flex", justifyContent: "space-between", padding: "10px 12px", background: RED, color: WHITE, borderRadius: 8, fontWeight: 900, fontSize: 16, marginTop: 4 }}>
                   <span>TOTAL</span><span>{money(invoice.total)}</span>
                 </div>
               </div>
@@ -1656,7 +1755,7 @@ function InvoiceModal({ invoice, onClose }) {
             <Download size={16} /> Descargar PDF
           </button>
           <button onClick={downloadPNG} disabled={busy} className="oft-btn-press" style={{ ...S.btnOutline, flex: 1, justifyContent: "center", minWidth: 140, display: "inline-flex", alignItems: "center", gap: 6, opacity: busy ? 0.7 : 1 }}>
-            <ImageIcon size={16} /> Guardar imagen
+            <ImageIcon size={16} /> {busy ? "Generando..." : "Guardar en fotos"}
           </button>
           <button onClick={onClose} className="oft-btn-press" style={{ ...S.btnBlack, justifyContent: "center" }}>Listo</button>
         </div>
