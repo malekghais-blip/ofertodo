@@ -6,7 +6,7 @@ import {
   Shirt, Footprints, Watch, Sparkles, ClipboardList, Image as ImageIcon,
   FileSpreadsheet, FolderPlus, Zap, Lock, Users, BarChart3, DollarSign,
   TrendingUp, Wallet, ShoppingBag, Pencil as PencilIcon, Save,
-  Building2, MapPin as MapPinIcon, Send
+  Building2, MapPin as MapPinIcon, Send, FilePlus, Download, FileText, Receipt
 } from "lucide-react";
 
 // ════════════════════════════════════════════════════════════════
@@ -1289,6 +1289,383 @@ function ProgressTracker({ estado, compact }) {
 }
 
 // ═══════════════════════════════════════════════════════════════
+//  CREAR PEDIDO MANUAL (ADMIN)
+// ═══════════════════════════════════════════════════════════════
+function CrearPedidoView() {
+  const { products, empresas, sucursales, showToast } = useApp();
+  const [items, setItems] = useState([]); // { product, pres, count }
+  const [search, setSearch] = useState("");
+  const [cliente, setCliente] = useState({ nombre: "", telefono: "", direccion: "" });
+  const [notas, setNotas] = useState("");
+  const [empresaId, setEmpresaId] = useState(null);
+  const [sucursalId, setSucursalId] = useState(null);
+  const [tipo, setTipo] = useState("pedido"); // 'pedido' | 'cotizacion'
+  const [saving, setSaving] = useState(false);
+  const [invoice, setInvoice] = useState(null); // datos de la factura generada
+
+  const money = (n) => "$" + Number(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const empresasActivas = empresas.filter(e => e.activa !== false);
+  const sucursalesEmpresa = sucursales.filter(s => s.empresa_id === empresaId && s.activa !== false);
+  const empresaSel = empresas.find(e => e.id === empresaId);
+  const sucursalSel = sucursales.find(s => s.id === sucursalId);
+
+  const filtered = search.trim()
+    ? products.filter(p => (p.nombre + " " + (p.referencia || "")).toLowerCase().includes(search.toLowerCase())).slice(0, 6)
+    : [];
+
+  const total = items.reduce((s, it) => s + presTotal(it.product, it.pres, it.count), 0);
+
+  const addItem = (product) => {
+    setItems(prev => {
+      const ex = prev.find(i => i.product.id === product.id && i.pres === "docena");
+      if (ex) return prev;
+      return [...prev, { product, pres: "docena", count: 1 }];
+    });
+    setSearch("");
+  };
+  const updateItem = (idx, field, val) => {
+    setItems(prev => prev.map((it, i) => i === idx ? { ...it, [field]: val } : it));
+  };
+  const removeItem = (idx) => setItems(prev => prev.filter((_, i) => i !== idx));
+
+  const handleGenerate = async () => {
+    if (items.length === 0) { alert("Agrega al menos un producto."); return; }
+    if (!cliente.nombre.trim()) { alert("Escribe el nombre del cliente."); return; }
+    setSaving(true);
+    try {
+      // Número de factura correlativo
+      let numFactura = null;
+      try {
+        const r = await fetch(`${SUPABASE_URL}/rest/v1/rpc/siguiente_factura`, {
+          method: "POST",
+          headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Content-Type": "application/json" },
+          body: "{}",
+        });
+        if (r.ok) numFactura = await r.json();
+      } catch(e) { /* si falla, usamos timestamp */ }
+      if (!numFactura) numFactura = Number(Date.now().toString().slice(-6));
+
+      const codigo = (tipo === "cotizacion" ? "COT-" : "OFT-") + numFactura;
+      const pedido = await sb.post("pedidos", {
+        codigo, usuario_id: null, nombre_cliente: cliente.nombre, telefono: cliente.telefono,
+        direccion: cliente.direccion, notas, total, estado: 0,
+        empresa_envio_id: empresaId, empresa_envio_nombre: empresaSel?.nombre || "",
+        sucursal_id: sucursalId, sucursal_nombre: sucursalSel?.nombre || "",
+        tipo, num_factura: numFactura, creado_por_admin: true,
+      });
+      const pedidoId = pedido[0].id;
+      for (const it of items) {
+        await sb.post("pedido_items", {
+          pedido_id: pedidoId, producto_id: it.product.id, nombre_producto: it.product.nombre,
+          cantidad: presToPiezas(it.pres, it.count), precio_unitario: presUnitPrice(it.product, it.pres),
+          subtotal: presTotal(it.product, it.pres, it.count),
+        });
+      }
+      // Datos para la factura
+      setInvoice({
+        codigo, numFactura, tipo, fecha: new Date(),
+        cliente: { ...cliente }, notas,
+        empresa: empresaSel?.nombre || "", sucursal: sucursalSel?.nombre || "",
+        items: items.map(it => ({
+          nombre: it.product.nombre, referencia: it.product.referencia,
+          presentacion: `${it.count} ${presLabelPlural(it.pres, it.count)}`,
+          piezas: presToPiezas(it.pres, it.count),
+          precioUnit: presUnitPrice(it.product, it.pres),
+          subtotal: presTotal(it.product, it.pres, it.count),
+        })),
+        total,
+      });
+      showToast(tipo === "cotizacion" ? "Cotización creada" : "Pedido creado");
+    } catch(e) { alert("Error al crear: " + e.message); }
+    setSaving(false);
+  };
+
+  const resetForm = () => {
+    setItems([]); setCliente({ nombre: "", telefono: "", direccion: "" }); setNotas("");
+    setEmpresaId(null); setSucursalId(null); setTipo("pedido"); setInvoice(null);
+  };
+
+  return (
+    <>
+      <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 8, display: "flex", alignItems: "center", gap: 10 }}><FilePlus size={24} color={RED} /> Crear Pedido / Cotización</div>
+      <p style={{ fontSize: 13, color: GRAY3, marginBottom: 24 }}>Crea un pedido manual y genera una factura para imprimir o enviar.</p>
+
+      {/* TIPO */}
+      <div style={{ display: "flex", gap: 10, marginBottom: 20 }}>
+        {[["pedido", "Pedido", Package], ["cotizacion", "Cotización", FileText]].map(([k, l, Icon]) => (
+          <button key={k} onClick={() => setTipo(k)} className="oft-btn-press"
+            style={{ flex: 1, padding: "14px", borderRadius: 12, border: `2px solid ${tipo === k ? RED : GRAY2}`, background: tipo === k ? "#FFF5F5" : WHITE, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, fontWeight: 800, color: tipo === k ? RED : BLACK }}>
+            <Icon size={18} /> {l}
+          </button>
+        ))}
+      </div>
+
+      <div className="oft-dash-grid-2" style={{ display: "grid", gridTemplateColumns: "1.3fr 1fr", gap: 20, alignItems: "start" }}>
+        {/* COLUMNA IZQUIERDA: productos */}
+        <div style={{ background: WHITE, borderRadius: 16, padding: 20, border: `1px solid ${GRAY2}` }}>
+          <div style={{ fontWeight: 800, marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}><Tag size={18} color={RED} /> Productos</div>
+
+          {/* Buscador */}
+          <div style={{ position: "relative", marginBottom: 12 }}>
+            <Search size={16} color={GRAY3} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)" }} />
+            <input style={{ ...S.input, paddingLeft: 36, marginBottom: 0 }} placeholder="Buscar producto por nombre o referencia..." value={search} onChange={e => setSearch(e.target.value)} />
+            {filtered.length > 0 && (
+              <div style={{ position: "absolute", top: "100%", left: 0, right: 0, background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 10, marginTop: 4, zIndex: 20, boxShadow: "0 8px 24px rgba(0,0,0,0.12)", overflow: "hidden" }}>
+                {filtered.map(p => (
+                  <div key={p.id} onClick={() => addItem(p)} className="oft-cat-chip" style={{ padding: 10, display: "flex", alignItems: "center", gap: 10, cursor: "pointer", borderBottom: `1px solid ${GRAY}` }}>
+                    {p.imagen_url ? <img src={p.imagen_url} style={{ width: 36, height: 36, borderRadius: 6, objectFit: "cover" }} /> : <div style={{ width: 36, height: 36, borderRadius: 6, background: GRAY, display: "flex", alignItems: "center", justifyContent: "center" }}><Package size={16} color={GRAY3} /></div>}
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 700, fontSize: 13 }}>{p.nombre}</div>
+                      <div style={{ fontSize: 11, color: GRAY3 }}>{p.referencia || "—"} · Docena ${p.precio_docena}</div>
+                    </div>
+                    <Plus size={18} color={RED} />
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Items agregados */}
+          {items.length === 0 ? (
+            <div style={{ textAlign: "center", padding: "30px 0", color: GRAY3, fontSize: 13 }}>
+              <Package size={36} strokeWidth={1.3} style={{ margin: "0 auto 8px" }} />
+              Busca y agrega productos al pedido
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {items.map((it, idx) => (
+                <div key={idx} style={{ border: `1px solid ${GRAY2}`, borderRadius: 10, padding: 10 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                    {it.product.imagen_url ? <img src={it.product.imagen_url} style={{ width: 40, height: 40, borderRadius: 6, objectFit: "cover" }} /> : <div style={{ width: 40, height: 40, borderRadius: 6, background: GRAY, display: "flex", alignItems: "center", justifyContent: "center" }}><Package size={18} color={GRAY3} /></div>}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 700, fontSize: 13 }}>{it.product.nombre}</div>
+                      <div style={{ fontSize: 11, color: GRAY3 }}>{presBreakdown(it.pres, it.count, it.product)}</div>
+                    </div>
+                    <div style={{ fontWeight: 800, color: RED }}>{money(presTotal(it.product, it.pres, it.count))}</div>
+                    <button onClick={() => removeItem(idx)} style={{ background: "none", border: "none", color: RED, cursor: "pointer", display: "flex" }}><Trash2 size={16} /></button>
+                  </div>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <select value={it.pres} onChange={e => updateItem(idx, "pres", e.target.value)} style={{ flex: 1, border: `1.5px solid ${GRAY2}`, borderRadius: 8, padding: "6px 8px", fontSize: 13, fontFamily: "inherit" }}>
+                      <option value="pieza">Pieza (${it.product.precio_pieza})</option>
+                      <option value="media">½ Docena (${it.product.precio_media_docena})</option>
+                      <option value="docena">Docena (${it.product.precio_docena})</option>
+                    </select>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, border: `1.5px solid ${GRAY2}`, borderRadius: 8, padding: "2px 6px" }}>
+                      <button onClick={() => updateItem(idx, "count", Math.max(1, it.count - 1))} style={{ border: "none", background: "none", fontSize: 18, cursor: "pointer", color: it.count <= 1 ? GRAY3 : BLACK, width: 24 }}>−</button>
+                      <span style={{ fontWeight: 800, minWidth: 20, textAlign: "center" }}>{it.count}</span>
+                      <button onClick={() => updateItem(idx, "count", it.count + 1)} style={{ border: "none", background: "none", fontSize: 18, cursor: "pointer", color: RED, width: 24 }}>+</button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+              <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 900, fontSize: 18, paddingTop: 10, borderTop: `2px solid ${GRAY2}` }}>
+                <span>Total</span><span style={{ color: RED }}>{money(total)}</span>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* COLUMNA DERECHA: datos del cliente */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <div style={{ background: WHITE, borderRadius: 16, padding: 20, border: `1px solid ${GRAY2}` }}>
+            <div style={{ fontWeight: 800, marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}><User size={18} color={RED} /> Datos del cliente</div>
+            <label style={S.label}>Nombre *</label>
+            <input style={S.input} placeholder="Nombre del cliente" value={cliente.nombre} onChange={e => setCliente({ ...cliente, nombre: e.target.value })} />
+            <label style={S.label}>WhatsApp / Teléfono</label>
+            <input style={S.input} placeholder="Ej: 6720-0474" value={cliente.telefono} onChange={e => setCliente({ ...cliente, telefono: e.target.value })} />
+            <label style={S.label}>Dirección / referencia</label>
+            <input style={S.input} placeholder="Opcional" value={cliente.direccion} onChange={e => setCliente({ ...cliente, direccion: e.target.value })} />
+          </div>
+
+          <div style={{ background: WHITE, borderRadius: 16, padding: 20, border: `1px solid ${GRAY2}` }}>
+            <div style={{ fontWeight: 800, marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}><Truck size={18} color={RED} /> Envío (opcional)</div>
+            <select style={S.input} value={empresaId || ""} onChange={e => { setEmpresaId(e.target.value ? Number(e.target.value) : null); setSucursalId(null); }}>
+              <option value="">Sin empresa de envío</option>
+              {empresasActivas.map(emp => <option key={emp.id} value={emp.id}>{emp.nombre}</option>)}
+            </select>
+            {empresaId && sucursalesEmpresa.length > 0 && (
+              <select style={{ ...S.input, marginBottom: 0 }} value={sucursalId || ""} onChange={e => setSucursalId(e.target.value ? Number(e.target.value) : null)}>
+                <option value="">Elige sucursal</option>
+                {sucursalesEmpresa.map(suc => <option key={suc.id} value={suc.id}>{suc.nombre}</option>)}
+              </select>
+            )}
+          </div>
+
+          <div style={{ background: WHITE, borderRadius: 16, padding: 20, border: `1px solid ${GRAY2}` }}>
+            <div style={{ fontWeight: 800, marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}><FileText size={18} color={RED} /> Notas</div>
+            <textarea style={{ ...S.input, marginBottom: 0, resize: "vertical" }} rows={3} placeholder="Notas del pedido (opcional)" value={notas} onChange={e => setNotas(e.target.value)} />
+          </div>
+
+          <button onClick={handleGenerate} disabled={saving} className="oft-btn-press"
+            style={{ ...S.btnRed, width: "100%", justifyContent: "center", padding: 16, fontSize: 16, opacity: saving ? 0.7 : 1 }}>
+            <Receipt size={18} /> {saving ? "Generando..." : `Generar ${tipo === "cotizacion" ? "cotización" : "pedido"} y factura`}
+          </button>
+        </div>
+      </div>
+
+      {/* MODAL DE FACTURA */}
+      {invoice && <InvoiceModal invoice={invoice} onClose={() => { resetForm(); }} />}
+    </>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  FACTURA (genera PDF + PNG)
+// ═══════════════════════════════════════════════════════════════
+function InvoiceModal({ invoice, onClose }) {
+  const ref = useRef(null);
+  const [busy, setBusy] = useState(false);
+  const money = (n) => "$" + Number(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const esCot = invoice.tipo === "cotizacion";
+
+  const downloadPNG = async () => {
+    if (!window.html2canvas) { alert("Cargando generador de imagen, intenta de nuevo en unos segundos."); return; }
+    setBusy(true);
+    try {
+      const canvas = await window.html2canvas(ref.current, { scale: 2, backgroundColor: "#ffffff", useCORS: true });
+      const link = document.createElement("a");
+      link.download = `${invoice.codigo}.png`;
+      link.href = canvas.toDataURL("image/png");
+      link.click();
+    } catch(e) { alert("Error generando imagen: " + e.message); }
+    setBusy(false);
+  };
+
+  const downloadPDF = async () => {
+    if (!window.html2canvas || !window.jspdf) { alert("Cargando generador de PDF, intenta de nuevo en unos segundos."); return; }
+    setBusy(true);
+    try {
+      const canvas = await window.html2canvas(ref.current, { scale: 2, backgroundColor: "#ffffff", useCORS: true });
+      const imgData = canvas.toDataURL("image/png");
+      const { jsPDF } = window.jspdf;
+      const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+      const pageW = 210;
+      const imgW = pageW - 20;
+      const imgH = (canvas.height * imgW) / canvas.width;
+      pdf.addImage(imgData, "PNG", 10, 10, imgW, imgH);
+      pdf.save(`${invoice.codigo}.pdf`);
+    } catch(e) { alert("Error generando PDF: " + e.message); }
+    setBusy(false);
+  };
+
+  return (
+    <div className="oft-overlay" style={{ ...S.overlay, alignItems: "flex-start", overflowY: "auto", padding: "20px 0" }} onClick={onClose}>
+      <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 16, maxWidth: 620, width: "92%", margin: "0 auto", overflow: "hidden" }} onClick={e => e.stopPropagation()}>
+        {/* Barra superior con acciones */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 18px", borderBottom: `1px solid ${GRAY2}`, background: GRAY }}>
+          <div style={{ fontWeight: 800, display: "flex", alignItems: "center", gap: 8 }}><CheckCircle2 size={18} color="#22c55e" /> {esCot ? "Cotización" : "Pedido"} creado</div>
+          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}><X size={22} /></button>
+        </div>
+
+        {/* FACTURA (lo que se exporta) */}
+        <div style={{ padding: 20, maxHeight: "62vh", overflowY: "auto" }}>
+          <div ref={ref} style={{ background: WHITE, padding: 28, fontFamily: "'Inter','Segoe UI',sans-serif", color: BLACK }}>
+            {/* Encabezado con logo */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", borderBottom: `3px solid ${RED}`, paddingBottom: 16, marginBottom: 20 }}>
+              <div>
+                <div style={{ display: "flex", alignItems: "center", fontWeight: 900, fontSize: 26, letterSpacing: -1 }}>
+                  <span style={{ color: RED }}>Ofer</span>
+                  <span style={{ background: RED, color: WHITE, padding: "0 8px", borderRadius: 4, marginLeft: 2 }}>todo</span>
+                </div>
+                <div style={{ fontSize: 11, color: GRAY3, marginTop: 6, lineHeight: 1.5 }}>
+                  Distribuidora Mayorista · Panamá<br />
+                  WhatsApp: +507 6720-0474<br />
+                  Colón, Panamá
+                </div>
+              </div>
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontWeight: 900, fontSize: 20, color: esCot ? "#856404" : RED, textTransform: "uppercase" }}>{esCot ? "Cotización" : "Factura"}</div>
+                <div style={{ fontSize: 13, fontWeight: 700, marginTop: 4 }}>N° {invoice.numFactura}</div>
+                <div style={{ fontSize: 11, color: GRAY3, marginTop: 2 }}>{invoice.codigo}</div>
+                <div style={{ fontSize: 11, color: GRAY3, marginTop: 4 }}>{invoice.fecha.toLocaleDateString("es-PA", { day: "2-digit", month: "long", year: "numeric" })}</div>
+              </div>
+            </div>
+
+            {/* Datos del cliente */}
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 20, marginBottom: 20, flexWrap: "wrap" }}>
+              <div style={{ minWidth: 160 }}>
+                <div style={{ fontSize: 10, color: GRAY3, fontWeight: 700, textTransform: "uppercase", marginBottom: 4 }}>Cliente</div>
+                <div style={{ fontWeight: 800, fontSize: 14 }}>{invoice.cliente.nombre}</div>
+                {invoice.cliente.telefono && <div style={{ fontSize: 12, color: GRAY3 }}>{invoice.cliente.telefono}</div>}
+                {invoice.cliente.direccion && <div style={{ fontSize: 12, color: GRAY3 }}>{invoice.cliente.direccion}</div>}
+              </div>
+              {invoice.empresa && (
+                <div style={{ minWidth: 160, textAlign: "right" }}>
+                  <div style={{ fontSize: 10, color: GRAY3, fontWeight: 700, textTransform: "uppercase", marginBottom: 4 }}>Envío</div>
+                  <div style={{ fontWeight: 700, fontSize: 13 }}>{invoice.empresa}</div>
+                  {invoice.sucursal && <div style={{ fontSize: 12, color: GRAY3 }}>{invoice.sucursal}</div>}
+                </div>
+              )}
+            </div>
+
+            {/* Tabla de productos */}
+            <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 16 }}>
+              <thead>
+                <tr style={{ background: GRAY }}>
+                  <th style={{ textAlign: "left", padding: "8px 10px", fontSize: 11, fontWeight: 700, color: GRAY3 }}>Producto</th>
+                  <th style={{ textAlign: "center", padding: "8px 6px", fontSize: 11, fontWeight: 700, color: GRAY3 }}>Cant.</th>
+                  <th style={{ textAlign: "right", padding: "8px 6px", fontSize: 11, fontWeight: 700, color: GRAY3 }}>P. Unit</th>
+                  <th style={{ textAlign: "right", padding: "8px 10px", fontSize: 11, fontWeight: 700, color: GRAY3 }}>Subtotal</th>
+                </tr>
+              </thead>
+              <tbody>
+                {invoice.items.map((it, i) => (
+                  <tr key={i} style={{ borderBottom: `1px solid ${GRAY2}` }}>
+                    <td style={{ padding: "9px 10px", fontSize: 12 }}>
+                      <div style={{ fontWeight: 700 }}>{it.nombre}</div>
+                      <div style={{ fontSize: 10, color: GRAY3 }}>{it.referencia ? `Ref: ${it.referencia} · ` : ""}{it.presentacion} · {it.piezas} pzs</div>
+                    </td>
+                    <td style={{ textAlign: "center", padding: "9px 6px", fontSize: 12 }}>{it.piezas}</td>
+                    <td style={{ textAlign: "right", padding: "9px 6px", fontSize: 12 }}>{money(it.precioUnit)}</td>
+                    <td style={{ textAlign: "right", padding: "9px 10px", fontSize: 12, fontWeight: 700 }}>{money(it.subtotal)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            {/* Total */}
+            <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 16 }}>
+              <div style={{ minWidth: 200 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", padding: "10px 12px", background: RED, color: WHITE, borderRadius: 8, fontWeight: 900, fontSize: 16 }}>
+                  <span>TOTAL</span><span>{money(invoice.total)}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Notas */}
+            {invoice.notas && (
+              <div style={{ background: GRAY, borderRadius: 8, padding: 12, marginBottom: 16 }}>
+                <div style={{ fontSize: 10, color: GRAY3, fontWeight: 700, textTransform: "uppercase", marginBottom: 4 }}>Notas</div>
+                <div style={{ fontSize: 12 }}>{invoice.notas}</div>
+              </div>
+            )}
+
+            {/* Pie */}
+            <div style={{ textAlign: "center", fontSize: 10, color: GRAY3, borderTop: `1px solid ${GRAY2}`, paddingTop: 12 }}>
+              {esCot
+                ? "Esta cotización es válida por 7 días. Los precios pueden variar según disponibilidad."
+                : "¡Gracias por tu compra! El pago se coordina por WhatsApp."}
+              <br />Ofertodo · Distribuidora Mayorista · Panamá
+            </div>
+          </div>
+        </div>
+
+        {/* Botones de descarga */}
+        <div style={{ display: "flex", gap: 10, padding: "14px 18px", borderTop: `1px solid ${GRAY2}`, flexWrap: "wrap" }}>
+          <button onClick={downloadPDF} disabled={busy} className="oft-btn-press" style={{ ...S.btnRed, flex: 1, justifyContent: "center", minWidth: 140, opacity: busy ? 0.7 : 1 }}>
+            <Download size={16} /> Descargar PDF
+          </button>
+          <button onClick={downloadPNG} disabled={busy} className="oft-btn-press" style={{ ...S.btnOutline, flex: 1, justifyContent: "center", minWidth: 140, display: "inline-flex", alignItems: "center", gap: 6, opacity: busy ? 0.7 : 1 }}>
+            <ImageIcon size={16} /> Guardar imagen
+          </button>
+          <button onClick={onClose} className="oft-btn-press" style={{ ...S.btnBlack, justifyContent: "center" }}>Listo</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
 //  ADMIN PANEL
 // ═══════════════════════════════════════════════════════════════
 function AdminView() {
@@ -1709,6 +2086,7 @@ function AdminView() {
   const tabs = [
     ["dashboard", "Dashboard", BarChart3],
     ["orders", "Pedidos", Package],
+    ["crear", "Crear", FilePlus],
     ["products", "Productos", Tag],
     ["categories", "Categorías", FolderOpen],
     ["shipping", "Envíos", Truck],
@@ -1731,6 +2109,9 @@ function AdminView() {
       </div>
 
       <div className="oft-admin-main" style={{ marginLeft: 220, padding: "32px", minHeight: "100vh", background: GRAY, flex: 1 }}>
+
+        {/* ═══════════ CREAR PEDIDO ═══════════ */}
+        {tab === "crear" && <CrearPedidoView />}
 
         {/* ═══════════ DASHBOARD ═══════════ */}
         {tab === "dashboard" && (
