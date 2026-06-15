@@ -595,7 +595,11 @@ function ProductCard({ product }) {
     if (color) msg += `\nColor: ${color}`;
     msg += `\nPresentación: Por pieza`;
     // Incluye el enlace de la foto: WhatsApp mostrará la vista previa de la imagen
-    if (product.imagen_url) msg += `\n\n📷 Foto del producto:\n${product.imagen_url}`;
+    if (product.imagen_url) {
+      msg += `\n\n📷 Foto del producto:\n${product.imagen_url}`;
+    } else {
+      msg += `\n\n(Este producto no tiene foto cargada)`;
+    }
     window.open(`https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(msg)}`, "_blank");
   };
 
@@ -761,7 +765,11 @@ function ProductModal() {
     if (color) msg += `\nColor: ${color}`;
     msg += `\nPresentación: Por pieza`;
     // Incluye el enlace de la foto: WhatsApp mostrará la vista previa de la imagen
-    if (product.imagen_url) msg += `\n\n📷 Foto del producto:\n${product.imagen_url}`;
+    if (product.imagen_url) {
+      msg += `\n\n📷 Foto del producto:\n${product.imagen_url}`;
+    } else {
+      msg += `\n\n(Este producto no tiene foto cargada)`;
+    }
     window.open(`https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(msg)}`, "_blank");
   };
 
