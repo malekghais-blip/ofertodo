@@ -1791,6 +1791,8 @@ function AdminView() {
   const [bulkImgLoading, setBulkImgLoading] = useState(false);
   const [bulkImgProgress, setBulkImgProgress] = useState({ done: 0, total: 0 });
   const bulkImgRef = useRef(null);
+  // Filtro por categoría en la página de productos
+  const [filtroCategoria, setFiltroCategoria] = useState("todas");
   // Edición masiva (selección por checkboxes)
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState([]);
@@ -2470,7 +2472,24 @@ function AdminView() {
               </div>
             </div>
 
-            {/* BARRA DE EDICIÓN MASIVA (cuando hay seleccionados) */}
+            {/* FILTRO POR CATEGORÍA */}
+            <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 8, marginBottom: 16 }}>
+              <button onClick={() => setFiltroCategoria("todas")} className="oft-btn-press"
+                style={{ flexShrink: 0, padding: "8px 16px", borderRadius: 20, border: `2px solid ${filtroCategoria === "todas" ? RED : GRAY2}`, background: filtroCategoria === "todas" ? RED : WHITE, color: filtroCategoria === "todas" ? WHITE : BLACK, fontWeight: 700, fontSize: 13, cursor: "pointer", whiteSpace: "nowrap" }}>
+                Todas ({products.length})
+              </button>
+              {categories.map(c => {
+                const count = products.filter(p => p.categoria_id === c.id).length;
+                const active = filtroCategoria === c.id;
+                return (
+                  <button key={c.id} onClick={() => setFiltroCategoria(c.id)} className="oft-btn-press"
+                    style={{ flexShrink: 0, padding: "8px 16px", borderRadius: 20, border: `2px solid ${active ? RED : GRAY2}`, background: active ? RED : WHITE, color: active ? WHITE : (count === 0 ? GRAY3 : BLACK), fontWeight: 700, fontSize: 13, cursor: "pointer", whiteSpace: "nowrap" }}>
+                    {c.nombre} ({count})
+                  </button>
+                );
+              })}
+            </div>
+
             {selectMode && (
               <div style={{ background: "#FFF5F5", border: `2px solid ${RED}`, borderRadius: 12, padding: "12px 16px", marginBottom: 16, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
                 <span style={{ fontWeight: 700, fontSize: 14 }}>{selectedIds.length} seleccionado(s)</span>
@@ -2576,12 +2595,43 @@ function AdminView() {
               </div>
             )}
 
+            {/* ESTADO VACÍO: categoría sin productos */}
+            {(() => {
+              const lista = filtroCategoria === "todas" ? products : products.filter(p => p.categoria_id === filtroCategoria);
+              if (lista.length === 0) {
+                const catNombre = filtroCategoria === "todas" ? "" : (categories.find(c => c.id === filtroCategoria)?.nombre || "");
+                return (
+                  <div style={{ background: WHITE, borderRadius: 16, padding: "40px 24px", border: `2px dashed ${GRAY2}`, textAlign: "center" }}>
+                    <div style={{ width: 64, height: 64, borderRadius: "50%", background: GRAY, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
+                      <Package size={30} color={GRAY3} strokeWidth={1.5} />
+                    </div>
+                    <div style={{ fontWeight: 800, fontSize: 17, marginBottom: 6 }}>
+                      {filtroCategoria === "todas" ? "Aún no hay productos" : `No hay productos en "${catNombre}"`}
+                    </div>
+                    <p style={{ fontSize: 14, color: GRAY3, marginBottom: 20 }}>Sube productos a esta categoría ahora mismo.</p>
+                    <div style={{ display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap" }}>
+                      <button className="oft-btn-press" style={{ ...S.btnRed, display: "inline-flex", alignItems: "center", gap: 6 }}
+                        onClick={() => { if (filtroCategoria !== "todas") setBulkImgCat(filtroCategoria); setShowBulkImg(true); setShowBulk(false); setShowProdForm(false); }}>
+                        <ImageIcon size={16} /> Cargar fotos aquí
+                      </button>
+                      <button className="oft-btn-press" style={{ ...S.btnBlack, display: "inline-flex", alignItems: "center", gap: 6 }}
+                        onClick={() => { openNewProduct(); if (filtroCategoria !== "todas") setTimeout(() => setProdForm(f => ({ ...f, categoria_id: filtroCategoria })), 0); }}>
+                        <Plus size={16} strokeWidth={2.5} /> Nuevo producto
+                      </button>
+                    </div>
+                  </div>
+                );
+              }
+              return null;
+            })()}
+
             {/* TABLA (solo escritorio) */}
+            {(filtroCategoria === "todas" ? products : products.filter(p => p.categoria_id === filtroCategoria)).length > 0 && (
             <div className="oft-table-wrap oft-only-desktop" style={{ background: WHITE, borderRadius: 12, overflow: "auto" }}>
               <table style={S.table}>
                 <thead><tr>{[...(selectMode ? ["✓"] : []), "Foto","Ref","Producto","Categoría","x1","x6","x12","Estado","Acciones"].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
                 <tbody>
-                  {products.map(p => {
+                  {(filtroCategoria === "todas" ? products : products.filter(p => p.categoria_id === filtroCategoria)).map(p => {
                     const isSel = selectedIds.includes(p.id);
                     return (
                     <tr key={p.id} style={{ background: isSel ? "#FFF5F5" : "transparent" }}>
@@ -2613,10 +2663,11 @@ function AdminView() {
                 </tbody>
               </table>
             </div>
+            )}
 
             {/* TARJETAS (solo celular) */}
             <div className="oft-only-mobile" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              {products.map(p => {
+              {(filtroCategoria === "todas" ? products : products.filter(p => p.categoria_id === filtroCategoria)).map(p => {
                 const isSel = selectedIds.includes(p.id);
                 return (
                   <div key={p.id} style={{ background: WHITE, borderRadius: 14, border: `2px solid ${isSel ? RED : GRAY2}`, padding: 14 }}>
