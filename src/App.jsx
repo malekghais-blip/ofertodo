@@ -334,7 +334,7 @@ function NavBar() {
 //  HOME
 // ═══════════════════════════════════════════════════════════════
 function HomeView() {
-  const { setView, categories, products, addToCart } = useApp();
+  const { setView, setCatalogCat, categories, products, addToCart } = useApp();
   const featured = products.filter(p => p.activo && p.badge);
 
   return (
@@ -351,7 +351,7 @@ function HomeView() {
           Compra por pieza, media docena o docena. Ropa, calzado y accesorios de calidad. Enviamos a todo Panamá.
         </p>
         <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
-          <button style={{ ...S.btnRed, padding: "14px 30px", fontSize: 15 }} onClick={() => setView("catalogo")}>Ver Catálogo →</button>
+          <button style={{ ...S.btnRed, padding: "14px 30px", fontSize: 15 }} onClick={() => { setCatalogCat(0); setView("catalogo"); }}>Ver Catálogo →</button>
           <button style={{ ...S.btnWA, padding: "14px 24px", fontSize: 15 }} onClick={() => window.open(`https://wa.me/${WA_NUMBER}?text=Hola%20Ofertodo%2C%20quiero%20hacer%20un%20pedido`, "_blank")}>
             <MessageCircle size={16} strokeWidth={2.2} /> Consultar por WhatsApp
           </button>
@@ -370,7 +370,7 @@ function HomeView() {
         <div style={S.sectionTitle}><span style={{ color: RED }}>▮</span> Categorías</div>
         <div className="oft-cat-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(130px, 1fr))", gap: 12 }}>
           {categories.map(c => (
-            <div key={c.id} onClick={() => setView("catalogo")} style={{ background: WHITE, border: `2px solid ${GRAY2}`, borderRadius: 12, padding: "18px 10px", textAlign: "center", cursor: "pointer" }}>
+            <div key={c.id} onClick={() => { setCatalogCat(c.id); setView("catalogo"); }} style={{ background: WHITE, border: `2px solid ${GRAY2}`, borderRadius: 12, padding: "18px 10px", textAlign: "center", cursor: "pointer" }}>
               <div style={{ marginBottom: 6, display: "flex", justifyContent: "center" }}><CategoryIcon cat={c} size={30} /></div>
               <div style={{ fontSize: 13, fontWeight: 700 }}>{c.nombre}</div>
             </div>
@@ -397,7 +397,7 @@ function HomeView() {
         <div style={{ fontSize: 28, fontWeight: 900, marginBottom: 12 }}>¿Listo para hacer tu pedido?</div>
         <p style={{ color: "#aaa", marginBottom: 24 }}>Explora todo nuestro catálogo o escríbenos directamente</p>
         <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
-          <button style={{ ...S.btnRed, padding: "14px 28px" }} onClick={() => setView("catalogo")}>Ver Catálogo</button>
+          <button style={{ ...S.btnRed, padding: "14px 28px" }} onClick={() => { setCatalogCat(0); setView("catalogo"); }}>Ver Catálogo</button>
           <button style={{ ...S.btnWA, padding: "14px 24px" }} onClick={() => window.open(`https://wa.me/${WA_NUMBER}`, "_blank")}><MessageCircle size={16} strokeWidth={2.2} /> WhatsApp</button>
         </div>
       </div>
@@ -584,14 +584,17 @@ function ProductCard({ product }) {
 //  CATÁLOGO
 // ═══════════════════════════════════════════════════════════════
 function CatalogoView() {
-  const { products, categories, loading } = useApp();
-  const [catFilter, setCatFilter] = useState(0);
+  const { products, categories, loading, catalogCat } = useApp();
+  const [catFilter, setCatFilter] = useState(catalogCat || 0);
   const [search, setSearch] = useState("");
+
+  // Si el usuario eligió una categoría desde el inicio, ábrela
+  useEffect(() => { setCatFilter(catalogCat || 0); }, [catalogCat]);
 
   const filtered = products.filter(p =>
     p.activo &&
     (catFilter === 0 || p.categoria_id === catFilter) &&
-    (search === "" || p.nombre.toLowerCase().includes(search.toLowerCase()) || p.referencia.toLowerCase().includes(search.toLowerCase()))
+    (search === "" || p.nombre.toLowerCase().includes(search.toLowerCase()) || (p.referencia || "").toLowerCase().includes(search.toLowerCase()))
   );
 
   if (loading) return <Spinner />;
@@ -2984,6 +2987,7 @@ export default function App() {
   const [showRegister, setShowRegister] = useState(false);
   const [showCart, setShowCart] = useState(false);
   const [quickView, setQuickView] = useState(null); // producto a mostrar en detalle
+  const [catalogCat, setCatalogCat] = useState(0); // categoría a abrir en el catálogo (0 = todas)
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]);
   const [empresas, setEmpresas] = useState([]);
@@ -3049,7 +3053,7 @@ export default function App() {
   }, []);
 
   const isAdmin = view === "admin";
-  const ctx = { view, setView, cart, setCart, addToCart, cartPulse, user, setUser, showLogin, setShowLogin, showRegister, setShowRegister, showCart, setShowCart, quickView, setQuickView, products, setProducts, categories, setCategories, empresas, setEmpresas, sucursales, setSucursales, loading, showToast };
+  const ctx = { view, setView, cart, setCart, addToCart, cartPulse, user, setUser, showLogin, setShowLogin, showRegister, setShowRegister, showCart, setShowCart, quickView, setQuickView, catalogCat, setCatalogCat, products, setProducts, categories, setCategories, empresas, setEmpresas, sucursales, setSucursales, loading, showToast };
 
   return (
     <AppCtx.Provider value={ctx}>
