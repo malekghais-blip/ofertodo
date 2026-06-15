@@ -1980,7 +1980,14 @@ function AdminView() {
       await sb.delete("productos", product.id);
       setProducts(prev => prev.filter(p => p.id !== product.id));
       showToast("Producto eliminado");
-    } catch(e) { alert("Error eliminando producto"); }
+    } catch(e) {
+      const msg = String(e.message || e);
+      if (msg.includes("foreign key") || msg.includes("violates") || msg.includes("23503")) {
+        alert("No se puede eliminar: este producto está en uno o más pedidos. Mejor ocúltalo con 'Mostrar/Ocultar'.");
+      } else {
+        alert("Error eliminando producto: " + msg);
+      }
+    }
   };
 
   // ── CARGA MASIVA CSV ───────────────────────────────────────────
@@ -2087,18 +2094,24 @@ function AdminView() {
   const handleBulkDelete = async () => {
     setBulkDeleteLoading(true);
     let ok = 0, err = 0;
+    const deletedIds = [];
     for (const id of selectedIds) {
       try {
         await sb.delete("productos", id);
+        deletedIds.push(id);
         ok++;
       } catch(e) { err++; }
     }
-    setProducts(prev => prev.filter(p => !selectedIds.includes(p.id)));
+    setProducts(prev => prev.filter(p => !deletedIds.includes(p.id)));
     setBulkDeleteLoading(false);
     setShowBulkDelete(false);
     setSelectedIds([]);
     setSelectMode(false);
-    showToast(`${ok} producto(s) eliminados${err > 0 ? `, ${err} con error` : ""}`);
+    if (err > 0) {
+      showToast(`${ok} eliminados. ${err} no se pudieron borrar (están en pedidos).`);
+    } else {
+      showToast(`${ok} producto(s) eliminados`);
+    }
   };
 
   // ── CATEGORÍAS ─────────────────────────────────────────────────
