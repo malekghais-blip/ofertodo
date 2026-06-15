@@ -34,12 +34,20 @@ const sb = {
     return r.json();
   },
   async patch(table, id, body) {
-    const r = await fetch(this.url(table, `?id=eq.${id}`), { method: "PATCH", headers: this.headers, body: JSON.stringify(body) });
+    // SEGURIDAD: nunca permitir un PATCH sin id válido (evita editar TODA la tabla)
+    if (id === undefined || id === null || id === "") {
+      throw new Error("patch: id inválido, operación cancelada por seguridad");
+    }
+    const r = await fetch(this.url(table, `?id=eq.${encodeURIComponent(id)}`), { method: "PATCH", headers: this.headers, body: JSON.stringify(body) });
     if (!r.ok) throw new Error(await r.text());
     return r.json();
   },
   async delete(table, id) {
-    const r = await fetch(this.url(table, `?id=eq.${id}`), { method: "DELETE", headers: this.headers });
+    // SEGURIDAD: nunca permitir un DELETE sin id válido (evita borrar TODA la tabla)
+    if (id === undefined || id === null || id === "") {
+      throw new Error("delete: id inválido, operación cancelada por seguridad");
+    }
+    const r = await fetch(this.url(table, `?id=eq.${encodeURIComponent(id)}`), { method: "DELETE", headers: this.headers });
     if (!r.ok) throw new Error(await r.text());
     return true;
   },
@@ -335,7 +343,7 @@ function NavBar() {
 // ═══════════════════════════════════════════════════════════════
 function HomeView() {
   const { setView, setCatalogCat, categories, products, addToCart } = useApp();
-  const featured = products.filter(p => p.activo && p.badge);
+  const featured = products.filter(p => p.activo && p.destacado);
 
   return (
     <>
@@ -1784,7 +1792,7 @@ function AdminView() {
   const [bulkLoading, setBulkLoading] = useState(false);
   const [newCatName, setNewCatName] = useState("");
   const [catUploading, setCatUploading] = useState(null); // id de categoría subiendo icono
-  const emptyProd = { referencia: "", nombre: "", descripcion: "", categoria_id: categories[0]?.id || 1, precio_pieza: "", precio_media_docena: "", precio_docena: "", badge: "", activo: true, imagen_url: "" };
+  const emptyProd = { referencia: "", nombre: "", descripcion: "", categoria_id: categories[0]?.id || 1, precio_pieza: "", precio_media_docena: "", precio_docena: "", badge: "", activo: true, destacado: false, imagen_url: "" };
   const [prodForm, setProdForm] = useState(emptyProd);
   const fileInputRef = useRef(null);
   const catFileRef = useRef(null);
@@ -1803,7 +1811,7 @@ function AdminView() {
   const [bulkEditLoading, setBulkEditLoading] = useState(false);
   const [showBulkDelete, setShowBulkDelete] = useState(false);
   const [bulkDeleteLoading, setBulkDeleteLoading] = useState(false);
-  const emptyBulkEdit = { nombre: "", precio_pieza: "", precio_media_docena: "", precio_docena: "", badge: "", descripcion: "", activo: "" };
+  const emptyBulkEdit = { nombre: "", precio_pieza: "", precio_media_docena: "", precio_docena: "", badge: "", descripcion: "", activo: "", destacado: "" };
   const [bulkEdit, setBulkEdit] = useState(emptyBulkEdit);
 
   // Carga pedidos y usuarios al entrar
@@ -1945,7 +1953,7 @@ function AdminView() {
   // ── GUARDAR / EDITAR PRODUCTO ──────────────────────────────────
   const openNewProduct = () => { setProdForm(emptyProd); setEditingId(null); setShowProdForm(true); setShowBulk(false); };
   const openEditProduct = (p) => {
-    setProdForm({ referencia: p.referencia || "", nombre: p.nombre || "", descripcion: p.descripcion || "", categoria_id: p.categoria_id || categories[0]?.id || 1, precio_pieza: p.precio_pieza, precio_media_docena: p.precio_media_docena, precio_docena: p.precio_docena, badge: p.badge || "", activo: p.activo, imagen_url: p.imagen_url || "" });
+    setProdForm({ referencia: p.referencia || "", nombre: p.nombre || "", descripcion: p.descripcion || "", categoria_id: p.categoria_id || categories[0]?.id || 1, precio_pieza: p.precio_pieza, precio_media_docena: p.precio_media_docena, precio_docena: p.precio_docena, badge: p.badge || "", activo: p.activo, destacado: p.destacado || false, imagen_url: p.imagen_url || "" });
     setEditingId(p.id);
     setShowProdForm(true);
     setShowBulk(false);
@@ -2077,14 +2085,22 @@ function AdminView() {
     if (bulkEdit.badge !== "") patch.badge = bulkEdit.badge;
     if (bulkEdit.descripcion !== "") patch.descripcion = bulkEdit.descripcion;
     if (bulkEdit.activo !== "") patch.activo = bulkEdit.activo === "1";
+    if (bulkEdit.destacado !== "") patch.destacado = bulkEdit.destacado === "1";
     if (Object.keys(patch).length === 0) { alert("Llena al menos un campo para aplicar."); return; }
     setBulkEditLoading(true);
     let ok = 0, err = 0;
-    for (const id of selectedIds) {
+    // SEGURIDAD: solo ids válidos y únicos de la selección
+    const idsValidos = [...new Set(selectedIds.filter(id => id !== undefined && id !== null && id !== ""))];
+    for (const id of idsValidos) {
       try {
         const updated = await sb.patch("productos", id, patch);
-        setProducts(prev => prev.map(p => p.id === id ? updated[0] : p));
-        ok++;
+        // Verifica que solo se actualizó 1 fila y que es la correcta
+        if (Array.isArray(updated) && updated.length === 1 && updated[0].id === id) {
+          setProducts(prev => prev.map(p => p.id === id ? updated[0] : p));
+          ok++;
+        } else {
+          err++;
+        }
       } catch(e) { err++; }
     }
     setBulkEditLoading(false);
@@ -2580,6 +2596,12 @@ function AdminView() {
                       <option value="0">Inactivo</option>
                     </select>
                   </div>
+                  <div><label style={S.label}>¿Producto destacado?</label>
+                    <select style={{ ...S.input }} value={prodForm.destacado ? "1" : "0"} onChange={e => setProdForm({...prodForm,destacado:e.target.value === "1"})}>
+                      <option value="0">No</option>
+                      <option value="1">Sí — mostrar en inicio</option>
+                    </select>
+                  </div>
                 </div>
                 <label style={S.label}>Descripción</label>
                 <input style={S.input} value={prodForm.descripcion} onChange={e => setProdForm({...prodForm,descripcion:e.target.value})} />
@@ -2762,6 +2784,12 @@ function AdminView() {
                     <option value="">No cambiar</option>
                     <option value="1">Activo (visible)</option>
                     <option value="0">Borrador (oculto)</option>
+                  </select>
+                  <label style={S.label}>Producto destacado</label>
+                  <select style={S.input} value={bulkEdit.destacado} onChange={e => setBulkEdit({...bulkEdit, destacado: e.target.value})}>
+                    <option value="">No cambiar</option>
+                    <option value="1">Sí — mostrar en inicio</option>
+                    <option value="0">No destacado</option>
                   </select>
                   <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
                     <button style={{ ...S.btnRed, flex: 1, justifyContent: "center", opacity: bulkEditLoading ? 0.7 : 1, display: "inline-flex", alignItems: "center", gap: 6 }} onClick={handleBulkEdit} disabled={bulkEditLoading}>
