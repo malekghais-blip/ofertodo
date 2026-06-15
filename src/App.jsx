@@ -508,6 +508,66 @@ function QtySelector({ product, pres, setPres, count, setCount, size = "normal" 
 }
 
 // ═══════════════════════════════════════════════════════════════
+//  SELECTOR DE TALLA Y COLOR (animado) — solo "Por pieza"
+// ═══════════════════════════════════════════════════════════════
+// Mapa de colores comunes en español → hex (para el puntito de color)
+const COLOR_HEX = {
+  rojo: "#E31E24", azul: "#1E63E3", verde: "#1FA64A", negro: "#111111", blanco: "#FFFFFF",
+  amarillo: "#F5C518", naranja: "#F57C18", morado: "#8E44AD", rosa: "#E8569E", rosado: "#E8569E",
+  gris: "#9E9E9E", cafe: "#7B4B2A", café: "#7B4B2A", marron: "#7B4B2A", marrón: "#7B4B2A",
+  beige: "#E8D8B0", celeste: "#7EC8E3", turquesa: "#1ABC9C", vino: "#7B1E2B", dorado: "#D4AF37",
+  plateado: "#C0C0C0", crema: "#F5F0E1", fucsia: "#E3197D",
+};
+const colorToHex = (name) => COLOR_HEX[(name || "").toLowerCase().trim()] || "#CCCCCC";
+
+function VariantPicker({ product, talla, setTalla, color, setColor }) {
+  const tallas = (product.tallas || "").split(",").map(s => s.trim()).filter(Boolean);
+  const colores = (product.colores || "").split(",").map(s => s.trim()).filter(Boolean);
+  const showTallas = product.tiene_tallas && tallas.length > 0;
+  const showColores = product.tiene_colores && colores.length > 0;
+  if (!showTallas && !showColores) return null;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      {showTallas && (
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: GRAY3, marginBottom: 5 }}>Talla</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+            {tallas.map(t => {
+              const active = talla === t;
+              return (
+                <button key={t} onClick={() => setTalla(active ? "" : t)} className="oft-btn-press"
+                  style={{ minWidth: 34, padding: "5px 9px", borderRadius: 8, border: `2px solid ${active ? RED : GRAY2}`, background: active ? RED : WHITE, color: active ? WHITE : BLACK, fontWeight: 800, fontSize: 12, cursor: "pointer", transition: "all 0.15s" }}>
+                  {t}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+      {showColores && (
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: GRAY3, marginBottom: 5 }}>Color</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {colores.map(c => {
+              const active = color === c;
+              return (
+                <button key={c} onClick={() => setColor(active ? "" : c)} className="oft-btn-press oft-color-chip"
+                  title={c}
+                  style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 10px 4px 5px", borderRadius: 20, border: `2px solid ${active ? RED : GRAY2}`, background: active ? "#FFF5F5" : WHITE, cursor: "pointer", transition: "all 0.15s", transform: active ? "scale(1.05)" : "scale(1)" }}>
+                  <span style={{ width: 16, height: 16, borderRadius: "50%", background: colorToHex(c), border: `1px solid ${GRAY2}`, flexShrink: 0 }} />
+                  <span style={{ fontSize: 12, fontWeight: 700, color: active ? RED : BLACK }}>{c}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
 //  PRODUCT CARD
 // ═══════════════════════════════════════════════════════════════
 function ProductCard({ product }) {
@@ -515,9 +575,27 @@ function ProductCard({ product }) {
   const [pres, setPres] = useState("docena");
   const [count, setCount] = useState(1);
   const [added, setAdded] = useState(false);
+  const [talla, setTalla] = useState("");
+  const [color, setColor] = useState("");
   const total = presTotal(product, pres, count);
   const imgUrl = product.imagen_url || null;
   const btnRef = useRef(null);
+
+  // ¿Este producto tiene variantes y el cliente eligió "Por pieza"?
+  const tieneVariantes = (product.tiene_tallas && (product.tallas || "").trim()) || (product.tiene_colores && (product.colores || "").trim());
+  const modoConsulta = pres === "pieza" && tieneVariantes;
+
+  // Consultar por WhatsApp con producto + talla + color
+  const consultarWhatsApp = () => {
+    if (product.tiene_tallas && (product.tallas || "").trim() && !talla) { showToast("Elige una talla primero"); return; }
+    if (product.tiene_colores && (product.colores || "").trim() && !color) { showToast("Elige un color primero"); return; }
+    let msg = `Hola Ofertodo, quiero consultar disponibilidad de:\n\n*${product.nombre}*`;
+    if (product.referencia) msg += `\nRef: ${product.referencia}`;
+    if (talla) msg += `\nTalla: ${talla}`;
+    if (color) msg += `\nColor: ${color}`;
+    msg += `\nPresentación: Por pieza`;
+    window.open(`https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(msg)}`, "_blank");
+  };
 
   const handleAdd = (e) => {
     const piezas = presToPiezas(pres, count);
@@ -570,19 +648,31 @@ function ProductCard({ product }) {
             <span style={{ fontSize: 18, color: RED, fontWeight: 900 }}>${Number(total).toFixed(2)}</span>
           </div>
           <QtySelector product={product} pres={pres} setPres={setPres} count={count} setCount={setCount} />
-          {/* DESGLOSE */}
-          <div style={{ fontSize: 11, color: GRAY3, background: GRAY, borderRadius: 6, padding: "6px 10px", display: "flex", alignItems: "center", gap: 5, marginTop: 8, minHeight: 30 }}>
-            <Sparkles size={12} style={{ flexShrink: 0 }} /> <span>{presBreakdown(pres, count, product)}</span>
-          </div>
+          {/* DESGLOSE o VARIANTES (si eligió Por pieza y tiene tallas/colores) */}
+          {modoConsulta ? (
+            <div style={{ background: GRAY, borderRadius: 8, padding: "10px 12px", marginTop: 8 }}>
+              <VariantPicker product={product} talla={talla} setTalla={setTalla} color={color} setColor={setColor} />
+            </div>
+          ) : (
+            <div style={{ fontSize: 11, color: GRAY3, background: GRAY, borderRadius: 6, padding: "6px 10px", display: "flex", alignItems: "center", gap: 5, marginTop: 8, minHeight: 30 }}>
+              <Sparkles size={12} style={{ flexShrink: 0 }} /> <span>{presBreakdown(pres, count, product)}</span>
+            </div>
+          )}
         </div>
         {/* Empuja los botones al fondo para alinear todas las tarjetas */}
         <div style={{ marginTop: "auto" }} />
+        {modoConsulta ? (
+          <button className="oft-btn-press" style={{ ...S.btnWA, width: "100%", justifyContent: "center", padding: 12 }} onClick={consultarWhatsApp}>
+            <MessageCircle size={16} /> Consultar disponibilidad
+          </button>
+        ) : (
         <div style={{ display: "flex", gap: 8 }}>
           <button ref={btnRef} className="oft-btn-press" style={{ ...S.btnRed, flex: 1, justifyContent: "center", background: added ? "#25D366" : RED, transition: "background 0.3s" }} onClick={handleAdd}>
             {added ? <><CheckCircle2 size={16} className="oft-check-pop" /> ¡Agregado!</> : <><Plus size={15} strokeWidth={2.5} /> Agregar al pedido</>}
           </button>
           <button className="oft-btn-press" style={S.btnWA} onClick={() => window.open(`https://wa.me/${WA_NUMBER}?text=Hola%20Ofertodo%2C%20me%20interesa:%20${encodeURIComponent(product.nombre)}`, "_blank")}><MessageCircle size={16} /></button>
         </div>
+        )}
       </div>
     </div>
   );
@@ -648,12 +738,28 @@ function ProductModal() {
   const [pres, setPres] = useState("docena");
   const [count, setCount] = useState(1);
   const [added, setAdded] = useState(false);
+  const [talla, setTalla] = useState("");
+  const [color, setColor] = useState("");
 
-  useEffect(() => { setPres("docena"); setCount(1); setAdded(false); }, [product]);
+  useEffect(() => { setPres("docena"); setCount(1); setAdded(false); setTalla(""); setColor(""); }, [product]);
 
   if (!product) return null;
   const total = presTotal(product, pres, count);
   const imgUrl = product.imagen_url || null;
+
+  const tieneVariantes = (product.tiene_tallas && (product.tallas || "").trim()) || (product.tiene_colores && (product.colores || "").trim());
+  const modoConsulta = pres === "pieza" && tieneVariantes;
+
+  const consultarWhatsApp = () => {
+    if (product.tiene_tallas && (product.tallas || "").trim() && !talla) { showToast("Elige una talla primero"); return; }
+    if (product.tiene_colores && (product.colores || "").trim() && !color) { showToast("Elige un color primero"); return; }
+    let msg = `Hola Ofertodo, quiero consultar disponibilidad de:\n\n*${product.nombre}*`;
+    if (product.referencia) msg += `\nRef: ${product.referencia}`;
+    if (talla) msg += `\nTalla: ${talla}`;
+    if (color) msg += `\nColor: ${color}`;
+    msg += `\nPresentación: Por pieza`;
+    window.open(`https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(msg)}`, "_blank");
+  };
 
   const handleAdd = () => {
     addToCart(product, presToPiezas(pres, count), pres, count);
@@ -692,18 +798,30 @@ function ProductModal() {
               <span style={{ fontSize: 24, color: RED, fontWeight: 900 }}>${Number(total).toFixed(2)}</span>
             </div>
             <QtySelector product={product} pres={pres} setPres={setPres} count={count} setCount={setCount} size="big" />
-            <div style={{ fontSize: 12, color: GRAY3, background: WHITE, borderRadius: 8, padding: "8px 12px", display: "flex", alignItems: "center", gap: 6, marginTop: 12 }}>
-              <Sparkles size={13} /> {presBreakdown(pres, count, product)}
-            </div>
+            {modoConsulta ? (
+              <div style={{ background: WHITE, borderRadius: 8, padding: "12px", marginTop: 12 }}>
+                <VariantPicker product={product} talla={talla} setTalla={setTalla} color={color} setColor={setColor} />
+              </div>
+            ) : (
+              <div style={{ fontSize: 12, color: GRAY3, background: WHITE, borderRadius: 8, padding: "8px 12px", display: "flex", alignItems: "center", gap: 6, marginTop: 12 }}>
+                <Sparkles size={13} /> {presBreakdown(pres, count, product)}
+              </div>
+            )}
           </div>
 
           {/* BOTONES */}
+          {modoConsulta ? (
+            <button className="oft-btn-press" style={{ ...S.btnWA, width: "100%", justifyContent: "center", padding: 14, fontSize: 15 }} onClick={consultarWhatsApp}>
+              <MessageCircle size={18} /> Consultar disponibilidad
+            </button>
+          ) : (
           <div style={{ display: "flex", gap: 10 }}>
             <button className="oft-btn-press" style={{ ...S.btnRed, flex: 1, justifyContent: "center", padding: 14, fontSize: 15, background: added ? "#25D366" : RED, transition: "background 0.3s" }} onClick={handleAdd}>
               {added ? <><CheckCircle2 size={17} className="oft-check-pop" /> ¡Agregado!</> : <><Plus size={16} strokeWidth={2.5} /> Agregar al pedido</>}
             </button>
             <button className="oft-btn-press" style={{ ...S.btnWA, padding: "14px 16px" }} onClick={() => window.open(`https://wa.me/${WA_NUMBER}?text=Hola%20Ofertodo%2C%20me%20interesa:%20${encodeURIComponent(product.nombre)}`, "_blank")}><MessageCircle size={18} /></button>
           </div>
+          )}
         </div>
       </div>
     </div>
@@ -1776,6 +1894,50 @@ function InvoiceModal({ invoice, onClose }) {
 }
 
 // ═══════════════════════════════════════════════════════════════
+//  AGREGAR CHIPS UNO POR UNO (tallas / colores)
+// ═══════════════════════════════════════════════════════════════
+function ChipAdder({ valor, onChange, placeholder, color }) {
+  const [input, setInput] = useState("");
+  const items = (valor || "").split(",").map(s => s.trim()).filter(Boolean);
+
+  const add = () => {
+    const v = input.trim();
+    if (!v) return;
+    if (items.some(i => i.toLowerCase() === v.toLowerCase())) { setInput(""); return; }
+    onChange([...items, v].join(", "));
+    setInput("");
+  };
+  const remove = (idx) => onChange(items.filter((_, i) => i !== idx).join(", "));
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 8, marginBottom: items.length ? 10 : 0 }}>
+        <input
+          style={{ ...S.input, marginBottom: 0 }}
+          placeholder={placeholder}
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); add(); } }}
+        />
+        <button type="button" onClick={add} className="oft-btn-press" style={{ background: color, color: WHITE, border: "none", borderRadius: 8, padding: "0 16px", fontWeight: 800, fontSize: 18, cursor: "pointer", flexShrink: 0 }}>+</button>
+      </div>
+      {items.length > 0 && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+          {items.map((it, idx) => (
+            <span key={idx} className="oft-chip-pop" style={{ display: "inline-flex", alignItems: "center", gap: 6, background: WHITE, border: `1.5px solid ${GRAY2}`, borderRadius: 20, padding: "5px 8px 5px 12px", fontSize: 13, fontWeight: 700 }}>
+              {it}
+              <button type="button" onClick={() => remove(idx)} style={{ background: GRAY2, border: "none", borderRadius: "50%", width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: BLACK }}>
+                <X size={11} />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
 //  ADMIN PANEL
 // ═══════════════════════════════════════════════════════════════
 function AdminView() {
@@ -1792,7 +1954,7 @@ function AdminView() {
   const [bulkLoading, setBulkLoading] = useState(false);
   const [newCatName, setNewCatName] = useState("");
   const [catUploading, setCatUploading] = useState(null); // id de categoría subiendo icono
-  const emptyProd = { referencia: "", nombre: "", descripcion: "", categoria_id: categories[0]?.id || 1, precio_pieza: "", precio_media_docena: "", precio_docena: "", badge: "", activo: true, destacado: false, imagen_url: "" };
+  const emptyProd = { referencia: "", nombre: "", descripcion: "", categoria_id: categories[0]?.id || 1, precio_pieza: "", precio_media_docena: "", precio_docena: "", badge: "", activo: true, destacado: false, imagen_url: "", tiene_tallas: false, tiene_colores: false, tallas: "", colores: "" };
   const [prodForm, setProdForm] = useState(emptyProd);
   const fileInputRef = useRef(null);
   const catFileRef = useRef(null);
@@ -1953,7 +2115,7 @@ function AdminView() {
   // ── GUARDAR / EDITAR PRODUCTO ──────────────────────────────────
   const openNewProduct = () => { setProdForm(emptyProd); setEditingId(null); setShowProdForm(true); setShowBulk(false); };
   const openEditProduct = (p) => {
-    setProdForm({ referencia: p.referencia || "", nombre: p.nombre || "", descripcion: p.descripcion || "", categoria_id: p.categoria_id || categories[0]?.id || 1, precio_pieza: p.precio_pieza, precio_media_docena: p.precio_media_docena, precio_docena: p.precio_docena, badge: p.badge || "", activo: p.activo, destacado: p.destacado || false, imagen_url: p.imagen_url || "" });
+    setProdForm({ referencia: p.referencia || "", nombre: p.nombre || "", descripcion: p.descripcion || "", categoria_id: p.categoria_id || categories[0]?.id || 1, precio_pieza: p.precio_pieza, precio_media_docena: p.precio_media_docena, precio_docena: p.precio_docena, badge: p.badge || "", activo: p.activo, destacado: p.destacado || false, imagen_url: p.imagen_url || "", tiene_tallas: p.tiene_tallas || false, tiene_colores: p.tiene_colores || false, tallas: p.tallas || "", colores: p.colores || "" });
     setEditingId(p.id);
     setShowProdForm(true);
     setShowBulk(false);
@@ -2613,6 +2775,40 @@ function AdminView() {
                     : <div style={{ color: GRAY3, display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}><ImageIcon size={32} strokeWidth={1.5} /><span style={{ fontSize: 13 }}>{uploading ? "Subiendo imagen..." : "Click para subir una foto"}</span></div>
                   }
                 </div>
+
+                {/* VARIANTES: TALLAS Y COLORES */}
+                <div style={{ background: GRAY, borderRadius: 12, padding: 16, marginBottom: 14 }}>
+                  <div style={{ fontWeight: 800, marginBottom: 12, fontSize: 14 }}>Variantes (opcional)</div>
+
+                  {/* TALLAS */}
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                    <span style={{ fontWeight: 700, fontSize: 13 }}>¿Tiene tallas?</span>
+                    <label style={{ position: "relative", display: "inline-block", width: 46, height: 26, cursor: "pointer" }}>
+                      <input type="checkbox" checked={prodForm.tiene_tallas} onChange={e => setProdForm({...prodForm, tiene_tallas: e.target.checked})} style={{ opacity: 0, width: 0, height: 0 }} />
+                      <span style={{ position: "absolute", inset: 0, background: prodForm.tiene_tallas ? RED : GRAY3, borderRadius: 26, transition: "0.2s" }}>
+                        <span style={{ position: "absolute", height: 20, width: 20, left: prodForm.tiene_tallas ? 23 : 3, top: 3, background: WHITE, borderRadius: "50%", transition: "0.2s" }} />
+                      </span>
+                    </label>
+                  </div>
+                  {prodForm.tiene_tallas && (
+                    <ChipAdder valor={prodForm.tallas} onChange={v => setProdForm({...prodForm, tallas: v})} placeholder="Ej: S, M, L, XL..." color={RED} />
+                  )}
+
+                  {/* COLORES */}
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", margin: "14px 0 8px" }}>
+                    <span style={{ fontWeight: 700, fontSize: 13 }}>¿Tiene colores?</span>
+                    <label style={{ position: "relative", display: "inline-block", width: 46, height: 26, cursor: "pointer" }}>
+                      <input type="checkbox" checked={prodForm.tiene_colores} onChange={e => setProdForm({...prodForm, tiene_colores: e.target.checked})} style={{ opacity: 0, width: 0, height: 0 }} />
+                      <span style={{ position: "absolute", inset: 0, background: prodForm.tiene_colores ? RED : GRAY3, borderRadius: 26, transition: "0.2s" }}>
+                        <span style={{ position: "absolute", height: 20, width: 20, left: prodForm.tiene_colores ? 23 : 3, top: 3, background: WHITE, borderRadius: "50%", transition: "0.2s" }} />
+                      </span>
+                    </label>
+                  </div>
+                  {prodForm.tiene_colores && (
+                    <ChipAdder valor={prodForm.colores} onChange={v => setProdForm({...prodForm, colores: v})} placeholder="Ej: Rojo, Azul, Negro..." color={BLACK} />
+                  )}
+                </div>
+
                 <div style={{ display: "flex", gap: 10 }}>
                   <button style={{ ...S.btnRed, display: "inline-flex", alignItems: "center", gap: 6 }} onClick={handleSaveProd}><Save size={16} /> {editingId ? "Guardar cambios" : "Crear producto"}</button>
                   <button style={S.btnOutline} onClick={() => { setShowProdForm(false); setEditingId(null); }}>Cancelar</button>
@@ -3119,6 +3315,10 @@ export default function App() {
         .oft-qv-pop { animation: qvPop 0.28s cubic-bezier(0.34,1.4,0.5,1) both; }
         @keyframes qtyBump { 0% { transform: scale(1); } 40% { transform: scale(1.3); color: ${RED}; } 100% { transform: scale(1); } }
         .oft-qty-bump { animation: qtyBump 0.28s ease; }
+        @keyframes chipPop { 0% { opacity: 0; transform: scale(0.6); } 100% { opacity: 1; transform: scale(1); } }
+        .oft-chip-pop { animation: chipPop 0.22s cubic-bezier(0.34,1.5,0.5,1) both; }
+        .oft-color-chip { transition: transform 0.15s ease, border-color 0.15s ease; }
+        .oft-color-chip:active { transform: scale(0.92) !important; }
         .oft-qty-btn { transition: transform 0.12s ease, box-shadow 0.15s ease; }
         .oft-qty-btn:active { transform: scale(0.88); }
         .oft-qty-chip:active { transform: scale(0.93); }
