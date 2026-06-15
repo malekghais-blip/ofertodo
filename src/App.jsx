@@ -2215,7 +2215,7 @@ function AdminView() {
   const money = (n) => "$" + Number(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
   return (
-    <div style={{ display: "flex", minHeight: "100vh" }}>
+    <div style={{ minHeight: "100vh" }}>
       <div className="oft-admin-sidebar" style={{ background: WHITE, color: BLACK, width: 230, minHeight: "100vh", padding: "24px 0", position: "fixed", top: 0, left: 0, zIndex: 90, borderRight: `1px solid ${GRAY2}` }}>
         <div className="oft-admin-brand" style={{ padding: "0 22px 22px", borderBottom: `1px solid ${GRAY2}` }}><Logo /><div style={{ fontSize: 11, color: GRAY3, marginTop: 6, display: "flex", alignItems: "center", gap: 5, fontWeight: 600 }}><Zap size={11} /> Panel Administrador</div></div>
         <div className="oft-admin-tabs" style={{ padding: "16px 12px" }}>
@@ -2227,8 +2227,8 @@ function AdminView() {
         </div>
       </div>
 
-      <div className="oft-admin-main" style={{ marginLeft: 230, padding: "32px", minHeight: "100vh", background: GRAY, flex: 1 }}>
-       <div key={tab} className="oft-tab-anim">
+      <div className="oft-admin-main" style={{ marginLeft: 230, padding: "32px", minHeight: "100vh", background: GRAY, boxSizing: "border-box", overflowX: "hidden" }}>
+       <div key={tab} className="oft-tab-anim" style={{ minWidth: 0 }}>
 
         {/* ═══════════ CREAR PEDIDO ═══════════ */}
         {tab === "crear" && <CrearPedidoView />}
@@ -3059,6 +3059,9 @@ export default function App() {
         * { box-sizing: border-box; }
         html, body { margin: 0; padding: 0; overflow-x: hidden; max-width: 100%; }
         img { max-width: 100%; }
+        /* La tabla nunca desborda: scroll horizontal dentro de su marco (web y celular) */
+        .oft-table-wrap { max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+        .oft-admin-main { max-width: 100%; }
         /* Mostrar/ocultar según dispositivo */
         .oft-only-mobile { display: none; }
         .oft-only-desktop { display: block; }
