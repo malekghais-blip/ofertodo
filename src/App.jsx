@@ -1443,6 +1443,7 @@ function CrearPedidoView() {
   const [tipo, setTipo] = useState("pedido"); // 'pedido' | 'cotizacion'
   const [descuento, setDescuento] = useState(""); // porcentaje
   const [envio, setEnvio] = useState(""); // costo de envío
+  const [redondear, setRedondear] = useState(true); // redondear total hacia arriba
   const [saving, setSaving] = useState(false);
   const [invoice, setInvoice] = useState(null); // datos de la factura generada
 
@@ -1460,7 +1461,11 @@ function CrearPedidoView() {
   const descPct = Math.min(Math.max(Number(descuento) || 0, 0), 100);
   const descMonto = subtotal * (descPct / 100);
   const costoEnvio = Number(envio) || 0;
-  const total = subtotal - descMonto + costoEnvio;
+  const totalReal = subtotal - descMonto + costoEnvio;
+  // Redondeo HACIA ARRIBA al 0.50 o entero más cercano (ej: 120.10→120.50, 120.60→121.00)
+  const totalRedondeado = Math.ceil(totalReal * 2) / 2;
+  const hayRedondeo = totalRedondeado !== totalReal;
+  const total = redondear ? totalRedondeado : totalReal;
 
   const addItem = (product) => {
     setItems(prev => {
@@ -1631,8 +1636,28 @@ function CrearPedidoView() {
                     <span>Envío</span><span>+{money(costoEnvio)}</span>
                   </div>
                 )}
+                {/* TOGGLE DE REDONDEO */}
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 6, padding: "8px 0", borderTop: `1px dashed ${GRAY2}` }}>
+                  <span style={{ fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
+                    Redondear total
+                    {hayRedondeo && redondear && <span style={{ fontSize: 10, color: "#155724", background: "#D4EDDA", padding: "1px 6px", borderRadius: 8 }}>+{money(totalRedondeado - totalReal)}</span>}
+                  </span>
+                  <label style={{ position: "relative", display: "inline-block", width: 44, height: 24, cursor: "pointer", flexShrink: 0 }}>
+                    <input type="checkbox" checked={redondear} onChange={e => setRedondear(e.target.checked)} style={{ opacity: 0, width: 0, height: 0 }} />
+                    <span style={{ position: "absolute", inset: 0, background: redondear ? RED : GRAY3, borderRadius: 24, transition: "0.2s" }}>
+                      <span style={{ position: "absolute", height: 18, width: 18, left: redondear ? 23 : 3, top: 3, background: WHITE, borderRadius: "50%", transition: "0.2s" }} />
+                    </span>
+                  </label>
+                </div>
+                {redondear && hayRedondeo && (
+                  <div style={{ display: "flex", justifyContent: "space-between", color: GRAY3, fontSize: 12 }}>
+                    <span style={{ textDecoration: "line-through" }}>Total real {money(totalReal)}</span>
+                    <span style={{ color: "#155724" }}>redondeado ↑</span>
+                  </div>
+                )}
                 <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 900, fontSize: 18, marginTop: 4 }}>
-                  <span>Total</span><span style={{ color: RED }}>{money(total)}</span>
+                  <span>Total</span>
+                  <span key={total} className="oft-total-pop" style={{ color: RED }}>{money(total)}</span>
                 </div>
               </div>
             </div>
@@ -3358,6 +3383,8 @@ export default function App() {
         .oft-qty-bump { animation: qtyBump 0.28s ease; }
         @keyframes chipPop { 0% { opacity: 0; transform: scale(0.6); } 100% { opacity: 1; transform: scale(1); } }
         .oft-chip-pop { animation: chipPop 0.22s cubic-bezier(0.34,1.5,0.5,1) both; }
+        @keyframes totalPop { 0% { transform: scale(1); } 35% { transform: scale(1.18); } 100% { transform: scale(1); } }
+        .oft-total-pop { display: inline-block; animation: totalPop 0.3s ease; }
         .oft-color-chip { transition: transform 0.15s ease, border-color 0.15s ease; }
         .oft-color-chip:active { transform: scale(0.92) !important; }
         .oft-qty-btn { transition: transform 0.12s ease, box-shadow 0.15s ease; }
