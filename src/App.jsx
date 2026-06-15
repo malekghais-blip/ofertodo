@@ -1973,7 +1973,7 @@ function AdminView() {
   const [bulkEditLoading, setBulkEditLoading] = useState(false);
   const [showBulkDelete, setShowBulkDelete] = useState(false);
   const [bulkDeleteLoading, setBulkDeleteLoading] = useState(false);
-  const emptyBulkEdit = { nombre: "", precio_pieza: "", precio_media_docena: "", precio_docena: "", badge: "", descripcion: "", activo: "", destacado: "" };
+  const emptyBulkEdit = { nombre: "", precio_pieza: "", precio_media_docena: "", precio_docena: "", badge: "", descripcion: "", activo: "", destacado: "", tiene_tallas: "", tallas: "", tiene_colores: "", colores: "" };
   const [bulkEdit, setBulkEdit] = useState(emptyBulkEdit);
 
   // Carga pedidos y usuarios al entrar
@@ -2248,6 +2248,12 @@ function AdminView() {
     if (bulkEdit.descripcion !== "") patch.descripcion = bulkEdit.descripcion;
     if (bulkEdit.activo !== "") patch.activo = bulkEdit.activo === "1";
     if (bulkEdit.destacado !== "") patch.destacado = bulkEdit.destacado === "1";
+    // Tallas: si activa "Sí", guarda la lista; si activa "No", apaga y limpia
+    if (bulkEdit.tiene_tallas === "1") { patch.tiene_tallas = true; if (bulkEdit.tallas.trim() !== "") patch.tallas = bulkEdit.tallas.trim(); }
+    if (bulkEdit.tiene_tallas === "0") { patch.tiene_tallas = false; }
+    // Colores: igual
+    if (bulkEdit.tiene_colores === "1") { patch.tiene_colores = true; if (bulkEdit.colores.trim() !== "") patch.colores = bulkEdit.colores.trim(); }
+    if (bulkEdit.tiene_colores === "0") { patch.tiene_colores = false; }
     if (Object.keys(patch).length === 0) { alert("Llena al menos un campo para aplicar."); return; }
     setBulkEditLoading(true);
     let ok = 0, err = 0;
@@ -2987,7 +2993,30 @@ function AdminView() {
                     <option value="1">Sí — mostrar en inicio</option>
                     <option value="0">No destacado</option>
                   </select>
-                  <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
+
+                  {/* TALLAS */}
+                  <label style={S.label}>Tallas</label>
+                  <select style={S.input} value={bulkEdit.tiene_tallas} onChange={e => setBulkEdit({...bulkEdit, tiene_tallas: e.target.value})}>
+                    <option value="">No cambiar</option>
+                    <option value="1">Activar tallas</option>
+                    <option value="0">Desactivar tallas</option>
+                  </select>
+                  {bulkEdit.tiene_tallas === "1" && (
+                    <ChipAdder valor={bulkEdit.tallas} onChange={v => setBulkEdit({...bulkEdit, tallas: v})} placeholder="Ej: S, M, L, XL..." color={RED} />
+                  )}
+
+                  {/* COLORES */}
+                  <label style={{ ...S.label, marginTop: 12 }}>Colores</label>
+                  <select style={S.input} value={bulkEdit.tiene_colores} onChange={e => setBulkEdit({...bulkEdit, tiene_colores: e.target.value})}>
+                    <option value="">No cambiar</option>
+                    <option value="1">Activar colores</option>
+                    <option value="0">Desactivar colores</option>
+                  </select>
+                  {bulkEdit.tiene_colores === "1" && (
+                    <ChipAdder valor={bulkEdit.colores} onChange={v => setBulkEdit({...bulkEdit, colores: v})} placeholder="Ej: Rojo, Azul, Negro..." color={BLACK} />
+                  )}
+
+                  <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
                     <button style={{ ...S.btnRed, flex: 1, justifyContent: "center", opacity: bulkEditLoading ? 0.7 : 1, display: "inline-flex", alignItems: "center", gap: 6 }} onClick={handleBulkEdit} disabled={bulkEditLoading}>
                       <Save size={16} /> {bulkEditLoading ? "Guardando..." : "Aplicar cambios"}
                     </button>
