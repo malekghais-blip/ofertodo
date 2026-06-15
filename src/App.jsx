@@ -2201,18 +2201,19 @@ function AdminView() {
 
   return (
     <div style={{ display: "flex", minHeight: "100vh" }}>
-      <div className="oft-admin-sidebar" style={{ background: BLACK, color: WHITE, width: 220, minHeight: "100vh", padding: "24px 0", position: "fixed", top: 0, left: 0, zIndex: 90 }}>
-        <div className="oft-admin-brand" style={{ padding: "0 20px 24px", borderBottom: "1px solid #333" }}><Logo /><div style={{ fontSize: 11, color: "#aaa", marginTop: 4, display: "flex", alignItems: "center", gap: 5 }}><Zap size={11} /> Panel Administrador</div></div>
-        <div className="oft-admin-tabs" style={{ padding: "16px 0" }}>
+      <div className="oft-admin-sidebar" style={{ background: WHITE, color: BLACK, width: 230, minHeight: "100vh", padding: "24px 0", position: "fixed", top: 0, left: 0, zIndex: 90, borderRight: `1px solid ${GRAY2}` }}>
+        <div className="oft-admin-brand" style={{ padding: "0 22px 22px", borderBottom: `1px solid ${GRAY2}` }}><Logo /><div style={{ fontSize: 11, color: GRAY3, marginTop: 6, display: "flex", alignItems: "center", gap: 5, fontWeight: 600 }}><Zap size={11} /> Panel Administrador</div></div>
+        <div className="oft-admin-tabs" style={{ padding: "16px 12px" }}>
           {tabs.map(([k,l,Icon]) => (
-            <div key={k} className={"oft-admin-tab" + (tab === k ? " active" : "")} onClick={() => setTab(k)} style={{ padding: "12px 24px", cursor: "pointer", fontWeight: 600, fontSize: 14, color: tab === k ? WHITE : "#aaa", background: tab === k ? RED : "transparent", borderLeft: tab === k ? "3px solid white" : "3px solid transparent", display: "flex", alignItems: "center", gap: 10 }}>
-              <Icon size={17} strokeWidth={2} /> {l}
+            <div key={k} className={"oft-admin-tab" + (tab === k ? " active" : "")} onClick={() => setTab(k)} style={{ padding: "11px 16px", marginBottom: 4, cursor: "pointer", fontWeight: tab === k ? 800 : 600, fontSize: 14, color: tab === k ? WHITE : GRAY3, background: tab === k ? RED : "transparent", borderRadius: 10, display: "flex", alignItems: "center", gap: 11, transition: "all 0.18s ease" }}>
+              <Icon size={18} strokeWidth={tab === k ? 2.4 : 2} /> {l}
             </div>
           ))}
         </div>
       </div>
 
-      <div className="oft-admin-main" style={{ marginLeft: 220, padding: "32px", minHeight: "100vh", background: GRAY, flex: 1 }}>
+      <div className="oft-admin-main" style={{ marginLeft: 230, padding: "32px", minHeight: "100vh", background: GRAY, flex: 1 }}>
+       <div key={tab} className="oft-tab-anim">
 
         {/* ═══════════ CREAR PEDIDO ═══════════ */}
         {tab === "crear" && <CrearPedidoView />}
@@ -2845,7 +2846,9 @@ function AdminView() {
               ))}
             </div>
             {loadingData ? <Spinner /> : (
-              <div className="oft-table-wrap" style={{ background: WHITE, borderRadius: 12, overflow: "auto" }}>
+              <>
+              {/* TABLA (solo escritorio) */}
+              <div className="oft-table-wrap oft-only-desktop" style={{ background: WHITE, borderRadius: 12, overflow: "auto" }}>
                 <table style={S.table}>
                   <thead><tr>{["Nombre","Email","WhatsApp","Pedidos","Registrado"].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
                   <tbody>
@@ -2866,9 +2869,41 @@ function AdminView() {
                   </tbody>
                 </table>
               </div>
+
+              {/* TARJETAS (solo celular) */}
+              <div className="oft-only-mobile" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                {users.length === 0 ? (
+                  <div style={{ textAlign: "center", padding: 30, color: GRAY3 }}>Aún no hay clientes registrados</div>
+                ) : users.map(u => {
+                  const pedidosUser = orders.filter(o => o.usuario_id === u.id).length;
+                  return (
+                    <div key={u.id} style={{ background: WHITE, borderRadius: 14, border: `1px solid ${GRAY2}`, padding: 16 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                        <div style={{ width: 46, height: 46, borderRadius: "50%", background: `linear-gradient(135deg, ${RED}, ${RED_D})`, color: WHITE, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 900, fontSize: 18, flexShrink: 0 }}>
+                          {(u.nombre || "?").charAt(0).toUpperCase()}
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontWeight: 800, fontSize: 15, display: "flex", alignItems: "center", gap: 6 }}>{u.nombre}{u.es_admin && <span style={{ fontSize: 9, background: RED, color: WHITE, padding: "1px 6px", borderRadius: 10 }}>ADMIN</span>}</div>
+                          <div style={{ fontSize: 12, color: GRAY3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u.email}</div>
+                        </div>
+                        <div style={{ textAlign: "center", flexShrink: 0 }}>
+                          <div style={{ fontSize: 20, fontWeight: 900, color: RED }}>{pedidosUser}</div>
+                          <div style={{ fontSize: 10, color: GRAY3 }}>pedidos</div>
+                        </div>
+                      </div>
+                      <div style={{ display: "flex", gap: 16, marginTop: 12, paddingTop: 12, borderTop: `1px solid ${GRAY2}`, fontSize: 12, color: GRAY3 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 5 }}><MessageCircle size={13} /> {u.telefono || "Sin WhatsApp"}</div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 5, marginLeft: "auto" }}><ClipboardList size={13} /> {u.created_at ? new Date(u.created_at).toLocaleDateString() : "-"}</div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              </>
             )}
           </>
         )}
+       </div>
       </div>
     </div>
   );
@@ -2996,6 +3031,8 @@ export default function App() {
         .oft-progress-fill { transform-origin: left; animation: progressGrow 0.8s ease both; }
         @keyframes detailOpen { from { opacity: 0; max-height: 0; } to { opacity: 1; max-height: 2000px; } }
         .oft-detail-open { animation: detailOpen 0.4s ease both; overflow: hidden; }
+        @keyframes tabAnim { 0% { opacity: 0; transform: translateY(10px); } 100% { opacity: 1; transform: translateY(0); } }
+        .oft-tab-anim { animation: tabAnim 0.35s cubic-bezier(0.22,1,0.36,1) both; }
 
         .oft-prod-anim { animation: fadeInUp 0.45s ease both; }
         .oft-cart-bounce { animation: cartBounce 0.5s ease; }
@@ -3015,11 +3052,11 @@ export default function App() {
           .oft-section { padding: 28px 16px !important; }
           .oft-infobar { gap: 14px !important; font-size: 11px !important; padding: 10px 14px !important; }
           .oft-admin-main { margin-left: 0 !important; padding: 18px 14px 80px !important; }
-          .oft-admin-sidebar { position: fixed !important; bottom: 0 !important; top: auto !important; left: 0 !important; right: 0 !important; width: 100% !important; min-height: auto !important; height: 64px !important; flex-direction: row !important; padding: 0 !important; z-index: 200 !important; border-top: 2px solid ${RED}; }
+          .oft-admin-sidebar { position: fixed !important; bottom: 0 !important; top: auto !important; left: 0 !important; right: 0 !important; width: 100% !important; min-height: auto !important; height: 62px !important; flex-direction: row !important; padding: 0 !important; z-index: 200 !important; border-right: none !important; border-top: 1px solid ${GRAY2} !important; box-shadow: 0 -2px 12px rgba(0,0,0,0.06); }
           .oft-admin-brand { display: none !important; }
-          .oft-admin-tabs { display: flex !important; flex-direction: row !important; padding: 0 !important; width: 100%; justify-content: space-around; }
-          .oft-admin-tab { flex-direction: column !important; gap: 3px !important; padding: 8px 4px !important; font-size: 10px !important; border-left: none !important; border-top: 3px solid transparent; text-align: center; flex: 1; justify-content: center; }
-          .oft-admin-tab.active { border-left: none !important; border-top: 3px solid white !important; }
+          .oft-admin-tabs { display: flex !important; flex-direction: row !important; padding: 6px 4px !important; margin: 0 !important; width: 100%; justify-content: space-between; overflow-x: auto; gap: 2px; }
+          .oft-admin-tab { flex-direction: column !important; gap: 3px !important; padding: 6px 8px !important; margin-bottom: 0 !important; font-size: 9.5px !important; border-radius: 10px !important; text-align: center; justify-content: center; flex: 0 0 auto; min-width: 56px; white-space: nowrap; }
+          .oft-admin-tab.active { background: ${RED} !important; }
           .oft-dash-grid-2 { grid-template-columns: 1fr !important; }
           .oft-btn-text-hide { display: none !important; }
           /* Admin: tablas con scroll horizontal y formularios apilados */
