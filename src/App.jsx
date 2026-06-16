@@ -1045,6 +1045,50 @@ function RegisterModal() {
 }
 
 // ═══════════════════════════════════════════════════════════════
+//  COMPLETAR PERFIL (después de registrarse con Google)
+// ═══════════════════════════════════════════════════════════════
+function CompleteProfileModal() {
+  const { completeProfile, setCompleteProfile, setUser, showToast } = useApp();
+  const [nombre, setNombre] = useState(completeProfile?.nombre || "");
+  const [telefono, setTelefono] = useState("");
+  const [loading, setLoading] = useState(false), [err, setErr] = useState("");
+
+  const handle = async () => {
+    if (!nombre.trim()) { setErr("Escribe tu nombre."); return; }
+    if (!telefono.trim()) { setErr("Escribe tu WhatsApp / celular."); return; }
+    setLoading(true); setErr("");
+    try {
+      await sb.post("usuarios", { nombre: nombre.trim(), email: completeProfile.email, telefono: telefono.trim(), es_admin: false });
+      const perfil = await sb.get("usuarios", `?email=eq.${encodeURIComponent(completeProfile.email)}&limit=1`);
+      setUser({ ...completeProfile.gUser, ...(perfil[0] || {}), token: completeProfile.token });
+      showToast(`¡Cuenta creada! Bienvenido, ${nombre.split(" ")[0]}`);
+      setCompleteProfile(null);
+    } catch(e) { setErr("Error al guardar. Intenta de nuevo."); }
+    setLoading(false);
+  };
+
+  return (
+    <div className="oft-overlay" style={S.overlay}>
+      <div className="oft-modal-sheet oft-modal" style={S.modal} onClick={e => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "center", marginBottom: 18 }}><Logo /></div>
+        <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 6, textAlign: "center" }}>¡Casi listo! 🎉</div>
+        <p style={{ fontSize: 14, color: GRAY3, textAlign: "center", marginBottom: 22 }}>
+          Entraste con Google como <strong>{completeProfile.email}</strong>. Completa estos datos para terminar tu registro.
+        </p>
+        <label style={S.label}>Nombre completo</label>
+        <input style={S.input} placeholder="Tu nombre completo" value={nombre} onChange={e => setNombre(e.target.value)} />
+        <label style={S.label}>WhatsApp / Celular</label>
+        <input style={S.input} placeholder="+507 0000-0000" value={telefono} onChange={e => setTelefono(e.target.value)} />
+        {err && <div style={{ color: RED, fontSize: 13, marginBottom: 12 }}>{err}</div>}
+        <button style={{ ...S.btnRed, width: "100%", justifyContent: "center", padding: 14, fontSize: 15, opacity: loading ? 0.7 : 1 }} onClick={handle} disabled={loading}>
+          {loading ? "Guardando..." : "Completar registro"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
 //  CHECKOUT
 // ═══════════════════════════════════════════════════════════════
 function CheckoutView() {
@@ -3656,6 +3700,7 @@ export default function App() {
   const [showCart, setShowCart] = useState(false);
   const [quickView, setQuickView] = useState(null); // producto a mostrar en detalle
   const [catalogCat, setCatalogCat] = useState(0); // categoría a abrir en el catálogo (0 = todas)
+  const [completeProfile, setCompleteProfile] = useState(null); // usuario de Google que debe completar sus datos
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]);
   const [empresas, setEmpresas] = useState([]);
@@ -3678,31 +3723,52 @@ export default function App() {
 
   // Cargar datos de Supabase al iniciar
   useEffect(() => {
-    // Si volvemos de iniciar sesión con Google, la URL trae el token (#access_token=...)
+    // Si volvemos de iniciar sesión con Google, la URL trae el token
     const procesarRetornoGoogle = async () => {
-      const hash = window.location.hash;
-      if (hash && hash.includes("access_token")) {
+      const hash = window.location.hash || "";
+      const query = window.location.search || "";
+      let token = null;
+
+      // Formato 1 (implicit): #access_token=...
+      if (hash.includes("access_token")) {
+        token = new URLSearchParams(hash.substring(1)).get("access_token");
+      }
+      // Formato 2 (PKCE): ?code=...  → hay que intercambiarlo por un token
+      else if (query.includes("code=")) {
+        const code = new URLSearchParams(query).get("code");
+        if (code) {
+          try {
+            const r = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=pkce`, {
+              method: "POST",
+              headers: { "apikey": SUPABASE_KEY, "Content-Type": "application/json" },
+              body: JSON.stringify({ auth_code: code }),
+            });
+            const data = await r.json();
+            token = data.access_token || null;
+          } catch(e) { console.warn("Error intercambiando code:", e.message); }
+        }
+      }
+
+      if (token) {
         try {
-          const params = new URLSearchParams(hash.substring(1));
-          const token = params.get("access_token");
-          if (token) {
-            // Pedir los datos del usuario de Google a Supabase
-            const r = await fetch(`${SUPABASE_URL}/auth/v1/user`, { headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${token}` } });
-            const gUser = await r.json();
-            if (gUser && gUser.email) {
-              const nombre = gUser.user_metadata?.full_name || gUser.user_metadata?.name || gUser.email.split("@")[0];
-              // ¿Ya existe en nuestra tabla? si no, lo creamos
-              let perfil = await sb.get("usuarios", `?email=eq.${encodeURIComponent(gUser.email)}&limit=1`);
-              if (!perfil || perfil.length === 0) {
-                try { await sb.post("usuarios", { nombre, email: gUser.email, telefono: "", es_admin: false }); } catch(e) {}
-                perfil = await sb.get("usuarios", `?email=eq.${encodeURIComponent(gUser.email)}&limit=1`);
-              }
-              setUser({ ...gUser, ...(perfil[0] || {}), token });
+          const r = await fetch(`${SUPABASE_URL}/auth/v1/user`, { headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${token}` } });
+          const gUser = await r.json();
+          if (gUser && gUser.email) {
+            const nombre = gUser.user_metadata?.full_name || gUser.user_metadata?.name || gUser.email.split("@")[0];
+            // ¿Ya existe en nuestra tabla de usuarios?
+            let perfil = await sb.get("usuarios", `?email=eq.${encodeURIComponent(gUser.email)}&limit=1`);
+            // Limpia el token de la URL antes de continuar
+            window.history.replaceState(null, "", window.location.origin + window.location.pathname);
+            if (perfil && perfil.length > 0) {
+              // Usuario existente → inicia sesión directo
+              setUser({ ...gUser, ...perfil[0], token });
+              showToast(`¡Bienvenido de vuelta, ${perfil[0].nombre?.split(" ")[0] || ""}!`);
+            } else {
+              // Usuario NUEVO → debe completar sus datos (teléfono, etc.)
+              setCompleteProfile({ email: gUser.email, nombre, token, gUser });
             }
           }
         } catch(e) { console.warn("Error procesando login de Google:", e.message); }
-        // Limpia el token de la URL para que no quede visible
-        window.history.replaceState(null, "", window.location.origin + window.location.pathname);
       }
     };
     procesarRetornoGoogle();
@@ -3750,7 +3816,7 @@ export default function App() {
   }, []);
 
   const isAdmin = view === "admin";
-  const ctx = { view, setView, cart, setCart, addToCart, cartPulse, user, setUser, showLogin, setShowLogin, showRegister, setShowRegister, showCart, setShowCart, quickView, setQuickView, catalogCat, setCatalogCat, products, setProducts, categories, setCategories, empresas, setEmpresas, sucursales, setSucursales, loading, showToast };
+  const ctx = { view, setView, cart, setCart, addToCart, cartPulse, user, setUser, showLogin, setShowLogin, showRegister, setShowRegister, showCart, setShowCart, quickView, setQuickView, catalogCat, setCatalogCat, completeProfile, setCompleteProfile, products, setProducts, categories, setCategories, empresas, setEmpresas, sucursales, setSucursales, loading, showToast };
 
   return (
     <AppCtx.Provider value={ctx}>
@@ -3898,6 +3964,7 @@ export default function App() {
         {showCart && <CartModal />}
         {showLogin && <LoginModal />}
         {showRegister && <RegisterModal />}
+        {completeProfile && <CompleteProfileModal />}
         {quickView && <ProductModal />}
         {!isAdmin && <FloatingCart />}
         <Toast msg={toastMsg} />
