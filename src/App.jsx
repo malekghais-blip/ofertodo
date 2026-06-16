@@ -350,10 +350,10 @@ function HomeView() {
       {/* HERO */}
       <div className="oft-hero" style={{ background: `linear-gradient(135deg, ${BLACK} 0%, #2a0000 60%, #1a0000 100%)`, color: WHITE, padding: "64px 24px", textAlign: "center" }}>
         <div style={{ background: RED, color: WHITE, fontSize: 11, fontWeight: 800, letterSpacing: 2, padding: "4px 14px", borderRadius: 4, display: "inline-flex", alignItems: "center", gap: 6, marginBottom: 18, textTransform: "uppercase" }}>
-          <Zap size={12} strokeWidth={2.5} /> Distribuidora Mayorista · Panamá
+          <Zap size={12} strokeWidth={2.5} /> Distribuidora · Panamá
         </div>
         <h1 className="oft-hero-title" style={{ fontSize: 44, fontWeight: 900, lineHeight: 1.1, marginBottom: 16, letterSpacing: -1 }}>
-          Precios al mayor<br /><span style={{ color: RED }}>sin complicaciones</span>
+          Más<br /><span style={{ color: RED }}>por menos</span>
         </h1>
         <p style={{ color: "#ccc", fontSize: 16, marginBottom: 36, maxWidth: 480, margin: "0 auto 36px" }}>
           Compra por pieza, media docena o docena. Ropa, calzado y accesorios de calidad. Enviamos a todo Panamá.
@@ -413,7 +413,7 @@ function HomeView() {
       {/* FOOTER */}
       <footer style={{ background: "#0a0a0a", color: WHITE, padding: "32px 24px" }}>
         <div style={{ display: "flex", gap: 40, flexWrap: "wrap", justifyContent: "space-between", maxWidth: 900, margin: "0 auto" }}>
-          <div><Logo /><p style={{ color: "#aaa", fontSize: 13, marginTop: 10, maxWidth: 220 }}>Distribuidora mayorista y minorista en Panamá.</p></div>
+          <div><Logo /><p style={{ color: "#aaa", fontSize: 13, marginTop: 10, maxWidth: 220 }}>Distribuidora · Panamá. Más por menos.</p></div>
           <div>
             <div style={{ fontWeight: 700, marginBottom: 10 }}>Contacto</div>
             <div style={{ fontSize: 13, color: "#aaa", lineHeight: 2.2 }}>
@@ -1999,7 +1999,7 @@ function InvoiceModal({ invoice, onClose }) {
                   <span style={{ background: RED, color: WHITE, padding: "0 8px", borderRadius: 4, marginLeft: 2 }}>todo</span>
                 </div>
                 <div style={{ fontSize: 11, color: GRAY3, marginTop: 6, lineHeight: 1.5 }}>
-                  Distribuidora Mayorista · Panamá<br />
+                  Distribuidora · Panamá<br />
                   WhatsApp: +507 6720-0474<br />
                   Colón, Panamá
                 </div>
@@ -2093,7 +2093,7 @@ function InvoiceModal({ invoice, onClose }) {
               {esCot
                 ? "Esta cotización es válida por 7 días. Los precios pueden variar según disponibilidad."
                 : "¡Gracias por tu compra! El pago se coordina por WhatsApp."}
-              <br />Ofertodo · Distribuidora Mayorista · Panamá
+              <br />Ofertodo · Distribuidora · Panamá
             </div>
           </div>
         </div>
