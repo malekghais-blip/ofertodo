@@ -458,7 +458,7 @@ function QtySelector({ product, pres, setPres, count, setCount, size = "normal" 
   return (
     <div>
       {/* SELECTOR DE PRESENTACIÓN */}
-      <div className="oft-pres-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6, marginBottom: 12, alignItems: "stretch" }}>
+      <div className="oft-pres-grid" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6, marginBottom: 12, alignItems: "stretch" }}>
         {presentaciones.map(p => {
           const active = pres === p.key;
           return (
@@ -3797,11 +3797,17 @@ export default function App() {
           .oft-price-label { font-size: 12px !important; }
           .oft-price-big { font-size: 14px !important; }
           .oft-qty-row { flex-wrap: wrap !important; gap: 6px !important; }
-          /* Bloques de presentación: iguales y sin desbordar en celular */
+          /* Bloques de presentación: mismo tamaño de número y misma altura */
+          .oft-pres-chip { padding: 10px 2px !important; }
+          .oft-pres-label { font-size: 10.5px !important; }
+          .oft-pres-price { font-size: 13px !important; }
+          .oft-pres-grid { gap: 5px !important; }
+        }
+        @media (max-width: 360px) {
+          /* En pantallas muy chicas, baja un poco pero TODOS por igual */
+          .oft-pres-price { font-size: 12px !important; }
+          .oft-pres-label { font-size: 9.5px !important; }
           .oft-pres-chip { padding: 9px 1px !important; }
-          .oft-pres-label { font-size: 10px !important; }
-          .oft-pres-price { font-size: 11.5px !important; }
-          .oft-pres-grid { gap: 4px !important; }
         }
         @media (max-width: 420px) {
           .oft-cat-grid { grid-template-columns: repeat(2, 1fr) !important; }
