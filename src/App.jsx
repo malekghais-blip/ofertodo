@@ -60,6 +60,11 @@ const sb = {
     const r = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, { method: "POST", headers: this.headers, body: JSON.stringify({ email, password }) });
     return r.json();
   },
+  // Inicia sesión con Google (OAuth). Redirige a Google y vuelve a la app.
+  signInWithGoogle() {
+    const redirectTo = encodeURIComponent(window.location.origin);
+    window.location.href = `${SUPABASE_URL}/auth/v1/authorize?provider=google&redirect_to=${redirectTo}`;
+  },
   // Storage
   uploadUrl(bucket, path) { return `${SUPABASE_URL}/storage/v1/object/${bucket}/${path}`; },
   publicUrl(bucket, path) { return `${SUPABASE_URL}/storage/v1/object/public/${bucket}/${path}`; },
@@ -961,7 +966,15 @@ function LoginModal() {
     <div className="oft-overlay" style={S.overlay} onClick={() => setShowLogin(false)}>
       <div className="oft-modal-sheet oft-modal" style={S.modal} onClick={e => e.stopPropagation()}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}><Logo /><button onClick={() => setShowLogin(false)} style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}><X size={22} /></button></div>
-        <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 24 }}>Iniciar sesión</div>
+        <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 20 }}>Iniciar sesión</div>
+        {/* BOTÓN DE GOOGLE */}
+        <button onClick={() => sb.signInWithGoogle()} className="oft-btn-press" style={{ width: "100%", justifyContent: "center", padding: 13, fontSize: 15, fontWeight: 700, border: `1.5px solid ${GRAY2}`, borderRadius: 10, background: WHITE, cursor: "pointer", display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+          <svg width="18" height="18" viewBox="0 0 18 18"><path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 01-1.8 2.72v2.26h2.92c1.71-1.57 2.68-3.89 2.68-6.62z"/><path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.8.54-1.83.86-3.04.86-2.34 0-4.32-1.58-5.03-3.7H.96v2.33A9 9 0 009 18z"/><path fill="#FBBC05" d="M3.97 10.72a5.4 5.4 0 010-3.44V4.95H.96a9 9 0 000 8.1l3.01-2.33z"/><path fill="#EA4335" d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.58A9 9 0 00.96 4.95l3.01 2.33C4.68 5.16 6.66 3.58 9 3.58z"/></svg>
+          Continuar con Google
+        </button>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+          <div style={{ flex: 1, height: 1, background: GRAY2 }} /><span style={{ fontSize: 12, color: GRAY3 }}>o con tu correo</span><div style={{ flex: 1, height: 1, background: GRAY2 }} />
+        </div>
         <label style={S.label}>Correo electrónico</label>
         <input style={S.input} type="email" placeholder="tu@email.com" value={email} onChange={e => setEmail(e.target.value)} />
         <label style={S.label}>Contraseña</label>
@@ -979,19 +992,22 @@ function LoginModal() {
 }
 
 function RegisterModal() {
-  const { setShowRegister, setUser, showToast } = useApp();
-  const [form, setForm] = useState({ nombre: "", telefono: "", email: "", pass: "" });
+  const { setShowRegister, setShowLogin, setUser, showToast } = useApp();
+  const [form, setForm] = useState({ nombre: "", telefono: "", email: "", pass: "", pass2: "" });
   const [loading, setLoading] = useState(false), [err, setErr] = useState("");
 
   const handle = async () => {
     if (!form.nombre || !form.email || !form.pass) { setErr("Por favor completa todos los campos."); return; }
+    if (form.pass.length < 6) { setErr("La contraseña debe tener al menos 6 caracteres."); return; }
+    if (form.pass !== form.pass2) { setErr("Las contraseñas no coinciden. Verifica que sean iguales."); return; }
     setLoading(true); setErr("");
     try {
       const auth = await sb.signUp(form.email, form.pass, { nombre: form.nombre });
-      if (auth.error) { setErr(auth.error.message); }
-      else {
+      if (auth.error || auth.error_description || auth.msg) {
+        setErr(auth.error?.message || auth.error_description || auth.msg || "No se pudo crear la cuenta.");
+      } else {
         await sb.post("usuarios", { nombre: form.nombre, email: form.email, telefono: form.telefono, es_admin: false });
-        showToast("¡Cuenta creada! Ya puedes iniciar sesión.");
+        showToast("¡Cuenta creada! Revisa tu correo para confirmar y luego inicia sesión.");
         setShowRegister(false);
       }
     } catch(e) { setErr("Error de conexión."); }
@@ -1002,14 +1018,27 @@ function RegisterModal() {
     <div className="oft-overlay" style={S.overlay} onClick={() => setShowRegister(false)}>
       <div className="oft-modal-sheet oft-modal" style={S.modal} onClick={e => e.stopPropagation()}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}><Logo /><button onClick={() => setShowRegister(false)} style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}><X size={22} /></button></div>
-        <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 24 }}>Crear cuenta</div>
-        {[["nombre","Nombre completo","Tu nombre completo"],["telefono","WhatsApp / Celular","+507 0000-0000"],["email","Correo electrónico","tu@email.com"],["pass","Contraseña","Mínimo 6 caracteres"]].map(([k,l,ph]) => (
-          <div key={k}><label style={S.label}>{l}</label><input style={S.input} type={k==="pass"?"password":k==="email"?"email":"text"} placeholder={ph} value={form[k]} onChange={e => setForm({...form,[k]:e.target.value})} /></div>
+        <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 20 }}>Crear cuenta</div>
+
+        {/* BOTÓN DE GOOGLE */}
+        <button onClick={() => sb.signInWithGoogle()} className="oft-btn-press" style={{ width: "100%", justifyContent: "center", padding: 13, fontSize: 15, fontWeight: 700, border: `1.5px solid ${GRAY2}`, borderRadius: 10, background: WHITE, cursor: "pointer", display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+          <svg width="18" height="18" viewBox="0 0 18 18"><path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 01-1.8 2.72v2.26h2.92c1.71-1.57 2.68-3.89 2.68-6.62z"/><path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.8.54-1.83.86-3.04.86-2.34 0-4.32-1.58-5.03-3.7H.96v2.33A9 9 0 009 18z"/><path fill="#FBBC05" d="M3.97 10.72a5.4 5.4 0 010-3.44V4.95H.96a9 9 0 000 8.1l3.01-2.33z"/><path fill="#EA4335" d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.58A9 9 0 00.96 4.95l3.01 2.33C4.68 5.16 6.66 3.58 9 3.58z"/></svg>
+          Continuar con Google
+        </button>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+          <div style={{ flex: 1, height: 1, background: GRAY2 }} /><span style={{ fontSize: 12, color: GRAY3 }}>o con tu correo</span><div style={{ flex: 1, height: 1, background: GRAY2 }} />
+        </div>
+
+        {[["nombre","Nombre completo","Tu nombre completo","text"],["telefono","WhatsApp / Celular","+507 0000-0000","text"],["email","Correo electrónico","tu@email.com","email"],["pass","Contraseña","Mínimo 6 caracteres","password"],["pass2","Repite la contraseña","Escríbela de nuevo","password"]].map(([k,l,ph,tp]) => (
+          <div key={k}><label style={S.label}>{l}</label><input style={S.input} type={tp} placeholder={ph} value={form[k]} onChange={e => setForm({...form,[k]:e.target.value})} /></div>
         ))}
         {err && <div style={{ color: RED, fontSize: 13, marginBottom: 12 }}>{err}</div>}
         <button style={{ ...S.btnRed, width: "100%", justifyContent: "center", padding: 14, fontSize: 15, opacity: loading ? 0.7 : 1 }} onClick={handle} disabled={loading}>
           {loading ? "Creando cuenta..." : "Crear cuenta"}
         </button>
+        <div style={{ textAlign: "center", marginTop: 16, fontSize: 14, color: GRAY3 }}>
+          ¿Ya tienes cuenta? <span style={{ color: RED, fontWeight: 700, cursor: "pointer" }} onClick={() => { setShowRegister(false); setShowLogin(true); }}>Inicia sesión</span>
+        </div>
       </div>
     </div>
   );
@@ -3649,6 +3678,35 @@ export default function App() {
 
   // Cargar datos de Supabase al iniciar
   useEffect(() => {
+    // Si volvemos de iniciar sesión con Google, la URL trae el token (#access_token=...)
+    const procesarRetornoGoogle = async () => {
+      const hash = window.location.hash;
+      if (hash && hash.includes("access_token")) {
+        try {
+          const params = new URLSearchParams(hash.substring(1));
+          const token = params.get("access_token");
+          if (token) {
+            // Pedir los datos del usuario de Google a Supabase
+            const r = await fetch(`${SUPABASE_URL}/auth/v1/user`, { headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${token}` } });
+            const gUser = await r.json();
+            if (gUser && gUser.email) {
+              const nombre = gUser.user_metadata?.full_name || gUser.user_metadata?.name || gUser.email.split("@")[0];
+              // ¿Ya existe en nuestra tabla? si no, lo creamos
+              let perfil = await sb.get("usuarios", `?email=eq.${encodeURIComponent(gUser.email)}&limit=1`);
+              if (!perfil || perfil.length === 0) {
+                try { await sb.post("usuarios", { nombre, email: gUser.email, telefono: "", es_admin: false }); } catch(e) {}
+                perfil = await sb.get("usuarios", `?email=eq.${encodeURIComponent(gUser.email)}&limit=1`);
+              }
+              setUser({ ...gUser, ...(perfil[0] || {}), token });
+            }
+          }
+        } catch(e) { console.warn("Error procesando login de Google:", e.message); }
+        // Limpia el token de la URL para que no quede visible
+        window.history.replaceState(null, "", window.location.origin + window.location.pathname);
+      }
+    };
+    procesarRetornoGoogle();
+
     const init = async () => {
       try {
         const [cats, prods] = await Promise.all([
