@@ -1446,6 +1446,10 @@ function CrearPedidoView() {
   const [redondear, setRedondear] = useState(true); // redondear total hacia arriba
   const [saving, setSaving] = useState(false);
   const [invoice, setInvoice] = useState(null); // datos de la factura generada
+  // ── FLEXPACK: armar docena/media mezclando referencias ──
+  const [flexPacks, setFlexPacks] = useState([]); // [{ id, modo:'docena'|'media', lineas:[{product, piezas}] }]
+  const [flexSearch, setFlexSearch] = useState("");
+  const [flexActiveId, setFlexActiveId] = useState(null); // pack al que se le está agregando
 
   const money = (n) => "$" + Number(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const empresasActivas = empresas.filter(e => e.activa !== false);
@@ -1453,11 +1457,51 @@ function CrearPedidoView() {
   const empresaSel = empresas.find(e => e.id === empresaId);
   const sucursalSel = sucursales.find(s => s.id === sucursalId);
 
+  // Precio por pieza de un producto según el modo del pack (docena ÷12, media ÷6)
+  const flexUnitPrice = (product, modo) => modo === "media" ? Number(product.precio_media_docena) / 6 : Number(product.precio_docena) / 12;
+  const FLEX_META = { docena: 12, media: 6 };
+  const flexPiezas = (pack) => pack.lineas.reduce((s, l) => s + l.piezas, 0);
+  const flexTotal = (pack) => pack.lineas.reduce((s, l) => s + flexUnitPrice(l.product, pack.modo) * l.piezas, 0);
+  const flexCompleto = (pack) => flexPiezas(pack) === FLEX_META[pack.modo];
+
   const filtered = search.trim()
     ? products.filter(p => (p.nombre + " " + (p.referencia || "")).toLowerCase().includes(search.toLowerCase())).slice(0, 6)
     : [];
+  const flexFiltered = flexSearch.trim()
+    ? products.filter(p => (p.nombre + " " + (p.referencia || "")).toLowerCase().includes(flexSearch.toLowerCase())).slice(0, 6)
+    : [];
 
-  const subtotal = items.reduce((s, it) => s + presTotal(it.product, it.pres, it.count), 0);
+  // FLEXPACK handlers
+  const addFlexPack = (modo) => {
+    const id = Date.now();
+    setFlexPacks(prev => [...prev, { id, modo, lineas: [] }]);
+    setFlexActiveId(id);
+  };
+  const removeFlexPack = (id) => setFlexPacks(prev => prev.filter(p => p.id !== id));
+  const addFlexLine = (packId, product) => {
+    setFlexPacks(prev => prev.map(pack => {
+      if (pack.id !== packId) return pack;
+      if (flexPiezas(pack) >= FLEX_META[pack.modo]) return pack; // ya está lleno
+      const ex = pack.lineas.find(l => l.product.id === product.id);
+      if (ex) return { ...pack, lineas: pack.lineas.map(l => l.product.id === product.id ? { ...l, piezas: l.piezas + 1 } : l) };
+      return { ...pack, lineas: [...pack.lineas, { product, piezas: 1 }] };
+    }));
+    setFlexSearch("");
+  };
+  const updateFlexLine = (packId, prodId, piezas) => {
+    setFlexPacks(prev => prev.map(pack => {
+      if (pack.id !== packId) return pack;
+      if (piezas <= 0) return { ...pack, lineas: pack.lineas.filter(l => l.product.id !== prodId) };
+      // no exceder el máximo del pack
+      const otras = pack.lineas.filter(l => l.product.id !== prodId).reduce((s, l) => s + l.piezas, 0);
+      const max = FLEX_META[pack.modo] - otras;
+      return { ...pack, lineas: pack.lineas.map(l => l.product.id === prodId ? { ...l, piezas: Math.min(piezas, max) } : l) };
+    }));
+  };
+
+  const subtotalNormal = items.reduce((s, it) => s + presTotal(it.product, it.pres, it.count), 0);
+  const subtotalFlex = flexPacks.reduce((s, pack) => s + flexTotal(pack), 0);
+  const subtotal = subtotalNormal + subtotalFlex;
   const descPct = Math.min(Math.max(Number(descuento) || 0, 0), 100);
   const descMonto = subtotal * (descPct / 100);
   const costoEnvio = Number(envio) || 0;
@@ -1481,8 +1525,19 @@ function CrearPedidoView() {
   const removeItem = (idx) => setItems(prev => prev.filter((_, i) => i !== idx));
 
   const handleGenerate = async () => {
-    if (items.length === 0) { alert("Agrega al menos un producto."); return; }
+    const hayNormales = items.length > 0;
+    const hayFlex = flexPacks.length > 0;
+    if (!hayNormales && !hayFlex) { alert("Agrega al menos un producto."); return; }
     if (!cliente.nombre.trim()) { alert("Escribe el nombre del cliente."); return; }
+    // Validar que cada FLEXPACK esté completo
+    for (let i = 0; i < flexPacks.length; i++) {
+      const pack = flexPacks[i];
+      if (!flexCompleto(pack)) {
+        const meta = FLEX_META[pack.modo];
+        alert(`El FLEXPACK ${pack.modo === "media" ? "media docena" : "docena"} #${i + 1} tiene ${flexPiezas(pack)} de ${meta} piezas. Complétalo o elimínalo.`);
+        return;
+      }
+    }
     setSaving(true);
     try {
       // Número de factura correlativo
@@ -1506,6 +1561,7 @@ function CrearPedidoView() {
         tipo, num_factura: numFactura, creado_por_admin: true,
       });
       const pedidoId = pedido[0].id;
+      // Productos normales
       for (const it of items) {
         await sb.post("pedido_items", {
           pedido_id: pedidoId, producto_id: it.product.id, nombre_producto: it.product.nombre,
@@ -1513,18 +1569,40 @@ function CrearPedidoView() {
           subtotal: presTotal(it.product, it.pres, it.count),
         });
       }
-      // Datos para la factura
-      setInvoice({
-        codigo, numFactura, tipo, fecha: new Date(),
-        cliente: { ...cliente }, notas,
-        empresa: empresaSel?.nombre || "", sucursal: sucursalSel?.nombre || "",
-        items: items.map(it => ({
+      // Líneas de FLEXPACK
+      for (const pack of flexPacks) {
+        const etiqueta = pack.modo === "media" ? "FLEXPACK ½ doc" : "FLEXPACK docena";
+        for (const l of pack.lineas) {
+          await sb.post("pedido_items", {
+            pedido_id: pedidoId, producto_id: l.product.id, nombre_producto: `${l.product.nombre} (${etiqueta})`,
+            cantidad: l.piezas, precio_unitario: flexUnitPrice(l.product, pack.modo),
+            subtotal: flexUnitPrice(l.product, pack.modo) * l.piezas,
+          });
+        }
+      }
+      // Items para la factura (normales + flex)
+      const invoiceItems = [
+        ...items.map(it => ({
           nombre: it.product.nombre, referencia: it.product.referencia,
           presentacion: `${it.count} ${presLabelPlural(it.pres, it.count)}`,
           piezas: presToPiezas(it.pres, it.count),
           precioUnit: presUnitPrice(it.product, it.pres),
           subtotal: presTotal(it.product, it.pres, it.count),
         })),
+        ...flexPacks.flatMap(pack => pack.lineas.map(l => ({
+          nombre: l.product.nombre, referencia: l.product.referencia,
+          presentacion: pack.modo === "media" ? "FLEXPACK ½ doc" : "FLEXPACK docena",
+          piezas: l.piezas,
+          precioUnit: flexUnitPrice(l.product, pack.modo),
+          subtotal: flexUnitPrice(l.product, pack.modo) * l.piezas,
+        }))),
+      ];
+      // Datos para la factura
+      setInvoice({
+        codigo, numFactura, tipo, fecha: new Date(),
+        cliente: { ...cliente }, notas,
+        empresa: empresaSel?.nombre || "", sucursal: sucursalSel?.nombre || "",
+        items: invoiceItems,
         subtotal, descPct, descMonto, costoEnvio, total,
       });
       showToast(tipo === "cotizacion" ? "Cotización creada" : "Pedido creado");
@@ -1533,7 +1611,7 @@ function CrearPedidoView() {
   };
 
   const resetForm = () => {
-    setItems([]); setCliente({ nombre: "", telefono: "", direccion: "" }); setNotas("");
+    setItems([]); setFlexPacks([]); setFlexActiveId(null); setCliente({ nombre: "", telefono: "", direccion: "" }); setNotas("");
     setEmpresaId(null); setSucursalId(null); setTipo("pedido"); setDescuento(""); setEnvio(""); setInvoice(null);
   };
 
@@ -1610,6 +1688,111 @@ function CrearPedidoView() {
                   </div>
                 </div>
               ))}
+            </div>
+          )}
+
+          {/* ═══ FLEXPACK ═══ */}
+          <div style={{ marginTop: 18, paddingTop: 16, borderTop: `2px dashed ${RED}` }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+              <div style={{ background: RED, color: WHITE, fontWeight: 900, fontSize: 11, padding: "3px 8px", borderRadius: 6, letterSpacing: 0.5 }}>FLEXPACK</div>
+              <span style={{ fontSize: 13, fontWeight: 700 }}>Arma una docena o media mezclando referencias</span>
+            </div>
+            <p style={{ fontSize: 12, color: GRAY3, marginBottom: 12 }}>Cada pieza se cobra al precio de docena/media de su propia referencia. Debes completar la cantidad exacta.</p>
+
+            {/* Botones para crear un pack */}
+            <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+              <button onClick={() => addFlexPack("docena")} className="oft-btn-press" style={{ ...S.btnOutline, flex: 1, justifyContent: "center", display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13 }}>
+                <Plus size={15} /> Docena (12 pzs)
+              </button>
+              <button onClick={() => addFlexPack("media")} className="oft-btn-press" style={{ ...S.btnOutline, flex: 1, justifyContent: "center", display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13 }}>
+                <Plus size={15} /> ½ Docena (6 pzs)
+              </button>
+            </div>
+
+            {/* Packs */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              {flexPacks.map((pack, pIdx) => {
+                const piezas = flexPiezas(pack);
+                const meta = FLEX_META[pack.modo];
+                const completo = piezas === meta;
+                const pct = Math.min((piezas / meta) * 100, 100);
+                const activo = flexActiveId === pack.id;
+                return (
+                  <div key={pack.id} style={{ border: `2px solid ${completo ? "#22c55e" : RED}`, borderRadius: 14, padding: 14, background: completo ? "#F0FDF4" : "#FFF9F9" }}>
+                    {/* Cabecera del pack */}
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                      <div style={{ fontWeight: 800, fontSize: 14, display: "flex", alignItems: "center", gap: 8 }}>
+                        {pack.modo === "media" ? "½ Docena" : "Docena"} FLEXPACK
+                        <span style={{ fontSize: 12, fontWeight: 700, color: completo ? "#155724" : RED, background: completo ? "#D4EDDA" : "#FFE0E0", padding: "2px 8px", borderRadius: 10 }}>
+                          {piezas}/{meta} {completo ? "✓" : ""}
+                        </span>
+                      </div>
+                      <button onClick={() => removeFlexPack(pack.id)} style={{ background: "none", border: "none", color: RED, cursor: "pointer", display: "flex" }}><Trash2 size={16} /></button>
+                    </div>
+
+                    {/* Barra de progreso */}
+                    <div style={{ height: 6, background: GRAY2, borderRadius: 3, overflow: "hidden", marginBottom: 12 }}>
+                      <div style={{ height: "100%", width: `${pct}%`, background: completo ? "#22c55e" : RED, borderRadius: 3, transition: "width 0.3s ease" }} />
+                    </div>
+
+                    {/* Líneas del pack */}
+                    {pack.lineas.map(l => (
+                      <div key={l.product.id} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8, background: WHITE, borderRadius: 8, padding: "8px 10px" }}>
+                        {l.product.imagen_url ? <img src={l.product.imagen_url} style={{ width: 34, height: 34, borderRadius: 6, objectFit: "cover" }} /> : <div style={{ width: 34, height: 34, borderRadius: 6, background: GRAY, display: "flex", alignItems: "center", justifyContent: "center" }}><Package size={15} color={GRAY3} /></div>}
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontWeight: 700, fontSize: 13 }}>{l.product.nombre}</div>
+                          <div style={{ fontSize: 11, color: GRAY3 }}>{money(flexUnitPrice(l.product, pack.modo))}/pza · {l.product.referencia || "—"}</div>
+                        </div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, border: `1.5px solid ${GRAY2}`, borderRadius: 8, padding: "2px 6px" }}>
+                          <button onClick={() => updateFlexLine(pack.id, l.product.id, l.piezas - 1)} style={{ border: "none", background: "none", fontSize: 16, cursor: "pointer", color: BLACK, width: 22 }}>−</button>
+                          <span style={{ fontWeight: 800, minWidth: 18, textAlign: "center", fontSize: 14 }}>{l.piezas}</span>
+                          <button onClick={() => updateFlexLine(pack.id, l.product.id, l.piezas + 1)} disabled={completo} style={{ border: "none", background: "none", fontSize: 16, cursor: completo ? "not-allowed" : "pointer", color: completo ? GRAY3 : RED, width: 22 }}>+</button>
+                        </div>
+                        <div style={{ fontWeight: 800, fontSize: 13, color: RED, minWidth: 52, textAlign: "right" }}>{money(flexUnitPrice(l.product, pack.modo) * l.piezas)}</div>
+                      </div>
+                    ))}
+
+                    {/* Buscador para agregar al pack */}
+                    {!completo && (
+                      <div style={{ position: "relative", marginTop: 8 }}>
+                        <input
+                          style={{ ...S.input, marginBottom: 0, fontSize: 13 }}
+                          placeholder={`Agregar referencia (faltan ${meta - piezas})`}
+                          value={activo ? flexSearch : ""}
+                          onFocus={() => setFlexActiveId(pack.id)}
+                          onChange={e => { setFlexActiveId(pack.id); setFlexSearch(e.target.value); }}
+                        />
+                        {activo && flexFiltered.length > 0 && (
+                          <div style={{ position: "absolute", top: "100%", left: 0, right: 0, background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 10, marginTop: 4, zIndex: 20, boxShadow: "0 8px 24px rgba(0,0,0,0.12)", overflow: "hidden" }}>
+                            {flexFiltered.map(p => (
+                              <div key={p.id} onClick={() => addFlexLine(pack.id, p)} className="oft-cat-chip" style={{ padding: 9, display: "flex", alignItems: "center", gap: 10, cursor: "pointer", borderBottom: `1px solid ${GRAY}` }}>
+                                {p.imagen_url ? <img src={p.imagen_url} style={{ width: 30, height: 30, borderRadius: 5, objectFit: "cover" }} /> : <div style={{ width: 30, height: 30, borderRadius: 5, background: GRAY, display: "flex", alignItems: "center", justifyContent: "center" }}><Package size={14} color={GRAY3} /></div>}
+                                <div style={{ flex: 1 }}>
+                                  <div style={{ fontWeight: 700, fontSize: 12 }}>{p.nombre}</div>
+                                  <div style={{ fontSize: 10, color: GRAY3 }}>{p.referencia || "—"} · {money(flexUnitPrice(p, pack.modo))}/pza</div>
+                                </div>
+                                <Plus size={16} color={RED} />
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Total del pack */}
+                    <div style={{ display: "flex", justifyContent: "space-between", marginTop: 10, paddingTop: 8, borderTop: `1px solid ${GRAY2}`, fontWeight: 800, fontSize: 14 }}>
+                      <span>{completo ? "Total del pack" : `Faltan ${meta - piezas} piezas`}</span>
+                      <span style={{ color: RED }}>{money(flexTotal(pack))}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* TOTALES (se muestran si hay productos normales o flexpacks) */}
+          {subtotal > 0 && (
+            <div style={{ marginTop: 16 }}>
               {/* DESCUENTO Y ENVÍO */}
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, paddingTop: 10, borderTop: `1px solid ${GRAY2}` }}>
                 <div>
