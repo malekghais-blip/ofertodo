@@ -2114,6 +2114,159 @@ function InvoiceModal({ invoice, onClose }) {
 }
 
 // ═══════════════════════════════════════════════════════════════
+//  GUÍA DE ENVÍO INTERNA (para empaque y despacho — NO para el cliente)
+// ═══════════════════════════════════════════════════════════════
+function ShippingLabelModal({ order, onClose }) {
+  const ref = useRef(null);
+  const [busy, setBusy] = useState(false);
+  const fecha = order.created_at ? new Date(order.created_at) : new Date();
+  const totalPiezas = (order.items || []).reduce((s, it) => s + Number(it.cantidad || 0), 0);
+
+  const renderCanvas = async () => {
+    const source = ref.current;
+    const clone = source.cloneNode(true);
+    const holder = document.createElement("div");
+    holder.style.position = "fixed"; holder.style.left = "-10000px"; holder.style.top = "0";
+    holder.style.width = "640px"; holder.style.background = "#ffffff";
+    clone.style.width = "640px"; clone.style.maxWidth = "640px";
+    holder.appendChild(clone);
+    document.body.appendChild(holder);
+    try {
+      return await window.html2canvas(clone, { scale: 2, backgroundColor: "#ffffff", useCORS: true, width: 640, windowWidth: 640 });
+    } finally { document.body.removeChild(holder); }
+  };
+
+  const downloadPDF = async () => {
+    if (!window.html2canvas || !window.jspdf) { alert("Cargando generador, intenta de nuevo en unos segundos."); return; }
+    setBusy(true);
+    try {
+      const canvas = await renderCanvas();
+      const { jsPDF } = window.jspdf;
+      const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+      const imgW = 190, imgH = (canvas.height * imgW) / canvas.width;
+      pdf.addImage(canvas.toDataURL("image/png"), "PNG", 10, 10, imgW, imgH);
+      pdf.save(`GUIA-${order.codigo}.pdf`);
+    } catch(e) { alert("Error generando PDF: " + e.message); }
+    setBusy(false);
+  };
+
+  const printLabel = () => {
+    const w = window.open("", "_blank");
+    if (!w) { alert("Permite ventanas emergentes para imprimir."); return; }
+    w.document.write(`<html><head><title>Guía ${order.codigo}</title></head><body style="margin:0">${ref.current.outerHTML}</body></html>`);
+    w.document.close();
+    setTimeout(() => { w.print(); }, 300);
+  };
+
+  return (
+    <div className="oft-overlay" style={{ ...S.overlay, alignItems: "flex-start", overflowY: "auto", padding: "20px 0" }} onClick={onClose}>
+      <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 16, maxWidth: 620, width: "92%", margin: "0 auto", overflow: "hidden" }} onClick={e => e.stopPropagation()}>
+        {/* Barra superior */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 18px", borderBottom: `1px solid ${GRAY2}`, background: GRAY }}>
+          <div style={{ fontWeight: 800, display: "flex", alignItems: "center", gap: 8 }}><Truck size={18} color={RED} /> Guía de envío interna</div>
+          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}><X size={22} /></button>
+        </div>
+
+        {/* GUÍA (lo que se exporta) */}
+        <div style={{ padding: 20, maxHeight: "62vh", overflowY: "auto" }}>
+          <div ref={ref} style={{ background: WHITE, padding: 26, fontFamily: "'Inter','Segoe UI',sans-serif", color: BLACK, border: `2px solid ${BLACK}` }}>
+            {/* Encabezado */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", borderBottom: `2px solid ${BLACK}`, paddingBottom: 12, marginBottom: 16 }}>
+              <div>
+                <div style={{ display: "flex", alignItems: "center", fontWeight: 900, fontSize: 22, letterSpacing: -1 }}>
+                  <span style={{ color: RED }}>Ofer</span>
+                  <span style={{ background: RED, color: WHITE, padding: "0 7px", borderRadius: 4, marginLeft: 2 }}>todo</span>
+                </div>
+                <div style={{ fontSize: 11, color: GRAY3, marginTop: 4, fontWeight: 700, letterSpacing: 1 }}>GUÍA DE ENVÍO · USO INTERNO</div>
+              </div>
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontWeight: 900, fontSize: 18 }}>{order.codigo}</div>
+                <div style={{ fontSize: 11, color: GRAY3, marginTop: 2 }}>{fecha.toLocaleDateString("es-PA", { day: "2-digit", month: "long", year: "numeric" })}</div>
+              </div>
+            </div>
+
+            {/* EMPRESA DE ENVÍO — lo más importante, bien grande */}
+            <div style={{ background: RED, color: WHITE, borderRadius: 10, padding: "14px 18px", marginBottom: 16 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, opacity: 0.85, letterSpacing: 1 }}>ENVIAR POR</div>
+              <div style={{ fontSize: 24, fontWeight: 900, lineHeight: 1.1, marginTop: 2 }}>{order.empresa_envio_nombre || "— Sin empresa asignada —"}</div>
+              {order.sucursal_nombre && <div style={{ fontSize: 15, fontWeight: 700, marginTop: 4 }}>📍 Sucursal: {order.sucursal_nombre}</div>}
+            </div>
+
+            {/* DATOS DEL DESTINATARIO */}
+            <div style={{ border: `2px solid ${BLACK}`, borderRadius: 10, padding: 16, marginBottom: 16 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: GRAY3, letterSpacing: 1, marginBottom: 8 }}>DESTINATARIO</div>
+              <div style={{ fontSize: 20, fontWeight: 900 }}>{order.nombre_cliente || "—"}</div>
+              {order.telefono && <div style={{ fontSize: 16, fontWeight: 700, marginTop: 4 }}>📱 {order.telefono}</div>}
+              {order.direccion && <div style={{ fontSize: 14, marginTop: 6, lineHeight: 1.4 }}>📍 {order.direccion}</div>}
+            </div>
+
+            {/* RESUMEN DE EMPAQUE */}
+            <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
+              <div style={{ flex: 1, border: `2px solid ${BLACK}`, borderRadius: 10, padding: "12px 14px", textAlign: "center" }}>
+                <div style={{ fontSize: 11, color: GRAY3, fontWeight: 700 }}>PRODUCTOS</div>
+                <div style={{ fontSize: 26, fontWeight: 900 }}>{(order.items || []).length}</div>
+              </div>
+              <div style={{ flex: 1, border: `2px solid ${BLACK}`, borderRadius: 10, padding: "12px 14px", textAlign: "center" }}>
+                <div style={{ fontSize: 11, color: GRAY3, fontWeight: 700 }}>PIEZAS TOTALES</div>
+                <div style={{ fontSize: 26, fontWeight: 900 }}>{totalPiezas}</div>
+              </div>
+            </div>
+
+            {/* CHECKLIST DE EMPAQUE */}
+            <div style={{ fontSize: 11, fontWeight: 700, color: GRAY3, letterSpacing: 1, marginBottom: 8 }}>CHECKLIST DE EMPAQUE</div>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead>
+                <tr style={{ background: GRAY }}>
+                  <th style={{ width: 28, padding: "8px 6px", fontSize: 11, fontWeight: 700, color: GRAY3, textAlign: "center" }}>✓</th>
+                  <th style={{ textAlign: "left", padding: "8px 10px", fontSize: 11, fontWeight: 700, color: GRAY3 }}>Producto</th>
+                  <th style={{ textAlign: "center", padding: "8px 6px", fontSize: 11, fontWeight: 700, color: GRAY3 }}>Cant.</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(order.items || []).map((it, i) => (
+                  <tr key={i} style={{ borderBottom: `1px solid ${GRAY2}` }}>
+                    <td style={{ textAlign: "center", padding: "10px 6px" }}>
+                      <span style={{ display: "inline-block", width: 18, height: 18, border: `2px solid ${BLACK}`, borderRadius: 4 }} />
+                    </td>
+                    <td style={{ padding: "10px", fontSize: 13, fontWeight: 700 }}>{it.nombre_producto}</td>
+                    <td style={{ textAlign: "center", padding: "10px 6px", fontSize: 15, fontWeight: 900 }}>{it.cantidad}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            {/* NOTAS */}
+            {order.notas && (
+              <div style={{ marginTop: 16, border: `2px dashed ${GRAY3}`, borderRadius: 8, padding: 12 }}>
+                <div style={{ fontSize: 11, color: GRAY3, fontWeight: 700, letterSpacing: 1, marginBottom: 4 }}>NOTAS DEL PEDIDO</div>
+                <div style={{ fontSize: 13 }}>{order.notas}</div>
+              </div>
+            )}
+
+            {/* Pie */}
+            <div style={{ marginTop: 16, paddingTop: 12, borderTop: `1px solid ${GRAY2}`, display: "flex", justifyContent: "space-between", fontSize: 11, color: GRAY3 }}>
+              <span>Empacado por: _______________</span>
+              <span>Despachado: _______________</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Botones */}
+        <div style={{ display: "flex", gap: 10, padding: "14px 18px", borderTop: `1px solid ${GRAY2}`, flexWrap: "wrap" }}>
+          <button onClick={downloadPDF} disabled={busy} className="oft-btn-press" style={{ ...S.btnRed, flex: 1, justifyContent: "center", minWidth: 140, opacity: busy ? 0.7 : 1 }}>
+            <Download size={16} /> {busy ? "Generando..." : "Descargar PDF"}
+          </button>
+          <button onClick={printLabel} className="oft-btn-press" style={{ ...S.btnOutline, flex: 1, justifyContent: "center", minWidth: 120, display: "inline-flex", alignItems: "center", gap: 6 }}>
+            <FileText size={16} /> Imprimir
+          </button>
+          <button onClick={onClose} className="oft-btn-press" style={{ ...S.btnBlack, justifyContent: "center" }}>Cerrar</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
 //  AGREGAR CHIPS UNO POR UNO (tallas / colores)
 // ═══════════════════════════════════════════════════════════════
 function ChipAdder({ valor, onChange, placeholder, color }) {
@@ -2195,6 +2348,7 @@ function AdminView() {
   const [bulkDeleteLoading, setBulkDeleteLoading] = useState(false);
   const emptyBulkEdit = { nombre: "", precio_pieza: "", precio_media_docena: "", precio_docena: "", badge: "", descripcion: "", activo: "", destacado: "", tiene_tallas: "", tallas: "", tiene_colores: "", colores: "" };
   const [bulkEdit, setBulkEdit] = useState(emptyBulkEdit);
+  const [shippingLabel, setShippingLabel] = useState(null); // pedido para la guía de envío
 
   // Carga pedidos y usuarios al entrar
   useEffect(() => {
@@ -2804,9 +2958,14 @@ function AdminView() {
                           </select>
                         </td>
                         <td style={S.td}>
-                          <button onClick={() => notifyWhatsApp(o, o.estado)} title="Enviar notificación por WhatsApp" style={{ ...S.btnWA, padding: "6px 10px", fontSize: 12 }}>
-                            <MessageCircle size={14} /> Avisar
-                          </button>
+                          <div style={{ display: "flex", gap: 6 }}>
+                            <button onClick={() => notifyWhatsApp(o, o.estado)} title="Enviar notificación por WhatsApp" style={{ ...S.btnWA, padding: "6px 10px", fontSize: 12 }}>
+                              <MessageCircle size={14} /> Avisar
+                            </button>
+                            <button onClick={() => setShippingLabel(o)} title="Generar guía de envío" style={{ background: "none", border: `1.5px solid ${BLACK}`, color: BLACK, borderRadius: 6, padding: "6px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                              <Truck size={14} /> Guía
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -2846,15 +3005,22 @@ function AdminView() {
                       {ORDER_STATUS.map((s,i) => <option key={i} value={i}>{s}</option>)}
                     </select>
 
-                    {/* Avisar */}
-                    <button onClick={() => notifyWhatsApp(o, o.estado)} style={{ ...S.btnWA, width: "100%", justifyContent: "center", padding: 12 }}>
-                      <MessageCircle size={16} /> Avisar al cliente por WhatsApp
-                    </button>
+                    {/* Avisar + Guía */}
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button onClick={() => notifyWhatsApp(o, o.estado)} style={{ ...S.btnWA, flex: 1, justifyContent: "center", padding: 12 }}>
+                        <MessageCircle size={16} /> Avisar
+                      </button>
+                      <button onClick={() => setShippingLabel(o)} style={{ background: BLACK, color: WHITE, border: "none", borderRadius: 10, padding: "12px 16px", fontSize: 14, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}>
+                        <Truck size={16} /> Guía
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
               </>
             )}
+            {/* MODAL GUÍA DE ENVÍO */}
+            {shippingLabel && <ShippingLabelModal order={shippingLabel} onClose={() => setShippingLabel(null)} />}
           </>
         )}
 
