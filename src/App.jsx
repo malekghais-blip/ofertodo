@@ -2522,6 +2522,19 @@ function AdminView() {
     } catch(e) { alert("Error al actualizar estado"); }
   };
 
+  // ── CONVERTIR COTIZACIÓN EN PEDIDO ─────────────────────────────
+  const convertirAPedido = async (cot) => {
+    const ok = confirm(`¿Convertir la cotización ${cot.codigo} en un pedido real?\n\nSe registrará como venta y aparecerá en Pedidos.`);
+    if (!ok) return;
+    try {
+      // Nuevo código de pedido (mantiene el número de factura)
+      const nuevoCodigo = "OFT-" + (cot.num_factura || Date.now().toString().slice(-6));
+      await sb.patch("pedidos", cot.id, { tipo: "pedido", codigo: nuevoCodigo, estado: 0 });
+      setOrders(prev => prev.map(o => o.id === cot.id ? { ...o, tipo: "pedido", codigo: nuevoCodigo, estado: 0 } : o));
+      showToast(`¡Cotización convertida en pedido ${nuevoCodigo}!`);
+    } catch(e) { alert("Error al convertir: " + (e.message || e)); }
+  };
+
   // ── SUBIDA DE IMAGEN DE PRODUCTO ───────────────────────────────
   const handleImageUpload = async (e) => {
     const file = e.target.files[0];
@@ -2977,17 +2990,22 @@ function AdminView() {
                     const firstItem = (o.items || [])[0];
                     const prod = firstItem ? products.find(p => p.id === firstItem.producto_id) : null;
                     return (
-                      <div key={o.id} style={{ display: "flex", alignItems: "center", gap: 14, padding: "12px 0", borderBottom: `1px solid ${GRAY2}` }}>
-                        {prod?.imagen_url
-                          ? <img src={prod.imagen_url} style={{ width: 44, height: 44, borderRadius: 8, objectFit: "cover" }} />
-                          : <div style={{ width: 44, height: 44, borderRadius: 8, background: GRAY, display: "flex", alignItems: "center", justifyContent: "center" }}><FileText size={20} color={GRAY3} /></div>
-                        }
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontWeight: 700, fontSize: 14 }}>{o.codigo} · {o.nombre_cliente}</div>
-                          <div style={{ fontSize: 12, color: GRAY3 }}>{(o.items || []).length} producto(s) · {new Date(o.created_at).toLocaleDateString()}</div>
+                      <div key={o.id} style={{ padding: "12px 0", borderBottom: `1px solid ${GRAY2}` }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                          {prod?.imagen_url
+                            ? <img src={prod.imagen_url} style={{ width: 44, height: 44, borderRadius: 8, objectFit: "cover" }} />
+                            : <div style={{ width: 44, height: 44, borderRadius: 8, background: GRAY, display: "flex", alignItems: "center", justifyContent: "center" }}><FileText size={20} color={GRAY3} /></div>
+                          }
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontWeight: 700, fontSize: 14 }}>{o.codigo} · {o.nombre_cliente}</div>
+                            <div style={{ fontSize: 12, color: GRAY3 }}>{(o.items || []).length} producto(s) · {new Date(o.created_at).toLocaleDateString()}</div>
+                          </div>
+                          <div style={{ fontWeight: 800, color: "#856404" }}>{money(o.total)}</div>
+                          <span style={{ background: "#FFF3CD", color: "#856404", padding: "3px 10px", borderRadius: 12, fontSize: 11, fontWeight: 700 }}>Cotización</span>
                         </div>
-                        <div style={{ fontWeight: 800, color: "#856404" }}>{money(o.total)}</div>
-                        <span style={{ background: "#FFF3CD", color: "#856404", padding: "3px 10px", borderRadius: 12, fontSize: 11, fontWeight: 700 }}>Cotización</span>
+                        <button onClick={() => convertirAPedido(o)} className="oft-btn-press" style={{ marginTop: 10, width: "100%", justifyContent: "center", background: "#155724", color: WHITE, border: "none", borderRadius: 8, padding: "9px", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
+                          <CheckCircle2 size={15} /> Convertir en pedido
+                        </button>
                       </div>
                     );
                   })}
