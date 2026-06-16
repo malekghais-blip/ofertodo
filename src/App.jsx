@@ -464,7 +464,7 @@ function QtySelector({ product, pres, setPres, count, setCount, size = "normal" 
           return (
             <button key={p.key}
               onClick={() => { setPres(p.key); setCount(1); triggerBump(); }}
-              className="oft-pres-chip oft-btn-press"
+              className={"oft-pres-chip oft-btn-press" + (big ? " oft-pres-big" : "")}
               style={{
                 padding: big ? "12px 4px" : "10px 2px", borderRadius: 10,
                 border: `2px solid ${active ? RED : GRAY2}`,
@@ -474,7 +474,7 @@ function QtySelector({ product, pres, setPres, count, setCount, size = "normal" 
                 minWidth: 0, width: "100%", boxSizing: "border-box",
               }}
             >
-              <div className="oft-pres-label" style={{ fontSize: big ? 12 : 11, fontWeight: 800, color: active ? RED : BLACK, textAlign: "center", width: "100%", lineHeight: 1.2, whiteSpace: "nowrap", overflow: "hidden" }}>{p.label}</div>
+              <div className="oft-pres-label" style={{ fontWeight: 800, color: active ? RED : BLACK, textAlign: "center", width: "100%", lineHeight: 1.2, whiteSpace: "nowrap", overflow: "hidden" }}>{p.label}</div>
               <div className="oft-pres-price" style={{ fontWeight: 900, color: active ? RED : BLACK, textAlign: "center", width: "100%", lineHeight: 1.2, whiteSpace: "nowrap", overflow: "hidden" }}>${p.precio.toFixed(2)}</div>
             </button>
           );
@@ -3708,8 +3708,10 @@ export default function App() {
         /* Mostrar/ocultar según dispositivo */
         .oft-only-mobile { display: none; }
         /* Bloques de presentación: tamaño base (escritorio) */
-        .oft-pres-label { font-size: 12px; }
-        .oft-pres-price { font-size: 15px; }
+        .oft-pres-label { font-size: 11px; }
+        .oft-pres-price { font-size: 13px; }
+        .oft-pres-big .oft-pres-label { font-size: 13px; }
+        .oft-pres-big .oft-pres-price { font-size: 16px; }
         .oft-only-desktop { display: block; }
         @media (max-width: 768px) {
           .oft-only-mobile { display: flex; }
@@ -3801,16 +3803,18 @@ export default function App() {
           .oft-price-big { font-size: 14px !important; }
           .oft-qty-row { flex-wrap: wrap !important; gap: 6px !important; }
           /* Bloques de presentación: mismo tamaño de número y misma altura */
-          .oft-pres-chip { padding: 10px 2px !important; }
-          .oft-pres-label { font-size: clamp(9px, 2.8vw, 12px) !important; }
-          .oft-pres-price { font-size: clamp(10px, 3.4vw, 15px) !important; }
-          .oft-pres-grid { gap: 5px !important; }
-        }
-        @media (max-width: 360px) {
-          /* En pantallas muy chicas, baja un poco pero TODOS por igual */
-          .oft-pres-price { font-size: clamp(9px, 3.2vw, 13px) !important; }
-          .oft-pres-label { font-size: clamp(8px, 2.6vw, 11px) !important; }
           .oft-pres-chip { padding: 9px 1px !important; }
+          .oft-pres-label { font-size: 10px !important; }
+          .oft-pres-price { font-size: 11px !important; letter-spacing: -0.3px !important; }
+          .oft-pres-grid { gap: 4px !important; }
+          /* En el modal (vista detalle) hay más espacio: números más grandes */
+          .oft-pres-big .oft-pres-label { font-size: 12px !important; }
+          .oft-pres-big .oft-pres-price { font-size: 15px !important; letter-spacing: 0 !important; }
+        }
+        @media (max-width: 380px) {
+          /* En pantallas muy chicas, baja un poco pero TODOS por igual */
+          .oft-pres-price { font-size: 10px !important; }
+          .oft-pres-label { font-size: 9px !important; }
         }
         @media (max-width: 420px) {
           .oft-cat-grid { grid-template-columns: repeat(2, 1fr) !important; }
