@@ -1251,10 +1251,33 @@ function CheckoutView() {
 //  DASHBOARD CLIENTE
 // ═══════════════════════════════════════════════════════════════
 function DashboardView() {
-  const { user, products } = useApp();
+  const { user, setUser, products, showToast } = useApp();
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState(null);
+  // Edición de datos de la cuenta
+  const [editandoPerfil, setEditandoPerfil] = useState(false);
+  const [perfilForm, setPerfilForm] = useState({ nombre: "", telefono: "" });
+  const [guardandoPerfil, setGuardandoPerfil] = useState(false);
+
+  const abrirEdicion = () => {
+    setPerfilForm({ nombre: user?.nombre || "", telefono: user?.telefono || "" });
+    setEditandoPerfil(true);
+  };
+  const guardarPerfil = async () => {
+    if (!perfilForm.nombre.trim()) { showToast("Escribe tu nombre"); return; }
+    if (!perfilForm.telefono.trim()) { showToast("Escribe tu celular"); return; }
+    if (!user?.id) { showToast("No se pudo identificar tu cuenta"); return; }
+    setGuardandoPerfil(true);
+    try {
+      const upd = await sb.patch("usuarios", user.id, { nombre: perfilForm.nombre.trim(), telefono: perfilForm.telefono.trim() });
+      const nuevo = Array.isArray(upd) && upd[0] ? upd[0] : { ...user, ...perfilForm };
+      setUser({ ...user, ...nuevo });
+      showToast("Datos actualizados");
+      setEditandoPerfil(false);
+    } catch(e) { showToast("Error al guardar. Intenta de nuevo."); }
+    setGuardandoPerfil(false);
+  };
 
   const loadOrders = async () => {
     if (!user?.id) { setLoading(false); return; }
@@ -1327,6 +1350,49 @@ function DashboardView() {
             <div style={{ fontSize: 13, color: GRAY3 }}>{label}</div>
           </div>
         ))}
+      </div>
+
+      {/* MIS DATOS */}
+      <div style={{ background: WHITE, borderRadius: 14, padding: 20, border: `1px solid ${GRAY2}`, marginBottom: 32 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: editandoPerfil ? 16 : 4 }}>
+          <div style={{ fontWeight: 800, fontSize: 16, display: "flex", alignItems: "center", gap: 8 }}><User size={18} color={RED} /> Mis datos</div>
+          {!editandoPerfil && (
+            <button onClick={abrirEdicion} className="oft-btn-press" style={{ background: "none", border: `1.5px solid ${BLACK}`, color: BLACK, borderRadius: 8, padding: "6px 12px", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 5 }}>
+              <PencilIcon size={14} /> Editar
+            </button>
+          )}
+        </div>
+
+        {!editandoPerfil ? (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 14, marginTop: 12 }}>
+            <div>
+              <div style={{ fontSize: 11, color: GRAY3, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>Nombre completo</div>
+              <div style={{ fontSize: 15, fontWeight: 700, marginTop: 2 }}>{user?.nombre || "—"}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: 11, color: GRAY3, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>WhatsApp / Celular</div>
+              <div style={{ fontSize: 15, fontWeight: 700, marginTop: 2 }}>{user?.telefono || "—"}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: 11, color: GRAY3, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>Correo electrónico</div>
+              <div style={{ fontSize: 15, fontWeight: 700, marginTop: 2, wordBreak: "break-all" }}>{user?.email || "—"}</div>
+              <div style={{ fontSize: 11, color: GRAY3, marginTop: 2 }}>El correo no se puede cambiar</div>
+            </div>
+          </div>
+        ) : (
+          <div>
+            <label style={S.label}>Nombre completo</label>
+            <input style={S.input} value={perfilForm.nombre} onChange={e => setPerfilForm({ ...perfilForm, nombre: e.target.value })} placeholder="Tu nombre completo" />
+            <label style={S.label}>WhatsApp / Celular</label>
+            <input style={S.input} value={perfilForm.telefono} onChange={e => setPerfilForm({ ...perfilForm, telefono: e.target.value })} placeholder="+507 0000-0000" />
+            <div style={{ display: "flex", gap: 10, marginTop: 6 }}>
+              <button onClick={guardarPerfil} disabled={guardandoPerfil} className="oft-btn-press" style={{ ...S.btnRed, justifyContent: "center", opacity: guardandoPerfil ? 0.7 : 1 }}>
+                {guardandoPerfil ? "Guardando..." : "Guardar cambios"}
+              </button>
+              <button onClick={() => setEditandoPerfil(false)} className="oft-btn-press" style={S.btnOutline}>Cancelar</button>
+            </div>
+          </div>
+        )}
       </div>
 
       {orders.length === 0 ? (
