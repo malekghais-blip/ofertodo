@@ -61,9 +61,20 @@ const sb = {
     return r.json();
   },
   // Inicia sesión con Google (OAuth). Redirige a Google y vuelve a la app.
-  signInWithGoogle() {
+  async signInWithGoogle() {
+    // PKCE: generamos un verificador y su reto (challenge) para un login seguro
+    const rand = (len) => {
+      const arr = new Uint8Array(len); crypto.getRandomValues(arr);
+      return btoa(String.fromCharCode(...arr)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    };
+    const verifier = rand(64);
+    localStorage.setItem("oft_pkce_verifier", verifier);
+    // challenge = base64url( SHA-256(verifier) )
+    const data = new TextEncoder().encode(verifier);
+    const digest = await crypto.subtle.digest("SHA-256", data);
+    const challenge = btoa(String.fromCharCode(...new Uint8Array(digest))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
     const redirectTo = encodeURIComponent(window.location.origin);
-    window.location.href = `${SUPABASE_URL}/auth/v1/authorize?provider=google&redirect_to=${redirectTo}`;
+    window.location.href = `${SUPABASE_URL}/auth/v1/authorize?provider=google&redirect_to=${redirectTo}&code_challenge=${challenge}&code_challenge_method=s256`;
   },
   // Storage
   uploadUrl(bucket, path) { return `${SUPABASE_URL}/storage/v1/object/${bucket}/${path}`; },
@@ -3747,23 +3758,36 @@ export default function App() {
       const query = window.location.search || "";
       let token = null;
 
+      // ¿Hubo un error devuelto por Google/Supabase?
+      if (hash.includes("error") || query.includes("error=")) {
+        const params = new URLSearchParams((hash || query).replace(/^[#?]/, ""));
+        const desc = params.get("error_description") || params.get("error") || "Error desconocido";
+        alert("Google devolvió un error: " + decodeURIComponent(desc));
+        window.history.replaceState(null, "", window.location.origin + window.location.pathname);
+        return;
+      }
+
       // Formato 1 (implicit): #access_token=...
       if (hash.includes("access_token")) {
         token = new URLSearchParams(hash.substring(1)).get("access_token");
       }
-      // Formato 2 (PKCE): ?code=...  → hay que intercambiarlo por un token
+      // Formato 2 (PKCE): ?code=...
       else if (query.includes("code=")) {
         const code = new URLSearchParams(query).get("code");
+        const verifier = localStorage.getItem("oft_pkce_verifier");
         if (code) {
           try {
+            const body = { auth_code: code };
+            if (verifier) body.code_verifier = verifier;
             const r = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=pkce`, {
               method: "POST",
               headers: { "apikey": SUPABASE_KEY, "Content-Type": "application/json" },
-              body: JSON.stringify({ auth_code: code }),
+              body: JSON.stringify(body),
             });
             const data = await r.json();
             token = data.access_token || null;
-          } catch(e) { console.warn("Error intercambiando code:", e.message); }
+            if (!token) alert("No se pudo completar el inicio con Google (código). Detalle: " + (data.error_description || data.msg || JSON.stringify(data)).toString().slice(0, 200));
+          } catch(e) { alert("Error de conexión al validar Google: " + e.message); }
         }
       }
 
@@ -3771,22 +3795,21 @@ export default function App() {
         try {
           const r = await fetch(`${SUPABASE_URL}/auth/v1/user`, { headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${token}` } });
           const gUser = await r.json();
+          window.history.replaceState(null, "", window.location.origin + window.location.pathname);
           if (gUser && gUser.email) {
             const nombre = gUser.user_metadata?.full_name || gUser.user_metadata?.name || gUser.email.split("@")[0];
-            // ¿Ya existe en nuestra tabla de usuarios?
-            let perfil = await sb.get("usuarios", `?email=eq.${encodeURIComponent(gUser.email)}&limit=1`);
-            // Limpia el token de la URL antes de continuar
-            window.history.replaceState(null, "", window.location.origin + window.location.pathname);
+            let perfil = [];
+            try { perfil = await sb.get("usuarios", `?email=eq.${encodeURIComponent(gUser.email)}&limit=1`); } catch(e) {}
             if (perfil && perfil.length > 0) {
-              // Usuario existente → inicia sesión directo
               setUser({ ...gUser, ...perfil[0], token });
               showToast(`¡Bienvenido de vuelta, ${perfil[0].nombre?.split(" ")[0] || ""}!`);
             } else {
-              // Usuario NUEVO → debe completar sus datos (teléfono, etc.)
               setCompleteProfile({ email: gUser.email, nombre, token, gUser });
             }
+          } else {
+            alert("Google no devolvió un correo válido. Intenta de nuevo.");
           }
-        } catch(e) { console.warn("Error procesando login de Google:", e.message); }
+        } catch(e) { alert("Error obteniendo tu perfil de Google: " + e.message); }
       }
     };
     procesarRetornoGoogle();
