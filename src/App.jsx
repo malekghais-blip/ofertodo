@@ -537,51 +537,76 @@ const COLOR_HEX = {
 };
 const colorToHex = (name) => COLOR_HEX[(name || "").toLowerCase().trim()] || "#CCCCCC";
 
-function VariantPicker({ product, talla, setTalla, color, setColor }) {
+function VariantPicker({ product, tallaQty, setTallaQty, colorQty, setColorQty }) {
   const tallas = (product.tallas || "").split(",").map(s => s.trim()).filter(Boolean);
   const colores = (product.colores || "").split(",").map(s => s.trim()).filter(Boolean);
   const showTallas = product.tiene_tallas && tallas.length > 0;
   const showColores = product.tiene_colores && colores.length > 0;
   if (!showTallas && !showColores) return null;
 
+  const cambiar = (mapa, setMapa, clave, delta) => {
+    const actual = mapa[clave] || 0;
+    const nuevo = Math.max(0, actual + delta);
+    const copia = { ...mapa };
+    if (nuevo === 0) delete copia[clave]; else copia[clave] = nuevo;
+    setMapa(copia);
+  };
+
+  const Stepper = ({ mapa, setMapa, clave }) => {
+    const qty = mapa[clave] || 0;
+    return (
+      <div style={{ display: "flex", alignItems: "center", gap: 4, border: `1.5px solid ${qty > 0 ? RED : GRAY2}`, borderRadius: 8, padding: "2px 4px", background: qty > 0 ? "#FFF5F5" : WHITE }}>
+        <button onClick={() => cambiar(mapa, setMapa, clave, -1)} className="oft-btn-press" style={{ border: "none", background: "none", fontSize: 16, lineHeight: 1, cursor: qty > 0 ? "pointer" : "not-allowed", color: qty > 0 ? BLACK : GRAY3, width: 20, height: 22 }}>−</button>
+        <span style={{ minWidth: 16, textAlign: "center", fontWeight: 800, fontSize: 13, color: qty > 0 ? RED : GRAY3 }}>{qty}</span>
+        <button onClick={() => cambiar(mapa, setMapa, clave, 1)} className="oft-btn-press" style={{ border: "none", background: "none", fontSize: 16, lineHeight: 1, cursor: "pointer", color: RED, width: 20, height: 22 }}>+</button>
+      </div>
+    );
+  };
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       {showTallas && (
         <div>
-          <div style={{ fontSize: 11, fontWeight: 700, color: GRAY3, marginBottom: 5 }}>Talla</div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
-            {tallas.map(t => {
-              const active = talla === t;
-              return (
-                <button key={t} onClick={() => setTalla(active ? "" : t)} className="oft-btn-press"
-                  style={{ minWidth: 34, padding: "5px 9px", borderRadius: 8, border: `2px solid ${active ? RED : GRAY2}`, background: active ? RED : WHITE, color: active ? WHITE : BLACK, fontWeight: 800, fontSize: 12, cursor: "pointer", transition: "all 0.15s" }}>
-                  {t}
-                </button>
-              );
-            })}
+          <div style={{ fontSize: 11, fontWeight: 700, color: GRAY3, marginBottom: 6 }}>¿Cuántas piezas de cada talla?</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {tallas.map(t => (
+              <div key={t} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                <span style={{ fontWeight: 800, fontSize: 13, minWidth: 40 }}>Talla {t}</span>
+                <Stepper mapa={tallaQty} setMapa={setTallaQty} clave={t} />
+              </div>
+            ))}
           </div>
         </div>
       )}
       {showColores && (
         <div>
-          <div style={{ fontSize: 11, fontWeight: 700, color: GRAY3, marginBottom: 5 }}>Color</div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-            {colores.map(c => {
-              const active = color === c;
-              return (
-                <button key={c} onClick={() => setColor(active ? "" : c)} className="oft-btn-press oft-color-chip"
-                  title={c}
-                  style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 10px 4px 5px", borderRadius: 20, border: `2px solid ${active ? RED : GRAY2}`, background: active ? "#FFF5F5" : WHITE, cursor: "pointer", transition: "all 0.15s", transform: active ? "scale(1.05)" : "scale(1)" }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: GRAY3, marginBottom: 6 }}>¿Cuántas piezas de cada color?</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {colores.map(c => (
+              <div key={c} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontWeight: 700, fontSize: 13 }}>
                   <span style={{ width: 16, height: 16, borderRadius: "50%", background: colorToHex(c), border: `1px solid ${GRAY2}`, flexShrink: 0 }} />
-                  <span style={{ fontSize: 12, fontWeight: 700, color: active ? RED : BLACK }}>{c}</span>
-                </button>
-              );
-            })}
+                  {c}
+                </span>
+                <Stepper mapa={colorQty} setMapa={setColorQty} clave={c} />
+              </div>
+            ))}
           </div>
         </div>
       )}
     </div>
   );
+}
+
+// Construye el resumen de variantes para el mensaje de WhatsApp
+function resumenVariantes(tallaQty, colorQty) {
+  const partes = [];
+  const tallas = Object.entries(tallaQty || {}).filter(([, q]) => q > 0);
+  const colores = Object.entries(colorQty || {}).filter(([, q]) => q > 0);
+  if (tallas.length) partes.push("Tallas:\n" + tallas.map(([t, q]) => `  • ${t}: ${q} pza(s)`).join("\n"));
+  if (colores.length) partes.push("Colores:\n" + colores.map(([c, q]) => `  • ${c}: ${q} pza(s)`).join("\n"));
+  const totalPiezas = [...tallas, ...colores].reduce((s, [, q]) => s + q, 0);
+  return { texto: partes.join("\n"), totalTallas: tallas.reduce((s, [, q]) => s + q, 0), totalColores: colores.reduce((s, [, q]) => s + q, 0) };
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -592,8 +617,8 @@ function ProductCard({ product }) {
   const [pres, setPres] = useState("docena");
   const [count, setCount] = useState(1);
   const [added, setAdded] = useState(false);
-  const [talla, setTalla] = useState("");
-  const [color, setColor] = useState("");
+  const [tallaQty, setTallaQty] = useState({});
+  const [colorQty, setColorQty] = useState({});
   const total = presTotal(product, pres, count);
   const imgUrl = product.imagen_url || null;
   const btnRef = useRef(null);
@@ -602,16 +627,15 @@ function ProductCard({ product }) {
   const tieneVariantes = (product.tiene_tallas && (product.tallas || "").trim()) || (product.tiene_colores && (product.colores || "").trim());
   const modoConsulta = pres === "pieza" && tieneVariantes;
 
-  // Consultar por WhatsApp con producto + talla + color
+  // Consultar por WhatsApp con el detalle de cantidades por talla/color
   const consultarWhatsApp = () => {
-    if (product.tiene_tallas && (product.tallas || "").trim() && !talla) { showToast("Elige una talla primero"); return; }
-    if (product.tiene_colores && (product.colores || "").trim() && !color) { showToast("Elige un color primero"); return; }
+    const { texto, totalTallas, totalColores } = resumenVariantes(tallaQty, colorQty);
+    if (product.tiene_tallas && (product.tallas || "").trim() && totalTallas === 0) { showToast("Indica cuántas piezas por talla"); return; }
+    if (product.tiene_colores && (product.colores || "").trim() && totalColores === 0) { showToast("Indica cuántas piezas por color"); return; }
     let msg = `Hola Ofertodo, quiero consultar disponibilidad de:\n\n*${product.nombre}*`;
     if (product.referencia) msg += `\nRef: ${product.referencia}`;
-    if (talla) msg += `\nTalla: ${talla}`;
-    if (color) msg += `\nColor: ${color}`;
     msg += `\nPresentación: Por pieza`;
-    // Incluye el enlace de la foto: WhatsApp mostrará la vista previa de la imagen
+    if (texto) msg += `\n\n${texto}`;
     if (product.imagen_url) {
       msg += `\n\n📷 Foto del producto:\n${product.imagen_url}`;
     } else {
@@ -674,7 +698,7 @@ function ProductCard({ product }) {
           {/* DESGLOSE o VARIANTES (si eligió Por pieza y tiene tallas/colores) */}
           {modoConsulta ? (
             <div style={{ background: GRAY, borderRadius: 8, padding: "10px 12px", marginTop: 8 }}>
-              <VariantPicker product={product} talla={talla} setTalla={setTalla} color={color} setColor={setColor} />
+              <VariantPicker product={product} tallaQty={tallaQty} setTallaQty={setTallaQty} colorQty={colorQty} setColorQty={setColorQty} />
             </div>
           ) : (
             <div style={{ fontSize: 11, color: GRAY3, background: GRAY, borderRadius: 6, padding: "6px 10px", display: "flex", alignItems: "center", gap: 5, marginTop: 8, minHeight: 30 }}>
@@ -761,10 +785,10 @@ function ProductModal() {
   const [pres, setPres] = useState("docena");
   const [count, setCount] = useState(1);
   const [added, setAdded] = useState(false);
-  const [talla, setTalla] = useState("");
-  const [color, setColor] = useState("");
+  const [tallaQty, setTallaQty] = useState({});
+  const [colorQty, setColorQty] = useState({});
 
-  useEffect(() => { setPres("docena"); setCount(1); setAdded(false); setTalla(""); setColor(""); }, [product]);
+  useEffect(() => { setPres("docena"); setCount(1); setAdded(false); setTallaQty({}); setColorQty({}); }, [product]);
 
   if (!product) return null;
   const total = presTotal(product, pres, count);
@@ -774,14 +798,13 @@ function ProductModal() {
   const modoConsulta = pres === "pieza" && tieneVariantes;
 
   const consultarWhatsApp = () => {
-    if (product.tiene_tallas && (product.tallas || "").trim() && !talla) { showToast("Elige una talla primero"); return; }
-    if (product.tiene_colores && (product.colores || "").trim() && !color) { showToast("Elige un color primero"); return; }
+    const { texto, totalTallas, totalColores } = resumenVariantes(tallaQty, colorQty);
+    if (product.tiene_tallas && (product.tallas || "").trim() && totalTallas === 0) { showToast("Indica cuántas piezas por talla"); return; }
+    if (product.tiene_colores && (product.colores || "").trim() && totalColores === 0) { showToast("Indica cuántas piezas por color"); return; }
     let msg = `Hola Ofertodo, quiero consultar disponibilidad de:\n\n*${product.nombre}*`;
     if (product.referencia) msg += `\nRef: ${product.referencia}`;
-    if (talla) msg += `\nTalla: ${talla}`;
-    if (color) msg += `\nColor: ${color}`;
     msg += `\nPresentación: Por pieza`;
-    // Incluye el enlace de la foto: WhatsApp mostrará la vista previa de la imagen
+    if (texto) msg += `\n\n${texto}`;
     if (product.imagen_url) {
       msg += `\n\n📷 Foto del producto:\n${product.imagen_url}`;
     } else {
@@ -829,7 +852,7 @@ function ProductModal() {
             <QtySelector product={product} pres={pres} setPres={setPres} count={count} setCount={setCount} size="big" />
             {modoConsulta ? (
               <div style={{ background: WHITE, borderRadius: 8, padding: "12px", marginTop: 12 }}>
-                <VariantPicker product={product} talla={talla} setTalla={setTalla} color={color} setColor={setColor} />
+                <VariantPicker product={product} tallaQty={tallaQty} setTallaQty={setTallaQty} colorQty={colorQty} setColorQty={setColorQty} />
               </div>
             ) : (
               <div style={{ fontSize: 12, color: GRAY3, background: WHITE, borderRadius: 8, padding: "8px 12px", display: "flex", alignItems: "center", gap: 6, marginTop: 12 }}>
