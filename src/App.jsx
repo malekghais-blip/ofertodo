@@ -1267,15 +1267,35 @@ function DashboardView() {
   const guardarPerfil = async () => {
     if (!perfilForm.nombre.trim()) { showToast("Escribe tu nombre"); return; }
     if (!perfilForm.telefono.trim()) { showToast("Escribe tu celular"); return; }
-    if (!user?.id) { showToast("No se pudo identificar tu cuenta"); return; }
+    if (!user?.email) { showToast("No se pudo identificar tu cuenta"); return; }
     setGuardandoPerfil(true);
     try {
-      const upd = await sb.patch("usuarios", user.id, { nombre: perfilForm.nombre.trim(), telefono: perfilForm.telefono.trim() });
-      const nuevo = Array.isArray(upd) && upd[0] ? upd[0] : { ...user, ...perfilForm };
-      setUser({ ...user, ...nuevo });
+      // Buscar la fila REAL en la tabla usuarios por email (id confiable)
+      let fila = null;
+      try {
+        const filas = await sb.get("usuarios", `?email=eq.${encodeURIComponent(user.email)}&limit=1`);
+        fila = filas && filas[0] ? filas[0] : null;
+      } catch(e) {}
+
+      const cambios = { nombre: perfilForm.nombre.trim(), telefono: perfilForm.telefono.trim() };
+
+      if (fila && fila.id) {
+        // Actualizar la fila existente
+        const upd = await sb.patch("usuarios", fila.id, cambios);
+        if (!Array.isArray(upd) || !upd[0]) {
+          // La base de datos no devolvió la fila actualizada → posible bloqueo de permisos (RLS)
+          throw new Error("la base de datos no guardó el cambio (revisa permisos)");
+        }
+        setUser({ ...user, ...upd[0] });
+      } else {
+        // No existe la fila (puede pasar con cuentas viejas): crearla
+        const creado = await sb.post("usuarios", { ...cambios, email: user.email, es_admin: false });
+        const nuevo = Array.isArray(creado) && creado[0] ? creado[0] : { ...user, ...cambios };
+        setUser({ ...user, ...nuevo });
+      }
       showToast("Datos actualizados");
       setEditandoPerfil(false);
-    } catch(e) { showToast("Error al guardar. Intenta de nuevo."); }
+    } catch(e) { showToast("Error al guardar: " + (e.message || "intenta de nuevo")); }
     setGuardandoPerfil(false);
   };
 
