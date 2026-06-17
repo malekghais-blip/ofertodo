@@ -6,7 +6,8 @@ import {
   Shirt, Footprints, Watch, Sparkles, ClipboardList, Image as ImageIcon,
   FileSpreadsheet, FolderPlus, Zap, Lock, Users, BarChart3, DollarSign,
   TrendingUp, Wallet, ShoppingBag, Pencil as PencilIcon, Save,
-  Building2, MapPin as MapPinIcon, Send, FilePlus, Download, FileText, Receipt
+  Building2, MapPin as MapPinIcon, Send, FilePlus, Download, FileText, Receipt,
+  Calendar as CalendarIcon
 } from "lucide-react";
 
 // ════════════════════════════════════════════════════════════════
@@ -2567,6 +2568,13 @@ function AdminView() {
   const emptyBulkEdit = { nombre: "", precio_pieza: "", precio_media_docena: "", precio_docena: "", badge: "", descripcion: "", activo: "", destacado: "", tiene_tallas: "", tallas: "", tiene_colores: "", colores: "" };
   const [bulkEdit, setBulkEdit] = useState(emptyBulkEdit);
   const [shippingLabel, setShippingLabel] = useState(null); // pedido para la guía de envío
+  const [pedidoAEliminar, setPedidoAEliminar] = useState(null); // pedido pendiente de eliminar (confirmación)
+  const [eliminando, setEliminando] = useState(false);
+  // Filtro de ventas por periodo en el dashboard
+  const [rangoVentas, setRangoVentas] = useState("todo"); // dia | semana | mes | anio | todo | personalizado
+  const [fechaPersonalizada, setFechaPersonalizada] = useState(null); // Date seleccionada en el calendario
+  const [mostrarCalendario, setMostrarCalendario] = useState(false);
+  const [mesCalendario, setMesCalendario] = useState(new Date()); // mes que muestra el calendario
 
   // Carga pedidos y usuarios al entrar
   useEffect(() => {
@@ -2593,7 +2601,25 @@ function AdminView() {
   // ── SEPARAR PEDIDOS REALES DE COTIZACIONES ─────────────────────
   // Las cotizaciones NO cuentan como ventas ni en métricas
   const cotizaciones = orders.filter(o => o.tipo === "cotizacion");
-  const pedidosReales = orders.filter(o => o.tipo !== "cotizacion");
+  const pedidosRealesTodos = orders.filter(o => o.tipo !== "cotizacion");
+
+  // ── FILTRO POR PERIODO ─────────────────────────────────────────
+  const enRango = (fecha) => {
+    const f = new Date(fecha);
+    const hoy = new Date();
+    if (rangoVentas === "todo") return true;
+    if (rangoVentas === "dia") return f.toDateString() === hoy.toDateString();
+    if (rangoVentas === "semana") {
+      const hace7 = new Date(); hace7.setDate(hoy.getDate() - 7);
+      return f >= hace7;
+    }
+    if (rangoVentas === "mes") return f.getMonth() === hoy.getMonth() && f.getFullYear() === hoy.getFullYear();
+    if (rangoVentas === "anio") return f.getFullYear() === hoy.getFullYear();
+    if (rangoVentas === "personalizado" && fechaPersonalizada) return f.toDateString() === new Date(fechaPersonalizada).toDateString();
+    return true;
+  };
+  const pedidosReales = pedidosRealesTodos.filter(o => enRango(o.created_at));
+  const etiquetaRango = { dia: "Hoy", semana: "Última semana", mes: "Este mes", anio: "Este año", todo: "Todo el tiempo", personalizado: fechaPersonalizada ? new Date(fechaPersonalizada).toLocaleDateString("es-PA", { day: "2-digit", month: "long", year: "numeric" }) : "Fecha específica" }[rangoVentas];
 
   // ── MÉTRICAS (solo pedidos reales) ─────────────────────────────
   const ingresoTotal = pedidosReales.reduce((s, o) => s + Number(o.total || 0), 0);
@@ -2678,6 +2704,24 @@ function AdminView() {
       setOrders(prev => prev.map(o => o.id === cot.id ? { ...o, tipo: "pedido", codigo: nuevoCodigo, estado: 0 } : o));
       showToast(`¡Cotización convertida en pedido ${nuevoCodigo}!`);
     } catch(e) { alert("Error al convertir: " + (e.message || e)); }
+  };
+
+  // ── ELIMINAR PEDIDO (con confirmación) ─────────────────────────
+  const eliminarPedido = async () => {
+    if (!pedidoAEliminar?.id) return;
+    setEliminando(true);
+    try {
+      // Borra primero los items del pedido, luego el pedido
+      try {
+        const its = await sb.get("pedido_items", `?pedido_id=eq.${pedidoAEliminar.id}`);
+        for (const it of (its || [])) { if (it.id) await sb.delete("pedido_items", it.id); }
+      } catch(e) {}
+      await sb.delete("pedidos", pedidoAEliminar.id);
+      setOrders(prev => prev.filter(o => o.id !== pedidoAEliminar.id));
+      showToast(`Pedido ${pedidoAEliminar.codigo} eliminado`);
+      setPedidoAEliminar(null);
+    } catch(e) { alert("Error al eliminar: " + (e.message || e)); }
+    setEliminando(false);
   };
 
   // ── SUBIDA DE IMAGEN DE PRODUCTO ───────────────────────────────
@@ -3031,6 +3075,63 @@ function AdminView() {
             <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 24, display: "flex", alignItems: "center", gap: 10 }}><BarChart3 size={24} color={RED} /> Dashboard</div>
             {loadingData ? <Spinner /> : (
               <>
+                {/* FILTRO POR PERIODO */}
+                <div style={{ marginBottom: 22 }}>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                    {[["dia","Día"],["semana","Semana"],["mes","Mes"],["anio","Año"],["todo","Todo"]].map(([k,l]) => (
+                      <button key={k} onClick={() => { setRangoVentas(k); setMostrarCalendario(false); }} className="oft-btn-press"
+                        style={{ padding: "8px 16px", borderRadius: 20, border: `2px solid ${rangoVentas === k ? RED : GRAY2}`, background: rangoVentas === k ? RED : WHITE, color: rangoVentas === k ? WHITE : BLACK, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+                        {l}
+                      </button>
+                    ))}
+                    <button onClick={() => setMostrarCalendario(v => !v)} className="oft-btn-press"
+                      style={{ padding: "8px 14px", borderRadius: 20, border: `2px solid ${rangoVentas === "personalizado" ? RED : GRAY2}`, background: rangoVentas === "personalizado" ? RED : WHITE, color: rangoVentas === "personalizado" ? WHITE : BLACK, fontWeight: 700, fontSize: 13, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}>
+                      <CalendarIcon size={15} /> {rangoVentas === "personalizado" && fechaPersonalizada ? new Date(fechaPersonalizada).toLocaleDateString("es-PA", { day: "2-digit", month: "short" }) : "Fecha"}
+                    </button>
+                    <span style={{ fontSize: 13, color: GRAY3, marginLeft: 4 }}>· Mostrando: <strong style={{ color: BLACK }}>{etiquetaRango}</strong></span>
+                  </div>
+
+                  {/* CALENDARIO ANIMADO */}
+                  {mostrarCalendario && (
+                    <div className="oft-cal-pop" style={{ marginTop: 12, background: WHITE, border: `2px solid ${GRAY2}`, borderRadius: 16, padding: 16, maxWidth: 320, boxShadow: "0 12px 32px rgba(0,0,0,0.12)" }}>
+                      {/* Cabecera del mes */}
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                        <button onClick={() => setMesCalendario(new Date(mesCalendario.getFullYear(), mesCalendario.getMonth() - 1, 1))} className="oft-btn-press" style={{ background: GRAY, border: "none", borderRadius: 8, width: 32, height: 32, cursor: "pointer", fontSize: 16, fontWeight: 800, color: RED }}>‹</button>
+                        <div style={{ fontWeight: 800, fontSize: 15, textTransform: "capitalize" }}>{mesCalendario.toLocaleDateString("es-PA", { month: "long", year: "numeric" })}</div>
+                        <button onClick={() => setMesCalendario(new Date(mesCalendario.getFullYear(), mesCalendario.getMonth() + 1, 1))} className="oft-btn-press" style={{ background: GRAY, border: "none", borderRadius: 8, width: 32, height: 32, cursor: "pointer", fontSize: 16, fontWeight: 800, color: RED }}>›</button>
+                      </div>
+                      {/* Días de la semana */}
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 2, marginBottom: 4 }}>
+                        {["D","L","M","M","J","V","S"].map((d, i) => <div key={i} style={{ textAlign: "center", fontSize: 11, fontWeight: 700, color: GRAY3, padding: "4px 0" }}>{d}</div>)}
+                      </div>
+                      {/* Días del mes */}
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 2 }}>
+                        {(() => {
+                          const y = mesCalendario.getFullYear(), m = mesCalendario.getMonth();
+                          const primerDia = new Date(y, m, 1).getDay();
+                          const diasMes = new Date(y, m + 1, 0).getDate();
+                          const celdas = [];
+                          for (let i = 0; i < primerDia; i++) celdas.push(<div key={"e"+i} />);
+                          for (let d = 1; d <= diasMes; d++) {
+                            const fecha = new Date(y, m, d);
+                            const esHoy = fecha.toDateString() === new Date().toDateString();
+                            const sel = fechaPersonalizada && new Date(fechaPersonalizada).toDateString() === fecha.toDateString();
+                            const tienePedidos = pedidosRealesTodos.some(o => new Date(o.created_at).toDateString() === fecha.toDateString());
+                            celdas.push(
+                              <button key={d} onClick={() => { setFechaPersonalizada(fecha); setRangoVentas("personalizado"); setMostrarCalendario(false); }} className="oft-cal-day oft-btn-press"
+                                style={{ aspectRatio: "1", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: sel || esHoy ? 800 : 600, background: sel ? RED : esHoy ? "#FFE5E6" : "transparent", color: sel ? WHITE : BLACK, position: "relative" }}>
+                                {d}
+                                {tienePedidos && !sel && <span style={{ position: "absolute", bottom: 3, left: "50%", transform: "translateX(-50%)", width: 4, height: 4, borderRadius: "50%", background: RED }} />}
+                              </button>
+                            );
+                          }
+                          return celdas;
+                        })()}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 {/* TARJETAS DE MÉTRICAS */}
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 16, marginBottom: 28 }}>
                   {[
@@ -3201,6 +3302,9 @@ function AdminView() {
                             <button onClick={() => setShippingLabel(o)} title="Generar guía de envío" style={{ background: "none", border: `1.5px solid ${BLACK}`, color: BLACK, borderRadius: 6, padding: "6px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}>
                               <Truck size={14} /> Guía
                             </button>
+                            <button onClick={() => setPedidoAEliminar(o)} title="Eliminar pedido" style={{ background: "none", border: `1.5px solid ${RED}`, color: RED, borderRadius: 6, padding: "6px 9px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                              <Trash2 size={14} />
+                            </button>
                           </div>
                         </td>
                       </tr>
@@ -3241,13 +3345,16 @@ function AdminView() {
                       {ORDER_STATUS.map((s,i) => <option key={i} value={i}>{s}</option>)}
                     </select>
 
-                    {/* Avisar + Guía */}
+                    {/* Avisar + Guía + Eliminar */}
                     <div style={{ display: "flex", gap: 8 }}>
                       <button onClick={() => notifyWhatsApp(o, o.estado)} style={{ ...S.btnWA, flex: 1, justifyContent: "center", padding: 12 }}>
                         <MessageCircle size={16} /> Avisar
                       </button>
                       <button onClick={() => setShippingLabel(o)} style={{ background: BLACK, color: WHITE, border: "none", borderRadius: 10, padding: "12px 16px", fontSize: 14, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}>
                         <Truck size={16} /> Guía
+                      </button>
+                      <button onClick={() => setPedidoAEliminar(o)} title="Eliminar" style={{ background: "none", color: RED, border: `1.5px solid ${RED}`, borderRadius: 10, padding: "12px 14px", cursor: "pointer", display: "inline-flex", alignItems: "center" }}>
+                        <Trash2 size={16} />
                       </button>
                     </div>
                   </div>
@@ -3257,6 +3364,27 @@ function AdminView() {
             )}
             {/* MODAL GUÍA DE ENVÍO */}
             {shippingLabel && <ShippingLabelModal order={shippingLabel} onClose={() => setShippingLabel(null)} />}
+            {/* MODAL CONFIRMAR ELIMINACIÓN */}
+            {pedidoAEliminar && (
+              <div className="oft-overlay" style={S.overlay} onClick={() => !eliminando && setPedidoAEliminar(null)}>
+                <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 16, maxWidth: 400, width: "90%", padding: 24, textAlign: "center" }} onClick={e => e.stopPropagation()}>
+                  <div style={{ width: 56, height: 56, borderRadius: "50%", background: "#FBE0E0", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
+                    <Trash2 size={26} color={RED} />
+                  </div>
+                  <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 8 }}>¿Eliminar este pedido?</div>
+                  <p style={{ fontSize: 14, color: GRAY3, marginBottom: 6 }}>
+                    Vas a eliminar <strong style={{ color: BLACK }}>{pedidoAEliminar.codigo}</strong> de {pedidoAEliminar.nombre_cliente}.
+                  </p>
+                  <p style={{ fontSize: 13, color: RED, marginBottom: 22, fontWeight: 700 }}>Esta acción no se puede deshacer y se restará del dashboard.</p>
+                  <div style={{ display: "flex", gap: 10 }}>
+                    <button onClick={() => setPedidoAEliminar(null)} disabled={eliminando} className="oft-btn-press" style={{ ...S.btnOutline, flex: 1, justifyContent: "center" }}>Cancelar</button>
+                    <button onClick={eliminarPedido} disabled={eliminando} className="oft-btn-press" style={{ ...S.btnRed, flex: 1, justifyContent: "center", opacity: eliminando ? 0.7 : 1 }}>
+                      {eliminando ? "Eliminando..." : "Sí, eliminar"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </>
         )}
 
@@ -4038,6 +4166,11 @@ export default function App() {
         .oft-chip-pop { animation: chipPop 0.22s cubic-bezier(0.34,1.5,0.5,1) both; }
         @keyframes totalPop { 0% { transform: scale(1); } 35% { transform: scale(1.18); } 100% { transform: scale(1); } }
         .oft-total-pop { display: inline-block; animation: totalPop 0.3s ease; }
+        @keyframes calPop { 0% { opacity: 0; transform: translateY(-8px) scale(0.97); } 100% { opacity: 1; transform: translateY(0) scale(1); } }
+        .oft-cal-pop { animation: calPop 0.22s cubic-bezier(0.34,1.4,0.5,1) both; }
+        .oft-cal-day { transition: background 0.15s ease, transform 0.1s ease; }
+        .oft-cal-day:hover { background: #FFE5E6 !important; }
+        .oft-cal-day:active { transform: scale(0.88); }
         .oft-color-chip { transition: transform 0.15s ease, border-color 0.15s ease; }
         .oft-color-chip:active { transform: scale(0.92) !important; }
         .oft-qty-btn { transition: transform 0.12s ease, box-shadow 0.15s ease; }
