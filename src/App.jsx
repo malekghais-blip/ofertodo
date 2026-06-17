@@ -2323,9 +2323,16 @@ function ShippingLabelModal({ order, onClose }) {
   const printLabel = () => {
     const w = window.open("", "_blank");
     if (!w) { alert("Permite ventanas emergentes para imprimir."); return; }
-    w.document.write(`<html><head><title>Guía ${order.codigo}</title></head><body style="margin:0">${ref.current.outerHTML}</body></html>`);
+    w.document.write(`<html><head><title>Guía ${order.codigo}</title>
+      <style>
+        * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
+        @page { margin: 12mm; }
+        html, body { margin: 0; padding: 0; background: #ffffff; font-family: 'Inter','Segoe UI',sans-serif; }
+        @media print { body { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; } }
+      </style>
+    </head><body>${ref.current.outerHTML}</body></html>`);
     w.document.close();
-    setTimeout(() => { w.print(); }, 300);
+    setTimeout(() => { w.print(); }, 400);
   };
 
   return (
