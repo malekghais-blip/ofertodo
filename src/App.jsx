@@ -1745,7 +1745,7 @@ function CrearPedidoView() {
         direccion: cliente.direccion, notas, total, estado: 0,
         empresa_envio_id: empresaId, empresa_envio_nombre: empresaSel?.nombre || "",
         sucursal_id: sucursalId, sucursal_nombre: sucursalSel?.nombre || "",
-        tipo, num_factura: numFactura, creado_por_admin: true,
+        tipo, num_factura: numFactura, creado_por_admin: true, costo_envio: costoEnvio,
       });
       const pedidoId = pedido[0].id;
       // Productos normales
@@ -2333,6 +2333,7 @@ function ShippingLabelModal({ order, onClose }) {
   const [busy, setBusy] = useState(false);
   const fecha = order.created_at ? new Date(order.created_at) : new Date();
   const totalPiezas = (order.items || []).reduce((s, it) => s + Number(it.cantidad || 0), 0);
+  const money = (n) => "$" + Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
   const renderCanvas = async () => {
     const source = ref.current;
@@ -2405,11 +2406,31 @@ function ShippingLabelModal({ order, onClose }) {
             </div>
 
             {/* EMPRESA DE ENVÍO — lo más importante, bien grande */}
-            <div style={{ background: RED, color: WHITE, borderRadius: 10, padding: "14px 18px", marginBottom: 16 }}>
+            <div style={{ background: RED, color: WHITE, borderRadius: 10, padding: "14px 18px", marginBottom: 12 }}>
               <div style={{ fontSize: 11, fontWeight: 700, opacity: 0.85, letterSpacing: 1 }}>ENVIAR POR</div>
               <div style={{ fontSize: 24, fontWeight: 900, lineHeight: 1.1, marginTop: 2 }}>{order.empresa_envio_nombre || "— Sin empresa asignada —"}</div>
               {order.sucursal_nombre && <div style={{ fontSize: 15, fontWeight: 700, marginTop: 4 }}>📍 Sucursal: {order.sucursal_nombre}</div>}
             </div>
+
+            {/* ESTADO DEL PAGO DEL ENVÍO */}
+            {(() => {
+              const envioPagado = Number(order.costo_envio || 0) > 0;
+              return (
+                <div style={{ display: "flex", alignItems: "center", gap: 10, borderRadius: 10, padding: "12px 16px", marginBottom: 16, border: `2px solid ${envioPagado ? "#155724" : "#856404"}`, background: envioPagado ? "#E6F4EA" : "#FFF8E1" }}>
+                  <div style={{ width: 38, height: 38, borderRadius: "50%", background: envioPagado ? "#155724" : "#856404", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                    {envioPagado ? <CheckCircle2 size={22} color="#fff" /> : <DollarSign size={22} color="#fff" />}
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 16, fontWeight: 900, color: envioPagado ? "#155724" : "#856404", lineHeight: 1.1 }}>
+                      {envioPagado ? "ENVÍO PAGADO" : "COBRO DE ENVÍO PENDIENTE"}
+                    </div>
+                    <div style={{ fontSize: 12, color: envioPagado ? "#155724" : "#856404", marginTop: 2 }}>
+                      {envioPagado ? `El cliente ya pagó el envío (${money(order.costo_envio)})` : "Cobrar el envío al entregar / en destino"}
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* DATOS DEL DESTINATARIO */}
             <div style={{ border: `2px solid ${BLACK}`, borderRadius: 10, padding: 16, marginBottom: 16 }}>
