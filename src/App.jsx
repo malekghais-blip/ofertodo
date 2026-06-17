@@ -1613,7 +1613,7 @@ function CrearPedidoView() {
   const [tipo, setTipo] = useState("pedido"); // 'pedido' | 'cotizacion'
   const [descuento, setDescuento] = useState(""); // porcentaje
   const [envio, setEnvio] = useState(""); // costo de envío
-  const [redondear, setRedondear] = useState(true); // redondear total hacia arriba
+  const [redondeo, setRedondeo] = useState("arriba"); // "arriba" | "abajo" | "no"
   const [saving, setSaving] = useState(false);
   const [invoice, setInvoice] = useState(null); // datos de la factura generada
   // ── FLEXPACK: armar docena/media mezclando referencias ──
@@ -1633,6 +1633,15 @@ function CrearPedidoView() {
   const flexPiezas = (pack) => pack.lineas.reduce((s, l) => s + l.piezas, 0);
   const flexTotal = (pack) => pack.lineas.reduce((s, l) => s + flexUnitPrice(l.product, pack.modo) * l.piezas, 0);
   const flexCompleto = (pack) => flexPiezas(pack) === FLEX_META[pack.modo];
+
+  // Precio unitario de un item: usa el precio editado (override) si existe, si no el del producto
+  const itemUnitPrice = (it) => {
+    if (it.precioOverride !== undefined && it.precioOverride !== "" && !isNaN(Number(it.precioOverride))) {
+      return Number(it.precioOverride);
+    }
+    return presUnitPrice(it.product, it.pres);
+  };
+  const itemTotal = (it) => itemUnitPrice(it) * it.count;
 
   const filtered = search.trim()
     ? products.filter(p => (p.nombre + " " + (p.referencia || "")).toLowerCase().includes(search.toLowerCase())).slice(0, 6)
@@ -1669,17 +1678,19 @@ function CrearPedidoView() {
     }));
   };
 
-  const subtotalNormal = items.reduce((s, it) => s + presTotal(it.product, it.pres, it.count), 0);
+  const subtotalNormal = items.reduce((s, it) => s + itemTotal(it), 0);
   const subtotalFlex = flexPacks.reduce((s, pack) => s + flexTotal(pack), 0);
   const subtotal = subtotalNormal + subtotalFlex;
   const descPct = Math.min(Math.max(Number(descuento) || 0, 0), 100);
   const descMonto = subtotal * (descPct / 100);
   const costoEnvio = Number(envio) || 0;
   const totalReal = subtotal - descMonto + costoEnvio;
-  // Redondeo HACIA ARRIBA al 0.50 o entero más cercano (ej: 120.10→120.50, 120.60→121.00)
-  const totalRedondeado = Math.ceil(totalReal * 2) / 2;
+  // Redondeo al 0.50 o entero más cercano. Arriba: 120.10→120.50, 120.60→121.00. Abajo: 120.40→120.00, 120.90→120.50
+  const totalArriba = Math.ceil(totalReal * 2) / 2;
+  const totalAbajo = Math.floor(totalReal * 2) / 2;
+  const totalRedondeado = redondeo === "arriba" ? totalArriba : redondeo === "abajo" ? totalAbajo : totalReal;
   const hayRedondeo = totalRedondeado !== totalReal;
-  const total = redondear ? totalRedondeado : totalReal;
+  const total = totalRedondeado;
 
   const addItem = (product) => {
     setItems(prev => {
@@ -1690,7 +1701,12 @@ function CrearPedidoView() {
     setSearch("");
   };
   const updateItem = (idx, field, val) => {
-    setItems(prev => prev.map((it, i) => i === idx ? { ...it, [field]: val } : it));
+    setItems(prev => prev.map((it, i) => {
+      if (i !== idx) return it;
+      // Si cambia la presentación, se borra el precio editado (era para la otra presentación)
+      if (field === "pres") return { ...it, pres: val, precioOverride: undefined };
+      return { ...it, [field]: val };
+    }));
   };
   const removeItem = (idx) => setItems(prev => prev.filter((_, i) => i !== idx));
 
@@ -1735,8 +1751,8 @@ function CrearPedidoView() {
       for (const it of items) {
         await sb.post("pedido_items", {
           pedido_id: pedidoId, producto_id: it.product.id, nombre_producto: it.product.nombre,
-          cantidad: presToPiezas(it.pres, it.count), precio_unitario: presUnitPrice(it.product, it.pres),
-          subtotal: presTotal(it.product, it.pres, it.count),
+          cantidad: presToPiezas(it.pres, it.count), precio_unitario: itemUnitPrice(it),
+          subtotal: itemTotal(it),
         });
       }
       // Líneas de FLEXPACK
@@ -1756,8 +1772,8 @@ function CrearPedidoView() {
           nombre: it.product.nombre, referencia: it.product.referencia,
           presentacion: `${it.count} ${presLabelPlural(it.pres, it.count)}`,
           piezas: presToPiezas(it.pres, it.count),
-          precioUnit: presUnitPrice(it.product, it.pres),
-          subtotal: presTotal(it.product, it.pres, it.count),
+          precioUnit: itemUnitPrice(it),
+          subtotal: itemTotal(it),
         })),
         ...flexPacks.flatMap(pack => pack.lineas.map(l => ({
           nombre: l.product.nombre, referencia: l.product.referencia,
@@ -1782,7 +1798,7 @@ function CrearPedidoView() {
 
   const resetForm = () => {
     setItems([]); setFlexPacks([]); setFlexActiveId(null); setCliente({ nombre: "", telefono: "", direccion: "" }); setNotas("");
-    setEmpresaId(null); setSucursalId(null); setTipo("pedido"); setDescuento(""); setEnvio(""); setInvoice(null);
+    setEmpresaId(null); setSucursalId(null); setTipo("pedido"); setDescuento(""); setEnvio(""); setRedondeo("arriba"); setInvoice(null);
   };
 
   return (
@@ -1833,15 +1849,18 @@ function CrearPedidoView() {
             </div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {items.map((it, idx) => (
+              {items.map((it, idx) => {
+                const precioActual = itemUnitPrice(it);
+                const precioEditado = it.precioOverride !== undefined && it.precioOverride !== "" && Number(it.precioOverride) !== presUnitPrice(it.product, it.pres);
+                return (
                 <div key={idx} style={{ border: `1px solid ${GRAY2}`, borderRadius: 10, padding: 10 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
                     {it.product.imagen_url ? <img src={it.product.imagen_url} style={{ width: 40, height: 40, borderRadius: 6, objectFit: "cover" }} /> : <div style={{ width: 40, height: 40, borderRadius: 6, background: GRAY, display: "flex", alignItems: "center", justifyContent: "center" }}><Package size={18} color={GRAY3} /></div>}
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontWeight: 700, fontSize: 13 }}>{it.product.nombre}</div>
-                      <div style={{ fontSize: 11, color: GRAY3 }}>{presBreakdown(it.pres, it.count, it.product)}</div>
+                      <div style={{ fontSize: 11, color: GRAY3 }}>{it.count} × {money(precioActual)} {presLabelPlural(it.pres, it.count)}</div>
                     </div>
-                    <div style={{ fontWeight: 800, color: RED }}>{money(presTotal(it.product, it.pres, it.count))}</div>
+                    <div style={{ fontWeight: 800, color: RED }}>{money(itemTotal(it))}</div>
                     <button onClick={() => removeItem(idx)} style={{ background: "none", border: "none", color: RED, cursor: "pointer", display: "flex" }}><Trash2 size={16} /></button>
                   </div>
                   <div style={{ display: "flex", gap: 8 }}>
@@ -1856,8 +1875,24 @@ function CrearPedidoView() {
                       <button onClick={() => updateItem(idx, "count", it.count + 1)} style={{ border: "none", background: "none", fontSize: 18, cursor: "pointer", color: RED, width: 24 }}>+</button>
                     </div>
                   </div>
+                  {/* EDITAR PRECIO UNITARIO */}
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+                    <span style={{ fontSize: 12, color: GRAY3, fontWeight: 700, whiteSpace: "nowrap" }}>Precio c/u $</span>
+                    <input
+                      type="number" min="0" step="0.01"
+                      value={it.precioOverride !== undefined ? it.precioOverride : presUnitPrice(it.product, it.pres)}
+                      onChange={e => updateItem(idx, "precioOverride", e.target.value)}
+                      style={{ flex: 1, border: `1.5px solid ${precioEditado ? RED : GRAY2}`, borderRadius: 8, padding: "6px 8px", fontSize: 13, fontFamily: "inherit", color: precioEditado ? RED : BLACK, fontWeight: precioEditado ? 800 : 400 }}
+                    />
+                    {precioEditado && (
+                      <button onClick={() => updateItem(idx, "precioOverride", undefined)} title="Volver al precio original" style={{ background: "none", border: `1.5px solid ${GRAY2}`, borderRadius: 8, padding: "5px 8px", fontSize: 11, fontWeight: 700, cursor: "pointer", color: GRAY3, whiteSpace: "nowrap" }}>
+                        ↺ Original
+                      </button>
+                    )}
+                  </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
 
@@ -1989,23 +2024,29 @@ function CrearPedidoView() {
                     <span>Envío</span><span>+{money(costoEnvio)}</span>
                   </div>
                 )}
-                {/* TOGGLE DE REDONDEO */}
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 6, padding: "8px 0", borderTop: `1px dashed ${GRAY2}` }}>
-                  <span style={{ fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
+                {/* REDONDEO: arriba / abajo / no */}
+                <div style={{ marginTop: 6, padding: "10px 0", borderTop: `1px dashed ${GRAY2}` }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
                     Redondear total
-                    {hayRedondeo && redondear && <span style={{ fontSize: 10, color: "#155724", background: "#D4EDDA", padding: "1px 6px", borderRadius: 8 }}>+{money(totalRedondeado - totalReal)}</span>}
-                  </span>
-                  <label style={{ position: "relative", display: "inline-block", width: 44, height: 24, cursor: "pointer", flexShrink: 0 }}>
-                    <input type="checkbox" checked={redondear} onChange={e => setRedondear(e.target.checked)} style={{ opacity: 0, width: 0, height: 0 }} />
-                    <span style={{ position: "absolute", inset: 0, background: redondear ? RED : GRAY3, borderRadius: 24, transition: "0.2s" }}>
-                      <span style={{ position: "absolute", height: 18, width: 18, left: redondear ? 23 : 3, top: 3, background: WHITE, borderRadius: "50%", transition: "0.2s" }} />
-                    </span>
-                  </label>
+                    {hayRedondeo && redondeo !== "no" && (
+                      <span style={{ fontSize: 10, color: redondeo === "arriba" ? "#155724" : "#7B1E1E", background: redondeo === "arriba" ? "#D4EDDA" : "#FBE0E0", padding: "1px 6px", borderRadius: 8 }}>
+                        {redondeo === "arriba" ? "+" : "−"}{money(Math.abs(totalRedondeado - totalReal))}
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    {[["arriba","Arriba ↑"],["abajo","Abajo ↓"],["no","Exacto"]].map(([k,l]) => (
+                      <button key={k} onClick={() => setRedondeo(k)} className="oft-btn-press"
+                        style={{ flex: 1, padding: "8px 4px", borderRadius: 8, border: `2px solid ${redondeo === k ? RED : GRAY2}`, background: redondeo === k ? RED : WHITE, color: redondeo === k ? WHITE : BLACK, fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+                        {l}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-                {redondear && hayRedondeo && (
+                {redondeo !== "no" && hayRedondeo && (
                   <div style={{ display: "flex", justifyContent: "space-between", color: GRAY3, fontSize: 12 }}>
                     <span style={{ textDecoration: "line-through" }}>Total real {money(totalReal)}</span>
-                    <span style={{ color: "#155724" }}>redondeado ↑</span>
+                    <span style={{ color: redondeo === "arriba" ? "#155724" : "#7B1E1E" }}>redondeado {redondeo === "arriba" ? "↑" : "↓"}</span>
                   </div>
                 )}
                 <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 900, fontSize: 18, marginTop: 4 }}>
