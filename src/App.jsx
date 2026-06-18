@@ -2937,13 +2937,15 @@ function AdminView() {
 
   // ── CONVERTIR COTIZACIÓN EN PEDIDO ─────────────────────────────
   const convertirAPedido = async (cot) => {
-    const ok = confirm(`¿Convertir la cotización ${cot.codigo} en un pedido real?\n\nSe registrará como venta y aparecerá en Pedidos.`);
+    const ok = confirm(`¿Convertir la cotización ${cot.codigo} en un pedido real?\n\nSe registrará como venta de HOY y aparecerá en Pedidos.`);
     if (!ok) return;
     try {
       // Nuevo código de pedido (mantiene el número de factura)
       const nuevoCodigo = "OFT-" + (cot.num_factura || Date.now().toString().slice(-6));
-      await sb.patch("pedidos", cot.id, { tipo: "pedido", codigo: nuevoCodigo, estado: 0 });
-      setOrders(prev => prev.map(o => o.id === cot.id ? { ...o, tipo: "pedido", codigo: nuevoCodigo, estado: 0 } : o));
+      // La fecha pasa a HOY: la venta cuenta el día en que se confirma, no el día de la cotización
+      const ahora = new Date().toISOString();
+      await sb.patch("pedidos", cot.id, { tipo: "pedido", codigo: nuevoCodigo, estado: 0, created_at: ahora });
+      setOrders(prev => prev.map(o => o.id === cot.id ? { ...o, tipo: "pedido", codigo: nuevoCodigo, estado: 0, created_at: ahora } : o));
       showToast(`¡Cotización convertida en pedido ${nuevoCodigo}!`);
     } catch(e) { alert("Error al convertir: " + (e.message || e)); }
   };
