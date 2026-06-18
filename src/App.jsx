@@ -2605,6 +2605,172 @@ function ChipAdder({ valor, onChange, placeholder, color }) {
 }
 
 // ═══════════════════════════════════════════════════════════════
+//  EDITAR COTIZACIÓN
+// ═══════════════════════════════════════════════════════════════
+function EditCotizacionModal({ cotizacion, empresas, sucursales, onClose, onSaved, showToast }) {
+  const money = (n) => "$" + Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  // Líneas editables (a partir de los items guardados)
+  const [lineas, setLineas] = useState(() => (cotizacion.items || []).map(it => ({
+    id: it.id, producto_id: it.producto_id, nombre: it.nombre_producto,
+    cantidad: Number(it.cantidad) || 1, precio: Number(it.precio_unitario) || 0,
+  })));
+  const [cliente, setCliente] = useState({ nombre: cotizacion.nombre_cliente || "", telefono: cotizacion.telefono || "", direccion: cotizacion.direccion || "" });
+  const [notas, setNotas] = useState(cotizacion.notas || "");
+  const [empresaId, setEmpresaId] = useState(cotizacion.empresa_envio_id || null);
+  const [sucursalId, setSucursalId] = useState(cotizacion.sucursal_id || null);
+  const [envio, setEnvio] = useState(cotizacion.costo_envio ? String(cotizacion.costo_envio) : "");
+  const [redondeo, setRedondeo] = useState("no");
+  const [guardando, setGuardando] = useState(false);
+
+  const empresasActivas = empresas.filter(e => e.activa !== false);
+  const sucursalesEmpresa = sucursales.filter(s => s.empresa_id === empresaId && s.activa !== false);
+  const empresaSel = empresas.find(e => e.id === empresaId);
+  const sucursalSel = sucursales.find(s => s.id === sucursalId);
+
+  const setLinea = (idx, campo, val) => setLineas(prev => prev.map((l, i) => i === idx ? { ...l, [campo]: val } : l));
+  const quitarLinea = (idx) => setLineas(prev => prev.filter((_, i) => i !== idx));
+
+  const subtotal = lineas.reduce((s, l) => s + (Number(l.cantidad) || 0) * (Number(l.precio) || 0), 0);
+  const costoEnvio = Number(envio) || 0;
+  const totalReal = subtotal + costoEnvio;
+  const totalArriba = Math.ceil(totalReal * 2) / 2;
+  const totalAbajo = Math.floor(totalReal * 2) / 2;
+  const total = redondeo === "arriba" ? totalArriba : redondeo === "abajo" ? totalAbajo : totalReal;
+
+  const guardar = async () => {
+    if (!cliente.nombre.trim()) { showToast("Escribe el nombre del cliente"); return; }
+    if (lineas.length === 0) { showToast("La cotización debe tener al menos un producto"); return; }
+    setGuardando(true);
+    try {
+      // 1) Actualiza los datos del pedido
+      await sb.patch("pedidos", cotizacion.id, {
+        nombre_cliente: cliente.nombre, telefono: cliente.telefono, direccion: cliente.direccion,
+        notas, total, costo_envio: costoEnvio,
+        empresa_envio_id: empresaId, empresa_envio_nombre: empresaSel?.nombre || "",
+        sucursal_id: sucursalId, sucursal_nombre: sucursalSel?.nombre || "",
+      });
+      // 2) Borra los items viejos y crea los nuevos
+      try {
+        const viejos = await sb.get("pedido_items", `?pedido_id=eq.${cotizacion.id}`);
+        for (const v of (viejos || [])) { if (v.id) await sb.delete("pedido_items", v.id); }
+      } catch(e) {}
+      const nuevosItems = [];
+      for (const l of lineas) {
+        const sub = (Number(l.cantidad) || 0) * (Number(l.precio) || 0);
+        const creado = await sb.post("pedido_items", {
+          pedido_id: cotizacion.id, producto_id: l.producto_id, nombre_producto: l.nombre,
+          cantidad: Number(l.cantidad) || 0, precio_unitario: Number(l.precio) || 0, subtotal: sub,
+        });
+        if (Array.isArray(creado) && creado[0]) nuevosItems.push(creado[0]);
+      }
+      showToast("Cotización actualizada");
+      onSaved({ ...cotizacion, nombre_cliente: cliente.nombre, telefono: cliente.telefono, direccion: cliente.direccion, notas, total, costo_envio: costoEnvio, empresa_envio_id: empresaId, empresa_envio_nombre: empresaSel?.nombre || "", sucursal_id: sucursalId, sucursal_nombre: sucursalSel?.nombre || "", items: nuevosItems });
+    } catch(e) { showToast("Error al guardar: " + (e.message || "intenta de nuevo")); }
+    setGuardando(false);
+  };
+
+  return (
+    <div className="oft-overlay" style={{ ...S.overlay, alignItems: "flex-start", overflowY: "auto", padding: "20px 0" }} onClick={() => !guardando && onClose()}>
+      <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 16, maxWidth: 560, width: "92%", margin: "0 auto", overflow: "hidden" }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 18px", borderBottom: `1px solid ${GRAY2}`, background: GRAY }}>
+          <div style={{ fontWeight: 800, display: "flex", alignItems: "center", gap: 8 }}><PencilIcon size={17} color={RED} /> Editar cotización {cotizacion.codigo}</div>
+          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}><X size={22} /></button>
+        </div>
+
+        <div style={{ padding: 18, maxHeight: "72vh", overflowY: "auto" }}>
+          {/* PRODUCTOS */}
+          <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 8 }}>Productos</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
+            {lineas.map((l, idx) => (
+              <div key={idx} style={{ border: `1px solid ${GRAY2}`, borderRadius: 10, padding: 10 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                  <div style={{ flex: 1, fontWeight: 700, fontSize: 13 }}>{l.nombre}</div>
+                  <button onClick={() => quitarLinea(idx)} style={{ background: "none", border: "none", color: RED, cursor: "pointer", display: "flex" }}><Trash2 size={15} /></button>
+                </div>
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <div style={{ flex: 1 }}>
+                    <label style={{ fontSize: 11, color: GRAY3, fontWeight: 700 }}>Cantidad</label>
+                    <input type="number" min="0" value={l.cantidad} onChange={e => setLinea(idx, "cantidad", e.target.value)} style={{ ...S.input, marginBottom: 0 }} />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <label style={{ fontSize: 11, color: GRAY3, fontWeight: 700 }}>Precio c/u $</label>
+                    <input type="number" min="0" step="0.01" value={l.precio} onChange={e => setLinea(idx, "precio", e.target.value)} style={{ ...S.input, marginBottom: 0 }} />
+                  </div>
+                  <div style={{ minWidth: 64, textAlign: "right" }}>
+                    <label style={{ fontSize: 11, color: GRAY3, fontWeight: 700, display: "block" }}>Subtotal</label>
+                    <span style={{ fontWeight: 800, color: RED }}>{money((Number(l.cantidad) || 0) * (Number(l.precio) || 0))}</span>
+                  </div>
+                </div>
+              </div>
+            ))}
+            {lineas.length === 0 && <div style={{ textAlign: "center", color: GRAY3, fontSize: 13, padding: "16px 0" }}>Sin productos. Agrega al menos uno o cancela.</div>}
+          </div>
+
+          {/* DATOS DEL CLIENTE */}
+          <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 8 }}>Datos del cliente</div>
+          <label style={S.label}>Nombre</label>
+          <input style={S.input} value={cliente.nombre} onChange={e => setCliente({ ...cliente, nombre: e.target.value })} />
+          <label style={S.label}>Teléfono</label>
+          <input style={S.input} value={cliente.telefono} onChange={e => setCliente({ ...cliente, telefono: e.target.value })} />
+          <label style={S.label}>Dirección</label>
+          <input style={S.input} value={cliente.direccion} onChange={e => setCliente({ ...cliente, direccion: e.target.value })} />
+
+          {/* ENVÍO */}
+          <div style={{ fontWeight: 800, fontSize: 14, margin: "8px 0" }}>Envío</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <div>
+              <label style={S.label}>Empresa</label>
+              <select style={S.input} value={empresaId || ""} onChange={e => { setEmpresaId(e.target.value ? Number(e.target.value) : null); setSucursalId(null); }}>
+                <option value="">— Ninguna —</option>
+                {empresasActivas.map(em => <option key={em.id} value={em.id}>{em.nombre}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={S.label}>Sucursal</label>
+              <select style={S.input} value={sucursalId || ""} onChange={e => setSucursalId(e.target.value ? Number(e.target.value) : null)} disabled={!empresaId}>
+                <option value="">— Ninguna —</option>
+                {sucursalesEmpresa.map(su => <option key={su.id} value={su.id}>{su.nombre}</option>)}
+              </select>
+            </div>
+          </div>
+          <label style={S.label}>Costo de envío ($)</label>
+          <input type="number" min="0" step="0.01" style={S.input} value={envio} onChange={e => setEnvio(e.target.value)} placeholder="0.00" />
+
+          {/* NOTAS */}
+          <label style={S.label}>Notas</label>
+          <textarea style={{ ...S.input, minHeight: 60, resize: "vertical" }} value={notas} onChange={e => setNotas(e.target.value)} />
+
+          {/* REDONDEO */}
+          <label style={S.label}>Redondeo del total</label>
+          <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+            {[["arriba","Arriba ↑"],["abajo","Abajo ↓"],["no","Exacto"]].map(([k,l]) => (
+              <button key={k} onClick={() => setRedondeo(k)} className="oft-btn-press"
+                style={{ flex: 1, padding: "8px 4px", borderRadius: 8, border: `2px solid ${redondeo === k ? RED : GRAY2}`, background: redondeo === k ? RED : WHITE, color: redondeo === k ? WHITE : BLACK, fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+                {l}
+              </button>
+            ))}
+          </div>
+
+          {/* RESUMEN */}
+          <div style={{ borderTop: `1px solid ${GRAY2}`, paddingTop: 10, fontSize: 14 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", color: GRAY3 }}><span>Subtotal</span><span>{money(subtotal)}</span></div>
+            {costoEnvio > 0 && <div style={{ display: "flex", justifyContent: "space-between", color: GRAY3 }}><span>Envío</span><span>+{money(costoEnvio)}</span></div>}
+            <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 900, fontSize: 18, marginTop: 4 }}><span>Total</span><span style={{ color: RED }}>{money(total)}</span></div>
+          </div>
+        </div>
+
+        <div style={{ display: "flex", gap: 10, padding: "14px 18px", borderTop: `1px solid ${GRAY2}` }}>
+          <button onClick={onClose} disabled={guardando} className="oft-btn-press" style={{ ...S.btnOutline, flex: 1, justifyContent: "center" }}>Cancelar</button>
+          <button onClick={guardar} disabled={guardando} className="oft-btn-press" style={{ ...S.btnRed, flex: 1, justifyContent: "center", opacity: guardando ? 0.7 : 1 }}>
+            {guardando ? "Guardando..." : "Guardar cambios"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
 //  ADMIN PANEL
 // ═══════════════════════════════════════════════════════════════
 function AdminView() {
@@ -2644,6 +2810,7 @@ function AdminView() {
   const [bulkEdit, setBulkEdit] = useState(emptyBulkEdit);
   const [shippingLabel, setShippingLabel] = useState(null); // pedido para la guía de envío
   const [pedidoAEliminar, setPedidoAEliminar] = useState(null); // pedido pendiente de eliminar (confirmación)
+  const [cotizacionAEditar, setCotizacionAEditar] = useState(null); // cotización que se está editando
   const [eliminando, setEliminando] = useState(false);
   // Filtro de ventas por periodo en el dashboard
   const [rangoVentas, setRangoVentas] = useState("todo"); // dia | semana | mes | anio | todo | personalizado
@@ -3324,9 +3491,14 @@ function AdminView() {
                           <div style={{ fontWeight: 800, color: "#856404" }}>{money(o.total)}</div>
                           <span style={{ background: "#FFF3CD", color: "#856404", padding: "3px 10px", borderRadius: 12, fontSize: 11, fontWeight: 700 }}>Cotización</span>
                         </div>
-                        <button onClick={() => convertirAPedido(o)} className="oft-btn-press" style={{ marginTop: 10, width: "100%", justifyContent: "center", background: "#155724", color: WHITE, border: "none", borderRadius: 8, padding: "9px", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
-                          <CheckCircle2 size={15} /> Convertir en pedido
-                        </button>
+                        <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                          <button onClick={() => setCotizacionAEditar(o)} className="oft-btn-press" style={{ flex: 1, justifyContent: "center", background: "none", color: BLACK, border: `1.5px solid ${BLACK}`, borderRadius: 8, padding: "9px", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
+                            <PencilIcon size={15} /> Editar
+                          </button>
+                          <button onClick={() => convertirAPedido(o)} className="oft-btn-press" style={{ flex: 1, justifyContent: "center", background: "#155724", color: WHITE, border: "none", borderRadius: 8, padding: "9px", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
+                            <CheckCircle2 size={15} /> A pedido
+                          </button>
+                        </div>
                       </div>
                     );
                   })}
@@ -3461,6 +3633,18 @@ function AdminView() {
               </div>
             )}
           </>
+        )}
+
+        {/* MODAL EDITAR COTIZACIÓN (disponible desde el dashboard) */}
+        {cotizacionAEditar && (
+          <EditCotizacionModal
+            cotizacion={cotizacionAEditar}
+            empresas={empresas}
+            sucursales={sucursales}
+            showToast={showToast}
+            onClose={() => setCotizacionAEditar(null)}
+            onSaved={(actualizada) => { setOrders(prev => prev.map(o => o.id === actualizada.id ? actualizada : o)); setCotizacionAEditar(null); }}
+          />
         )}
 
         {/* ═══════════ PRODUCTOS ═══════════ */}
