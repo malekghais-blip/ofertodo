@@ -2190,7 +2190,7 @@ function InvoiceModal({ invoice, onClose }) {
   };
 
   return (
-    <div className="oft-overlay" style={{ ...S.overlay, alignItems: "flex-start", overflowY: "auto", padding: "20px 0" }} onClick={onClose}>
+    <div className="oft-overlay oft-overlay-doc" style={{ ...S.overlay, alignItems: "flex-start", overflowY: "auto", padding: "20px 0" }} onClick={onClose}>
       <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 16, maxWidth: 620, width: "92%", margin: "0 auto", overflow: "hidden" }} onClick={e => e.stopPropagation()}>
         {/* Barra superior con acciones */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 18px", borderBottom: `1px solid ${GRAY2}`, background: GRAY }}>
@@ -2396,7 +2396,7 @@ function ShippingLabelModal({ order, onClose }) {
   };
 
   return (
-    <div className="oft-overlay" style={{ ...S.overlay, alignItems: "flex-start", overflowY: "auto", padding: "20px 0" }} onClick={onClose}>
+    <div className="oft-overlay oft-overlay-doc" style={{ ...S.overlay, alignItems: "flex-start", overflowY: "auto", padding: "20px 0" }} onClick={onClose}>
       <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 16, maxWidth: 620, width: "92%", margin: "0 auto", overflow: "hidden" }} onClick={e => e.stopPropagation()}>
         {/* Barra superior */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 18px", borderBottom: `1px solid ${GRAY2}`, background: GRAY }}>
@@ -2633,7 +2633,7 @@ function EditCotizacionModal({ cotizacion, empresas, sucursales, onClose, onSave
   };
 
   return (
-    <div className="oft-overlay" style={{ ...S.overlay, alignItems: "flex-start", overflowY: "auto", padding: "20px 0" }} onClick={() => !guardando && onClose()}>
+    <div className="oft-overlay oft-overlay-doc" style={{ ...S.overlay, alignItems: "flex-start", overflowY: "auto", padding: "20px 0" }} onClick={() => !guardando && onClose()}>
       <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 16, maxWidth: 560, width: "92%", margin: "0 auto", overflow: "hidden" }} onClick={e => e.stopPropagation()}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 18px", borderBottom: `1px solid ${GRAY2}`, background: GRAY }}>
           <div style={{ fontWeight: 800, display: "flex", alignItems: "center", gap: 8 }}><PencilIcon size={17} color={RED} /> Editar cotización {cotizacion.codigo}</div>
@@ -4470,6 +4470,9 @@ export default function App() {
           table { font-size: 12px !important; }
           .oft-overlay { align-items: flex-end !important; padding: 0 !important; }
           .oft-modal-sheet { border-radius: 18px 18px 0 0 !important; max-width: 100% !important; max-height: 92vh !important; }
+          /* Modales de documentos (factura, guía, editar cotización): centrados arriba, NO hoja inferior */
+          .oft-overlay-doc { align-items: flex-start !important; padding: 12px !important; overflow-y: auto !important; }
+          .oft-overlay-doc > div { margin: auto !important; width: 96% !important; max-width: 96% !important; }
           /* PRECIOS más legibles en celular */
           .oft-prod-body { padding: 12px !important; }
           .oft-price-table { padding: 10px 10px !important; }
