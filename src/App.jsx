@@ -2362,18 +2362,37 @@ function ShippingLabelModal({ order, onClose }) {
   };
 
   const printLabel = () => {
-    const w = window.open("", "_blank");
-    if (!w) { alert("Permite ventanas emergentes para imprimir."); return; }
-    w.document.write(`<html><head><title>Guía ${order.codigo}</title>
+    const contenido = ref.current.outerHTML;
+    const estilos = `
       <style>
         * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
         @page { margin: 12mm; }
         html, body { margin: 0; padding: 0; background: #ffffff; font-family: 'Inter','Segoe UI',sans-serif; }
-        @media print { body { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; } }
-      </style>
-    </head><body>${ref.current.outerHTML}</body></html>`);
-    w.document.close();
-    setTimeout(() => { w.print(); }, 400);
+      </style>`;
+    // Usa un iframe OCULTO en la misma página: no abre ventana nueva, así no recarga
+    // la app ni cierra la sesión en celular.
+    const iframe = document.createElement("iframe");
+    iframe.style.position = "fixed";
+    iframe.style.right = "0";
+    iframe.style.bottom = "0";
+    iframe.style.width = "0";
+    iframe.style.height = "0";
+    iframe.style.border = "0";
+    document.body.appendChild(iframe);
+    const doc = iframe.contentWindow.document;
+    doc.open();
+    doc.write(`<html><head><title>Guía ${order.codigo}</title>${estilos}</head><body>${contenido}</body></html>`);
+    doc.close();
+    // Esperar a que cargue el contenido (imágenes) antes de imprimir
+    const lanzarImpresion = () => {
+      try {
+        iframe.contentWindow.focus();
+        iframe.contentWindow.print();
+      } catch(e) { /* si falla, no hacemos nada */ }
+      // Quitar el iframe después de imprimir
+      setTimeout(() => { try { document.body.removeChild(iframe); } catch(e) {} }, 1000);
+    };
+    setTimeout(lanzarImpresion, 500);
   };
 
   return (
