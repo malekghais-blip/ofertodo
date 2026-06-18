@@ -2479,7 +2479,7 @@ function ShippingLabelModal({ order, onClose }) {
                       {envioPagado ? "ENVÍO PAGADO" : "COBRO DE ENVÍO PENDIENTE"}
                     </div>
                     <div style={{ fontSize: 12, color: envioPagado ? "#155724" : "#856404", marginTop: 2 }}>
-                      {envioPagado ? `El cliente ya pagó el envío (${money(order.costo_envio)})` : "Cobrar el envío al entregar / en destino"}
+                      {envioPagado ? "El cliente ya pagó el envío" : "Cobrar el envío al entregar / en destino"}
                     </div>
                   </div>
                 </div>
