@@ -906,7 +906,7 @@ function FloatingCart() {
 //  CART MODAL
 // ═══════════════════════════════════════════════════════════════
 function CartModal() {
-  const { cart, setCart, setShowCart, user, setShowLogin, setView } = useApp();
+  const { cart, setCart, setShowCart, user, setShowLogin, setView, setPendingCheckout } = useApp();
   const total = cart.reduce((s, i) => s + cartItemTotal(i), 0);
 
   return (
@@ -936,7 +936,7 @@ function CartModal() {
               <span>Total</span><span style={{ color: RED }}>${total.toFixed(2)}</span>
             </div>
             <button style={{ ...S.btnRed, width: "100%", justifyContent: "center", padding: 14, fontSize: 15 }}
-              onClick={() => { setShowCart(false); user ? setView("checkout") : setShowLogin(true); }}>
+              onClick={() => { setShowCart(false); if (user) { setView("checkout"); } else { setPendingCheckout(true); setShowLogin(true); } }}>
               Finalizar Pedido →
             </button>
             <button style={{ ...S.btnWA, width: "100%", justifyContent: "center", padding: 12, marginTop: 10 }}
@@ -4189,7 +4189,10 @@ function AdminView() {
 // ═══════════════════════════════════════════════════════════════
 export default function App() {
   const [view, setView] = useState("home");
-  const [cart, setCart] = useState([]);
+  // El carrito se guarda en el navegador para que NO se pierda al iniciar sesión o recargar
+  const [cart, setCart] = useState(() => {
+    try { const g = localStorage.getItem("oft_cart"); return g ? JSON.parse(g) : []; } catch(e) { return []; }
+  });
   const [user, setUser] = useState(null);
   const [showLogin, setShowLogin] = useState(false);
   const [showRegister, setShowRegister] = useState(false);
@@ -4197,6 +4200,7 @@ export default function App() {
   const [quickView, setQuickView] = useState(null); // producto a mostrar en detalle
   const [catalogCat, setCatalogCat] = useState(0); // categoría a abrir en el catálogo (0 = todas)
   const [completeProfile, setCompleteProfile] = useState(null); // usuario de Google que debe completar sus datos
+  const [pendingCheckout, setPendingCheckout] = useState(false); // el cliente quería pagar y tuvo que loguearse
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]);
   const [empresas, setEmpresas] = useState([]);
@@ -4205,6 +4209,21 @@ export default function App() {
   const [toastMsg, setToastMsg] = useState("");
 
   const showToast = (msg) => { setToastMsg(msg); setTimeout(() => setToastMsg(""), 3000); };
+
+  // Guarda el carrito en el navegador cada vez que cambia
+  useEffect(() => {
+    try { localStorage.setItem("oft_cart", JSON.stringify(cart)); } catch(e) {}
+  }, [cart]);
+
+  // Cuando el cliente inicia sesión teniendo un checkout pendiente, lo lleva directo a finalizar
+  useEffect(() => {
+    if (user && pendingCheckout) {
+      setPendingCheckout(false);
+      setShowLogin(false);
+      setShowRegister(false);
+      if (cart.length > 0) { setView("checkout"); showToast("¡Sesión iniciada! Continúa tu pedido"); }
+    }
+  }, [user, pendingCheckout]);
 
   const [cartPulse, setCartPulse] = useState(0);
   const addToCart = (product, qty, pres = "pieza", count = qty) => {
@@ -4324,7 +4343,7 @@ export default function App() {
   }, []);
 
   const isAdmin = view === "admin";
-  const ctx = { view, setView, cart, setCart, addToCart, cartPulse, user, setUser, showLogin, setShowLogin, showRegister, setShowRegister, showCart, setShowCart, quickView, setQuickView, catalogCat, setCatalogCat, completeProfile, setCompleteProfile, products, setProducts, categories, setCategories, empresas, setEmpresas, sucursales, setSucursales, loading, showToast };
+  const ctx = { view, setView, cart, setCart, addToCart, cartPulse, user, setUser, showLogin, setShowLogin, showRegister, setShowRegister, showCart, setShowCart, quickView, setQuickView, catalogCat, setCatalogCat, completeProfile, setCompleteProfile, pendingCheckout, setPendingCheckout, products, setProducts, categories, setCategories, empresas, setEmpresas, sucursales, setSucursales, loading, showToast };
 
   return (
     <AppCtx.Provider value={ctx}>
