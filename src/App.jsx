@@ -18,6 +18,7 @@ import {
 const SUPABASE_URL = "https://esezhctdiucwovbvxmou.supabase.co";  // ← Cambia esto
 const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVzZXpoY3RkaXVjd292YnZ4bW91Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODExMDY0NjgsImV4cCI6MjA5NjY4MjQ2OH0.5u--RCUEWH6hBrH0EFnmW1hZhuVjzqMbJax1qQh7zNo";                  // ← Cambia esto
 const WA_NUMBER   = "50767200474";                        // ← Tu número WhatsApp
+const YAPPY_DIRECTORIO = "@ofertodopanama";               // ← Tu usuario en el Directorio de Yappy, para que el cliente te pague
 
 // ─── Supabase client minimalista (sin instalar paquetes) ────────
 const sb = {
@@ -1109,6 +1110,7 @@ function CheckoutView() {
   const [empresaId, setEmpresaId] = useState(null);
   const [sucursalId, setSucursalId] = useState(null);
   const total = cart.reduce((s, i) => s + cartItemTotal(i), 0);
+  const money = (n) => "$" + Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
   const empresasActivas = empresas.filter(e => e.activa !== false);
   const sucursalesEmpresa = sucursales.filter(s => s.empresa_id === empresaId && s.activa !== false);
@@ -1149,6 +1151,34 @@ function CheckoutView() {
         <StatusBadge index={0} />
         {empresaSel && <div style={{ marginTop: 10, fontSize: 13, color: GRAY3, display: "flex", alignItems: "center", gap: 6 }}><Truck size={14} /> {empresaSel.nombre}{sucursalSel ? ` · ${sucursalSel.nombre}` : ""}</div>}
       </div>
+
+      {/* PAGO CON YAPPY */}
+      <div style={{ background: "#0B1F3A", borderRadius: 16, padding: 22, margin: "0 0 16px", color: WHITE, textAlign: "left" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+          <span style={{ fontWeight: 900, fontSize: 17 }}>Pagar con Yappy</span>
+          <span style={{ background: "#00C2DE", color: "#0B1F3A", fontWeight: 900, fontSize: 13, padding: "3px 12px", borderRadius: 20 }}>Total: {money(total)}</span>
+        </div>
+        <p style={{ fontSize: 13, opacity: 0.85, marginBottom: 14, lineHeight: 1.5 }}>
+          Abre tu app de Yappy, ve al Directorio y búscanos como <strong>{YAPPY_DIRECTORIO}</strong>. Paga el total y luego envíanos el comprobante por WhatsApp para confirmar tu pedido.
+        </p>
+        <div style={{ background: "rgba(255,255,255,0.1)", borderRadius: 10, padding: "10px 14px", marginBottom: 14, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div>
+            <div style={{ fontSize: 11, opacity: 0.7 }}>Búscanos en el Directorio Yappy</div>
+            <div style={{ fontWeight: 800, fontSize: 16 }}>{YAPPY_DIRECTORIO}</div>
+          </div>
+          <button onClick={() => { navigator.clipboard?.writeText(YAPPY_DIRECTORIO); showToast("Usuario copiado"); }} style={{ background: "rgba(255,255,255,0.15)", border: "none", color: WHITE, borderRadius: 8, padding: "8px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Copiar</button>
+        </div>
+        <button onClick={() => window.open("https://yappy.com.pa/", "_blank")} className="oft-btn-press" style={{ width: "100%", justifyContent: "center", background: "#00C2DE", color: "#0B1F3A", border: "none", borderRadius: 10, padding: 14, fontSize: 15, fontWeight: 900, cursor: "pointer", marginBottom: 10, display: "flex", alignItems: "center", gap: 8 }}>
+          Abrir Yappy
+        </button>
+        <button onClick={() => {
+          const msg = `Hola Ofertodo, ya pagué mi pedido *${placed}* por ${money(total)} con Yappy. Aquí está mi comprobante:`;
+          window.open(`https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(msg)}`, "_blank");
+        }} className="oft-btn-press" style={{ width: "100%", justifyContent: "center", background: "#25D366", color: WHITE, border: "none", borderRadius: 10, padding: 14, fontSize: 15, fontWeight: 800, cursor: "pointer", display: "flex", alignItems: "center", gap: 8 }}>
+          <MessageCircle size={18} /> Enviar comprobante por WhatsApp
+        </button>
+      </div>
+
       <button style={{ ...S.btnRed, justifyContent: "center", margin: "0 auto" }} onClick={() => setView("dashboard")}>Ver estado de mi pedido</button>
     </div>
   );
