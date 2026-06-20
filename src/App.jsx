@@ -1256,24 +1256,6 @@ function CheckoutView() {
     showToast("¡Pago recibido! Tu pedido está confirmado.");
   };
 
-  // PANTALLA DE PAGO: pedido guardado, esperando que el cliente pague con Yappy
-  if (pedidoPendiente) return (
-    <div className="oft-section" style={{ ...S.section, textAlign: "center", maxWidth: 460 }}>
-      <h2 style={{ fontSize: 22, fontWeight: 900, marginBottom: 4 }}>Paga para confirmar tu pedido</h2>
-      <p style={{ color: GRAY3, fontSize: 14, marginBottom: 18 }}>Tu pedido se confirmará apenas se reciba el pago.</p>
-      <div style={{ background: "#0B1F3A", borderRadius: 16, padding: 24, color: WHITE, marginBottom: 18 }}>
-        <div style={{ fontSize: 13, opacity: 0.8 }}>Total a pagar</div>
-        <div style={{ fontSize: 34, fontWeight: 900, marginBottom: 18 }}>{money(pedidoPendiente.total)}</div>
-        <YappyButton
-          pedido={pedidoPendiente}
-          onExito={onPagoExitoso}
-          onCancelar={() => { setPedidoPendiente(null); showToast("Pago cancelado. Tu pedido quedó pendiente."); setView("dashboard"); }}
-        />
-      </div>
-      <p style={{ fontSize: 12, color: GRAY3 }}>Pago seguro procesado por Yappy.</p>
-    </div>
-  );
-
   if (placed) return (
     <div className="oft-section" style={{ ...S.section, textAlign: "center", maxWidth: 500 }}>
       <div style={{ display: "flex", justifyContent: "center", marginBottom: 12 }}><CheckCircle2 size={64} color="#22c55e" strokeWidth={1.5} /></div>
@@ -1401,15 +1383,36 @@ function CheckoutView() {
         <input style={S.input} placeholder="Opcional..." value={notes} onChange={e => setNotes(e.target.value)} />
       </div>
 
+      {/* PAGO */}
       <div style={{ background: WHITE, borderRadius: 12, padding: 24, marginBottom: 20, border: `1px solid ${GRAY2}` }}>
-        <div style={{ fontWeight: 800, marginBottom: 10, display: "flex", alignItems: "center", gap: 8 }}><CreditCard size={18} /> Pago</div>
-        <div style={{ background: GRAY, borderRadius: 8, padding: 14, fontSize: 14, color: GRAY3 }}>
-          El pago se coordina por WhatsApp (Yappy, Nequi, transferencia o efectivo al recibir)
-        </div>
+        <div style={{ fontWeight: 800, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}><CreditCard size={18} /> Pago</div>
+
+        {!pedidoPendiente ? (
+          <>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: GRAY, borderRadius: 10, padding: "12px 16px", marginBottom: 14 }}>
+              <span style={{ fontWeight: 700 }}>Total a pagar</span>
+              <span style={{ fontWeight: 900, fontSize: 22, color: RED }}>{money(total)}</span>
+            </div>
+            <p style={{ fontSize: 13, color: GRAY3, marginBottom: 14 }}>
+              Paga de forma segura con Yappy. Tu pedido se confirma apenas se reciba el pago.
+            </p>
+            <button style={{ ...S.btnRed, width: "100%", justifyContent: "center", padding: 16, fontSize: 16, opacity: loading ? 0.7 : 1 }} onClick={handlePlace} disabled={loading}>
+              {loading ? "Procesando..." : <>Continuar al pago →</>}
+            </button>
+          </>
+        ) : (
+          <div style={{ background: "#0B1F3A", borderRadius: 14, padding: 20, color: WHITE, textAlign: "center" }}>
+            <div style={{ fontSize: 13, opacity: 0.8 }}>Total a pagar</div>
+            <div style={{ fontSize: 30, fontWeight: 900, marginBottom: 16 }}>{money(pedidoPendiente.total)}</div>
+            <YappyButton
+              pedido={pedidoPendiente}
+              onExito={onPagoExitoso}
+              onCancelar={() => { setPedidoPendiente(null); showToast("Pago cancelado. Puedes intentar de nuevo."); }}
+            />
+            <p style={{ fontSize: 11, opacity: 0.7, marginTop: 12 }}>Pago seguro procesado por Yappy.</p>
+          </div>
+        )}
       </div>
-      <button style={{ ...S.btnRed, width: "100%", justifyContent: "center", padding: 16, fontSize: 16, opacity: loading ? 0.7 : 1 }} onClick={handlePlace} disabled={loading}>
-        {loading ? "Procesando..." : <>Continuar al pago →</>}
-      </button>
     </div>
   );
 }
