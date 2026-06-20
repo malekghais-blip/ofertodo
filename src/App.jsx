@@ -1189,6 +1189,7 @@ function CheckoutView() {
   const [telefono, setTelefono] = useState(user?.telefono || "");
   const [empresaId, setEmpresaId] = useState(null);
   const [sucursalId, setSucursalId] = useState(null);
+  const [modoEntrega, setModoEntrega] = useState("sucursal"); // "sucursal" | "puerta"
   const total = cart.reduce((s, i) => s + cartItemTotal(i), 0);
   const money = (n) => "$" + Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -1196,13 +1197,35 @@ function CheckoutView() {
   const sucursalesEmpresa = sucursales.filter(s => s.empresa_id === empresaId && s.activa !== false);
   const empresaSel = empresas.find(e => e.id === empresaId);
   const sucursalSel = sucursales.find(s => s.id === sucursalId);
+  // Para puerta a puerta: busca la empresa Servientrega en la lista (por nombre)
+  const servientrega = empresas.find(e => (e.nombre || "").toLowerCase().includes("servientrega"));
 
   const [pedidoPendiente, setPedidoPendiente] = useState(null); // pedido guardado, esperando pago Yappy
 
   const handlePlace = async () => {
     if (!nombre.trim()) { alert("Por favor escribe tu nombre."); return; }
-    if (!empresaId) { alert("Por favor elige una empresa de envío."); return; }
-    if (sucursalesEmpresa.length > 0 && !sucursalId) { alert("Por favor elige una sucursal."); return; }
+
+    // Definir empresa, sucursal y dirección según el modo de entrega
+    let empresaFinalId, empresaFinalNombre, sucursalFinalId, sucursalFinalNombre;
+
+    if (modoEntrega === "puerta") {
+      // Puerta a puerta: Servientrega automático + dirección obligatoria + sin sucursal
+      if (!servientrega) { alert("El envío puerta a puerta no está disponible por ahora. Por favor elige una sucursal."); return; }
+      if (!address.trim()) { alert("Para envío puerta a puerta, la dirección es obligatoria."); return; }
+      empresaFinalId = servientrega.id;
+      empresaFinalNombre = servientrega.nombre;
+      sucursalFinalId = null;
+      sucursalFinalNombre = "Puerta a puerta";
+    } else {
+      // Recoger en sucursal
+      if (!empresaId) { alert("Por favor elige una empresa de envío."); return; }
+      if (sucursalesEmpresa.length > 0 && !sucursalId) { alert("Por favor elige una sucursal."); return; }
+      empresaFinalId = empresaId;
+      empresaFinalNombre = empresaSel?.nombre || "";
+      sucursalFinalId = sucursalId;
+      sucursalFinalNombre = sucursalSel?.nombre || "";
+    }
+
     setLoading(true);
     try {
       // orderId corto para Yappy (máx 15 caracteres alfanuméricos)
@@ -1211,8 +1234,8 @@ function CheckoutView() {
       const pedido = await sb.post("pedidos", {
         codigo, usuario_id: user.id, nombre_cliente: nombre, telefono: telefono,
         direccion: address, notas: notes, total, estado: 0,
-        empresa_envio_id: empresaId, empresa_envio_nombre: empresaSel?.nombre || "",
-        sucursal_id: sucursalId, sucursal_nombre: sucursalSel?.nombre || "",
+        empresa_envio_id: empresaFinalId, empresa_envio_nombre: empresaFinalNombre,
+        sucursal_id: sucursalFinalId, sucursal_nombre: sucursalFinalNombre,
         pagado: false, yappy_order_id: yappyOrderId,
       });
       const pedidoId = pedido[0].id;
@@ -1283,7 +1306,27 @@ function CheckoutView() {
         </div>
       </div>
 
-      {/* EMPRESA DE ENVÍO */}
+      {/* MODO DE ENTREGA */}
+      <div style={{ background: WHITE, borderRadius: 12, padding: 24, marginBottom: 16, border: `1px solid ${GRAY2}` }}>
+        <div style={{ fontWeight: 800, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}><Truck size={18} /> ¿Cómo quieres recibir tu pedido? *</div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 6 }}>
+          <div onClick={() => setModoEntrega("sucursal")}
+            style={{ border: `2px solid ${modoEntrega === "sucursal" ? RED : GRAY2}`, background: modoEntrega === "sucursal" ? "#FFF5F5" : WHITE, borderRadius: 10, padding: 16, cursor: "pointer", textAlign: "center" }}>
+            <Building2 size={28} color={modoEntrega === "sucursal" ? RED : GRAY3} strokeWidth={1.6} />
+            <div style={{ fontWeight: 800, fontSize: 14, marginTop: 8 }}>Recoger en sucursal</div>
+            <div style={{ fontSize: 11, color: GRAY3, marginTop: 2 }}>Tú eliges la empresa y sucursal</div>
+          </div>
+          <div onClick={() => setModoEntrega("puerta")}
+            style={{ border: `2px solid ${modoEntrega === "puerta" ? RED : GRAY2}`, background: modoEntrega === "puerta" ? "#FFF5F5" : WHITE, borderRadius: 10, padding: 16, cursor: "pointer", textAlign: "center" }}>
+            <MapPin size={28} color={modoEntrega === "puerta" ? RED : GRAY3} strokeWidth={1.6} />
+            <div style={{ fontWeight: 800, fontSize: 14, marginTop: 8 }}>Puerta a puerta</div>
+            <div style={{ fontSize: 11, color: GRAY3, marginTop: 2 }}>Te lo llevamos por Servientrega</div>
+          </div>
+        </div>
+      </div>
+
+      {/* EMPRESA DE ENVÍO (solo si recoge en sucursal) */}
+      {modoEntrega === "sucursal" && (
       <div style={{ background: WHITE, borderRadius: 12, padding: 24, marginBottom: 16, border: `1px solid ${GRAY2}` }}>
         <div style={{ fontWeight: 800, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}><Truck size={18} /> Empresa de envío *</div>
         {empresasActivas.length === 0 ? (
@@ -1333,6 +1376,17 @@ function CheckoutView() {
           </div>
         )}
       </div>
+      )}
+
+      {/* AVISO PUERTA A PUERTA */}
+      {modoEntrega === "puerta" && (
+        <div style={{ background: "#FFF5F5", border: `1.5px solid ${RED}`, borderRadius: 12, padding: 16, marginBottom: 16, display: "flex", alignItems: "center", gap: 12 }}>
+          <Truck size={22} color={RED} />
+          <div style={{ fontSize: 13 }}>
+            <strong>Envío puerta a puerta por Servientrega.</strong> Te lo llevamos a la dirección que indiques abajo. <span style={{ color: RED, fontWeight: 700 }}>La dirección es obligatoria.</span>
+          </div>
+        </div>
+      )}
 
       {/* DIRECCIÓN / NOTAS */}
       <div style={{ background: WHITE, borderRadius: 12, padding: 24, marginBottom: 16, border: `1px solid ${GRAY2}` }}>
@@ -1341,8 +1395,8 @@ function CheckoutView() {
         <input style={S.input} placeholder="Tu nombre" value={nombre} onChange={e => setNombre(e.target.value)} />
         <label style={S.label}>WhatsApp / Teléfono</label>
         <input style={S.input} placeholder="Ej: 6720-0474" value={telefono} onChange={e => setTelefono(e.target.value)} />
-        <label style={S.label}>Dirección o referencia (opcional)</label>
-        <input style={S.input} placeholder="Ej: cerca del parque central..." value={address} onChange={e => setAddress(e.target.value)} />
+        <label style={S.label}>Dirección {modoEntrega === "puerta" ? "*" : "(opcional)"}</label>
+        <input style={{ ...S.input, borderColor: modoEntrega === "puerta" && !address.trim() ? RED : GRAY2 }} placeholder={modoEntrega === "puerta" ? "Dirección completa para la entrega..." : "Ej: cerca del parque central..."} value={address} onChange={e => setAddress(e.target.value)} />
         <label style={S.label}>Notas (tallas, colores, referencias)</label>
         <input style={S.input} placeholder="Opcional..." value={notes} onChange={e => setNotes(e.target.value)} />
       </div>
