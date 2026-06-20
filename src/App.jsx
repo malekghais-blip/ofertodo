@@ -19,6 +19,7 @@ const SUPABASE_URL = "https://esezhctdiucwovbvxmou.supabase.co";  // ← Cambia 
 const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVzZXpoY3RkaXVjd292YnZ4bW91Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODExMDY0NjgsImV4cCI6MjA5NjY4MjQ2OH0.5u--RCUEWH6hBrH0EFnmW1hZhuVjzqMbJax1qQh7zNo";                  // ← Cambia esto
 const WA_NUMBER   = "50767200474";                        // ← Tu número WhatsApp
 const YAPPY_DIRECTORIO = "@ofertodopanama";               // ← Tu usuario en el Directorio de Yappy, para que el cliente te pague
+const YAPPY_FN_CREAR = SUPABASE_URL + "/functions/v1/crear-orden-yappy"; // Edge Function que crea la orden de pago en Yappy
 
 // ─── Supabase client minimalista (sin instalar paquetes) ────────
 const sb = {
@@ -1100,6 +1101,85 @@ function CompleteProfileModal() {
 }
 
 // ═══════════════════════════════════════════════════════════════
+//  BOTÓN DE PAGO YAPPY (oficial, vía CDN)
+// ═══════════════════════════════════════════════════════════════
+function YappyButton({ pedido, onExito, onCancelar }) {
+  const ref = useRef(null);
+  const [estado, setEstado] = useState("listo"); // listo | cargando | error
+  const [errorMsg, setErrorMsg] = useState("");
+
+  useEffect(() => {
+    const btn = ref.current;
+    if (!btn) return;
+
+    // Cuando el cliente toca el botón de Yappy: creamos la orden en el backend
+    const handleClick = async () => {
+      setEstado("cargando");
+      setErrorMsg("");
+      try {
+        btn.isButtonLoading = true;
+        const resp = await fetch(YAPPY_FN_CREAR, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Authorization": "Bearer " + SUPABASE_KEY },
+          body: JSON.stringify({ total: pedido.total, orderId: pedido.yappyOrderId }),
+        });
+        const result = await resp.json();
+        // La respuesta de Yappy trae body.transactionId, body.token, body.documentName
+        const body = result?.body;
+        if (body && body.transactionId && body.token && body.documentName) {
+          btn.eventPayment({
+            transactionId: body.transactionId,
+            documentName: body.documentName,
+            token: body.token,
+          });
+        } else {
+          const desc = result?.status?.description || "No se pudo iniciar el pago. Intenta de nuevo.";
+          setEstado("error");
+          setErrorMsg(desc);
+          btn.isButtonLoading = false;
+        }
+      } catch (e) {
+        setEstado("error");
+        setErrorMsg("Error de conexión. Intenta de nuevo.");
+        btn.isButtonLoading = false;
+      }
+    };
+
+    const handleSuccess = () => { onExito(); };
+    const handleError = () => {
+      setEstado("error");
+      setErrorMsg("El pago no se completó. Puedes intentarlo de nuevo.");
+      btn.isButtonLoading = false;
+    };
+
+    btn.addEventListener("eventClick", handleClick);
+    btn.addEventListener("eventSuccess", handleSuccess);
+    btn.addEventListener("eventError", handleError);
+    return () => {
+      btn.removeEventListener("eventClick", handleClick);
+      btn.removeEventListener("eventSuccess", handleSuccess);
+      btn.removeEventListener("eventError", handleError);
+    };
+  }, [pedido]);
+
+  return (
+    <div style={{ textAlign: "center" }}>
+      <div style={{ display: "flex", justifyContent: "center", marginBottom: 12 }}>
+        {/* El botón oficial de Yappy se renderiza aquí */}
+        {/* @ts-ignore */}
+        <btn-yappy ref={ref} theme="blue"></btn-yappy>
+      </div>
+      {estado === "error" && (
+        <div style={{ color: RED, fontSize: 13, fontWeight: 600, marginBottom: 10 }}>{errorMsg}</div>
+      )}
+      <button onClick={onCancelar} style={{ background: "none", border: "none", color: GRAY3, fontSize: 13, textDecoration: "underline", cursor: "pointer" }}>
+        Cancelar y volver
+      </button>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
 //  CHECKOUT
 // ═══════════════════════════════════════════════════════════════
 function CheckoutView() {
@@ -1117,68 +1197,72 @@ function CheckoutView() {
   const empresaSel = empresas.find(e => e.id === empresaId);
   const sucursalSel = sucursales.find(s => s.id === sucursalId);
 
+  const [pedidoPendiente, setPedidoPendiente] = useState(null); // pedido guardado, esperando pago Yappy
+
   const handlePlace = async () => {
     if (!nombre.trim()) { alert("Por favor escribe tu nombre."); return; }
     if (!empresaId) { alert("Por favor elige una empresa de envío."); return; }
     if (sucursalesEmpresa.length > 0 && !sucursalId) { alert("Por favor elige una sucursal."); return; }
     setLoading(true);
     try {
+      // orderId corto para Yappy (máx 15 caracteres alfanuméricos)
+      const yappyOrderId = "OFT" + Date.now().toString().slice(-10);
       const codigo = `OFT-${Date.now().toString().slice(-6)}`;
       const pedido = await sb.post("pedidos", {
         codigo, usuario_id: user.id, nombre_cliente: nombre, telefono: telefono,
         direccion: address, notas: notes, total, estado: 0,
         empresa_envio_id: empresaId, empresa_envio_nombre: empresaSel?.nombre || "",
         sucursal_id: sucursalId, sucursal_nombre: sucursalSel?.nombre || "",
+        pagado: false, yappy_order_id: yappyOrderId,
       });
       const pedidoId = pedido[0].id;
       for (const item of cart) {
         await sb.post("pedido_items", { pedido_id: pedidoId, producto_id: item.product.id, nombre_producto: item.product.nombre, cantidad: item.qty, precio_unitario: item.product.precio_pieza, subtotal: cartItemTotal(item) });
       }
-      setPlaced(codigo);
-      setCart([]);
-      showToast("¡Pedido realizado con éxito!");
+      // Guarda el pedido pendiente y muestra el botón de Yappy (el pago va primero)
+      setPedidoPendiente({ id: pedidoId, codigo, yappyOrderId, total });
     } catch(e) { alert("Error al guardar el pedido: " + e.message); }
     setLoading(false);
   };
 
+  // Cuando el pago de Yappy se confirma con éxito
+  const onPagoExitoso = () => {
+    setPlaced(pedidoPendiente.codigo);
+    setCart([]);
+    setPedidoPendiente(null);
+    showToast("¡Pago recibido! Tu pedido está confirmado.");
+  };
+
+  // PANTALLA DE PAGO: pedido guardado, esperando que el cliente pague con Yappy
+  if (pedidoPendiente) return (
+    <div className="oft-section" style={{ ...S.section, textAlign: "center", maxWidth: 460 }}>
+      <h2 style={{ fontSize: 22, fontWeight: 900, marginBottom: 4 }}>Paga para confirmar tu pedido</h2>
+      <p style={{ color: GRAY3, fontSize: 14, marginBottom: 18 }}>Tu pedido se confirmará apenas se reciba el pago.</p>
+      <div style={{ background: "#0B1F3A", borderRadius: 16, padding: 24, color: WHITE, marginBottom: 18 }}>
+        <div style={{ fontSize: 13, opacity: 0.8 }}>Total a pagar</div>
+        <div style={{ fontSize: 34, fontWeight: 900, marginBottom: 18 }}>{money(pedidoPendiente.total)}</div>
+        <YappyButton
+          pedido={pedidoPendiente}
+          onExito={onPagoExitoso}
+          onCancelar={() => { setPedidoPendiente(null); showToast("Pago cancelado. Tu pedido quedó pendiente."); setView("dashboard"); }}
+        />
+      </div>
+      <p style={{ fontSize: 12, color: GRAY3 }}>Pago seguro procesado por Yappy.</p>
+    </div>
+  );
+
   if (placed) return (
     <div className="oft-section" style={{ ...S.section, textAlign: "center", maxWidth: 500 }}>
-      <div style={{ display: "flex", justifyContent: "center", marginBottom: 12 }}><CheckCircle2 size={64} color={RED} strokeWidth={1.5} /></div>
-      <h2 style={{ fontSize: 24, fontWeight: 900 }}>¡Pedido realizado!</h2>
-      <p style={{ color: GRAY3 }}>Sigue el estado de tu pedido desde "Mi Cuenta".</p>
+      <div style={{ display: "flex", justifyContent: "center", marginBottom: 12 }}><CheckCircle2 size={64} color="#22c55e" strokeWidth={1.5} /></div>
+      <h2 style={{ fontSize: 24, fontWeight: 900 }}>¡Pago recibido!</h2>
+      <p style={{ color: GRAY3 }}>Tu pedido está confirmado. Sigue su estado desde "Mi Cuenta".</p>
       <div style={{ background: GRAY, borderRadius: 12, padding: 20, margin: "20px 0", textAlign: "left" }}>
         <div style={{ fontWeight: 800, marginBottom: 8 }}>Número: <span style={{ color: RED }}>{placed}</span></div>
-        <StatusBadge index={0} />
+        <div style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "#D4EDDA", color: "#155724", padding: "4px 12px", borderRadius: 20, fontWeight: 700, fontSize: 13, marginBottom: 4 }}>
+          <CheckCircle2 size={14} /> Pagado con Yappy
+        </div>
         {empresaSel && <div style={{ marginTop: 10, fontSize: 13, color: GRAY3, display: "flex", alignItems: "center", gap: 6 }}><Truck size={14} /> {empresaSel.nombre}{sucursalSel ? ` · ${sucursalSel.nombre}` : ""}</div>}
       </div>
-
-      {/* PAGO CON YAPPY */}
-      <div style={{ background: "#0B1F3A", borderRadius: 16, padding: 22, margin: "0 0 16px", color: WHITE, textAlign: "left" }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-          <span style={{ fontWeight: 900, fontSize: 17 }}>Pagar con Yappy</span>
-          <span style={{ background: "#00C2DE", color: "#0B1F3A", fontWeight: 900, fontSize: 13, padding: "3px 12px", borderRadius: 20 }}>Total: {money(total)}</span>
-        </div>
-        <p style={{ fontSize: 13, opacity: 0.85, marginBottom: 14, lineHeight: 1.5 }}>
-          Abre tu app de Yappy, ve al Directorio y búscanos como <strong>{YAPPY_DIRECTORIO}</strong>. Paga el total y luego envíanos el comprobante por WhatsApp para confirmar tu pedido.
-        </p>
-        <div style={{ background: "rgba(255,255,255,0.1)", borderRadius: 10, padding: "10px 14px", marginBottom: 14, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <div>
-            <div style={{ fontSize: 11, opacity: 0.7 }}>Búscanos en el Directorio Yappy</div>
-            <div style={{ fontWeight: 800, fontSize: 16 }}>{YAPPY_DIRECTORIO}</div>
-          </div>
-          <button onClick={() => { navigator.clipboard?.writeText(YAPPY_DIRECTORIO); showToast("Usuario copiado"); }} style={{ background: "rgba(255,255,255,0.15)", border: "none", color: WHITE, borderRadius: 8, padding: "8px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Copiar</button>
-        </div>
-        <button onClick={() => window.open("https://yappy.com.pa/", "_blank")} className="oft-btn-press" style={{ width: "100%", justifyContent: "center", background: "#00C2DE", color: "#0B1F3A", border: "none", borderRadius: 10, padding: 14, fontSize: 15, fontWeight: 900, cursor: "pointer", marginBottom: 10, display: "flex", alignItems: "center", gap: 8 }}>
-          Abrir Yappy
-        </button>
-        <button onClick={() => {
-          const msg = `Hola Ofertodo, ya pagué mi pedido *${placed}* por ${money(total)} con Yappy. Aquí está mi comprobante:`;
-          window.open(`https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(msg)}`, "_blank");
-        }} className="oft-btn-press" style={{ width: "100%", justifyContent: "center", background: "#25D366", color: WHITE, border: "none", borderRadius: 10, padding: 14, fontSize: 15, fontWeight: 800, cursor: "pointer", display: "flex", alignItems: "center", gap: 8 }}>
-          <MessageCircle size={18} /> Enviar comprobante por WhatsApp
-        </button>
-      </div>
-
       <button style={{ ...S.btnRed, justifyContent: "center", margin: "0 auto" }} onClick={() => setView("dashboard")}>Ver estado de mi pedido</button>
     </div>
   );
@@ -1270,7 +1354,7 @@ function CheckoutView() {
         </div>
       </div>
       <button style={{ ...S.btnRed, width: "100%", justifyContent: "center", padding: 16, fontSize: 16, opacity: loading ? 0.7 : 1 }} onClick={handlePlace} disabled={loading}>
-        {loading ? "Procesando..." : <><CheckCircle2 size={18} /> Confirmar Pedido</>}
+        {loading ? "Procesando..." : <>Continuar al pago →</>}
       </button>
     </div>
   );
@@ -3521,7 +3605,11 @@ function AdminView() {
                   <tbody>
                     {pedidosReales.map(o => (
                       <tr key={o.id}>
-                        <td style={{ ...S.td, fontWeight: 700, color: RED }}>{o.codigo}</td>
+                        <td style={{ ...S.td, fontWeight: 700, color: RED }}>
+                          {o.codigo}
+                          {o.pagado === false && <div style={{ marginTop: 3, display: "inline-block", background: "#FFF3CD", color: "#856404", fontSize: 10, fontWeight: 800, padding: "2px 6px", borderRadius: 6 }}>SIN PAGAR</div>}
+                          {o.pagado === true && <div style={{ marginTop: 3, display: "inline-block", background: "#D4EDDA", color: "#155724", fontSize: 10, fontWeight: 800, padding: "2px 6px", borderRadius: 6 }}>PAGADO</div>}
+                        </td>
                         <td style={S.td}>{o.nombre_cliente}</td>
                         <td style={S.td}>{o.telefono}</td>
                         <td style={S.td}>
@@ -3567,6 +3655,8 @@ function AdminView() {
                         <div style={{ fontWeight: 900, fontSize: 16, color: RED }}>{o.codigo}</div>
                         <div style={{ fontSize: 14, fontWeight: 700, marginTop: 2 }}>{o.nombre_cliente}</div>
                         <div style={{ fontSize: 12, color: GRAY3 }}>{o.telefono}</div>
+                        {o.pagado === false && <span style={{ display: "inline-block", marginTop: 4, background: "#FFF3CD", color: "#856404", fontSize: 10, fontWeight: 800, padding: "2px 7px", borderRadius: 6 }}>SIN PAGAR</span>}
+                        {o.pagado === true && <span style={{ display: "inline-block", marginTop: 4, background: "#D4EDDA", color: "#155724", fontSize: 10, fontWeight: 800, padding: "2px 7px", borderRadius: 6 }}>PAGADO</span>}
                       </div>
                       <div style={{ textAlign: "right" }}>
                         <div style={{ fontWeight: 900, fontSize: 18 }}>{money(o.total)}</div>
