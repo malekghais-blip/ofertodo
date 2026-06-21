@@ -372,7 +372,7 @@ function HomeView() {
           <Zap size={12} strokeWidth={2.5} /> Distribuidora · Panamá
         </div>
         <h1 className="oft-hero-title" style={{ fontSize: 44, fontWeight: 900, lineHeight: 1.1, marginBottom: 16, letterSpacing: -1 }}>
-          Más<br /><span style={{ color: RED }}>por menos</span>
+          Compra más<br /><span style={{ color: RED }}>Crece más</span>
         </h1>
         <p style={{ color: "#ccc", fontSize: 16, marginBottom: 36, maxWidth: 480, margin: "0 auto 36px" }}>
           Compra por pieza, media docena o docena. Ropa, calzado y accesorios de calidad. Enviamos a todo Panamá.
@@ -432,7 +432,7 @@ function HomeView() {
       {/* FOOTER */}
       <footer style={{ background: "#0a0a0a", color: WHITE, padding: "32px 24px" }}>
         <div style={{ display: "flex", gap: 40, flexWrap: "wrap", justifyContent: "space-between", maxWidth: 900, margin: "0 auto" }}>
-          <div><Logo /><p style={{ color: "#aaa", fontSize: 13, marginTop: 10, maxWidth: 220 }}>Distribuidora · Panamá. Más por menos.</p></div>
+          <div><Logo /><p style={{ color: "#aaa", fontSize: 13, marginTop: 10, maxWidth: 220 }}>Distribuidora · Panamá. Compra más, crece más.</p></div>
           <div>
             <div style={{ fontWeight: 700, marginBottom: 10 }}>Contacto</div>
             <div style={{ fontSize: 13, color: "#aaa", lineHeight: 2.2 }}>
