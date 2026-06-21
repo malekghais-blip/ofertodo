@@ -1788,6 +1788,13 @@ function CrearPedidoView() {
   const [items, setItems] = useState([]); // { product, pres, count }
   const [search, setSearch] = useState("");
   const [cliente, setCliente] = useState({ nombre: "", telefono: "", direccion: "" });
+  const [clientesLista, setClientesLista] = useState([]); // clientes registrados para buscar
+  const [busquedaCliente, setBusquedaCliente] = useState(""); // texto de búsqueda de cliente
+  const [mostrarClientes, setMostrarClientes] = useState(false); // muestra el desplegable de resultados
+  // Carga la lista de clientes para poder buscarlos al crear el pedido
+  useEffect(() => {
+    sb.get("usuarios", "?es_admin=eq.false&order=nombre.asc").then(d => setClientesLista(d || [])).catch(() => {});
+  }, []);
   const [notas, setNotas] = useState("");
   const [empresaId, setEmpresaId] = useState(null);
   const [sucursalId, setSucursalId] = useState(null);
@@ -2243,6 +2250,54 @@ function CrearPedidoView() {
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           <div style={{ background: WHITE, borderRadius: 16, padding: 20, border: `1px solid ${GRAY2}` }}>
             <div style={{ fontWeight: 800, marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}><User size={18} color={RED} /> Datos del cliente</div>
+
+            {/* BUSCAR CLIENTE EXISTENTE */}
+            <div style={{ position: "relative", marginBottom: 14 }}>
+              <label style={S.label}>Buscar cliente registrado</label>
+              <div style={{ position: "relative" }}>
+                <Search size={15} color={GRAY3} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)" }} />
+                <input
+                  style={{ ...S.input, paddingLeft: 34, marginBottom: 0 }}
+                  placeholder="Escribe nombre o teléfono..."
+                  value={busquedaCliente}
+                  onChange={e => { setBusquedaCliente(e.target.value); setMostrarClientes(true); }}
+                  onFocus={() => setMostrarClientes(true)}
+                />
+              </div>
+              {/* Resultados */}
+              {mostrarClientes && busquedaCliente.trim() && (
+                <div style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 30, background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 10, marginTop: 4, maxHeight: 220, overflowY: "auto", boxShadow: "0 8px 24px rgba(0,0,0,0.12)" }}>
+                  {clientesLista
+                    .filter(c => {
+                      const q = busquedaCliente.toLowerCase();
+                      return (c.nombre || "").toLowerCase().includes(q) || (c.telefono || "").includes(q);
+                    })
+                    .slice(0, 8)
+                    .map(c => (
+                      <div key={c.id} onClick={() => {
+                        setCliente({ nombre: c.nombre || "", telefono: c.telefono || "", direccion: cliente.direccion });
+                        setBusquedaCliente("");
+                        setMostrarClientes(false);
+                        showToast(`Cliente: ${c.nombre}`);
+                      }} style={{ padding: "10px 14px", cursor: "pointer", borderBottom: `1px solid ${GRAY}`, display: "flex", alignItems: "center", gap: 10 }}
+                      onMouseEnter={e => e.currentTarget.style.background = GRAY}
+                      onMouseLeave={e => e.currentTarget.style.background = WHITE}>
+                        <div style={{ width: 32, height: 32, borderRadius: "50%", background: `linear-gradient(135deg, ${RED}, ${RED_D})`, color: WHITE, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 900, fontSize: 14, flexShrink: 0 }}>
+                          {(c.nombre || "?").charAt(0).toUpperCase()}
+                        </div>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontWeight: 700, fontSize: 13 }}>{c.nombre}</div>
+                          <div style={{ fontSize: 12, color: GRAY3 }}>{c.telefono || "Sin teléfono"}</div>
+                        </div>
+                      </div>
+                    ))}
+                  {clientesLista.filter(c => { const q = busquedaCliente.toLowerCase(); return (c.nombre || "").toLowerCase().includes(q) || (c.telefono || "").includes(q); }).length === 0 && (
+                    <div style={{ padding: "12px 14px", fontSize: 13, color: GRAY3 }}>No se encontró ese cliente. Puedes escribir sus datos abajo.</div>
+                  )}
+                </div>
+              )}
+            </div>
+
             <label style={S.label}>Nombre *</label>
             <input style={S.input} placeholder="Nombre del cliente" value={cliente.nombre} onChange={e => setCliente({ ...cliente, nombre: e.target.value })} />
             <label style={S.label}>WhatsApp / Teléfono</label>
@@ -2956,12 +3011,17 @@ function AdminView() {
   const [shippingLabel, setShippingLabel] = useState(null); // pedido para la guía de envío
   const [pedidoAEliminar, setPedidoAEliminar] = useState(null); // pedido pendiente de eliminar (confirmación)
   const [cotizacionAEditar, setCotizacionAEditar] = useState(null); // cotización que se está editando
+  const [nuevoCliente, setNuevoCliente] = useState(null); // {nombre, telefono, email} o null; modal crear cliente
+  const [guardandoCliente, setGuardandoCliente] = useState(false);
   const [eliminando, setEliminando] = useState(false);
   // Filtro de ventas por periodo en el dashboard
-  const [rangoVentas, setRangoVentas] = useState("todo"); // dia | semana | mes | anio | todo | personalizado
+  const [rangoVentas, setRangoVentas] = useState("todo"); // dia | semana | mes | anio | todo | personalizado | rango
   const [fechaPersonalizada, setFechaPersonalizada] = useState(null); // Date seleccionada en el calendario
   const [mostrarCalendario, setMostrarCalendario] = useState(false);
   const [mesCalendario, setMesCalendario] = useState(new Date()); // mes que muestra el calendario
+  const [rangoInicio, setRangoInicio] = useState(null); // inicio del rango (día X)
+  const [rangoFin, setRangoFin] = useState(null); // fin del rango (día Y)
+  const [modoCalendario, setModoCalendario] = useState("dia"); // "dia" = un día | "rango" = del X al Y
 
   // Carga pedidos y usuarios al entrar
   useEffect(() => {
@@ -3004,10 +3064,16 @@ function AdminView() {
     if (rangoVentas === "mes") return f.getMonth() === hoy.getMonth() && f.getFullYear() === hoy.getFullYear();
     if (rangoVentas === "anio") return f.getFullYear() === hoy.getFullYear();
     if (rangoVentas === "personalizado" && fechaPersonalizada) return f.toDateString() === new Date(fechaPersonalizada).toDateString();
+    if (rangoVentas === "rango" && rangoInicio && rangoFin) {
+      const ini = new Date(rangoInicio); ini.setHours(0,0,0,0);
+      const fin = new Date(rangoFin); fin.setHours(23,59,59,999);
+      return f >= ini && f <= fin;
+    }
     return true;
   };
   const pedidosReales = pedidosRealesTodos.filter(o => enRango(o.created_at));
-  const etiquetaRango = { dia: "Hoy", semana: "Última semana", mes: "Este mes", anio: "Este año", todo: "Todo el tiempo", personalizado: fechaPersonalizada ? new Date(fechaPersonalizada).toLocaleDateString("es-PA", { day: "2-digit", month: "long", year: "numeric" }) : "Fecha específica" }[rangoVentas];
+  const fmtCorta = (d) => new Date(d).toLocaleDateString("es-PA", { day: "2-digit", month: "short" });
+  const etiquetaRango = { dia: "Hoy", semana: "Última semana", mes: "Este mes", anio: "Este año", todo: "Todo el tiempo", personalizado: fechaPersonalizada ? new Date(fechaPersonalizada).toLocaleDateString("es-PA", { day: "2-digit", month: "long", year: "numeric" }) : "Fecha específica", rango: (rangoInicio && rangoFin) ? `${fmtCorta(rangoInicio)} → ${fmtCorta(rangoFin)}` : "Rango de fechas" }[rangoVentas];
 
   // ── MÉTRICAS (solo pedidos reales) ─────────────────────────────
   const ingresoTotal = pedidosReales.reduce((s, o) => s + Number(o.total || 0), 0);
@@ -3112,6 +3178,28 @@ function AdminView() {
       setPedidoAEliminar(null);
     } catch(e) { alert("Error al eliminar: " + (e.message || e)); }
     setEliminando(false);
+  };
+
+  // ── CREAR CLIENTE MANUALMENTE ──────────────────────────────────
+  const crearClienteManual = async () => {
+    if (!nuevoCliente?.nombre?.trim()) { showToast("Escribe el nombre del cliente"); return; }
+    setGuardandoCliente(true);
+    try {
+      // Email opcional: si no ponen, generamos uno interno para identificarlo
+      const email = (nuevoCliente.email || "").trim() || `cliente_${Date.now()}@ofertodo.local`;
+      const fila = await sb.post("usuarios", {
+        nombre: nuevoCliente.nombre.trim(),
+        telefono: (nuevoCliente.telefono || "").trim(),
+        email,
+        es_admin: false,
+      });
+      if (Array.isArray(fila) && fila[0]) setUsers(prev => [fila[0], ...prev]);
+      showToast("Cliente creado");
+      setNuevoCliente(null);
+    } catch(e) {
+      showToast("Error: " + (e.message || "no se pudo crear"));
+    }
+    setGuardandoCliente(false);
   };
 
   // ── SUBIDA DE IMAGEN DE PRODUCTO ───────────────────────────────
@@ -3475,8 +3563,8 @@ function AdminView() {
                       </button>
                     ))}
                     <button onClick={() => setMostrarCalendario(v => !v)} className="oft-btn-press"
-                      style={{ padding: "8px 14px", borderRadius: 20, border: `2px solid ${rangoVentas === "personalizado" ? RED : GRAY2}`, background: rangoVentas === "personalizado" ? RED : WHITE, color: rangoVentas === "personalizado" ? WHITE : BLACK, fontWeight: 700, fontSize: 13, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}>
-                      <CalendarIcon size={15} /> {rangoVentas === "personalizado" && fechaPersonalizada ? new Date(fechaPersonalizada).toLocaleDateString("es-PA", { day: "2-digit", month: "short" }) : "Fecha"}
+                      style={{ padding: "8px 14px", borderRadius: 20, border: `2px solid ${(rangoVentas === "personalizado" || rangoVentas === "rango") ? RED : GRAY2}`, background: (rangoVentas === "personalizado" || rangoVentas === "rango") ? RED : WHITE, color: (rangoVentas === "personalizado" || rangoVentas === "rango") ? WHITE : BLACK, fontWeight: 700, fontSize: 13, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}>
+                      <CalendarIcon size={15} /> {rangoVentas === "personalizado" && fechaPersonalizada ? new Date(fechaPersonalizada).toLocaleDateString("es-PA", { day: "2-digit", month: "short" }) : rangoVentas === "rango" && rangoInicio && rangoFin ? `${fmtCorta(rangoInicio)}–${fmtCorta(rangoFin)}` : "Fecha"}
                     </button>
                     <span style={{ fontSize: 13, color: GRAY3, marginLeft: 4 }}>· Mostrando: <strong style={{ color: BLACK }}>{etiquetaRango}</strong></span>
                   </div>
@@ -3484,6 +3572,20 @@ function AdminView() {
                   {/* CALENDARIO ANIMADO */}
                   {mostrarCalendario && (
                     <div className="oft-cal-pop" style={{ marginTop: 12, background: WHITE, border: `2px solid ${GRAY2}`, borderRadius: 16, padding: 16, maxWidth: 320, boxShadow: "0 12px 32px rgba(0,0,0,0.12)" }}>
+                      {/* Modo: un día o rango */}
+                      <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+                        {[["dia","Un día"],["rango","Rango (X → Y)"]].map(([k,l]) => (
+                          <button key={k} onClick={() => { setModoCalendario(k); setRangoInicio(null); setRangoFin(null); }} className="oft-btn-press"
+                            style={{ flex: 1, padding: "7px 4px", borderRadius: 8, border: `2px solid ${modoCalendario === k ? RED : GRAY2}`, background: modoCalendario === k ? RED : WHITE, color: modoCalendario === k ? WHITE : BLACK, fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+                            {l}
+                          </button>
+                        ))}
+                      </div>
+                      {modoCalendario === "rango" && (
+                        <div style={{ fontSize: 12, color: GRAY3, marginBottom: 10, textAlign: "center" }}>
+                          {!rangoInicio ? "Toca el día de inicio" : !rangoFin ? "Ahora toca el día final" : `${fmtCorta(rangoInicio)} → ${fmtCorta(rangoFin)}`}
+                        </div>
+                      )}
                       {/* Cabecera del mes */}
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
                         <button onClick={() => setMesCalendario(new Date(mesCalendario.getFullYear(), mesCalendario.getMonth() - 1, 1))} className="oft-btn-press" style={{ background: GRAY, border: "none", borderRadius: 8, width: 32, height: 32, cursor: "pointer", fontSize: 16, fontWeight: 800, color: RED }}>‹</button>
@@ -3505,11 +3607,31 @@ function AdminView() {
                           for (let d = 1; d <= diasMes; d++) {
                             const fecha = new Date(y, m, d);
                             const esHoy = fecha.toDateString() === new Date().toDateString();
-                            const sel = fechaPersonalizada && new Date(fechaPersonalizada).toDateString() === fecha.toDateString();
+                            const selDia = fechaPersonalizada && new Date(fechaPersonalizada).toDateString() === fecha.toDateString();
+                            // Resaltado para modo rango
+                            const esInicio = rangoInicio && new Date(rangoInicio).toDateString() === fecha.toDateString();
+                            const esFin = rangoFin && new Date(rangoFin).toDateString() === fecha.toDateString();
+                            const dentroRango = rangoInicio && rangoFin && fecha >= new Date(new Date(rangoInicio).setHours(0,0,0,0)) && fecha <= new Date(new Date(rangoFin).setHours(23,59,59,999));
+                            const sel = modoCalendario === "dia" ? selDia : (esInicio || esFin);
                             const tienePedidos = pedidosRealesTodos.some(o => new Date(o.created_at).toDateString() === fecha.toDateString());
+                            const clickDia = () => {
+                              if (modoCalendario === "dia") {
+                                setFechaPersonalizada(fecha); setRangoVentas("personalizado"); setMostrarCalendario(false);
+                              } else {
+                                // Modo rango: primer clic = inicio, segundo = fin
+                                if (!rangoInicio || (rangoInicio && rangoFin)) {
+                                  setRangoInicio(fecha); setRangoFin(null);
+                                } else {
+                                  // segundo clic: ordena por si elige al revés
+                                  if (fecha < new Date(rangoInicio)) { setRangoFin(new Date(rangoInicio)); setRangoInicio(fecha); }
+                                  else { setRangoFin(fecha); }
+                                  setRangoVentas("rango");
+                                }
+                              }
+                            };
                             celdas.push(
-                              <button key={d} onClick={() => { setFechaPersonalizada(fecha); setRangoVentas("personalizado"); setMostrarCalendario(false); }} className="oft-cal-day oft-btn-press"
-                                style={{ aspectRatio: "1", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: sel || esHoy ? 800 : 600, background: sel ? RED : esHoy ? "#FFE5E6" : "transparent", color: sel ? WHITE : BLACK, position: "relative" }}>
+                              <button key={d} onClick={clickDia} className="oft-cal-day oft-btn-press"
+                                style={{ aspectRatio: "1", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: sel || esHoy ? 800 : 600, background: sel ? RED : dentroRango ? "#FFD9DB" : esHoy ? "#FFE5E6" : "transparent", color: sel ? WHITE : BLACK, position: "relative" }}>
                                 {d}
                                 {tienePedidos && !sel && <span style={{ position: "absolute", bottom: 3, left: "50%", transform: "translateX(-50%)", width: 4, height: 4, borderRadius: "50%", background: RED }} />}
                               </button>
@@ -3518,6 +3640,12 @@ function AdminView() {
                           return celdas;
                         })()}
                       </div>
+                      {/* Botón aplicar rango */}
+                      {modoCalendario === "rango" && rangoInicio && rangoFin && (
+                        <button onClick={() => setMostrarCalendario(false)} className="oft-btn-press" style={{ ...S.btnRed, width: "100%", justifyContent: "center", marginTop: 12, padding: 10, fontSize: 13 }}>
+                          Aplicar {fmtCorta(rangoInicio)} → {fmtCorta(rangoFin)}
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>
@@ -3799,6 +3927,30 @@ function AdminView() {
             onClose={() => setCotizacionAEditar(null)}
             onSaved={(actualizada) => { setOrders(prev => prev.map(o => o.id === actualizada.id ? actualizada : o)); setCotizacionAEditar(null); }}
           />
+        )}
+
+        {/* MODAL CREAR CLIENTE */}
+        {nuevoCliente && (
+          <div className="oft-overlay" style={S.overlay} onClick={() => !guardandoCliente && setNuevoCliente(null)}>
+            <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 16, maxWidth: 420, width: "92%", padding: 24 }} onClick={e => e.stopPropagation()}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+                <div style={{ fontWeight: 800, fontSize: 18, display: "flex", alignItems: "center", gap: 8 }}><Users size={18} color={RED} /> Nuevo cliente</div>
+                <button onClick={() => setNuevoCliente(null)} style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}><X size={22} /></button>
+              </div>
+              <label style={S.label}>Nombre *</label>
+              <input style={S.input} placeholder="Nombre del cliente" value={nuevoCliente.nombre} onChange={e => setNuevoCliente({ ...nuevoCliente, nombre: e.target.value })} autoFocus />
+              <label style={S.label}>WhatsApp / Teléfono</label>
+              <input style={S.input} placeholder="Ej: 6720-0474" value={nuevoCliente.telefono} onChange={e => setNuevoCliente({ ...nuevoCliente, telefono: e.target.value })} />
+              <label style={S.label}>Email (opcional)</label>
+              <input style={S.input} placeholder="correo@ejemplo.com" value={nuevoCliente.email} onChange={e => setNuevoCliente({ ...nuevoCliente, email: e.target.value })} />
+              <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
+                <button onClick={() => setNuevoCliente(null)} disabled={guardandoCliente} className="oft-btn-press" style={{ ...S.btnOutline, flex: 1, justifyContent: "center" }}>Cancelar</button>
+                <button onClick={crearClienteManual} disabled={guardandoCliente} className="oft-btn-press" style={{ ...S.btnRed, flex: 1, justifyContent: "center", opacity: guardandoCliente ? 0.7 : 1 }}>
+                  {guardandoCliente ? "Guardando..." : "Crear cliente"}
+                </button>
+              </div>
+            </div>
+          </div>
         )}
 
         {/* ═══════════ PRODUCTOS ═══════════ */}
@@ -4322,7 +4474,12 @@ function AdminView() {
         {/* ═══════════ CLIENTES ═══════════ */}
         {tab === "users" && (
           <>
-            <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 24, display: "flex", alignItems: "center", gap: 10 }}><Users size={24} color={RED} /> Clientes Registrados</div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24, flexWrap: "wrap", gap: 12 }}>
+              <div style={{ fontSize: 22, fontWeight: 900, display: "flex", alignItems: "center", gap: 10 }}><Users size={24} color={RED} /> Clientes Registrados</div>
+              <button onClick={() => setNuevoCliente({ nombre: "", telefono: "", email: "" })} className="oft-btn-press" style={{ ...S.btnRed, padding: "10px 18px", fontSize: 14 }}>
+                <Plus size={16} /> Crear cliente
+              </button>
+            </div>
             <div style={{ display: "flex", gap: 16, marginBottom: 28, flexWrap: "wrap" }}>
               {[["Total clientes", users.length, Users, RED], ["Con pedidos", new Set(orders.map(o => o.usuario_id)).size, ShoppingBag, "#155724"]].map(([l,n,Icon,c]) => (
                 <div key={l} style={S.statCard}><Icon size={20} color={c} strokeWidth={1.8} /><div style={{ fontSize: 28, fontWeight: 900, color: c }}>{n}</div><div style={{ fontSize: 13, color: GRAY3 }}>{l}</div></div>
