@@ -1401,15 +1401,22 @@ function CheckoutView() {
             </button>
           </>
         ) : (
-          <div style={{ background: "#0B1F3A", borderRadius: 14, padding: 20, color: WHITE, textAlign: "center" }}>
-            <div style={{ fontSize: 13, opacity: 0.8 }}>Total a pagar</div>
-            <div style={{ fontSize: 30, fontWeight: 900, marginBottom: 16 }}>{money(pedidoPendiente.total)}</div>
-            <YappyButton
-              pedido={pedidoPendiente}
-              onExito={onPagoExitoso}
-              onCancelar={() => { setPedidoPendiente(null); showToast("Pago cancelado. Puedes intentar de nuevo."); }}
-            />
-            <p style={{ fontSize: 11, opacity: 0.7, marginTop: 12 }}>Pago seguro procesado por Yappy.</p>
+          <div style={{ background: `linear-gradient(135deg, ${RED} 0%, ${RED_D} 100%)`, borderRadius: 16, padding: 22, color: WHITE, textAlign: "center", boxShadow: "0 8px 24px rgba(227,30,36,0.25)" }}>
+            <div style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "rgba(255,255,255,0.18)", borderRadius: 20, padding: "4px 14px", fontSize: 12, fontWeight: 800, marginBottom: 12 }}>
+              <Lock size={13} /> PAGO SEGURO
+            </div>
+            <div style={{ fontSize: 13, opacity: 0.9 }}>Total a pagar</div>
+            <div style={{ fontSize: 34, fontWeight: 900, marginBottom: 18, letterSpacing: -0.5 }}>{money(pedidoPendiente.total)}</div>
+            <div style={{ background: WHITE, borderRadius: 12, padding: "16px 14px" }}>
+              <YappyButton
+                pedido={pedidoPendiente}
+                onExito={onPagoExitoso}
+                onCancelar={() => { setPedidoPendiente(null); showToast("Pago cancelado. Puedes intentar de nuevo."); }}
+              />
+            </div>
+            <p style={{ fontSize: 11, opacity: 0.85, marginTop: 12, display: "flex", alignItems: "center", justifyContent: "center", gap: 5 }}>
+              <CheckCircle2 size={12} /> Procesado de forma segura por Yappy
+            </p>
           </div>
         )}
       </div>
