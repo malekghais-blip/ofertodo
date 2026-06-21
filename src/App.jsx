@@ -1167,7 +1167,7 @@ function YappyButton({ pedido, onExito, onCancelar }) {
       <div style={{ display: "flex", justifyContent: "center", marginBottom: 12 }}>
         {/* El botón oficial de Yappy se renderiza aquí */}
         {/* @ts-ignore */}
-        <btn-yappy ref={ref} theme="blue"></btn-yappy>
+        <btn-yappy ref={ref} theme="sky"></btn-yappy>
       </div>
       {estado === "error" && (
         <div style={{ color: RED, fontSize: 13, fontWeight: 600, marginBottom: 10 }}>{errorMsg}</div>
