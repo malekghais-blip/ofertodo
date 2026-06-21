@@ -1249,7 +1249,10 @@ function CheckoutView() {
   };
 
   // Cuando el pago de Yappy se confirma con éxito
-  const onPagoExitoso = () => {
+  const onPagoExitoso = async () => {
+    // Respaldo: marcamos el pedido como pagado también desde el front (la confirmación
+    // oficial viene del IPN de Yappy, pero así el cliente lo ve de inmediato).
+    try { if (pedidoPendiente?.id) await sb.patch("pedidos", pedidoPendiente.id, { pagado: true }); } catch(e) {}
     setPlaced(pedidoPendiente.codigo);
     setCart([]);
     setPedidoPendiente(null);
@@ -1479,7 +1482,8 @@ function DashboardView() {
   const loadOrders = async () => {
     if (!user?.id) { setLoading(false); return; }
     try {
-      const data = await sb.get("pedidos", `?usuario_id=eq.${user.id}&order=created_at.desc`);
+      // Solo mostramos pedidos pagados (o los viejos sin esta columna). Los no pagados quedan ocultos hasta que Yappy confirme.
+      const data = await sb.get("pedidos", `?usuario_id=eq.${user.id}&or=(pagado.is.null,pagado.is.true)&order=created_at.desc`);
       const withItems = await Promise.all((data || []).map(async o => {
         try {
           const items = await sb.get("pedido_items", `?pedido_id=eq.${o.id}`);
@@ -1502,7 +1506,7 @@ function DashboardView() {
     // refresco en vivo cada 30s (no muestra spinner, solo actualiza datos)
     const interval = setInterval(() => {
       if (user?.id) {
-        sb.get("pedidos", `?usuario_id=eq.${user.id}&order=created_at.desc`)
+        sb.get("pedidos", `?usuario_id=eq.${user.id}&or=(pagado.is.null,pagado.is.true)&order=created_at.desc`)
           .then(async data => {
             const withItems = await Promise.all((data || []).map(async o => {
               try { const items = await sb.get("pedido_items", `?pedido_id=eq.${o.id}`); return { ...o, items: items || [] }; }
@@ -2982,9 +2986,10 @@ function AdminView() {
   }, []);
 
   // ── SEPARAR PEDIDOS REALES DE COTIZACIONES ─────────────────────
-  // Las cotizaciones NO cuentan como ventas ni en métricas
+  // Las cotizaciones NO cuentan como ventas ni en métricas.
+  // Los pedidos SIN PAGAR (pagado === false) tampoco cuentan como ventas (esperan el pago de Yappy).
   const cotizaciones = orders.filter(o => o.tipo === "cotizacion");
-  const pedidosRealesTodos = orders.filter(o => o.tipo !== "cotizacion");
+  const pedidosRealesTodos = orders.filter(o => o.tipo !== "cotizacion" && o.pagado !== false);
 
   // ── FILTRO POR PERIODO ─────────────────────────────────────────
   const enRango = (fecha) => {
