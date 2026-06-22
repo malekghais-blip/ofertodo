@@ -1933,6 +1933,7 @@ function CrearPedidoView() {
         empresa_envio_id: empresaId, empresa_envio_nombre: empresaSel?.nombre || "",
         sucursal_id: sucursalId, sucursal_nombre: sucursalSel?.nombre || "",
         tipo, num_factura: numFactura, creado_por_admin: true, costo_envio: costoEnvio,
+        pagado: true, // los pedidos/cotizaciones creados por el admin se consideran confirmados
       });
       const pedidoId = pedido[0].id;
       // Productos normales
