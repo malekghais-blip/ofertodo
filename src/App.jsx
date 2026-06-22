@@ -2437,7 +2437,7 @@ function InvoiceModal({ invoice, onClose }) {
         </div>
 
         {/* FACTURA (lo que se exporta) */}
-        <div style={{ padding: 20, maxHeight: "62vh", overflowY: "auto" }}>
+        <div style={{ padding: 20, maxHeight: "80vh", overflowY: "auto" }}>
           <div ref={ref} style={{ background: WHITE, padding: 28, fontFamily: "'Inter','Segoe UI',sans-serif", color: BLACK }}>
             {/* Encabezado con logo */}
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", borderBottom: `3px solid ${RED}`, paddingBottom: 16, marginBottom: 20 }}>
@@ -2643,7 +2643,7 @@ function ShippingLabelModal({ order, onClose }) {
         </div>
 
         {/* GUÍA (lo que se exporta) */}
-        <div style={{ padding: 20, maxHeight: "62vh", overflowY: "auto" }}>
+        <div style={{ padding: 20, maxHeight: "80vh", overflowY: "auto" }}>
           <div ref={ref} style={{ background: WHITE, padding: 26, fontFamily: "'Inter','Segoe UI',sans-serif", color: BLACK, border: `2px solid ${BLACK}` }}>
             {/* Encabezado */}
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", borderBottom: `2px solid ${BLACK}`, paddingBottom: 12, marginBottom: 16 }}>
@@ -3976,7 +3976,7 @@ function AdminView() {
                           <button onClick={() => setCotizacionAEditar(o)} className="oft-btn-press" style={{ flex: 1, justifyContent: "center", background: "none", color: BLACK, border: `1.5px solid ${BLACK}`, borderRadius: 8, padding: "9px", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
                             <PencilIcon size={15} /> Editar
                           </button>
-                          <button onClick={() => convertirAPedido(o)} className="oft-btn-press" style={{ flex: 1, justifyContent: "center", background: "#155724", color: WHITE, border: "none", borderRadius: 8, padding: "9px", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
+                          <button onClick={() => convertirAPedido(o)} className="oft-btn-press" style={{ flex: 1, justifyContent: "center", background: RED, color: WHITE, border: "none", borderRadius: 8, padding: "9px", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
                             <CheckCircle2 size={15} /> A pedido
                           </button>
                         </div>
@@ -4648,8 +4648,8 @@ function AdminView() {
 
             {/* MODAL CREAR / EDITAR DESCUENTO */}
             {descForm && (
-              <div className="oft-overlay" style={S.overlay} onClick={() => !guardandoDesc && setDescForm(null)}>
-                <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 16, maxWidth: 460, width: "92%", maxHeight: "88vh", overflowY: "auto", padding: 24 }} onClick={e => e.stopPropagation()}>
+              <div className="oft-overlay oft-overlay-doc" style={{ ...S.overlay, alignItems: "flex-start", overflowY: "auto", padding: "20px 16px" }} onClick={() => !guardandoDesc && setDescForm(null)}>
+                <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 16, maxWidth: 460, width: "92%", margin: "0 auto", padding: 24 }} onClick={e => e.stopPropagation()}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
                     <div style={{ fontWeight: 800, fontSize: 18, display: "flex", alignItems: "center", gap: 8 }}><Zap size={18} color={RED} /> {descForm.id ? "Editar" : "Nuevo"} descuento</div>
                     <button onClick={() => setDescForm(null)} style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}><X size={22} /></button>
