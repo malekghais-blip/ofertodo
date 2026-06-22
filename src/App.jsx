@@ -3013,6 +3013,11 @@ function AdminView() {
   const [cotizacionAEditar, setCotizacionAEditar] = useState(null); // cotización que se está editando
   const [nuevoCliente, setNuevoCliente] = useState(null); // {nombre, telefono, email} o null; modal crear cliente
   const [guardandoCliente, setGuardandoCliente] = useState(false);
+  // ── DESCUENTOS ──
+  const [descuentos, setDescuentos] = useState([]); // lista de códigos de descuento
+  const [descForm, setDescForm] = useState(null); // formulario crear/editar descuento o null
+  const [guardandoDesc, setGuardandoDesc] = useState(false);
+  const [descProductosOpen, setDescProductosOpen] = useState(false); // selector de productos en el form
   const [eliminando, setEliminando] = useState(false);
   // Filtro de ventas por periodo en el dashboard
   const [rangoVentas, setRangoVentas] = useState("todo"); // dia | semana | mes | anio | todo | personalizado | rango
@@ -3032,6 +3037,8 @@ function AdminView() {
           sb.get("pedidos", "?order=created_at.desc"),
           sb.get("usuarios", "?order=created_at.desc").catch(() => []),
         ]);
+        // Cargar descuentos (si la tabla existe)
+        sb.get("descuentos", "?order=created_at.desc").then(d => setDescuentos(d || [])).catch(() => {});
         // Cargar items de cada pedido para estadísticas de mejores productos
         const ordersWithItems = await Promise.all(ordersData.map(async o => {
           const items = await sb.get("pedido_items", `?pedido_id=eq.${o.id}`).catch(() => []);
@@ -3243,6 +3250,56 @@ function AdminView() {
       showToast("Error: " + (e.message || "no se pudo crear"));
     }
     setGuardandoCliente(false);
+  };
+
+  // ── DESCUENTOS: crear / editar / eliminar / activar ────────────
+  const abrirNuevoDescuento = () => setDescForm({
+    id: null, codigo: "", tipo_aplicacion: "tienda", porcentaje: "10",
+    productos_ids: [], activo: true,
+  });
+  const guardarDescuento = async () => {
+    const f = descForm;
+    if (!f.codigo.trim()) { showToast("Escribe un código (ej: VERANO10)"); return; }
+    const pct = Number(f.porcentaje);
+    if (!pct || pct <= 0 || pct > 100) { showToast("El porcentaje debe ser entre 1 y 100"); return; }
+    if (f.tipo_aplicacion === "productos" && (!f.productos_ids || f.productos_ids.length === 0)) { showToast("Elige al menos un producto"); return; }
+    setGuardandoDesc(true);
+    try {
+      const datos = {
+        codigo: f.codigo.trim().toUpperCase(),
+        tipo_aplicacion: f.tipo_aplicacion, // "tienda" | "productos"
+        porcentaje: pct,
+        productos_ids: f.tipo_aplicacion === "productos" ? f.productos_ids : [],
+        activo: f.activo,
+      };
+      if (f.id) {
+        await sb.patch("descuentos", f.id, datos);
+        setDescuentos(prev => prev.map(d => d.id === f.id ? { ...d, ...datos } : d));
+      } else {
+        const fila = await sb.post("descuentos", datos);
+        if (Array.isArray(fila) && fila[0]) setDescuentos(prev => [fila[0], ...prev]);
+      }
+      showToast("Descuento guardado");
+      setDescForm(null);
+    } catch(e) {
+      const msg = (e.message || "").includes("duplicate") ? "Ya existe un descuento con ese código" : "Error: " + (e.message || "no se pudo guardar");
+      showToast(msg);
+    }
+    setGuardandoDesc(false);
+  };
+  const eliminarDescuento = async (d) => {
+    if (!confirm(`¿Eliminar el código ${d.codigo}?`)) return;
+    try {
+      await sb.delete("descuentos", d.id);
+      setDescuentos(prev => prev.filter(x => x.id !== d.id));
+      showToast("Descuento eliminado");
+    } catch(e) { showToast("Error al eliminar"); }
+  };
+  const toggleDescuento = async (d) => {
+    try {
+      await sb.patch("descuentos", d.id, { activo: !d.activo });
+      setDescuentos(prev => prev.map(x => x.id === d.id ? { ...x, activo: !x.activo } : x));
+    } catch(e) { showToast("Error al cambiar estado"); }
   };
 
   // ── SUBIDA DE IMAGEN DE PRODUCTO ───────────────────────────────
@@ -3565,6 +3622,7 @@ function AdminView() {
     ["crear", "Crear", FilePlus],
     ["products", "Productos", Tag],
     ["categories", "Categorías", FolderOpen],
+    ["descuentos", "Descuentos", Zap],
     ["shipping", "Envíos", Truck],
     ["users", "Clientes", Users],
   ];
@@ -4502,6 +4560,133 @@ function AdminView() {
               if (cat) handleCatIconUpload(e, cat);
               e.target.value = "";
             }} />
+          </>
+        )}
+
+        {/* ═══════════ DESCUENTOS ═══════════ */}
+        {tab === "descuentos" && (
+          <>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24, flexWrap: "wrap", gap: 12 }}>
+              <div style={{ fontSize: 22, fontWeight: 900, display: "flex", alignItems: "center", gap: 10 }}><Zap size={24} color={RED} /> Descuentos</div>
+              <button onClick={abrirNuevoDescuento} className="oft-btn-press" style={{ ...S.btnRed, padding: "10px 18px", fontSize: 14 }}>
+                <Plus size={16} /> Crear descuento
+              </button>
+            </div>
+
+            <p style={{ fontSize: 13, color: GRAY3, marginBottom: 20, maxWidth: 560 }}>
+              Crea códigos de descuento que tus clientes pueden usar al pagar. Pueden aplicar a <strong>toda la tienda</strong> o a <strong>productos seleccionados</strong>.
+            </p>
+
+            {/* LISTA DE DESCUENTOS */}
+            {descuentos.length === 0 ? (
+              <div style={{ background: WHITE, border: `1px dashed ${GRAY2}`, borderRadius: 14, padding: 40, textAlign: "center", color: GRAY3 }}>
+                <Zap size={36} color={GRAY3} strokeWidth={1.4} style={{ marginBottom: 10 }} />
+                <div style={{ fontWeight: 700, marginBottom: 4 }}>Aún no tienes descuentos</div>
+                <div style={{ fontSize: 13 }}>Crea tu primer código de descuento con el botón de arriba.</div>
+              </div>
+            ) : (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 14 }}>
+                {descuentos.map((d, i) => (
+                  <div key={d.id} className="oft-widget" style={{ background: WHITE, borderRadius: 14, border: `1px solid ${d.activo ? RED : GRAY2}`, padding: 18, transition: "transform 0.2s, box-shadow 0.2s", animationDelay: `${i * 0.05}s`, opacity: d.activo ? 1 : 0.65 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
+                      <div>
+                        <div style={{ fontWeight: 900, fontSize: 18, color: RED, letterSpacing: 0.5, display: "flex", alignItems: "center", gap: 8 }}>
+                          {d.codigo}
+                          <button onClick={() => { navigator.clipboard?.writeText(d.codigo); showToast("Código copiado"); }} title="Copiar" style={{ background: "none", border: "none", cursor: "pointer", color: GRAY3, display: "flex" }}><FileText size={14} /></button>
+                        </div>
+                        <div style={{ fontSize: 24, fontWeight: 900, marginTop: 2 }}>{d.porcentaje}% OFF</div>
+                      </div>
+                      <span style={{ fontSize: 10, fontWeight: 800, padding: "3px 8px", borderRadius: 8, background: d.activo ? "#D4EDDA" : GRAY2, color: d.activo ? "#155724" : GRAY3 }}>
+                        {d.activo ? "ACTIVO" : "PAUSADO"}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: 12, color: GRAY3, marginBottom: 14, display: "flex", alignItems: "center", gap: 5 }}>
+                      {d.tipo_aplicacion === "tienda"
+                        ? <><ShoppingBag size={13} /> Toda la tienda</>
+                        : <><Tag size={13} /> {(d.productos_ids || []).length} producto(s) seleccionado(s)</>
+                      }
+                    </div>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button onClick={() => toggleDescuento(d)} className="oft-btn-press" style={{ flex: 1, justifyContent: "center", background: WHITE, color: BLACK, border: `1.5px solid ${GRAY2}`, borderRadius: 8, padding: "8px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                        {d.activo ? "Pausar" : "Activar"}
+                      </button>
+                      <button onClick={() => setDescForm({ id: d.id, codigo: d.codigo, tipo_aplicacion: d.tipo_aplicacion, porcentaje: String(d.porcentaje), productos_ids: d.productos_ids || [], activo: d.activo })} className="oft-btn-press" style={{ justifyContent: "center", background: "none", color: BLACK, border: `1.5px solid ${BLACK}`, borderRadius: 8, padding: "8px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                        <PencilIcon size={13} />
+                      </button>
+                      <button onClick={() => eliminarDescuento(d)} className="oft-btn-press" style={{ justifyContent: "center", background: "none", color: RED, border: `1.5px solid ${RED}`, borderRadius: 8, padding: "8px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center" }}>
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* MODAL CREAR / EDITAR DESCUENTO */}
+            {descForm && (
+              <div className="oft-overlay" style={S.overlay} onClick={() => !guardandoDesc && setDescForm(null)}>
+                <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 16, maxWidth: 460, width: "92%", maxHeight: "88vh", overflowY: "auto", padding: 24 }} onClick={e => e.stopPropagation()}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+                    <div style={{ fontWeight: 800, fontSize: 18, display: "flex", alignItems: "center", gap: 8 }}><Zap size={18} color={RED} /> {descForm.id ? "Editar" : "Nuevo"} descuento</div>
+                    <button onClick={() => setDescForm(null)} style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}><X size={22} /></button>
+                  </div>
+
+                  <label style={S.label}>Código del descuento *</label>
+                  <input style={{ ...S.input, textTransform: "uppercase", fontWeight: 800, letterSpacing: 1 }} placeholder="Ej: VERANO10" value={descForm.codigo} onChange={e => setDescForm({ ...descForm, codigo: e.target.value.toUpperCase() })} />
+
+                  <label style={S.label}>Porcentaje de descuento (%) *</label>
+                  <input type="number" min="1" max="100" style={S.input} placeholder="Ej: 10" value={descForm.porcentaje} onChange={e => setDescForm({ ...descForm, porcentaje: e.target.value })} />
+
+                  <label style={S.label}>¿A qué aplica?</label>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
+                    <div onClick={() => setDescForm({ ...descForm, tipo_aplicacion: "tienda" })}
+                      style={{ border: `2px solid ${descForm.tipo_aplicacion === "tienda" ? RED : GRAY2}`, background: descForm.tipo_aplicacion === "tienda" ? "#FFF5F5" : WHITE, borderRadius: 10, padding: 14, cursor: "pointer", textAlign: "center" }}>
+                      <ShoppingBag size={24} color={descForm.tipo_aplicacion === "tienda" ? RED : GRAY3} strokeWidth={1.6} />
+                      <div style={{ fontWeight: 800, fontSize: 13, marginTop: 6 }}>Toda la tienda</div>
+                    </div>
+                    <div onClick={() => setDescForm({ ...descForm, tipo_aplicacion: "productos" })}
+                      style={{ border: `2px solid ${descForm.tipo_aplicacion === "productos" ? RED : GRAY2}`, background: descForm.tipo_aplicacion === "productos" ? "#FFF5F5" : WHITE, borderRadius: 10, padding: 14, cursor: "pointer", textAlign: "center" }}>
+                      <Tag size={24} color={descForm.tipo_aplicacion === "productos" ? RED : GRAY3} strokeWidth={1.6} />
+                      <div style={{ fontWeight: 800, fontSize: 13, marginTop: 6 }}>Productos elegidos</div>
+                    </div>
+                  </div>
+
+                  {/* SELECTOR DE PRODUCTOS */}
+                  {descForm.tipo_aplicacion === "productos" && (
+                    <div style={{ marginBottom: 12 }}>
+                      <label style={S.label}>Elige los productos ({descForm.productos_ids.length} seleccionados)</label>
+                      <div style={{ border: `1px solid ${GRAY2}`, borderRadius: 10, maxHeight: 220, overflowY: "auto" }}>
+                        {products.map(p => {
+                          const sel = descForm.productos_ids.includes(p.id);
+                          return (
+                            <div key={p.id} onClick={() => {
+                              const ids = sel ? descForm.productos_ids.filter(x => x !== p.id) : [...descForm.productos_ids, p.id];
+                              setDescForm({ ...descForm, productos_ids: ids });
+                            }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", cursor: "pointer", borderBottom: `1px solid ${GRAY}`, background: sel ? "#FFF5F5" : WHITE }}>
+                              <div style={{ width: 20, height: 20, borderRadius: 5, border: `2px solid ${sel ? RED : GRAY2}`, background: sel ? RED : WHITE, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                                {sel && <CheckCircle2 size={13} color={WHITE} />}
+                              </div>
+                              {p.imagen_url ? <img src={p.imagen_url} style={{ width: 30, height: 30, borderRadius: 5, objectFit: "cover" }} /> : <div style={{ width: 30, height: 30, borderRadius: 5, background: GRAY }} />}
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.nombre}</div>
+                                <div style={{ fontSize: 11, color: GRAY3 }}>{p.referencia}</div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
+                    <button onClick={() => setDescForm(null)} disabled={guardandoDesc} className="oft-btn-press" style={{ ...S.btnOutline, flex: 1, justifyContent: "center" }}>Cancelar</button>
+                    <button onClick={guardarDescuento} disabled={guardandoDesc} className="oft-btn-press" style={{ ...S.btnRed, flex: 1, justifyContent: "center", opacity: guardandoDesc ? 0.7 : 1 }}>
+                      {guardandoDesc ? "Guardando..." : "Guardar descuento"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </>
         )}
 
