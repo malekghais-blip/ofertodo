@@ -3094,6 +3094,49 @@ function AdminView() {
   })();
   const maxIngreso = Math.max(...ingresosPorFecha.map(d => d.ingreso), 1);
 
+  // ── RETURNING CUSTOMER RATE ────────────────────────────────────
+  // % de clientes (con usuario_id) que han hecho más de un pedido real
+  const returningRate = (() => {
+    const conteo = {};
+    pedidosRealesTodos.forEach(o => { if (o.usuario_id) conteo[o.usuario_id] = (conteo[o.usuario_id] || 0) + 1; });
+    const compradores = Object.keys(conteo).length;
+    if (compradores === 0) return 0;
+    const recurrentes = Object.values(conteo).filter(n => n > 1).length;
+    return (recurrentes / compradores) * 100;
+  })();
+
+  // ── AVERAGE ORDER VALUE OVER TIME (valor + serie para gráfica) ──
+  const aovActual = ordenesTotal > 0 ? ingresoTotal / ordenesTotal : 0;
+  const aovPorFecha = (() => {
+    const map = {};
+    pedidosReales.forEach(o => {
+      const d = new Date(o.created_at).toLocaleDateString("es-PA", { day: "2-digit", month: "2-digit" });
+      if (!map[d]) map[d] = { fecha: d, total: 0, ordenes: 0 };
+      map[d].total += Number(o.total || 0);
+      map[d].ordenes += 1;
+    });
+    return Object.values(map).map(d => ({ fecha: d.fecha, aov: d.ordenes > 0 ? d.total / d.ordenes : 0 })).slice(-7);
+  })();
+  const maxAov = Math.max(...aovPorFecha.map(d => d.aov), 1);
+
+  // ── DESGLOSE DE VENTAS (mini-tabla) ────────────────────────────
+  // Nota: retornos y flete de retorno aún no existen en el sistema → 0.00 (próximamente)
+  const desglose = (() => {
+    let descuentos = 0, envios = 0, totales = 0;
+    pedidosReales.forEach(o => {
+      totales += Number(o.total || 0);
+      envios += Number(o.costo_envio || 0);
+      // Si el pedido guardó un descuento en monto, lo sumamos (si existe el campo)
+      descuentos += Number(o.descuento_monto || 0);
+    });
+    const retornos = 0;          // próximamente
+    const fleteRetorno = 0;      // próximamente
+    // Venta bruta = total - envíos + descuentos (lo que valían los productos antes de ajustes)
+    const bruta = totales - envios + descuentos;
+    const netas = bruta - descuentos - retornos;
+    return { bruta, descuentos, retornos, netas, envios, fleteRetorno, totales };
+  })();
+
   // Mejores productos (por cantidad vendida, solo pedidos reales)
   const mejoresProductos = (() => {
     const map = {};
@@ -3651,14 +3694,15 @@ function AdminView() {
                 </div>
 
                 {/* TARJETAS DE MÉTRICAS */}
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 16, marginBottom: 28 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 16, marginBottom: 20 }}>
                   {[
                     ["Ingresos totales", money(ingresoTotal), DollarSign, RED],
                     ["Órdenes totales", ordenesTotal, ShoppingBag, "#004085"],
                     ["Clientes", clientesTotal, Users, "#155724"],
+                    ["Clientes que regresan", returningRate.toFixed(0) + "%", RefreshCw, "#6f42c1"],
                     ["Mi balance", money(balance), Wallet, "#856404"],
-                  ].map(([label, val, Icon, color]) => (
-                    <div key={label} style={{ background: WHITE, borderRadius: 14, padding: 20, border: `1px solid ${GRAY2}` }}>
+                  ].map(([label, val, Icon, color], i) => (
+                    <div key={label} className="oft-widget" style={{ background: WHITE, borderRadius: 14, padding: 20, border: `1px solid ${GRAY2}`, transition: "transform 0.2s, box-shadow 0.2s", animationDelay: `${i * 0.07}s` }}>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                         <div>
                           <div style={{ fontSize: 13, color: GRAY3, marginBottom: 6 }}>{label}</div>
@@ -3670,6 +3714,86 @@ function AdminView() {
                       </div>
                     </div>
                   ))}
+                </div>
+
+                {/* WIDGET: AOV OVER TIME + MINI-TABLA DE VENTAS */}
+                <div className="oft-dash-grid-2" style={{ display: "grid", gridTemplateColumns: "1.3fr 1fr", gap: 16, marginBottom: 28 }}>
+                  {/* AVERAGE ORDER VALUE OVER TIME */}
+                  <div className="oft-widget" style={{ background: WHITE, borderRadius: 14, padding: 24, border: `1px solid ${GRAY2}`, transition: "transform 0.2s, box-shadow 0.2s" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4 }}>
+                      <div style={{ fontWeight: 800, display: "flex", alignItems: "center", gap: 8 }}><TrendingUp size={18} color={RED} /> Valor promedio por orden</div>
+                      <div style={{ textAlign: "right" }}>
+                        <div className="oft-total-pop" style={{ fontSize: 24, fontWeight: 900, color: RED }}>{money(aovActual)}</div>
+                        <div style={{ fontSize: 11, color: GRAY3 }}>promedio actual</div>
+                      </div>
+                    </div>
+                    <div style={{ fontSize: 12, color: GRAY3, marginBottom: 14 }}>Evolución del ticket promedio</div>
+                    {aovPorFecha.length === 0 ? (
+                      <div style={{ textAlign: "center", padding: 30, color: GRAY3, fontSize: 13 }}>Aún no hay datos</div>
+                    ) : (
+                      <svg viewBox="0 0 320 120" style={{ width: "100%", height: 120, overflow: "visible" }}>
+                        {(() => {
+                          const w = 320, h = 100, pad = 6;
+                          const pts = aovPorFecha.map((d, i) => {
+                            const x = pad + (i * (w - 2 * pad)) / Math.max(aovPorFecha.length - 1, 1);
+                            const y = h - (d.aov / maxAov) * (h - 20) - 6;
+                            return [x, y];
+                          });
+                          const path = pts.map((p, i) => (i === 0 ? "M" : "L") + p[0].toFixed(1) + " " + p[1].toFixed(1)).join(" ");
+                          const area = path + ` L ${pts[pts.length-1][0].toFixed(1)} ${h} L ${pts[0][0].toFixed(1)} ${h} Z`;
+                          return (
+                            <>
+                              <defs>
+                                <linearGradient id="aovGrad" x1="0" y1="0" x2="0" y2="1">
+                                  <stop offset="0%" stopColor={RED} stopOpacity="0.28" />
+                                  <stop offset="100%" stopColor={RED} stopOpacity="0" />
+                                </linearGradient>
+                              </defs>
+                              <path d={area} fill="url(#aovGrad)" />
+                              <path className="oft-line-draw" d={path} fill="none" stroke={RED} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+                              {pts.map((p, i) => (
+                                <g key={i}>
+                                  <circle cx={p[0]} cy={p[1]} r="3.5" fill={WHITE} stroke={RED} strokeWidth="2" />
+                                  <text x={p[0]} y={h + 14} textAnchor="middle" fontSize="9" fill={GRAY3}>{aovPorFecha[i].fecha}</text>
+                                </g>
+                              ))}
+                            </>
+                          );
+                        })()}
+                      </svg>
+                    )}
+                  </div>
+
+                  {/* MINI-TABLA DE VENTAS */}
+                  <div className="oft-widget" style={{ background: WHITE, borderRadius: 14, padding: 24, border: `1px solid ${GRAY2}`, transition: "transform 0.2s, box-shadow 0.2s" }}>
+                    <div style={{ fontWeight: 800, marginBottom: 4, display: "flex", alignItems: "center", gap: 8 }}><BarChart3 size={18} color={RED} /> Resumen de ventas</div>
+                    <div style={{ fontSize: 12, color: GRAY3, marginBottom: 14 }}>Desglose del periodo</div>
+                    <div style={{ display: "flex", flexDirection: "column" }}>
+                      {[
+                        ["Venta bruta", desglose.bruta, false, false],
+                        ["Descuentos", desglose.descuentos, true, false],
+                        ["Retornos", desglose.retornos, true, true],
+                        ["Ventas netas", desglose.netas, false, false],
+                        ["Costos de envío", desglose.envios, false, false],
+                        ["Flete de retorno", desglose.fleteRetorno, false, true],
+                        ["Ventas totales", desglose.totales, false, false],
+                      ].map(([label, val, esResta, proximamente], i) => {
+                        const esTotal = label === "Ventas totales";
+                        const esNeta = label === "Ventas netas";
+                        return (
+                          <div key={label} className="oft-row-in" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "9px 0", borderTop: i === 0 ? "none" : `1px solid ${GRAY}`, animationDelay: `${i * 0.06}s` }}>
+                            <span style={{ fontSize: 13, fontWeight: (esTotal || esNeta) ? 800 : 500, color: (esTotal || esNeta) ? BLACK : GRAY3, display: "flex", alignItems: "center", gap: 6 }}>
+                              {label}
+                              {proximamente && <span style={{ fontSize: 9, background: "#FFF3CD", color: "#856404", padding: "1px 5px", borderRadius: 6, fontWeight: 700 }}>próximamente</span>}
+                            </span>
+                            <span style={{ fontSize: esTotal ? 16 : 13, fontWeight: (esTotal || esNeta) ? 900 : 600, color: esTotal ? RED : esResta && val > 0 ? "#B01519" : BLACK }}>
+                              {esResta && val > 0 ? "−" : ""}{money(val)}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
                 </div>
 
                 {/* GRÁFICO DE INGRESOS + MEJORES PRODUCTOS */}
@@ -3685,7 +3809,7 @@ function AdminView() {
                         {ingresosPorFecha.map((d, i) => (
                           <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
                             <div style={{ fontSize: 11, fontWeight: 700, color: RED }}>{money(d.ingreso)}</div>
-                            <div style={{ width: "100%", maxWidth: 48, background: `linear-gradient(180deg, ${RED} 0%, ${RED_D} 100%)`, borderRadius: "6px 6px 0 0", height: `${Math.max((d.ingreso / maxIngreso) * 150, 4)}px`, transition: "height 0.3s" }} />
+                            <div className="oft-bar-grow" style={{ width: "100%", maxWidth: 48, background: `linear-gradient(180deg, ${RED} 0%, ${RED_D} 100%)`, borderRadius: "6px 6px 0 0", height: `${Math.max((d.ingreso / maxIngreso) * 150, 4)}px`, transition: "height 0.3s", animationDelay: `${i * 0.08}s` }} />
                             <div style={{ fontSize: 11, color: GRAY3 }}>{d.fecha}</div>
                             <div style={{ fontSize: 10, color: GRAY3, background: GRAY, borderRadius: 10, padding: "1px 7px" }}>{d.ordenes} ord</div>
                           </div>
@@ -4757,6 +4881,15 @@ export default function App() {
         .oft-total-pop { display: inline-block; animation: totalPop 0.3s ease; }
         @keyframes calPop { 0% { opacity: 0; transform: translateY(-8px) scale(0.97); } 100% { opacity: 1; transform: translateY(0) scale(1); } }
         .oft-cal-pop { animation: calPop 0.22s cubic-bezier(0.34,1.4,0.5,1) both; }
+        @keyframes widgetIn { 0% { opacity: 0; transform: translateY(14px) scale(0.98); } 100% { opacity: 1; transform: translateY(0) scale(1); } }
+        .oft-widget { animation: widgetIn 0.5s cubic-bezier(0.22,1,0.36,1) both; }
+        .oft-widget:hover { transform: translateY(-3px); box-shadow: 0 12px 28px rgba(0,0,0,0.10); }
+        @keyframes barGrow { from { transform: scaleY(0); } to { transform: scaleY(1); } }
+        .oft-bar-grow { transform-origin: bottom; animation: barGrow 0.7s cubic-bezier(0.22,1,0.36,1) both; }
+        @keyframes lineDraw { from { stroke-dashoffset: 1000; } to { stroke-dashoffset: 0; } }
+        .oft-line-draw { stroke-dasharray: 1000; animation: lineDraw 1.4s ease forwards; }
+        @keyframes rowIn { from { opacity: 0; transform: translateX(-8px); } to { opacity: 1; transform: translateX(0); } }
+        .oft-row-in { animation: rowIn 0.45s ease both; }
         .oft-cal-day { transition: background 0.15s ease, transform 0.1s ease; }
         .oft-cal-day:hover { background: #FFE5E6 !important; }
         .oft-cal-day:active { transform: scale(0.88); }
