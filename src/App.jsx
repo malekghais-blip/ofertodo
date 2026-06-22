@@ -3019,6 +3019,7 @@ function AdminView() {
   const [descForm, setDescForm] = useState(null); // formulario crear/editar descuento o null
   const [guardandoDesc, setGuardandoDesc] = useState(false);
   const [descProductosOpen, setDescProductosOpen] = useState(false); // selector de productos en el form
+  const [busquedaCotizacion, setBusquedaCotizacion] = useState(""); // buscar cotización por nombre de cliente
   const [eliminando, setEliminando] = useState(false);
   // Filtro de ventas por periodo en el dashboard
   const [rangoVentas, setRangoVentas] = useState("todo"); // dia | semana | mes | anio | todo | personalizado | rango
@@ -3858,7 +3859,7 @@ function AdminView() {
                 {/* GRÁFICO DE INGRESOS + MEJORES PRODUCTOS */}
                 <div className="oft-dash-grid-2" style={{ display: "grid", gridTemplateColumns: "1.6fr 1fr", gap: 16, marginBottom: 28 }}>
                   {/* GRÁFICO INGRESOS */}
-                  <div style={{ background: WHITE, borderRadius: 14, padding: 24, border: `1px solid ${GRAY2}` }}>
+                  <div className="oft-widget" style={{ background: WHITE, borderRadius: 14, padding: 24, border: `1px solid ${GRAY2}`, transition: "transform 0.2s, box-shadow 0.2s" }}>
                     <div style={{ fontWeight: 800, marginBottom: 4, display: "flex", alignItems: "center", gap: 8 }}><TrendingUp size={18} color={RED} /> Estadística de Ingresos</div>
                     <div style={{ fontSize: 12, color: GRAY3, marginBottom: 20 }}>Ingresos y órdenes por día</div>
                     {ingresosPorFecha.length === 0 ? (
@@ -3878,7 +3879,7 @@ function AdminView() {
                   </div>
 
                   {/* MEJORES PRODUCTOS */}
-                  <div style={{ background: WHITE, borderRadius: 14, padding: 24, border: `1px solid ${GRAY2}` }}>
+                  <div className="oft-widget" style={{ background: WHITE, borderRadius: 14, padding: 24, border: `1px solid ${GRAY2}`, transition: "transform 0.2s, box-shadow 0.2s", animationDelay: "0.1s" }}>
                     <div style={{ fontWeight: 800, marginBottom: 4, display: "flex", alignItems: "center", gap: 8 }}><Sparkles size={18} color={RED} /> Mejores Productos</div>
                     <div style={{ fontSize: 12, color: GRAY3, marginBottom: 16 }}>Más vendidos por cantidad</div>
                     {mejoresProductos.length === 0 ? (
@@ -3929,11 +3930,32 @@ function AdminView() {
 
                 {/* COTIZACIONES RECIENTES */}
                 <div style={{ background: WHITE, borderRadius: 14, padding: 24, border: `1px solid ${GRAY2}`, marginTop: 24 }}>
-                  <div style={{ fontWeight: 800, marginBottom: 4, display: "flex", alignItems: "center", gap: 8 }}><FileText size={18} color="#856404" /> Cotizaciones Recientes</div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 4 }}>
+                    <div style={{ fontWeight: 800, display: "flex", alignItems: "center", gap: 8 }}><FileText size={18} color="#856404" /> Cotizaciones Recientes</div>
+                    {cotizaciones.length > 0 && (
+                      <div style={{ position: "relative", width: 220, maxWidth: "100%" }}>
+                        <Search size={14} color={GRAY3} style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)" }} />
+                        <input
+                          style={{ width: "100%", padding: "8px 10px 8px 32px", borderRadius: 20, border: `1.5px solid ${GRAY2}`, fontSize: 13, outline: "none", boxSizing: "border-box" }}
+                          placeholder="Buscar por cliente..."
+                          value={busquedaCotizacion}
+                          onChange={e => setBusquedaCotizacion(e.target.value)}
+                        />
+                        {busquedaCotizacion && (
+                          <button onClick={() => setBusquedaCotizacion("")} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", display: "flex", color: GRAY3 }}><X size={15} /></button>
+                        )}
+                      </div>
+                    )}
+                  </div>
                   <div style={{ fontSize: 12, color: GRAY3, marginBottom: 16 }}>Las cotizaciones no cuentan como ventas</div>
-                  {cotizaciones.length === 0 ? (
-                    <div style={{ textAlign: "center", padding: 30, color: GRAY3, fontSize: 13 }}>Aún no hay cotizaciones</div>
-                  ) : cotizaciones.slice(0, 5).map(o => {
+                  {(() => {
+                    const q = busquedaCotizacion.trim().toLowerCase();
+                    const cotizacionesFiltradas = q
+                      ? cotizaciones.filter(o => (o.nombre_cliente || "").toLowerCase().includes(q) || (o.codigo || "").toLowerCase().includes(q))
+                      : cotizaciones;
+                    if (cotizaciones.length === 0) return <div style={{ textAlign: "center", padding: 30, color: GRAY3, fontSize: 13 }}>Aún no hay cotizaciones</div>;
+                    if (cotizacionesFiltradas.length === 0) return <div style={{ textAlign: "center", padding: 30, color: GRAY3, fontSize: 13 }}>No se encontró ninguna cotización de "{busquedaCotizacion}"</div>;
+                    return (q ? cotizacionesFiltradas : cotizacionesFiltradas.slice(0, 5)).map(o => {
                     const firstItem = (o.items || [])[0];
                     const prod = firstItem ? products.find(p => p.id === firstItem.producto_id) : null;
                     return (
@@ -3960,7 +3982,8 @@ function AdminView() {
                         </div>
                       </div>
                     );
-                  })}
+                  });
+                  })()}
                 </div>
               </>
             )}
