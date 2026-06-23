@@ -1886,7 +1886,7 @@ function CrearPedidoView() {
   const { products, empresas, sucursales, showToast } = useApp();
   const [items, setItems] = useState([]); // { product, pres, count }
   const [search, setSearch] = useState("");
-  const [cliente, setCliente] = useState({ nombre: "", telefono: "", direccion: "" });
+  const [cliente, setCliente] = useState({ id: null, nombre: "", telefono: "", direccion: "" });
   const [clientesLista, setClientesLista] = useState([]); // clientes registrados para buscar
   const [busquedaCliente, setBusquedaCliente] = useState(""); // texto de búsqueda de cliente
   const [mostrarClientes, setMostrarClientes] = useState(false); // muestra el desplegable de resultados
@@ -2027,7 +2027,7 @@ function CrearPedidoView() {
 
       const codigo = (tipo === "cotizacion" ? "COT-" : "OFT-") + numFactura;
       const pedido = await sb.post("pedidos", {
-        codigo, usuario_id: null, nombre_cliente: cliente.nombre, telefono: cliente.telefono,
+        codigo, usuario_id: cliente.id || null, nombre_cliente: cliente.nombre, telefono: cliente.telefono,
         direccion: cliente.direccion, notas, total, estado: 0,
         empresa_envio_id: empresaId, empresa_envio_nombre: empresaSel?.nombre || "",
         sucursal_id: sucursalId, sucursal_nombre: sucursalSel?.nombre || "",
@@ -2375,7 +2375,7 @@ function CrearPedidoView() {
                     .slice(0, 8)
                     .map(c => (
                       <div key={c.id} onClick={() => {
-                        setCliente({ nombre: c.nombre || "", telefono: c.telefono || "", direccion: cliente.direccion });
+                        setCliente({ id: c.id, nombre: c.nombre || "", telefono: c.telefono || "", direccion: cliente.direccion });
                         setBusquedaCliente("");
                         setMostrarClientes(false);
                         showToast(`Cliente: ${c.nombre}`);
@@ -2399,7 +2399,7 @@ function CrearPedidoView() {
             </div>
 
             <label style={S.label}>Nombre *</label>
-            <input style={S.input} placeholder="Nombre del cliente" value={cliente.nombre} onChange={e => setCliente({ ...cliente, nombre: e.target.value })} />
+            <input style={S.input} placeholder="Nombre del cliente" value={cliente.nombre} onChange={e => setCliente({ ...cliente, id: null, nombre: e.target.value })} />
             <label style={S.label}>WhatsApp / Teléfono</label>
             <input style={S.input} placeholder="Ej: 6720-0474" value={cliente.telefono} onChange={e => setCliente({ ...cliente, telefono: e.target.value })} />
             <label style={S.label}>Dirección / referencia</label>
