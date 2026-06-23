@@ -976,7 +976,7 @@ function LoginModal() {
 
   return (
     <div className="oft-overlay" style={S.overlay} onClick={() => setShowLogin(false)}>
-      <div className="oft-modal-sheet oft-modal" style={S.modal} onClick={e => e.stopPropagation()}>
+      <div className="oft-modal-sheet oft-modal oft-auth-pop" style={S.modal} onClick={e => e.stopPropagation()}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}><Logo /><button onClick={() => setShowLogin(false)} style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}><X size={22} /></button></div>
         <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 20 }}>Iniciar sesión</div>
         {/* BOTÓN DE GOOGLE */}
@@ -1028,7 +1028,7 @@ function RegisterModal() {
 
   return (
     <div className="oft-overlay" style={S.overlay} onClick={() => setShowRegister(false)}>
-      <div className="oft-modal-sheet oft-modal" style={S.modal} onClick={e => e.stopPropagation()}>
+      <div className="oft-modal-sheet oft-modal oft-auth-pop" style={S.modal} onClick={e => e.stopPropagation()}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}><Logo /><button onClick={() => setShowRegister(false)} style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}><X size={22} /></button></div>
         <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 20 }}>Crear cuenta</div>
 
@@ -1081,7 +1081,7 @@ function CompleteProfileModal() {
 
   return (
     <div className="oft-overlay" style={S.overlay}>
-      <div className="oft-modal-sheet oft-modal" style={S.modal} onClick={e => e.stopPropagation()}>
+      <div className="oft-modal-sheet oft-modal oft-auth-pop" style={S.modal} onClick={e => e.stopPropagation()}>
         <div style={{ display: "flex", justifyContent: "center", marginBottom: 18 }}><Logo /></div>
         <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 6, textAlign: "center" }}>¡Casi listo! 🎉</div>
         <p style={{ fontSize: 14, color: GRAY3, textAlign: "center", marginBottom: 22 }}>
@@ -5181,6 +5181,10 @@ export default function App() {
         .oft-toast-in { animation: toastIn 0.3s ease both; }
         @keyframes qvPop { 0% { opacity: 0; transform: scale(0.88); } 100% { opacity: 1; transform: scale(1); } }
         .oft-qv-pop { animation: qvPop 0.28s cubic-bezier(0.34,1.4,0.5,1) both; }
+        @keyframes overlayFade { from { opacity: 0; } to { opacity: 1; } }
+        .oft-overlay { animation: overlayFade 0.22s ease both; }
+        @keyframes authPop { 0% { opacity: 0; transform: translateY(18px) scale(0.94); } 60% { opacity: 1; transform: translateY(0) scale(1.015); } 100% { transform: translateY(0) scale(1); } }
+        .oft-auth-pop { animation: authPop 0.4s cubic-bezier(0.34,1.45,0.5,1) both; }
         @keyframes qtyBump { 0% { transform: scale(1); } 40% { transform: scale(1.3); color: ${RED}; } 100% { transform: scale(1); } }
         .oft-qty-bump { animation: qtyBump 0.28s ease; }
         @keyframes chipPop { 0% { opacity: 0; transform: scale(0.6); } 100% { opacity: 1; transform: scale(1); } }
