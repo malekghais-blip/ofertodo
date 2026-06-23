@@ -1190,8 +1190,61 @@ function CheckoutView() {
   const [empresaId, setEmpresaId] = useState(null);
   const [sucursalId, setSucursalId] = useState(null);
   const [modoEntrega, setModoEntrega] = useState("sucursal"); // "sucursal" | "puerta"
-  const total = cart.reduce((s, i) => s + cartItemTotal(i), 0);
+  const subtotalBruto = cart.reduce((s, i) => s + cartItemTotal(i), 0);
+  // ── DESCUENTO ──
+  const [codigoInput, setCodigoInput] = useState("");        // lo que el cliente escribe
+  const [descuentoAplicado, setDescuentoAplicado] = useState(null); // {codigo, porcentaje, tipo_aplicacion, productos_ids}
+  const [validandoCodigo, setValidandoCodigo] = useState(false);
+  const [errorCodigo, setErrorCodigo] = useState("");
+
+  // Calcula cuánto se descuenta según el tipo (tienda o productos seleccionados)
+  const montoDescuento = (() => {
+    if (!descuentoAplicado) return 0;
+    const pct = Number(descuentoAplicado.porcentaje) / 100;
+    if (descuentoAplicado.tipo_aplicacion === "tienda") {
+      return subtotalBruto * pct;
+    }
+    // Solo sobre los productos incluidos en el descuento
+    const ids = descuentoAplicado.productos_ids || [];
+    const baseAplicable = cart.reduce((s, i) => ids.includes(i.product.id) ? s + cartItemTotal(i) : s, 0);
+    return baseAplicable * pct;
+  })();
+  const total = Math.max(subtotalBruto - montoDescuento, 0);
   const money = (n) => "$" + Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  // Valida el código contra la tabla de descuentos
+  const aplicarCodigo = async () => {
+    const code = codigoInput.trim().toUpperCase();
+    if (!code) { setErrorCodigo("Escribe un código"); return; }
+    setValidandoCodigo(true);
+    setErrorCodigo("");
+    try {
+      const res = await sb.get("descuentos", `?codigo=eq.${encodeURIComponent(code)}&activo=eq.true`);
+      if (!res || res.length === 0) {
+        setErrorCodigo("Código no válido o inactivo");
+        setDescuentoAplicado(null);
+      } else {
+        const d = res[0];
+        // Si es por productos, verifica que el carrito tenga al menos uno incluido
+        if (d.tipo_aplicacion === "productos") {
+          const ids = d.productos_ids || [];
+          const hayAlguno = cart.some(i => ids.includes(i.product.id));
+          if (!hayAlguno) {
+            setErrorCodigo("Este código aplica a productos que no están en tu carrito");
+            setDescuentoAplicado(null);
+            setValidandoCodigo(false);
+            return;
+          }
+        }
+        setDescuentoAplicado(d);
+        showToast(`¡Código ${code} aplicado! ${d.porcentaje}% de descuento`);
+      }
+    } catch(e) {
+      setErrorCodigo("No se pudo validar el código");
+    }
+    setValidandoCodigo(false);
+  };
+  const quitarCodigo = () => { setDescuentoAplicado(null); setCodigoInput(""); setErrorCodigo(""); };
 
   const empresasActivas = empresas.filter(e => e.activa !== false);
   const sucursalesEmpresa = sucursales.filter(s => s.empresa_id === empresaId && s.activa !== false);
@@ -1237,6 +1290,8 @@ function CheckoutView() {
         empresa_envio_id: empresaFinalId, empresa_envio_nombre: empresaFinalNombre,
         sucursal_id: sucursalFinalId, sucursal_nombre: sucursalFinalNombre,
         pagado: false, yappy_order_id: yappyOrderId,
+        descuento_codigo: descuentoAplicado?.codigo || null,
+        descuento_monto: montoDescuento > 0 ? Number(montoDescuento.toFixed(2)) : 0,
       });
       const pedidoId = pedido[0].id;
       for (const item of cart) {
@@ -1286,6 +1341,50 @@ function CheckoutView() {
             <span style={{ fontWeight: 700 }}>${cartItemTotal(item).toFixed(2)}</span>
           </div>
         ))}
+
+        {/* CÓDIGO DE DESCUENTO */}
+        <div style={{ marginTop: 14 }}>
+          {!descuentoAplicado ? (
+            <div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <input
+                  style={{ flex: 1, padding: "10px 12px", borderRadius: 8, border: `1.5px solid ${errorCodigo ? RED : GRAY2}`, fontSize: 14, textTransform: "uppercase", outline: "none" }}
+                  placeholder="¿Tienes un código?"
+                  value={codigoInput}
+                  onChange={e => { setCodigoInput(e.target.value.toUpperCase()); setErrorCodigo(""); }}
+                  onKeyDown={e => e.key === "Enter" && aplicarCodigo()}
+                />
+                <button onClick={aplicarCodigo} disabled={validandoCodigo} className="oft-btn-press" style={{ background: BLACK, color: WHITE, border: "none", borderRadius: 8, padding: "0 18px", fontSize: 14, fontWeight: 700, cursor: "pointer", opacity: validandoCodigo ? 0.6 : 1 }}>
+                  {validandoCodigo ? "..." : "Aplicar"}
+                </button>
+              </div>
+              {errorCodigo && <div style={{ color: RED, fontSize: 12, marginTop: 6, fontWeight: 600 }}>{errorCodigo}</div>}
+            </div>
+          ) : (
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "#E8F5E9", border: "1px solid #A5D6A7", borderRadius: 8, padding: "10px 14px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <CheckCircle2 size={16} color="#2E7D32" />
+                <div>
+                  <div style={{ fontWeight: 800, fontSize: 13, color: "#2E7D32" }}>{descuentoAplicado.codigo}</div>
+                  <div style={{ fontSize: 11, color: "#2E7D32" }}>{descuentoAplicado.porcentaje}% de descuento aplicado</div>
+                </div>
+              </div>
+              <button onClick={quitarCodigo} style={{ background: "none", border: "none", cursor: "pointer", color: "#2E7D32", display: "flex" }}><X size={18} /></button>
+            </div>
+          )}
+        </div>
+
+        {/* DESGLOSE */}
+        {montoDescuento > 0 && (
+          <>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 14, marginTop: 14, color: GRAY3 }}>
+              <span>Subtotal</span><span>${subtotalBruto.toFixed(2)}</span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 14, marginTop: 6, color: "#2E7D32", fontWeight: 700 }}>
+              <span>Descuento ({descuentoAplicado.porcentaje}%)</span><span>−${montoDescuento.toFixed(2)}</span>
+            </div>
+          </>
+        )}
         <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 900, fontSize: 18, marginTop: 14 }}>
           <span>Total</span><span style={{ color: RED }}>${total.toFixed(2)}</span>
         </div>
