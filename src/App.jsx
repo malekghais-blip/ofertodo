@@ -4985,12 +4985,71 @@ function AdminView() {
 //  APP ROOT — Estado global + carga de datos
 // ═══════════════════════════════════════════════════════════════
 export default function App() {
-  const [view, setView] = useState("home");
+  // Vista persiste en localStorage para que el refresh no regrese al inicio
+  const [view, setViewRaw] = useState(() => {
+    try {
+      const v = localStorage.getItem("oft_view");
+      // Solo las vistas "seguras" para persistir (no modales intermedios)
+      const permitidas = ["home", "catalog", "dashboard", "admin", "checkout"];
+      return (v && permitidas.includes(v)) ? v : "home";
+    } catch(e) { return "home"; }
+  });
+  const setView = (v) => {
+    setViewRaw(v);
+    try { localStorage.setItem("oft_view", v); } catch(e) {}
+  };
+
   // El carrito se guarda en el navegador para que NO se pierda al iniciar sesión o recargar
   const [cart, setCart] = useState(() => {
     try { const g = localStorage.getItem("oft_cart"); return g ? JSON.parse(g) : []; } catch(e) { return []; }
   });
-  const [user, setUser] = useState(null);
+
+  // Usuario persiste en localStorage para no perder la sesión al hacer refresh
+  const [user, setUserRaw] = useState(() => {
+    try {
+      const u = localStorage.getItem("oft_user");
+      if (!u) return null;
+      const parsed = JSON.parse(u);
+      // Verificar que el token no expiró (exp en segundos Unix)
+      if (parsed?.exp && Date.now() / 1000 > parsed.exp) {
+        localStorage.removeItem("oft_user");
+        localStorage.removeItem("oft_view");
+        return null;
+      }
+      return parsed;
+    } catch(e) { return null; }
+  });
+  const setUser = (u) => {
+    setUserRaw(u);
+    try {
+      if (u) localStorage.setItem("oft_user", JSON.stringify(u));
+      else { localStorage.removeItem("oft_user"); localStorage.removeItem("oft_view"); }
+    } catch(e) {}
+  };
+
+  // AUTO SIGN OUT por inactividad (30 minutos sin tocar nada)
+  const INACTIVIDAD_MS = 30 * 60 * 1000; // 30 minutos
+  const ultimaActividad = useRef(Date.now());
+  const [toastMsg, setToastMsg] = useState("");
+  const showToast = (msg) => { setToastMsg(msg); setTimeout(() => setToastMsg(""), 3000); };
+
+  useEffect(() => {
+    if (!user) return; // Solo aplica si hay sesión
+    const actualizar = () => { ultimaActividad.current = Date.now(); };
+    const eventos = ["mousemove", "keydown", "click", "touchstart", "scroll"];
+    eventos.forEach(e => window.addEventListener(e, actualizar, { passive: true }));
+    const intervalo = setInterval(() => {
+      if (Date.now() - ultimaActividad.current > INACTIVIDAD_MS) {
+        setUser(null);
+        setView("home");
+        showToast("Sesión cerrada por inactividad");
+      }
+    }, 60 * 1000); // revisa cada minuto
+    return () => {
+      eventos.forEach(e => window.removeEventListener(e, actualizar));
+      clearInterval(intervalo);
+    };
+  }, [user]);
   const [showLogin, setShowLogin] = useState(false);
   const [showRegister, setShowRegister] = useState(false);
   const [showCart, setShowCart] = useState(false);
@@ -5003,9 +5062,6 @@ export default function App() {
   const [empresas, setEmpresas] = useState([]);
   const [sucursales, setSucursales] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [toastMsg, setToastMsg] = useState("");
-
-  const showToast = (msg) => { setToastMsg(msg); setTimeout(() => setToastMsg(""), 3000); };
 
   // Guarda el carrito en el navegador cada vez que cambia
   useEffect(() => {
