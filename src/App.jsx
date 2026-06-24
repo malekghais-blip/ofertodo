@@ -3074,7 +3074,7 @@ function EditCotizacionModal({ cotizacion, empresas, sucursales, onClose, onSave
 //  ADMIN PANEL
 // ═══════════════════════════════════════════════════════════════
 function AdminView() {
-  const { products, setProducts, categories, setCategories, empresas, setEmpresas, sucursales, setSucursales, showToast } = useApp();
+  const { products, setProducts, categories, setCategories, empresas, setEmpresas, sucursales, setSucursales, showToast, setView, setUser } = useApp();
   const [tab, setTab] = useState("dashboard");
   const [orders, setOrders] = useState([]);
   const [users, setUsers] = useState([]);
