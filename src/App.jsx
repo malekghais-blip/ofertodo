@@ -2,7 +2,7 @@ import { useState, useEffect, createContext, useContext, useRef } from "react";
 import {
   ShoppingCart, Search, Trash2, MessageCircle, X, Package, CheckCircle2,
   MapPin, CreditCard, LayoutGrid, FolderOpen, Tag, Truck, Headphones,
-  Plus, Pencil, Upload, RefreshCw, ChevronDown, ChevronUp, LogOut, User,
+  Plus, Pencil, Upload, RefreshCw, ChevronDown, ChevronUp, LogOut, User, Home,
   Shirt, Footprints, Watch, Sparkles, ClipboardList, Image as ImageIcon,
   FileSpreadsheet, FolderPlus, Zap, Lock, Users, BarChart3, DollarSign,
   TrendingUp, Wallet, ShoppingBag, Pencil as PencilIcon, Save,
@@ -3741,6 +3741,15 @@ function AdminView() {
             </div>
           ))}
         </div>
+        {/* BOTONES INFERIORES: Ver tienda + Cerrar sesión */}
+        <div className="oft-admin-bottom-btns" style={{ padding: "12px 12px 0", borderTop: `1px solid ${GRAY2}`, marginTop: 8 }}>
+          <div onClick={() => setView("home")} className="oft-admin-tab" style={{ padding: "11px 16px", marginBottom: 4, cursor: "pointer", fontWeight: 600, fontSize: 14, color: GRAY3, background: "transparent", borderRadius: 10, display: "flex", alignItems: "center", gap: 11, transition: "all 0.18s ease" }}>
+            <Home size={18} strokeWidth={2} /> Ver tienda
+          </div>
+          <div onClick={() => { setUser(null); setView("home"); }} className="oft-admin-tab" style={{ padding: "11px 16px", marginBottom: 4, cursor: "pointer", fontWeight: 600, fontSize: 14, color: RED, background: "transparent", borderRadius: 10, display: "flex", alignItems: "center", gap: 11, transition: "all 0.18s ease" }}>
+            <LogOut size={18} strokeWidth={2} /> Cerrar sesión
+          </div>
+        </div>
       </div>
 
       <div className="oft-admin-main" style={{ marginLeft: 230, padding: "32px", minHeight: "100vh", background: GRAY, boxSizing: "border-box", overflowX: "hidden" }}>
@@ -5300,6 +5309,7 @@ export default function App() {
           .oft-admin-tabs { display: flex !important; flex-direction: row !important; padding: 6px 4px !important; margin: 0 !important; width: 100%; justify-content: space-between; overflow-x: auto; gap: 2px; }
           .oft-admin-tab { flex-direction: column !important; gap: 3px !important; padding: 6px 8px !important; margin-bottom: 0 !important; font-size: 9.5px !important; border-radius: 10px !important; text-align: center; justify-content: center; flex: 0 0 auto; min-width: 56px; white-space: nowrap; }
           .oft-admin-tab.active { background: ${RED} !important; }
+          .oft-admin-bottom-btns { display: flex !important; flex-direction: row !important; border-top: none !important; margin-top: 0 !important; padding: 6px 4px !important; }
           .oft-dash-grid-2 { grid-template-columns: 1fr !important; }
           .oft-btn-text-hide { display: none !important; }
           /* Admin: tablas con scroll horizontal y formularios apilados */
