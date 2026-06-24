@@ -1121,7 +1121,7 @@ function YappyButton({ pedido, onExito, onCancelar }) {
         const resp = await fetch(YAPPY_FN_CREAR, {
           method: "POST",
           headers: { "Content-Type": "application/json", "Authorization": "Bearer " + SUPABASE_KEY },
-          body: JSON.stringify({ total: pedido.total, orderId: pedido.yappyOrderId }),
+          body: JSON.stringify({ total: pedido.total, orderId: pedido.yappyOrderId, telefono: pedido.telefono }),
         });
         const result = await resp.json();
         // La respuesta de Yappy trae body.transactionId, body.token, body.documentName
@@ -1298,7 +1298,7 @@ function CheckoutView() {
         await sb.post("pedido_items", { pedido_id: pedidoId, producto_id: item.product.id, nombre_producto: item.product.nombre, cantidad: item.qty, precio_unitario: item.product.precio_pieza, subtotal: cartItemTotal(item) });
       }
       // Guarda el pedido pendiente y muestra el botón de Yappy (el pago va primero)
-      setPedidoPendiente({ id: pedidoId, codigo, yappyOrderId, total });
+      setPedidoPendiente({ id: pedidoId, codigo, yappyOrderId, total, telefono });
     } catch(e) { alert("Error al guardar el pedido: " + e.message); }
     setLoading(false);
   };
