@@ -2379,9 +2379,7 @@ function CrearPedidoView() {
                         setBusquedaCliente("");
                         setMostrarClientes(false);
                         showToast(`Cliente: ${c.nombre}`);
-                      }} style={{ padding: "10px 14px", cursor: "pointer", borderBottom: `1px solid ${GRAY}`, display: "flex", alignItems: "center", gap: 10 }}
-                      onMouseEnter={e => e.currentTarget.style.background = GRAY}
-                      onMouseLeave={e => e.currentTarget.style.background = WHITE}>
+                      }} style={{ padding: "10px 14px", cursor: "pointer", borderBottom: `1px solid ${GRAY}`, display: "flex", alignItems: "center", gap: 10, background: WHITE }}>
                         <div style={{ width: 32, height: 32, borderRadius: "50%", background: `linear-gradient(135deg, ${RED}, ${RED_D})`, color: WHITE, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 900, fontSize: 14, flexShrink: 0 }}>
                           {(c.nombre || "?").charAt(0).toUpperCase()}
                         </div>
@@ -2529,10 +2527,18 @@ function InvoiceModal({ invoice, onClose }) {
   return (
     <div className="oft-overlay oft-overlay-doc" style={{ ...S.overlay, alignItems: "flex-start", overflowY: "auto", padding: "20px 0" }} onClick={onClose}>
       <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 16, maxWidth: 620, width: "92%", margin: "0 auto", overflow: "hidden" }} onClick={e => e.stopPropagation()}>
-        {/* Barra superior con acciones */}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 18px", borderBottom: `1px solid ${GRAY2}`, background: GRAY }}>
+        {/* Barra superior con acciones — siempre visible arriba */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", borderBottom: `1px solid ${GRAY2}`, background: GRAY, flexWrap: "wrap", gap: 8 }}>
           <div style={{ fontWeight: 800, display: "flex", alignItems: "center", gap: 8 }}><CheckCircle2 size={18} color="#22c55e" /> {esCot ? "Cotización" : "Pedido"} creado</div>
-          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}><X size={22} /></button>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button onClick={downloadPDF} disabled={busy} className="oft-btn-press" style={{ ...S.btnRed, padding: "8px 14px", fontSize: 13, opacity: busy ? 0.7 : 1 }}>
+              <Download size={14} /> PDF
+            </button>
+            <button onClick={downloadPNG} disabled={busy} className="oft-btn-press" style={{ ...S.btnOutline, padding: "8px 14px", fontSize: 13, display: "inline-flex", alignItems: "center", gap: 6, opacity: busy ? 0.7 : 1 }}>
+              <ImageIcon size={14} /> {busy ? "..." : "PNG"}
+            </button>
+            <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", display: "flex", padding: 4 }}><X size={22} /></button>
+          </div>
         </div>
 
         {/* FACTURA (lo que se exporta) */}
@@ -2645,15 +2651,6 @@ function InvoiceModal({ invoice, onClose }) {
           </div>
         </div>
 
-        {/* Botones de descarga */}
-        <div style={{ display: "flex", gap: 10, padding: "14px 18px", borderTop: `1px solid ${GRAY2}`, flexWrap: "wrap" }}>
-          <button onClick={downloadPDF} disabled={busy} className="oft-btn-press" style={{ ...S.btnRed, flex: 1, justifyContent: "center", minWidth: 140, opacity: busy ? 0.7 : 1 }}>
-            <Download size={16} /> Descargar PDF
-          </button>
-          <button onClick={downloadPNG} disabled={busy} className="oft-btn-press" style={{ ...S.btnOutline, flex: 1, justifyContent: "center", minWidth: 140, display: "inline-flex", alignItems: "center", gap: 6, opacity: busy ? 0.7 : 1 }}>
-            <ImageIcon size={16} /> {busy ? "Generando..." : "Guardar en fotos"}
-          </button>
-          <button onClick={onClose} className="oft-btn-press" style={{ ...S.btnBlack, justifyContent: "center" }}>Listo</button>
         </div>
       </div>
     </div>
@@ -2735,10 +2732,18 @@ function ShippingLabelModal({ order, onClose }) {
   return (
     <div className="oft-overlay oft-overlay-doc" style={{ ...S.overlay, alignItems: "flex-start", overflowY: "auto", padding: "20px 0" }} onClick={onClose}>
       <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 16, maxWidth: 620, width: "92%", margin: "0 auto", overflow: "hidden" }} onClick={e => e.stopPropagation()}>
-        {/* Barra superior */}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 18px", borderBottom: `1px solid ${GRAY2}`, background: GRAY }}>
+        {/* Barra superior — siempre visible arriba */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", borderBottom: `1px solid ${GRAY2}`, background: GRAY, flexWrap: "wrap", gap: 8 }}>
           <div style={{ fontWeight: 800, display: "flex", alignItems: "center", gap: 8 }}><Truck size={18} color={RED} /> Guía de envío interna</div>
-          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}><X size={22} /></button>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button onClick={downloadPDF} disabled={busy} className="oft-btn-press" style={{ ...S.btnRed, padding: "8px 14px", fontSize: 13, opacity: busy ? 0.7 : 1 }}>
+              <Download size={14} /> {busy ? "..." : "PDF"}
+            </button>
+            <button onClick={printLabel} className="oft-btn-press" style={{ ...S.btnOutline, padding: "8px 14px", fontSize: 13, display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <FileText size={14} /> Imprimir
+            </button>
+            <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", display: "flex", padding: 4 }}><X size={22} /></button>
+          </div>
         </div>
 
         {/* GUÍA (lo que se exporta) */}
@@ -2845,15 +2850,6 @@ function ShippingLabelModal({ order, onClose }) {
           </div>
         </div>
 
-        {/* Botones */}
-        <div style={{ display: "flex", gap: 10, padding: "14px 18px", borderTop: `1px solid ${GRAY2}`, flexWrap: "wrap" }}>
-          <button onClick={downloadPDF} disabled={busy} className="oft-btn-press" style={{ ...S.btnRed, flex: 1, justifyContent: "center", minWidth: 140, opacity: busy ? 0.7 : 1 }}>
-            <Download size={16} /> {busy ? "Generando..." : "Descargar PDF"}
-          </button>
-          <button onClick={printLabel} className="oft-btn-press" style={{ ...S.btnOutline, flex: 1, justifyContent: "center", minWidth: 120, display: "inline-flex", alignItems: "center", gap: 6 }}>
-            <FileText size={16} /> Imprimir
-          </button>
-          <button onClick={onClose} className="oft-btn-press" style={{ ...S.btnBlack, justifyContent: "center" }}>Cerrar</button>
         </div>
       </div>
     </div>
@@ -4380,8 +4376,31 @@ function AdminView() {
                   {editingId ? <><PencilIcon size={18} color={RED} /> Editar producto</> : <><Plus size={18} color={RED} /> Nuevo producto</>}
                 </div>
                 <div className="oft-form-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                  {[["referencia","Referencia"],["nombre","Nombre del producto"],["precio_pieza","Precio x pieza ($)"],["precio_media_docena","Precio x media docena ($)"],["precio_docena","Precio x docena ($)"],["badge","Badge (NUEVO, OFERTA, etc)"]].map(([k,l]) => (
+                  {[["referencia","Referencia"],["nombre","Nombre del producto"],["badge","Badge (NUEVO, OFERTA, etc)"]].map(([k,l]) => (
                     <div key={k}><label style={S.label}>{l}</label><input style={S.input} value={prodForm[k]} onChange={e => setProdForm({...prodForm,[k]:e.target.value})} /></div>
+                  ))}
+                  {/* Campos de precio: solo números y punto decimal */}
+                  {[["precio_pieza","Precio x pieza"],["precio_media_docena","Precio x media docena"],["precio_docena","Precio x docena"]].map(([k,l]) => (
+                    <div key={k}>
+                      <label style={S.label}>{l}</label>
+                      <div style={{ position: "relative" }}>
+                        <span style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: GRAY3, fontWeight: 700, fontSize: 15, pointerEvents: "none" }}>$</span>
+                        <input
+                          style={{ ...S.input, paddingLeft: 22 }}
+                          type="number"
+                          inputMode="decimal"
+                          min="0"
+                          step="0.01"
+                          placeholder="0.00"
+                          value={prodForm[k]}
+                          onChange={e => {
+                            // Solo permite números y punto — elimina cualquier $, letras, etc.
+                            const val = e.target.value.replace(/[^0-9.]/g, "");
+                            setProdForm({...prodForm,[k]:val});
+                          }}
+                        />
+                      </div>
+                    </div>
                   ))}
                   <div><label style={S.label}>Categoría</label>
                     <select style={{ ...S.input }} value={prodForm.categoria_id} onChange={e => setProdForm({...prodForm,categoria_id:Number(e.target.value)})}>
