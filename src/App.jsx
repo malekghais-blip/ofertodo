@@ -1127,14 +1127,14 @@ function YappyButton({ pedido, onExito, onCancelar }) {
         const result = await resp.json();
         const body = result?.body;
         if (body && body.transactionId && body.token && body.documentName) {
+          // Marcamos ANTES de llamar eventPayment para que handleError lo vea
+          esperandoRef.current = true;
+          setEstado("esperando");
           btn.eventPayment({
             transactionId: body.transactionId,
             documentName: body.documentName,
             token: body.token,
           });
-          // La solicitud llegó al Yappy del cliente — ahora debe confirmar en su app
-          esperandoRef.current = true;
-          setEstado("esperando");
         } else {
           const desc = result?.status?.description || "No se pudo crear el pago. Intenta de nuevo.";
           setEstado("error");
