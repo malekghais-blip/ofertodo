@@ -1125,7 +1125,9 @@ function YappyButton({ pedido, onExito, onCancelar }) {
           body: JSON.stringify({ total: pedido.total, orderId: pedido.yappyOrderId, telefono: pedido.telefono }),
         });
         const result = await resp.json();
-        const body = result?.body;
+        // La función devuelve { paso, enviado, respuestaYappy }
+        // Los datos del pago están en respuestaYappy.body
+        const body = result?.respuestaYappy?.body || result?.body;
         if (body && body.transactionId && body.token && body.documentName) {
           // Marcamos ANTES de llamar eventPayment para que handleError lo vea
           esperandoRef.current = true;
@@ -1136,7 +1138,7 @@ function YappyButton({ pedido, onExito, onCancelar }) {
             token: body.token,
           });
         } else {
-          const desc = result?.status?.description || "No se pudo crear el pago. Intenta de nuevo.";
+          const desc = result?.respuestaYappy?.status?.description || result?.status?.description || "No se pudo crear el pago. Intenta de nuevo.";
           setEstado("error");
           setErrorMsg(desc);
           btn.isButtonLoading = false;
