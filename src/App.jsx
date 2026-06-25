@@ -1149,22 +1149,15 @@ function YappyButton({ pedido, onExito, onCancelar }) {
     };
 
     const handleSuccess = () => { esperandoRef.current = false; onExito(); };
-    const handleError = () => {
-      // Si ya mandamos la solicitud al Yappy del cliente, ignoramos el eventError
-      // (el cliente debe ir a su app y confirmar — no es un error real)
-      if (esperandoRef.current) return;
-      setEstado("error");
-      setErrorMsg("El pago no se completó. Puedes intentarlo de nuevo.");
-      btn.isButtonLoading = false;
-    };
 
+    // NO conectamos eventError de Yappy — lo manejamos todo nosotros
+    // Yappy dispara eventError cuando envía la solicitud al teléfono del cliente,
+    // pero eso NO es un error real — el cliente debe confirmar en su app.
     btn.addEventListener("eventClick", handleClick);
     btn.addEventListener("eventSuccess", handleSuccess);
-    btn.addEventListener("eventError", handleError);
     return () => {
       btn.removeEventListener("eventClick", handleClick);
       btn.removeEventListener("eventSuccess", handleSuccess);
-      btn.removeEventListener("eventError", handleError);
     };
   }, [pedido]);
 
