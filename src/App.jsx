@@ -1187,9 +1187,13 @@ function CheckoutView() {
   const [address, setAddress] = useState(""), [notes, setNotes] = useState(""), [loading, setLoading] = useState(false), [placed, setPlaced] = useState(null);
   const [nombre, setNombre] = useState(user?.nombre || "");
   const [telefono, setTelefono] = useState(user?.telefono || "");
+  const [telefonoYappy, setTelefonoYappy] = useState(user?.telefono || ""); // número específico para pagar con Yappy
   const [empresaId, setEmpresaId] = useState(null);
   const [sucursalId, setSucursalId] = useState(null);
   const [modoEntrega, setModoEntrega] = useState("sucursal"); // "sucursal" | "puerta"
+
+  // Scroll al inicio al abrir el checkout — importante en celular
+  useEffect(() => { window.scrollTo({ top: 0, behavior: "instant" }); }, []);
   const subtotalBruto = cart.reduce((s, i) => s + cartItemTotal(i), 0);
   // ── DESCUENTO ──
   const [codigoInput, setCodigoInput] = useState("");        // lo que el cliente escribe
@@ -1257,6 +1261,8 @@ function CheckoutView() {
 
   const handlePlace = async () => {
     if (!nombre.trim()) { alert("Por favor escribe tu nombre."); return; }
+    const aliasLimpio = telefonoYappy.replace(/\D/g, "");
+    if (aliasLimpio.length < 7) { alert("Por favor escribe tu número de Yappy para poder cobrar el pago."); return; }
 
     // Definir empresa, sucursal y dirección según el modo de entrega
     let empresaFinalId, empresaFinalNombre, sucursalFinalId, sucursalFinalNombre;
@@ -1298,7 +1304,7 @@ function CheckoutView() {
         await sb.post("pedido_items", { pedido_id: pedidoId, producto_id: item.product.id, nombre_producto: item.product.nombre, cantidad: item.qty, precio_unitario: item.product.precio_pieza, subtotal: cartItemTotal(item) });
       }
       // Guarda el pedido pendiente y muestra el botón de Yappy (el pago va primero)
-      setPedidoPendiente({ id: pedidoId, codigo, yappyOrderId, total, telefono });
+      setPedidoPendiente({ id: pedidoId, codigo, yappyOrderId, total, telefono: telefonoYappy });
     } catch(e) { alert("Error al guardar el pedido: " + e.message); }
     setLoading(false);
   };
@@ -1495,8 +1501,24 @@ function CheckoutView() {
               <span style={{ fontWeight: 700 }}>Total a pagar</span>
               <span style={{ fontWeight: 900, fontSize: 22, color: RED }}>{money(total)}</span>
             </div>
-            <p style={{ fontSize: 13, color: GRAY3, marginBottom: 14 }}>
+            <p style={{ fontSize: 13, color: GRAY3, marginBottom: 12 }}>
               Paga de forma segura con Yappy. Tu pedido se confirma apenas se reciba el pago.
+            </p>
+            {/* Número de Yappy del cliente */}
+            <label style={{ ...S.label, display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+              <span style={{ background: "#00C2DE", borderRadius: 6, padding: "2px 7px", color: WHITE, fontWeight: 900, fontSize: 11 }}>YAPPY</span>
+              Número de Yappy para el cobro *
+            </label>
+            <input
+              style={{ ...S.input, marginBottom: 12, fontWeight: 700, fontSize: 15 }}
+              type="tel"
+              inputMode="numeric"
+              placeholder="Ej: 6700-0000"
+              value={telefonoYappy}
+              onChange={e => setTelefonoYappy(e.target.value)}
+            />
+            <p style={{ fontSize: 11, color: GRAY3, marginBottom: 14 }}>
+              Escribe el número de teléfono registrado en tu app de Yappy. La solicitud de pago llegará a ese número.
             </p>
             <button style={{ ...S.btnRed, width: "100%", justifyContent: "center", padding: 16, fontSize: 16, opacity: loading ? 0.7 : 1 }} onClick={handlePlace} disabled={loading}>
               {loading ? "Procesando..." : <>Continuar al pago →</>}
