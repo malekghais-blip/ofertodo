@@ -1105,6 +1105,7 @@ function CompleteProfileModal() {
 // ═══════════════════════════════════════════════════════════════
 function YappyButton({ pedido, onExito, onCancelar }) {
   const ref = useRef(null);
+  const esperandoRef = useRef(false); // evita el cierre obsoleto en handleError
   const [estado, setEstado] = useState("listo"); // listo | enviando | esperando | error
   const [errorMsg, setErrorMsg] = useState("");
 
@@ -1132,6 +1133,7 @@ function YappyButton({ pedido, onExito, onCancelar }) {
             token: body.token,
           });
           // La solicitud llegó al Yappy del cliente — ahora debe confirmar en su app
+          esperandoRef.current = true;
           setEstado("esperando");
         } else {
           const desc = result?.status?.description || "No se pudo crear el pago. Intenta de nuevo.";
@@ -1146,8 +1148,11 @@ function YappyButton({ pedido, onExito, onCancelar }) {
       }
     };
 
-    const handleSuccess = () => { onExito(); };
+    const handleSuccess = () => { esperandoRef.current = false; onExito(); };
     const handleError = () => {
+      // Si ya mandamos la solicitud al Yappy del cliente, ignoramos el eventError
+      // (el cliente debe ir a su app y confirmar — no es un error real)
+      if (esperandoRef.current) return;
       setEstado("error");
       setErrorMsg("El pago no se completó. Puedes intentarlo de nuevo.");
       btn.isButtonLoading = false;
