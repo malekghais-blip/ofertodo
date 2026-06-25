@@ -2527,7 +2527,7 @@ function InvoiceModal({ invoice, onClose }) {
   return (
     <div className="oft-overlay oft-overlay-doc" style={{ ...S.overlay, alignItems: "flex-start", overflowY: "auto", padding: "20px 0" }} onClick={onClose}>
       <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 16, maxWidth: 620, width: "92%", margin: "0 auto", overflow: "hidden" }} onClick={e => e.stopPropagation()}>
-        {/* Barra superior con acciones — siempre visible arriba */}
+        {/* Barra superior con acciones - siempre visible arriba */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", borderBottom: `1px solid ${GRAY2}`, background: GRAY, flexWrap: "wrap", gap: 8 }}>
           <div style={{ fontWeight: 800, display: "flex", alignItems: "center", gap: 8 }}><CheckCircle2 size={18} color="#22c55e" /> {esCot ? "Cotización" : "Pedido"} creado</div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -2650,8 +2650,6 @@ function InvoiceModal({ invoice, onClose }) {
             </div>
           </div>
         </div>
-
-        </div>
       </div>
     </div>
   );
@@ -2732,7 +2730,7 @@ function ShippingLabelModal({ order, onClose }) {
   return (
     <div className="oft-overlay oft-overlay-doc" style={{ ...S.overlay, alignItems: "flex-start", overflowY: "auto", padding: "20px 0" }} onClick={onClose}>
       <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 16, maxWidth: 620, width: "92%", margin: "0 auto", overflow: "hidden" }} onClick={e => e.stopPropagation()}>
-        {/* Barra superior — siempre visible arriba */}
+        {/* Barra superior - siempre visible arriba */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", borderBottom: `1px solid ${GRAY2}`, background: GRAY, flexWrap: "wrap", gap: 8 }}>
           <div style={{ fontWeight: 800, display: "flex", alignItems: "center", gap: 8 }}><Truck size={18} color={RED} /> Guía de envío interna</div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
