@@ -2847,8 +2847,6 @@ function ShippingLabelModal({ order, onClose }) {
             </div>
           </div>
         </div>
-
-        </div>
       </div>
     </div>
   );
