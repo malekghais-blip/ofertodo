@@ -1105,7 +1105,7 @@ function CompleteProfileModal() {
 // ═══════════════════════════════════════════════════════════════
 function YappyButton({ pedido, onExito, onCancelar }) {
   const ref = useRef(null);
-  const [estado, setEstado] = useState("listo"); // listo | cargando | error
+  const [estado, setEstado] = useState("listo"); // listo | enviando | esperando | error
   const [errorMsg, setErrorMsg] = useState("");
 
   useEffect(() => {
@@ -1114,7 +1114,7 @@ function YappyButton({ pedido, onExito, onCancelar }) {
 
     // Cuando el cliente toca el botón de Yappy: creamos la orden en el backend
     const handleClick = async () => {
-      setEstado("cargando");
+      setEstado("enviando");
       setErrorMsg("");
       try {
         btn.isButtonLoading = true;
@@ -1124,7 +1124,6 @@ function YappyButton({ pedido, onExito, onCancelar }) {
           body: JSON.stringify({ total: pedido.total, orderId: pedido.yappyOrderId, telefono: pedido.telefono }),
         });
         const result = await resp.json();
-        // La respuesta de Yappy trae body.transactionId, body.token, body.documentName
         const body = result?.body;
         if (body && body.transactionId && body.token && body.documentName) {
           btn.eventPayment({
@@ -1132,8 +1131,10 @@ function YappyButton({ pedido, onExito, onCancelar }) {
             documentName: body.documentName,
             token: body.token,
           });
+          // La solicitud llegó al Yappy del cliente — ahora debe confirmar en su app
+          setEstado("esperando");
         } else {
-          const desc = result?.status?.description || "No se pudo iniciar el pago. Intenta de nuevo.";
+          const desc = result?.status?.description || "No se pudo crear el pago. Intenta de nuevo.";
           setEstado("error");
           setErrorMsg(desc);
           btn.isButtonLoading = false;
@@ -1165,10 +1166,21 @@ function YappyButton({ pedido, onExito, onCancelar }) {
   return (
     <div style={{ textAlign: "center" }}>
       <div style={{ display: "flex", justifyContent: "center", marginBottom: 12 }}>
-        {/* El botón oficial de Yappy se renderiza aquí */}
         {/* @ts-ignore */}
         <btn-yappy ref={ref} theme="sky"></btn-yappy>
       </div>
+      {/* Mensaje cuando la solicitud ya fue enviada al Yappy del cliente */}
+      {estado === "esperando" && (
+        <div style={{ background: "#E8F5E9", border: "1px solid #A5D6A7", borderRadius: 10, padding: "12px 16px", marginBottom: 10 }}>
+          <div style={{ fontWeight: 800, color: "#2E7D32", fontSize: 14, marginBottom: 4 }}>
+            ✅ ¡Solicitud enviada a tu Yappy!
+          </div>
+          <div style={{ fontSize: 13, color: "#2E7D32", lineHeight: 1.5 }}>
+            Abre tu app de <strong>Yappy</strong> y confirma el pago pendiente de <strong>{pedido?.total ? `$${Number(pedido.total).toFixed(2)}` : ""}</strong>.<br />
+            Tu pedido se confirmará automáticamente.
+          </div>
+        </div>
+      )}
       {estado === "error" && (
         <div style={{ color: RED, fontSize: 13, fontWeight: 600, marginBottom: 10 }}>{errorMsg}</div>
       )}
