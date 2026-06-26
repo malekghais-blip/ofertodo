@@ -2014,11 +2014,9 @@ function CrearPedidoView() {
   const total = totalRedondeado;
 
   const addItem = (product) => {
-    setItems(prev => {
-      const ex = prev.find(i => i.product.id === product.id && i.pres === "docena");
-      if (ex) return prev;
-      return [...prev, { product, pres: "docena", count: 1 }];
-    });
+    // Siempre agrega una nueva línea — permite el mismo producto con distintas presentaciones
+    // (ej: docena + 4 piezas de la misma referencia)
+    setItems(prev => [...prev, { product, pres: "docena", count: 1 }]);
     setSearch("");
   };
   const updateItem = (idx, field, val) => {
