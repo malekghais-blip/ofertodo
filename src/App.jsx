@@ -178,11 +178,12 @@ const S = {
 // ═══════════════════════════════════════════════════════════════
 //  HELPERS
 // ═══════════════════════════════════════════════════════════════
+const LOGO_URL = "https://esezhctdiucwovbvxmou.supabase.co/storage/v1/object/public/brand/apple-touch-icon.png";
+
 function Logo({ onClick }) {
   return (
-    <div onClick={onClick} style={{ display: "flex", alignItems: "center", gap: 2, cursor: "pointer" }}>
-      <span style={{ color: RED, fontWeight: 800, fontSize: 22, letterSpacing: -1 }}>Ofer</span>
-      <span style={{ background: RED, color: WHITE, fontWeight: 800, fontSize: 22, padding: "2px 8px", borderRadius: 6, letterSpacing: -1 }}>todo</span>
+    <div onClick={onClick} style={{ display: "flex", alignItems: "center", cursor: onClick ? "pointer" : "default" }}>
+      <img src={LOGO_URL} alt="Ofertodo" style={{ height: 40, objectFit: "contain" }} />
     </div>
   );
 }
