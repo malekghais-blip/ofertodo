@@ -178,12 +178,12 @@ const S = {
 // ═══════════════════════════════════════════════════════════════
 //  HELPERS
 // ═══════════════════════════════════════════════════════════════
-const LOGO_URL = "https://esezhctdiucwovbvxmou.supabase.co/storage/v1/object/public/brand/apple-touch-icon.png";
+const LOGO_URL = "https://esezhctdiucwovbvxmou.supabase.co/storage/v1/object/public/brand/ESTE.png";
 
-function Logo({ onClick }) {
+function Logo({ onClick, height = 48 }) {
   return (
     <div onClick={onClick} style={{ display: "flex", alignItems: "center", cursor: onClick ? "pointer" : "default" }}>
-      <img src={LOGO_URL} alt="Ofertodo" style={{ height: 40, objectFit: "contain" }} />
+      <img src={LOGO_URL} alt="Ofertodo" style={{ height: height, width: "auto", objectFit: "contain" }} />
     </div>
   );
 }
@@ -335,7 +335,7 @@ function NavBar() {
 
   return (
     <nav className="oft-nav" style={S.nav}>
-      <Logo onClick={() => setView("home")} />
+      <Logo onClick={() => setView("home")} height={52} />
       <div className="oft-nav-links" style={{ display: "flex", gap: 24, alignItems: "center" }}>
         {["home","catalogo"].map(v => (
           <span key={v} onClick={() => setView(v)} style={{ fontWeight: 600, fontSize: 14, cursor: "pointer", color: view === v ? RED : BLACK, borderBottom: view === v ? `2px solid ${RED}` : "2px solid transparent", paddingBottom: 2, whiteSpace: "nowrap" }}>
@@ -433,7 +433,7 @@ function HomeView() {
       {/* FOOTER */}
       <footer style={{ background: "#0a0a0a", color: WHITE, padding: "32px 24px" }}>
         <div style={{ display: "flex", gap: 40, flexWrap: "wrap", justifyContent: "space-between", maxWidth: 900, margin: "0 auto" }}>
-          <div><Logo /><p style={{ color: "#aaa", fontSize: 13, marginTop: 10, maxWidth: 220 }}>Distribuidora · Panamá. Compra más, crece más.</p></div>
+          <div><Logo height={36} /><p style={{ color: "#aaa", fontSize: 13, marginTop: 10, maxWidth: 220 }}>Distribuidora · Panamá. Compra más, crece más.</p></div>
           <div>
             <div style={{ fontWeight: 700, marginBottom: 10 }}>Contacto</div>
             <div style={{ fontSize: 13, color: "#aaa", lineHeight: 2.2 }}>
@@ -978,7 +978,7 @@ function LoginModal() {
   return (
     <div className="oft-overlay" style={S.overlay} onClick={() => setShowLogin(false)}>
       <div className="oft-modal-sheet oft-modal oft-auth-pop" style={S.modal} onClick={e => e.stopPropagation()}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}><Logo /><button onClick={() => setShowLogin(false)} style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}><X size={22} /></button></div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}><Logo height={44} /><button onClick={() => setShowLogin(false)} style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}><X size={22} /></button></div>
         <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 20 }}>Iniciar sesión</div>
         {/* BOTÓN DE GOOGLE */}
         <button onClick={() => sb.signInWithGoogle()} className="oft-btn-press" style={{ width: "100%", justifyContent: "center", padding: 13, fontSize: 15, fontWeight: 700, border: `1.5px solid ${GRAY2}`, borderRadius: 10, background: WHITE, cursor: "pointer", display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
@@ -1030,7 +1030,7 @@ function RegisterModal() {
   return (
     <div className="oft-overlay" style={S.overlay} onClick={() => setShowRegister(false)}>
       <div className="oft-modal-sheet oft-modal oft-auth-pop" style={S.modal} onClick={e => e.stopPropagation()}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}><Logo /><button onClick={() => setShowRegister(false)} style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}><X size={22} /></button></div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}><Logo height={44} /><button onClick={() => setShowRegister(false)} style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}><X size={22} /></button></div>
         <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 20 }}>Crear cuenta</div>
 
         {/* BOTÓN DE GOOGLE */}
@@ -1083,7 +1083,7 @@ function CompleteProfileModal() {
   return (
     <div className="oft-overlay" style={S.overlay}>
       <div className="oft-modal-sheet oft-modal oft-auth-pop" style={S.modal} onClick={e => e.stopPropagation()}>
-        <div style={{ display: "flex", justifyContent: "center", marginBottom: 18 }}><Logo /></div>
+        <div style={{ display: "flex", justifyContent: "center", marginBottom: 18 }}><Logo height={44} /></div>
         <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 6, textAlign: "center" }}>¡Casi listo! 🎉</div>
         <p style={{ fontSize: 14, color: GRAY3, textAlign: "center", marginBottom: 22 }}>
           Entraste con Google como <strong>{completeProfile.email}</strong>. Completa estos datos para terminar tu registro.
@@ -3758,7 +3758,7 @@ function AdminView() {
   return (
     <div style={{ minHeight: "100vh" }}>
       <div className="oft-admin-sidebar" style={{ background: WHITE, color: BLACK, width: 230, minHeight: "100vh", padding: "24px 0", position: "fixed", top: 0, left: 0, zIndex: 90, borderRight: `1px solid ${GRAY2}` }}>
-        <div className="oft-admin-brand" style={{ padding: "0 22px 22px", borderBottom: `1px solid ${GRAY2}` }}><Logo /><div style={{ fontSize: 11, color: GRAY3, marginTop: 6, display: "flex", alignItems: "center", gap: 5, fontWeight: 600 }}><Zap size={11} /> Panel Administrador</div></div>
+        <div className="oft-admin-brand" style={{ padding: "0 22px 22px", borderBottom: `1px solid ${GRAY2}` }}><Logo height={44} /><div style={{ fontSize: 11, color: GRAY3, marginTop: 6, display: "flex", alignItems: "center", gap: 5, fontWeight: 600 }}><Zap size={11} /> Panel Administrador</div></div>
         <div className="oft-admin-tabs" style={{ padding: "16px 12px" }}>
           {tabs.map(([k,l,Icon]) => (
             <div key={k} className={"oft-admin-tab" + (tab === k ? " active" : "")} onClick={() => setTab(k)} style={{ padding: "11px 16px", marginBottom: 4, cursor: "pointer", fontWeight: tab === k ? 800 : 600, fontSize: 14, color: tab === k ? WHITE : GRAY3, background: tab === k ? RED : "transparent", borderRadius: 10, display: "flex", alignItems: "center", gap: 11, transition: "all 0.18s ease" }}>
