@@ -3158,6 +3158,11 @@ function AdminView() {
   const [guardandoDesc, setGuardandoDesc] = useState(false);
   const [descProductosOpen, setDescProductosOpen] = useState(false); // selector de productos en el form
   const [busquedaCotizacion, setBusquedaCotizacion] = useState(""); // buscar cotización por nombre de cliente
+  // ── RETORNOS ──
+  const [retornos, setRetornos] = useState([]);
+  const [retornoForm, setRetornoForm] = useState(null); // null | objeto del formulario
+  const [guardandoRetorno, setGuardandoRetorno] = useState(false);
+  const [busquedaRetorno, setBusquedaRetorno] = useState("");
   const [eliminando, setEliminando] = useState(false);
   // Filtro de ventas por periodo en el dashboard
   const [rangoVentas, setRangoVentas] = useState("todo"); // dia | semana | mes | anio | todo | personalizado | rango
@@ -3179,6 +3184,8 @@ function AdminView() {
         ]);
         // Cargar descuentos (si la tabla existe)
         sb.get("descuentos", "?order=created_at.desc").then(d => setDescuentos(d || [])).catch(() => {});
+        // Cargar retornos
+        sb.get("retornos", "?order=created_at.desc").then(d => setRetornos(d || [])).catch(() => {});
         // Cargar items de cada pedido para estadísticas de mejores productos
         const ordersWithItems = await Promise.all(ordersData.map(async o => {
           const items = await sb.get("pedido_items", `?pedido_id=eq.${o.id}`).catch(() => []);
@@ -3439,6 +3446,69 @@ function AdminView() {
     try {
       await sb.patch("descuentos", d.id, { activo: !d.activo });
       setDescuentos(prev => prev.map(x => x.id === d.id ? { ...x, activo: !x.activo } : x));
+    } catch(e) { showToast("Error al cambiar estado"); }
+  };
+
+  // ── RETORNOS: crear / editar / eliminar ────────────────────────
+  const abrirNuevoRetorno = () => setRetornoForm({
+    id: null,
+    pedido_id: "",
+    codigo_pedido: "",
+    nombre_cliente: "",
+    motivo: "",
+    productos_retornados: "",
+    monto_reembolso: "",
+    estado: "pendiente",
+    notas: "",
+  });
+
+  const abrirEditarRetorno = (r) => setRetornoForm({ ...r });
+
+  const guardarRetorno = async () => {
+    const f = retornoForm;
+    if (!f.nombre_cliente?.trim()) { showToast("Escribe el nombre del cliente"); return; }
+    if (!f.motivo?.trim()) { showToast("Escribe el motivo del retorno"); return; }
+    setGuardandoRetorno(true);
+    try {
+      const datos = {
+        pedido_id: f.pedido_id || null,
+        codigo_pedido: f.codigo_pedido?.trim() || "",
+        nombre_cliente: f.nombre_cliente.trim(),
+        motivo: f.motivo.trim(),
+        productos_retornados: f.productos_retornados?.trim() || "",
+        monto_reembolso: Number(f.monto_reembolso) || 0,
+        estado: f.estado || "pendiente",
+        notas: f.notas?.trim() || "",
+        updated_at: new Date().toISOString(),
+      };
+      if (f.id) {
+        await sb.patch("retornos", f.id, datos);
+        setRetornos(prev => prev.map(r => r.id === f.id ? { ...r, ...datos } : r));
+        showToast("Retorno actualizado");
+      } else {
+        const fila = await sb.post("retornos", datos);
+        if (Array.isArray(fila) && fila[0]) setRetornos(prev => [fila[0], ...prev]);
+        showToast("Retorno registrado");
+      }
+      setRetornoForm(null);
+    } catch(e) { showToast("Error: " + (e.message || "no se pudo guardar")); }
+    setGuardandoRetorno(false);
+  };
+
+  const eliminarRetorno = async (r) => {
+    if (!confirm(`¿Eliminar el retorno de ${r.nombre_cliente}?`)) return;
+    try {
+      await sb.delete("retornos", r.id);
+      setRetornos(prev => prev.filter(x => x.id !== r.id));
+      showToast("Retorno eliminado");
+    } catch(e) { showToast("Error al eliminar"); }
+  };
+
+  const cambiarEstadoRetorno = async (r, nuevoEstado) => {
+    try {
+      await sb.patch("retornos", r.id, { estado: nuevoEstado, updated_at: new Date().toISOString() });
+      setRetornos(prev => prev.map(x => x.id === r.id ? { ...x, estado: nuevoEstado } : x));
+      showToast("Estado actualizado");
     } catch(e) { showToast("Error al cambiar estado"); }
   };
 
@@ -3763,6 +3833,7 @@ function AdminView() {
     ["products", "Productos", Tag],
     ["categories", "Categorías", FolderOpen],
     ["descuentos", "Descuentos", Zap],
+    ["retornos", "Retornos", RefreshCw],
     ["shipping", "Envíos", Truck],
     ["users", "Clientes", Users],
   ];
@@ -4877,6 +4948,166 @@ function AdminView() {
                     <button onClick={() => setDescForm(null)} disabled={guardandoDesc} className="oft-btn-press" style={{ ...S.btnOutline, flex: 1, justifyContent: "center" }}>Cancelar</button>
                     <button onClick={guardarDescuento} disabled={guardandoDesc} className="oft-btn-press" style={{ ...S.btnRed, flex: 1, justifyContent: "center", opacity: guardandoDesc ? 0.7 : 1 }}>
                       {guardandoDesc ? "Guardando..." : "Guardar descuento"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+
+        {/* ═══════════ RETORNOS ═══════════ */}
+        {tab === "retornos" && (
+          <>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24, flexWrap: "wrap", gap: 12 }}>
+              <div style={{ fontSize: 22, fontWeight: 900, display: "flex", alignItems: "center", gap: 10 }}><RefreshCw size={24} color={RED} /> Retornos</div>
+              <button onClick={abrirNuevoRetorno} className="oft-btn-press" style={{ ...S.btnRed, padding: "10px 18px", fontSize: 14 }}>
+                <Plus size={16} /> Registrar retorno
+              </button>
+            </div>
+
+            {/* BUSCADOR */}
+            <div style={{ position: "relative", marginBottom: 20, maxWidth: 340 }}>
+              <Search size={15} color={GRAY3} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)" }} />
+              <input style={{ width: "100%", padding: "10px 10px 10px 36px", borderRadius: 10, border: `1.5px solid ${GRAY2}`, fontSize: 14, outline: "none", boxSizing: "border-box" }}
+                placeholder="Buscar por cliente o pedido..."
+                value={busquedaRetorno}
+                onChange={e => setBusquedaRetorno(e.target.value)}
+              />
+              {busquedaRetorno && <button onClick={() => setBusquedaRetorno("")} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: GRAY3, display: "flex" }}><X size={15} /></button>}
+            </div>
+
+            {/* ESTADO BADGES HELPER */}
+            {(() => {
+              const ESTADOS = {
+                pendiente:   { bg: "#FFF3CD", color: "#856404", label: "Pendiente" },
+                aprobado:    { bg: "#D4EDDA", color: "#155724", label: "Aprobado" },
+                reembolsado: { bg: "#CCE5FF", color: "#004085", label: "Reembolsado" },
+                rechazado:   { bg: "#F8D7DA", color: "#721C24", label: "Rechazado" },
+              };
+              const money = (n) => "$" + Number(n || 0).toFixed(2);
+              const q = busquedaRetorno.trim().toLowerCase();
+              const retornosFiltrados = q
+                ? retornos.filter(r => (r.nombre_cliente || "").toLowerCase().includes(q) || (r.codigo_pedido || "").toLowerCase().includes(q))
+                : retornos;
+
+              if (retornos.length === 0) return (
+                <div style={{ background: WHITE, border: `1px dashed ${GRAY2}`, borderRadius: 14, padding: 40, textAlign: "center", color: GRAY3 }}>
+                  <RefreshCw size={36} color={GRAY3} strokeWidth={1.4} style={{ marginBottom: 10 }} />
+                  <div style={{ fontWeight: 700, marginBottom: 4 }}>Sin retornos registrados</div>
+                  <div style={{ fontSize: 13 }}>Registra tu primer retorno con el botón de arriba.</div>
+                </div>
+              );
+
+              if (retornosFiltrados.length === 0) return (
+                <div style={{ textAlign: "center", padding: 30, color: GRAY3, fontSize: 14 }}>No se encontraron retornos para "{busquedaRetorno}"</div>
+              );
+
+              return (
+                <>
+                  {/* RESUMEN RÁPIDO */}
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12, marginBottom: 24 }}>
+                    {Object.entries(ESTADOS).map(([k, v]) => {
+                      const count = retornos.filter(r => r.estado === k).length;
+                      const total = retornos.filter(r => r.estado === k).reduce((s, r) => s + Number(r.monto_reembolso || 0), 0);
+                      return (
+                        <div key={k} style={{ background: v.bg, borderRadius: 12, padding: "14px 16px" }}>
+                          <div style={{ fontWeight: 800, color: v.color, fontSize: 22 }}>{count}</div>
+                          <div style={{ fontSize: 12, color: v.color, fontWeight: 700 }}>{v.label}</div>
+                          <div style={{ fontSize: 11, color: v.color, opacity: 0.8, marginTop: 2 }}>{money(total)}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* LISTA */}
+                  <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                    {retornosFiltrados.map((r, i) => {
+                      const est = ESTADOS[r.estado] || ESTADOS.pendiente;
+                      return (
+                        <div key={r.id} className="oft-widget" style={{ background: WHITE, borderRadius: 14, border: `1px solid ${GRAY2}`, padding: 20, animationDelay: `${i * 0.04}s`, transition: "transform 0.2s, box-shadow 0.2s" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12 }}>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 6 }}>
+                                <div style={{ fontWeight: 900, fontSize: 16 }}>{r.nombre_cliente}</div>
+                                {r.codigo_pedido && <div style={{ fontSize: 12, color: RED, fontWeight: 700 }}>{r.codigo_pedido}</div>}
+                                <span style={{ background: est.bg, color: est.color, fontSize: 11, fontWeight: 800, padding: "3px 10px", borderRadius: 10 }}>{est.label}</span>
+                              </div>
+                              <div style={{ fontSize: 13, color: GRAY3, marginBottom: 4 }}><strong>Motivo:</strong> {r.motivo}</div>
+                              {r.productos_retornados && <div style={{ fontSize: 13, color: GRAY3, marginBottom: 4 }}><strong>Productos:</strong> {r.productos_retornados}</div>}
+                              {r.notas && <div style={{ fontSize: 12, color: GRAY3, fontStyle: "italic" }}>📝 {r.notas}</div>}
+                            </div>
+                            <div style={{ textAlign: "right", flexShrink: 0 }}>
+                              <div style={{ fontSize: 24, fontWeight: 900, color: RED }}>{money(r.monto_reembolso)}</div>
+                              <div style={{ fontSize: 11, color: GRAY3 }}>{new Date(r.created_at).toLocaleDateString("es-PA")}</div>
+                            </div>
+                          </div>
+
+                          {/* ACCIONES */}
+                          <div style={{ display: "flex", gap: 8, marginTop: 14, flexWrap: "wrap" }}>
+                            {/* Cambiar estado */}
+                            <select value={r.estado} onChange={e => cambiarEstadoRetorno(r, e.target.value)}
+                              style={{ flex: 1, minWidth: 130, padding: "8px 10px", borderRadius: 8, border: `1.5px solid ${GRAY2}`, fontSize: 13, fontWeight: 700, cursor: "pointer", background: WHITE }}>
+                              <option value="pendiente">Pendiente</option>
+                              <option value="aprobado">Aprobado</option>
+                              <option value="reembolsado">Reembolsado</option>
+                              <option value="rechazado">Rechazado</option>
+                            </select>
+                            <button onClick={() => abrirEditarRetorno(r)} className="oft-btn-press" style={{ background: "none", color: BLACK, border: `1.5px solid ${BLACK}`, borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 5 }}>
+                              <PencilIcon size={14} /> Editar
+                            </button>
+                            <button onClick={() => eliminarRetorno(r)} className="oft-btn-press" style={{ background: "none", color: RED, border: `1.5px solid ${RED}`, borderRadius: 8, padding: "8px 12px", fontSize: 13, cursor: "pointer", display: "inline-flex", alignItems: "center" }}>
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              );
+            })()}
+
+            {/* MODAL CREAR / EDITAR RETORNO */}
+            {retornoForm && (
+              <div className="oft-overlay oft-overlay-doc" style={{ ...S.overlay, alignItems: "flex-start", overflowY: "auto", padding: "20px 16px" }} onClick={() => !guardandoRetorno && setRetornoForm(null)}>
+                <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 16, maxWidth: 480, width: "92%", margin: "0 auto", padding: 24 }} onClick={e => e.stopPropagation()}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+                    <div style={{ fontWeight: 800, fontSize: 18, display: "flex", alignItems: "center", gap: 8 }}><RefreshCw size={18} color={RED} /> {retornoForm.id ? "Editar" : "Nuevo"} retorno</div>
+                    <button onClick={() => setRetornoForm(null)} style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}><X size={22} /></button>
+                  </div>
+
+                  <label style={S.label}>Nombre del cliente *</label>
+                  <input style={S.input} placeholder="Nombre completo" value={retornoForm.nombre_cliente} onChange={e => setRetornoForm({ ...retornoForm, nombre_cliente: e.target.value })} autoFocus />
+
+                  <label style={S.label}>Código del pedido (opcional)</label>
+                  <input style={S.input} placeholder="Ej: OFT-123456" value={retornoForm.codigo_pedido} onChange={e => setRetornoForm({ ...retornoForm, codigo_pedido: e.target.value.toUpperCase() })} />
+
+                  <label style={S.label}>Motivo del retorno *</label>
+                  <input style={S.input} placeholder="Ej: Talla incorrecta, producto dañado..." value={retornoForm.motivo} onChange={e => setRetornoForm({ ...retornoForm, motivo: e.target.value })} />
+
+                  <label style={S.label}>Productos retornados</label>
+                  <input style={S.input} placeholder="Ej: 3 camisas talla M, ref. ABC-001" value={retornoForm.productos_retornados} onChange={e => setRetornoForm({ ...retornoForm, productos_retornados: e.target.value })} />
+
+                  <label style={S.label}>Monto a reembolsar ($)</label>
+                  <input type="number" min="0" step="0.01" style={S.input} placeholder="0.00" value={retornoForm.monto_reembolso} onChange={e => setRetornoForm({ ...retornoForm, monto_reembolso: e.target.value })} />
+
+                  <label style={S.label}>Estado</label>
+                  <select value={retornoForm.estado} onChange={e => setRetornoForm({ ...retornoForm, estado: e.target.value })}
+                    style={{ ...S.input, cursor: "pointer" }}>
+                    <option value="pendiente">Pendiente</option>
+                    <option value="aprobado">Aprobado</option>
+                    <option value="reembolsado">Reembolsado</option>
+                    <option value="rechazado">Rechazado</option>
+                  </select>
+
+                  <label style={S.label}>Notas internas (opcional)</label>
+                  <input style={S.input} placeholder="Notas para tu equipo..." value={retornoForm.notas} onChange={e => setRetornoForm({ ...retornoForm, notas: e.target.value })} />
+
+                  <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
+                    <button onClick={() => setRetornoForm(null)} disabled={guardandoRetorno} className="oft-btn-press" style={{ ...S.btnOutline, flex: 1, justifyContent: "center" }}>Cancelar</button>
+                    <button onClick={guardarRetorno} disabled={guardandoRetorno} className="oft-btn-press" style={{ ...S.btnRed, flex: 1, justifyContent: "center", opacity: guardandoRetorno ? 0.7 : 1 }}>
+                      {guardandoRetorno ? "Guardando..." : "Guardar retorno"}
                     </button>
                   </div>
                 </div>
