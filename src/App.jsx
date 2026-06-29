@@ -5368,7 +5368,7 @@ export default function App() {
           .oft-nav { padding: 0 14px !important; }
           .oft-nav-links { gap: 14px !important; font-size: 13px !important; }
           .oft-hero-title { font-size: 30px !important; }
-          .oft-hero { padding: 40px 18px 0 !important; }
+          .oft-hero { padding: 40px 18px 48px !important; }
           .oft-infobar-item { border-right: none !important; border-bottom: 1px solid #E0E0E0; padding: 12px 16px !important; }
           .oft-section { padding: 28px 16px !important; }
           .oft-infobar { gap: 14px !important; font-size: 11px !important; padding: 10px 14px !important; }
