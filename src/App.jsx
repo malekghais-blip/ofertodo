@@ -3274,21 +3274,23 @@ function AdminView() {
   const maxAov = Math.max(...aovPorFecha.map(d => d.aov), 1);
 
   // ── DESGLOSE DE VENTAS (mini-tabla) ────────────────────────────
-  // Nota: retornos y flete de retorno aún no existen en el sistema → 0.00 (próximamente)
+  // Desglose de ventas — ahora incluye retornos reales desde la tabla de retornos
   const desglose = (() => {
     let descuentos = 0, envios = 0, totales = 0;
     pedidosReales.forEach(o => {
       totales += Number(o.total || 0);
       envios += Number(o.costo_envio || 0);
-      // Si el pedido guardó un descuento en monto, lo sumamos (si existe el campo)
       descuentos += Number(o.descuento_monto || 0);
     });
-    const retornos = 0;          // próximamente
-    const fleteRetorno = 0;      // próximamente
-    // Venta bruta = total - envíos + descuentos (lo que valían los productos antes de ajustes)
+    // Retornos reembolsados en el período seleccionado
+    const retornosEnRango = retornos.filter(r =>
+      (r.estado === "reembolsado" || r.estado === "aprobado") && enRango(r.created_at)
+    );
+    const montoRetornos = retornosEnRango.reduce((s, r) => s + Number(r.monto_reembolso || 0), 0);
+    const fleteRetorno = 0; // próximamente
     const bruta = totales - envios + descuentos;
-    const netas = bruta - descuentos - retornos;
-    return { bruta, descuentos, retornos, netas, envios, fleteRetorno, totales };
+    const netas = bruta - descuentos - montoRetornos;
+    return { bruta, descuentos, retornos: montoRetornos, netas, envios, fleteRetorno, totales };
   })();
 
   // Mejores productos (por cantidad vendida, solo pedidos reales)
@@ -4051,7 +4053,7 @@ function AdminView() {
                       {[
                         ["Venta bruta", desglose.bruta, false, false],
                         ["Descuentos", desglose.descuentos, true, false],
-                        ["Retornos", desglose.retornos, true, true],
+                        ["Retornos", desglose.retornos, true, false],
                         ["Ventas netas", desglose.netas, false, false],
                         ["Costos de envío", desglose.envios, false, false],
                         ["Flete de retorno", desglose.fleteRetorno, false, true],
