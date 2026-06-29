@@ -3458,13 +3458,17 @@ function AdminView() {
     codigo_pedido: "",
     nombre_cliente: "",
     motivo: "",
-    productos_retornados: "",
+    items_retornados: [], // [{ product_id, referencia, nombre, cantidad }]
+    productos_retornados: "", // texto libre como respaldo
     monto_reembolso: "",
     estado: "pendiente",
     notas: "",
   });
 
-  const abrirEditarRetorno = (r) => setRetornoForm({ ...r });
+  const abrirEditarRetorno = (r) => setRetornoForm({
+    ...r,
+    items_retornados: r.items_retornados || [],
+  });
 
   const guardarRetorno = async () => {
     const f = retornoForm;
@@ -3477,7 +3481,11 @@ function AdminView() {
         codigo_pedido: f.codigo_pedido?.trim() || "",
         nombre_cliente: f.nombre_cliente.trim(),
         motivo: f.motivo.trim(),
-        productos_retornados: f.productos_retornados?.trim() || "",
+        // Genera el texto de productos desde los items seleccionados
+        productos_retornados: f.items_retornados?.length > 0
+          ? f.items_retornados.map(i => `${i.cantidad}x ${i.nombre} (${i.referencia})`).join(", ")
+          : f.productos_retornados?.trim() || "",
+        items_retornados: f.items_retornados || [],
         monto_reembolso: Number(f.monto_reembolso) || 0,
         estado: f.estado || "pendiente",
         notas: f.notas?.trim() || "",
@@ -5089,7 +5097,59 @@ function AdminView() {
                   <input style={S.input} placeholder="Ej: Talla incorrecta, producto dañado..." value={retornoForm.motivo} onChange={e => setRetornoForm({ ...retornoForm, motivo: e.target.value })} />
 
                   <label style={S.label}>Productos retornados</label>
-                  <input style={S.input} placeholder="Ej: 3 camisas talla M, ref. ABC-001" value={retornoForm.productos_retornados} onChange={e => setRetornoForm({ ...retornoForm, productos_retornados: e.target.value })} />
+                  {/* Selector de productos del catálogo */}
+                  <div style={{ border: `1px solid ${GRAY2}`, borderRadius: 10, overflow: "hidden", marginBottom: 8 }}>
+                    {/* Lista de productos ya seleccionados */}
+                    {(retornoForm.items_retornados || []).length > 0 && (
+                      <div style={{ background: GRAY, padding: "8px 12px", borderBottom: `1px solid ${GRAY2}` }}>
+                        {retornoForm.items_retornados.map((item, idx) => (
+                          <div key={idx} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                            <div style={{ flex: 1, fontSize: 13 }}>
+                              <span style={{ fontWeight: 700 }}>{item.nombre}</span>
+                              <span style={{ color: GRAY3, fontSize: 11 }}> · {item.referencia}</span>
+                            </div>
+                            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                              <button onClick={() => {
+                                const updated = [...retornoForm.items_retornados];
+                                if (updated[idx].cantidad > 1) { updated[idx] = { ...updated[idx], cantidad: updated[idx].cantidad - 1 }; }
+                                setRetornoForm({ ...retornoForm, items_retornados: updated });
+                              }} style={{ width: 24, height: 24, borderRadius: 6, border: `1px solid ${GRAY2}`, background: WHITE, cursor: "pointer", fontWeight: 900, fontSize: 14, display: "flex", alignItems: "center", justifyContent: "center" }}>−</button>
+                              <span style={{ fontWeight: 700, minWidth: 20, textAlign: "center" }}>{item.cantidad}</span>
+                              <button onClick={() => {
+                                const updated = [...retornoForm.items_retornados];
+                                updated[idx] = { ...updated[idx], cantidad: updated[idx].cantidad + 1 };
+                                setRetornoForm({ ...retornoForm, items_retornados: updated });
+                              }} style={{ width: 24, height: 24, borderRadius: 6, border: `1px solid ${GRAY2}`, background: WHITE, cursor: "pointer", fontWeight: 900, fontSize: 14, display: "flex", alignItems: "center", justifyContent: "center" }}>+</button>
+                              <button onClick={() => {
+                                setRetornoForm({ ...retornoForm, items_retornados: retornoForm.items_retornados.filter((_, i) => i !== idx) });
+                              }} style={{ width: 24, height: 24, borderRadius: 6, border: `1px solid ${RED}`, background: WHITE, cursor: "pointer", color: RED, display: "flex", alignItems: "center", justifyContent: "center" }}><X size={12} /></button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {/* Buscador de productos */}
+                    <div style={{ padding: 8, maxHeight: 200, overflowY: "auto" }}>
+                      {products.filter(p => !(retornoForm.items_retornados || []).some(i => i.product_id === p.id)).map(p => (
+                        <div key={p.id} onClick={() => {
+                          setRetornoForm({ ...retornoForm, items_retornados: [...(retornoForm.items_retornados || []), { product_id: p.id, referencia: p.referencia, nombre: p.nombre, cantidad: 1 }] });
+                        }} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 8px", cursor: "pointer", borderRadius: 6, marginBottom: 2, background: WHITE }}
+                        onMouseEnter={e => e.currentTarget.style.background = GRAY}
+                        onMouseLeave={e => e.currentTarget.style.background = WHITE}>
+                          {p.imagen_url
+                            ? <img src={p.imagen_url} style={{ width: 28, height: 28, borderRadius: 4, objectFit: "cover" }} />
+                            : <div style={{ width: 28, height: 28, borderRadius: 4, background: GRAY2 }} />
+                          }
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 12, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.nombre}</div>
+                            <div style={{ fontSize: 10, color: GRAY3 }}>{p.referencia}</div>
+                          </div>
+                          <Plus size={14} color={RED} />
+                        </div>
+                      ))}
+                      {products.length === 0 && <div style={{ padding: 8, fontSize: 12, color: GRAY3 }}>No hay productos en el catálogo</div>}
+                    </div>
+                  </div>
 
                   <label style={S.label}>Monto a reembolsar ($)</label>
                   <input type="number" min="0" step="0.01" style={S.input} placeholder="0.00" value={retornoForm.monto_reembolso} onChange={e => setRetornoForm({ ...retornoForm, monto_reembolso: e.target.value })} />
