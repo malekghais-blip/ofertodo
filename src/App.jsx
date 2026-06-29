@@ -5291,9 +5291,38 @@ function AdminView() {
           <>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24, flexWrap: "wrap", gap: 12 }}>
               <div style={{ fontSize: 22, fontWeight: 900, display: "flex", alignItems: "center", gap: 10 }}><Users size={24} color={RED} /> Clientes Registrados</div>
-              <button onClick={() => setNuevoCliente({ nombre: "", telefono: "", email: "" })} className="oft-btn-press" style={{ ...S.btnRed, padding: "10px 18px", fontSize: 14 }}>
-                <Plus size={16} /> Crear cliente
-              </button>
+              <div style={{ display: "flex", gap: 10 }}>
+                <button onClick={() => {
+                  // Exportar clientes a CSV (abre en Excel)
+                  const BOM = "\uFEFF"; // para que Excel reconozca UTF-8
+                  const headers = ["Nombre", "Email", "WhatsApp", "Pedidos", "Admin", "Registrado"];
+                  const filas = users.map(u => {
+                    const pedidosUser = orders.filter(o => o.usuario_id === u.id).length;
+                    return [
+                      u.nombre || "",
+                      (u.email || "").includes("@ofertodo.local") ? "" : (u.email || ""),
+                      u.telefono || "",
+                      pedidosUser,
+                      u.es_admin ? "Sí" : "No",
+                      u.created_at ? new Date(u.created_at).toLocaleDateString("es-PA") : "",
+                    ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(",");
+                  });
+                  const csv = BOM + [headers.join(","), ...filas].join("\n");
+                  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = `clientes_ofertodo_${new Date().toISOString().slice(0,10)}.csv`;
+                  a.click();
+                  URL.revokeObjectURL(url);
+                  showToast("Descargando Excel...");
+                }} className="oft-btn-press" style={{ ...S.btnOutline, padding: "10px 18px", fontSize: 14, display: "inline-flex", alignItems: "center", gap: 6 }}>
+                  <FileSpreadsheet size={16} /> Exportar Excel
+                </button>
+                <button onClick={() => setNuevoCliente({ nombre: "", telefono: "", email: "" })} className="oft-btn-press" style={{ ...S.btnRed, padding: "10px 18px", fontSize: 14 }}>
+                  <Plus size={16} /> Crear cliente
+                </button>
+              </div>
             </div>
             <div style={{ display: "flex", gap: 16, marginBottom: 28, flexWrap: "wrap" }}>
               {[["Total clientes", users.length, Users, RED], ["Con pedidos", new Set(orders.map(o => o.usuario_id)).size, ShoppingBag, "#155724"]].map(([l,n,Icon,c]) => (
