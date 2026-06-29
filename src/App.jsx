@@ -367,61 +367,30 @@ function HomeView() {
 
   return (
     <>
-      {/* HERO — fondo blanco puro con info bar integrado */}
-      <div className="oft-hero" style={{ background: "#FFFFFF", color: BLACK, padding: "64px 24px 0", textAlign: "center", position: "relative", overflow: "hidden", borderBottom: `1px solid ${GRAY2}` }}>
-        {/* Decoración sutil */}
-        <div style={{ position: "absolute", top: -80, right: -80, width: 320, height: 320, background: `radial-gradient(circle, ${RED}08 0%, transparent 70%)`, pointerEvents: "none" }} />
-        <div style={{ position: "absolute", bottom: 0, left: -60, width: 260, height: 260, background: `radial-gradient(circle, ${RED}06 0%, transparent 70%)`, pointerEvents: "none" }} />
-        <div style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundImage: `radial-gradient(circle, ${GRAY2} 1px, transparent 1px)`, backgroundSize: "28px 28px", pointerEvents: "none", opacity: 0.5 }} />
-
-        <div style={{ position: "relative", zIndex: 1 }}>
-          {/* Badge */}
-          <div className="oft-hero-badge" style={{ display: "inline-flex", alignItems: "center", gap: 6, background: `${RED}12`, border: `1px solid ${RED}30`, color: RED, fontSize: 11, fontWeight: 800, letterSpacing: 3, padding: "6px 16px", borderRadius: 20, marginBottom: 24, textTransform: "uppercase" }}>
-            <span style={{ width: 6, height: 6, borderRadius: "50%", background: RED, display: "inline-block" }} />
-            Distribuidora · Panamá
-          </div>
-
-          {/* Título */}
-          <h1 className="oft-hero-title" style={{ fontSize: 52, fontWeight: 900, lineHeight: 1.05, marginBottom: 16, letterSpacing: -2, color: "#1a1a1a" }}>
-            Compra más<br />
-            <span style={{ color: RED }}>Crece más</span>
-          </h1>
-
-          {/* Subtítulo */}
-          <p style={{ color: "#888", fontSize: 15, maxWidth: 400, margin: "0 auto 36px", lineHeight: 1.7, fontWeight: 400 }}>
-            Ropa, calzado y accesorios al por mayor.<br />
-            Precios por pieza, media docena y docena.
-          </p>
-
-          {/* Botones */}
-          <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap", marginBottom: 48 }}>
-            <button className="oft-btn-press" style={{ ...S.btnRed, padding: "14px 32px", fontSize: 15, borderRadius: 10, fontWeight: 800 }} onClick={() => { setCatalogCat(0); setView("catalogo"); }}>
-              Ver Catálogo →
-            </button>
-            <button className="oft-btn-press" style={{ ...S.btnWA, padding: "14px 24px", fontSize: 15, borderRadius: 10 }} onClick={() => window.open(`https://wa.me/${WA_NUMBER}?text=Hola%20Ofertodo%2C%20quiero%20hacer%20un%20pedido`, "_blank")}>
-              <MessageCircle size={16} strokeWidth={2.2} /> WhatsApp
-            </button>
-          </div>
-
-          {/* INFO BAR integrado en el mismo bloque */}
-          <div style={{ borderTop: `1px solid ${GRAY2}`, display: "flex", gap: 0, justifyContent: "center", flexWrap: "wrap", background: GRAY, margin: "0 -24px", padding: "18px 24px" }}>
-            {[
-              [Package, "Precios flexibles", "Pieza · Media docena · Docena"],
-              [Truck, "Envíos a todo Panamá", "Servicio nacional"],
-              [MessageCircle, "WhatsApp disponible", "Atención personalizada"],
-            ].map(([Icon, titulo, sub], i) => (
-              <div key={i} className="oft-infobar-item" style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 28px", borderRight: i < 2 ? `1px solid ${GRAY2}` : "none", flex: "1 1 180px", justifyContent: "center" }}>
-                <div style={{ width: 32, height: 32, borderRadius: 8, background: `${RED}12`, border: `1px solid ${RED}25`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                  <Icon size={15} color={RED} strokeWidth={2} />
-                </div>
-                <div style={{ textAlign: "left" }}>
-                  <div style={{ fontWeight: 700, fontSize: 12, color: "#1a1a1a" }}>{titulo}</div>
-                  <div style={{ fontSize: 11, color: "#999", marginTop: 1 }}>{sub}</div>
-                </div>
-              </div>
-            ))}
-          </div>
+      {/* HERO */}
+      <div className="oft-hero" style={{ background: `linear-gradient(135deg, ${BLACK} 0%, #2a0000 60%, #1a0000 100%)`, color: WHITE, padding: "64px 24px", textAlign: "center" }}>
+        <div style={{ background: RED, color: WHITE, fontSize: 11, fontWeight: 800, letterSpacing: 2, padding: "4px 14px", borderRadius: 4, display: "inline-flex", alignItems: "center", gap: 6, marginBottom: 18, textTransform: "uppercase" }}>
+          <Zap size={12} strokeWidth={2.5} /> Distribuidora · Panamá
         </div>
+        <h1 className="oft-hero-title" style={{ fontSize: 44, fontWeight: 900, lineHeight: 1.1, marginBottom: 16, letterSpacing: -1 }}>
+          Compra más<br /><span style={{ color: RED }}>Crece más</span>
+        </h1>
+        <p style={{ color: "#ccc", fontSize: 16, marginBottom: 36, maxWidth: 480, margin: "0 auto 36px" }}>
+          Compra por pieza, media docena o docena. Ropa, calzado y accesorios de calidad. Enviamos a todo Panamá.
+        </p>
+        <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
+          <button style={{ ...S.btnRed, padding: "14px 30px", fontSize: 15 }} onClick={() => { setCatalogCat(0); setView("catalogo"); }}>Ver Catálogo →</button>
+          <button style={{ ...S.btnWA, padding: "14px 24px", fontSize: 15 }} onClick={() => window.open(`https://wa.me/${WA_NUMBER}?text=Hola%20Ofertodo%2C%20quiero%20hacer%20un%20pedido`, "_blank")}>
+            <MessageCircle size={16} strokeWidth={2.2} /> Consultar por WhatsApp
+          </button>
+        </div>
+      </div>
+
+      {/* INFO BAR */}
+      <div className="oft-infobar" style={{ background: RED, color: WHITE, padding: "10px 24px", display: "flex", gap: 32, justifyContent: "center", flexWrap: "wrap", fontSize: 13, fontWeight: 600 }}>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Package size={15} strokeWidth={2.2} /> Pieza · Media docena · Docena</span>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Truck size={15} strokeWidth={2.2} /> Envíos a todo Panamá</span>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><MessageCircle size={15} strokeWidth={2.2} /> WhatsApp disponible</span>
       </div>
 
       {/* CATEGORÍAS */}
