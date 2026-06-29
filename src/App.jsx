@@ -1020,6 +1020,14 @@ function RegisterModal() {
         setErr(auth.error?.message || auth.error_description || auth.msg || "No se pudo crear la cuenta.");
       } else {
         await sb.post("usuarios", { nombre: form.nombre, email: form.email, telefono: form.telefono, es_admin: false });
+        // Enviar email de bienvenida (sin bloquear el flujo si falla)
+        try {
+          fetch(SUPABASE_URL + "/functions/v1/bienvenida-cliente", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "Authorization": "Bearer " + SUPABASE_KEY },
+            body: JSON.stringify({ nombre: form.nombre, email: form.email }),
+          });
+        } catch(e) {}
         showToast("¡Cuenta creada! Revisa tu correo para confirmar y luego inicia sesión.");
         setShowRegister(false);
       }
