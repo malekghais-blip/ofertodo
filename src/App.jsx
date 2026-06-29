@@ -367,34 +367,34 @@ function HomeView() {
 
   return (
     <>
-      {/* HERO */}
-      <div className="oft-hero" style={{ background: WHITE, color: BLACK, padding: "72px 24px 60px", textAlign: "center", position: "relative", overflow: "hidden", borderBottom: `1px solid ${GRAY2}` }}>
-        {/* Decoración de fondo */}
-        <div style={{ position: "absolute", top: -80, right: -80, width: 320, height: 320, background: `radial-gradient(circle, ${RED}10 0%, transparent 70%)`, pointerEvents: "none" }} />
-        <div style={{ position: "absolute", bottom: -60, left: -60, width: 260, height: 260, background: `radial-gradient(circle, ${RED}08 0%, transparent 70%)`, pointerEvents: "none" }} />
-        <div style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundImage: `radial-gradient(circle, ${GRAY2} 1px, transparent 1px)`, backgroundSize: "32px 32px", pointerEvents: "none", opacity: 0.5 }} />
+      {/* HERO — fondo blanco puro con info bar integrado */}
+      <div className="oft-hero" style={{ background: "#FFFFFF", color: BLACK, padding: "64px 24px 0", textAlign: "center", position: "relative", overflow: "hidden", borderBottom: `1px solid ${GRAY2}` }}>
+        {/* Decoración sutil */}
+        <div style={{ position: "absolute", top: -80, right: -80, width: 320, height: 320, background: `radial-gradient(circle, ${RED}08 0%, transparent 70%)`, pointerEvents: "none" }} />
+        <div style={{ position: "absolute", bottom: 0, left: -60, width: 260, height: 260, background: `radial-gradient(circle, ${RED}06 0%, transparent 70%)`, pointerEvents: "none" }} />
+        <div style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundImage: `radial-gradient(circle, ${GRAY2} 1px, transparent 1px)`, backgroundSize: "28px 28px", pointerEvents: "none", opacity: 0.5 }} />
 
         <div style={{ position: "relative", zIndex: 1 }}>
           {/* Badge */}
-          <div className="oft-hero-badge" style={{ display: "inline-flex", alignItems: "center", gap: 6, background: `${RED}10`, border: `1px solid ${RED}33`, color: RED, fontSize: 11, fontWeight: 800, letterSpacing: 3, padding: "6px 16px", borderRadius: 20, marginBottom: 28, textTransform: "uppercase" }}>
+          <div className="oft-hero-badge" style={{ display: "inline-flex", alignItems: "center", gap: 6, background: `${RED}12`, border: `1px solid ${RED}30`, color: RED, fontSize: 11, fontWeight: 800, letterSpacing: 3, padding: "6px 16px", borderRadius: 20, marginBottom: 24, textTransform: "uppercase" }}>
             <span style={{ width: 6, height: 6, borderRadius: "50%", background: RED, display: "inline-block" }} />
             Distribuidora · Panamá
           </div>
 
           {/* Título */}
-          <h1 className="oft-hero-title" style={{ fontSize: 52, fontWeight: 900, lineHeight: 1.05, marginBottom: 20, letterSpacing: -2, color: BLACK }}>
+          <h1 className="oft-hero-title" style={{ fontSize: 52, fontWeight: 900, lineHeight: 1.05, marginBottom: 16, letterSpacing: -2, color: "#1a1a1a" }}>
             Compra más<br />
             <span style={{ color: RED }}>Crece más</span>
           </h1>
 
           {/* Subtítulo */}
-          <p style={{ color: GRAY3, fontSize: 15, marginBottom: 40, maxWidth: 420, margin: "0 auto 40px", lineHeight: 1.7, fontWeight: 400 }}>
+          <p style={{ color: "#888", fontSize: 15, maxWidth: 400, margin: "0 auto 36px", lineHeight: 1.7, fontWeight: 400 }}>
             Ropa, calzado y accesorios al por mayor.<br />
             Precios por pieza, media docena y docena.
           </p>
 
           {/* Botones */}
-          <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap", marginBottom: 48 }}>
             <button className="oft-btn-press" style={{ ...S.btnRed, padding: "14px 32px", fontSize: 15, borderRadius: 10, fontWeight: 800 }} onClick={() => { setCatalogCat(0); setView("catalogo"); }}>
               Ver Catálogo →
             </button>
@@ -402,26 +402,26 @@ function HomeView() {
               <MessageCircle size={16} strokeWidth={2.2} /> WhatsApp
             </button>
           </div>
-        </div>
-      </div>
 
-      {/* INFO BAR */}
-      <div className="oft-infobar" style={{ background: GRAY, borderBottom: `1px solid ${GRAY2}`, color: BLACK, padding: "20px 24px", display: "flex", gap: 0, justifyContent: "center", flexWrap: "wrap" }}>
-        {[
-          [Package, "Precios flexibles", "Pieza · Media docena · Docena"],
-          [Truck, "Envíos a todo Panamá", "Servicio nacional"],
-          [MessageCircle, "WhatsApp disponible", "Atención personalizada"],
-        ].map(([Icon, titulo, sub], i) => (
-          <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 32px", borderRight: i < 2 ? `1px solid ${GRAY2}` : "none", flex: "1 1 200px", justifyContent: "center" }}>
-            <div style={{ width: 36, height: 36, borderRadius: 8, background: `${RED}12`, border: `1px solid ${RED}25`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-              <Icon size={16} color={RED} strokeWidth={2} />
-            </div>
-            <div>
-              <div style={{ fontWeight: 700, fontSize: 13, color: BLACK }}>{titulo}</div>
-              <div style={{ fontSize: 11, color: GRAY3, marginTop: 1 }}>{sub}</div>
-            </div>
+          {/* INFO BAR integrado en el mismo bloque */}
+          <div style={{ borderTop: `1px solid ${GRAY2}`, display: "flex", gap: 0, justifyContent: "center", flexWrap: "wrap", background: GRAY, margin: "0 -24px", padding: "18px 24px" }}>
+            {[
+              [Package, "Precios flexibles", "Pieza · Media docena · Docena"],
+              [Truck, "Envíos a todo Panamá", "Servicio nacional"],
+              [MessageCircle, "WhatsApp disponible", "Atención personalizada"],
+            ].map(([Icon, titulo, sub], i) => (
+              <div key={i} className="oft-infobar-item" style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 28px", borderRight: i < 2 ? `1px solid ${GRAY2}` : "none", flex: "1 1 180px", justifyContent: "center" }}>
+                <div style={{ width: 32, height: 32, borderRadius: 8, background: `${RED}12`, border: `1px solid ${RED}25`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                  <Icon size={15} color={RED} strokeWidth={2} />
+                </div>
+                <div style={{ textAlign: "left" }}>
+                  <div style={{ fontWeight: 700, fontSize: 12, color: "#1a1a1a" }}>{titulo}</div>
+                  <div style={{ fontSize: 11, color: "#999", marginTop: 1 }}>{sub}</div>
+                </div>
+              </div>
+            ))}
           </div>
-        ))}
+        </div>
       </div>
 
       {/* CATEGORÍAS */}
@@ -5401,7 +5401,8 @@ export default function App() {
           .oft-nav { padding: 0 14px !important; }
           .oft-nav-links { gap: 14px !important; font-size: 13px !important; }
           .oft-hero-title { font-size: 30px !important; }
-          .oft-hero { padding: 40px 18px !important; }
+          .oft-hero { padding: 40px 18px 0 !important; }
+          .oft-infobar-item { border-right: none !important; border-bottom: 1px solid #E0E0E0; padding: 12px 16px !important; }
           .oft-section { padding: 28px 16px !important; }
           .oft-infobar { gap: 14px !important; font-size: 11px !important; padding: 10px 14px !important; }
           .oft-admin-main { margin-left: 0 !important; padding: 18px 14px 80px !important; }
