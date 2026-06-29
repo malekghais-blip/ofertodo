@@ -5129,25 +5129,43 @@ function AdminView() {
                       </div>
                     )}
                     {/* Buscador de productos */}
-                    <div style={{ padding: 8, maxHeight: 200, overflowY: "auto" }}>
-                      {products.filter(p => !(retornoForm.items_retornados || []).some(i => i.product_id === p.id)).map(p => (
-                        <div key={p.id} onClick={() => {
-                          setRetornoForm({ ...retornoForm, items_retornados: [...(retornoForm.items_retornados || []), { product_id: p.id, referencia: p.referencia, nombre: p.nombre, cantidad: 1 }] });
-                        }} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 8px", cursor: "pointer", borderRadius: 6, marginBottom: 2, background: WHITE }}
-                        onMouseEnter={e => e.currentTarget.style.background = GRAY}
-                        onMouseLeave={e => e.currentTarget.style.background = WHITE}>
-                          {p.imagen_url
-                            ? <img src={p.imagen_url} style={{ width: 28, height: 28, borderRadius: 4, objectFit: "cover" }} />
-                            : <div style={{ width: 28, height: 28, borderRadius: 4, background: GRAY2 }} />
-                          }
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ fontSize: 12, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.nombre}</div>
-                            <div style={{ fontSize: 10, color: GRAY3 }}>{p.referencia}</div>
+                    <div style={{ padding: "8px 8px 0" }}>
+                      <div style={{ position: "relative", marginBottom: 6 }}>
+                        <Search size={13} color={GRAY3} style={{ position: "absolute", left: 9, top: "50%", transform: "translateY(-50%)" }} />
+                        <input
+                          style={{ width: "100%", padding: "7px 8px 7px 28px", borderRadius: 7, border: `1px solid ${GRAY2}`, fontSize: 13, outline: "none", boxSizing: "border-box", background: GRAY }}
+                          placeholder="Buscar por nombre o referencia..."
+                          value={retornoForm._busquedaProducto || ""}
+                          onChange={e => setRetornoForm({ ...retornoForm, _busquedaProducto: e.target.value })}
+                        />
+                      </div>
+                    </div>
+                    <div style={{ padding: "0 8px 8px", maxHeight: 200, overflowY: "auto" }}>
+                      {(() => {
+                        const q = (retornoForm._busquedaProducto || "").toLowerCase();
+                        const filtrados = products.filter(p =>
+                          !(retornoForm.items_retornados || []).some(i => i.product_id === p.id) &&
+                          (q === "" || (p.nombre || "").toLowerCase().includes(q) || (p.referencia || "").toLowerCase().includes(q))
+                        );
+                        if (filtrados.length === 0) return <div style={{ padding: "8px 4px", fontSize: 12, color: GRAY3 }}>No se encontraron productos</div>;
+                        return filtrados.map(p => (
+                          <div key={p.id} onClick={() => {
+                            setRetornoForm({ ...retornoForm, items_retornados: [...(retornoForm.items_retornados || []), { product_id: p.id, referencia: p.referencia, nombre: p.nombre, cantidad: 1 }] });
+                          }} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 8px", cursor: "pointer", borderRadius: 6, marginBottom: 2, background: WHITE }}
+                          onMouseEnter={e => e.currentTarget.style.background = GRAY}
+                          onMouseLeave={e => e.currentTarget.style.background = WHITE}>
+                            {p.imagen_url
+                              ? <img src={p.imagen_url} style={{ width: 28, height: 28, borderRadius: 4, objectFit: "cover" }} />
+                              : <div style={{ width: 28, height: 28, borderRadius: 4, background: GRAY2 }} />
+                            }
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontSize: 12, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.nombre}</div>
+                              <div style={{ fontSize: 10, color: GRAY3 }}>{p.referencia}</div>
+                            </div>
+                            <Plus size={14} color={RED} />
                           </div>
-                          <Plus size={14} color={RED} />
-                        </div>
-                      ))}
-                      {products.length === 0 && <div style={{ padding: 8, fontSize: 12, color: GRAY3 }}>No hay productos en el catálogo</div>}
+                        ));
+                      })()}
                     </div>
                   </div>
 
