@@ -368,29 +368,60 @@ function HomeView() {
   return (
     <>
       {/* HERO */}
-      <div className="oft-hero" style={{ background: `linear-gradient(135deg, ${BLACK} 0%, #2a0000 60%, #1a0000 100%)`, color: WHITE, padding: "64px 24px", textAlign: "center" }}>
-        <div style={{ background: RED, color: WHITE, fontSize: 11, fontWeight: 800, letterSpacing: 2, padding: "4px 14px", borderRadius: 4, display: "inline-flex", alignItems: "center", gap: 6, marginBottom: 18, textTransform: "uppercase" }}>
-          <Zap size={12} strokeWidth={2.5} /> Distribuidora · Panamá
-        </div>
-        <h1 className="oft-hero-title" style={{ fontSize: 44, fontWeight: 900, lineHeight: 1.1, marginBottom: 16, letterSpacing: -1 }}>
-          Compra más<br /><span style={{ color: RED }}>Crece más</span>
-        </h1>
-        <p style={{ color: "#ccc", fontSize: 16, marginBottom: 36, maxWidth: 480, margin: "0 auto 36px" }}>
-          Compra por pieza, media docena o docena. Ropa, calzado y accesorios de calidad. Enviamos a todo Panamá.
-        </p>
-        <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
-          <button style={{ ...S.btnRed, padding: "14px 30px", fontSize: 15 }} onClick={() => { setCatalogCat(0); setView("catalogo"); }}>Ver Catálogo →</button>
-          <button style={{ ...S.btnWA, padding: "14px 24px", fontSize: 15 }} onClick={() => window.open(`https://wa.me/${WA_NUMBER}?text=Hola%20Ofertodo%2C%20quiero%20hacer%20un%20pedido`, "_blank")}>
-            <MessageCircle size={16} strokeWidth={2.2} /> Consultar por WhatsApp
-          </button>
+      <div className="oft-hero" style={{ background: WHITE, color: BLACK, padding: "72px 24px 60px", textAlign: "center", position: "relative", overflow: "hidden", borderBottom: `1px solid ${GRAY2}` }}>
+        {/* Decoración de fondo */}
+        <div style={{ position: "absolute", top: -80, right: -80, width: 320, height: 320, background: `radial-gradient(circle, ${RED}10 0%, transparent 70%)`, pointerEvents: "none" }} />
+        <div style={{ position: "absolute", bottom: -60, left: -60, width: 260, height: 260, background: `radial-gradient(circle, ${RED}08 0%, transparent 70%)`, pointerEvents: "none" }} />
+        <div style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundImage: `radial-gradient(circle, ${GRAY2} 1px, transparent 1px)`, backgroundSize: "32px 32px", pointerEvents: "none", opacity: 0.5 }} />
+
+        <div style={{ position: "relative", zIndex: 1 }}>
+          {/* Badge */}
+          <div className="oft-hero-badge" style={{ display: "inline-flex", alignItems: "center", gap: 6, background: `${RED}10`, border: `1px solid ${RED}33`, color: RED, fontSize: 11, fontWeight: 800, letterSpacing: 3, padding: "6px 16px", borderRadius: 20, marginBottom: 28, textTransform: "uppercase" }}>
+            <span style={{ width: 6, height: 6, borderRadius: "50%", background: RED, display: "inline-block" }} />
+            Distribuidora · Panamá
+          </div>
+
+          {/* Título */}
+          <h1 className="oft-hero-title" style={{ fontSize: 52, fontWeight: 900, lineHeight: 1.05, marginBottom: 20, letterSpacing: -2, color: BLACK }}>
+            Compra más<br />
+            <span style={{ color: RED }}>Crece más</span>
+          </h1>
+
+          {/* Subtítulo */}
+          <p style={{ color: GRAY3, fontSize: 15, marginBottom: 40, maxWidth: 420, margin: "0 auto 40px", lineHeight: 1.7, fontWeight: 400 }}>
+            Ropa, calzado y accesorios al por mayor.<br />
+            Precios por pieza, media docena y docena.
+          </p>
+
+          {/* Botones */}
+          <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
+            <button className="oft-btn-press" style={{ ...S.btnRed, padding: "14px 32px", fontSize: 15, borderRadius: 10, fontWeight: 800 }} onClick={() => { setCatalogCat(0); setView("catalogo"); }}>
+              Ver Catálogo →
+            </button>
+            <button className="oft-btn-press" style={{ ...S.btnWA, padding: "14px 24px", fontSize: 15, borderRadius: 10 }} onClick={() => window.open(`https://wa.me/${WA_NUMBER}?text=Hola%20Ofertodo%2C%20quiero%20hacer%20un%20pedido`, "_blank")}>
+              <MessageCircle size={16} strokeWidth={2.2} /> WhatsApp
+            </button>
+          </div>
         </div>
       </div>
 
       {/* INFO BAR */}
-      <div className="oft-infobar" style={{ background: RED, color: WHITE, padding: "10px 24px", display: "flex", gap: 32, justifyContent: "center", flexWrap: "wrap", fontSize: 13, fontWeight: 600 }}>
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Package size={15} strokeWidth={2.2} /> Pedido mínimo: 1 docena</span>
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Truck size={15} strokeWidth={2.2} /> Envíos a todo Panamá</span>
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><MessageCircle size={15} strokeWidth={2.2} /> WhatsApp disponible</span>
+      <div className="oft-infobar" style={{ background: GRAY, borderBottom: `1px solid ${GRAY2}`, color: BLACK, padding: "20px 24px", display: "flex", gap: 0, justifyContent: "center", flexWrap: "wrap" }}>
+        {[
+          [Package, "Precios flexibles", "Pieza · Media docena · Docena"],
+          [Truck, "Envíos a todo Panamá", "Servicio nacional"],
+          [MessageCircle, "WhatsApp disponible", "Atención personalizada"],
+        ].map(([Icon, titulo, sub], i) => (
+          <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 32px", borderRight: i < 2 ? `1px solid ${GRAY2}` : "none", flex: "1 1 200px", justifyContent: "center" }}>
+            <div style={{ width: 36, height: 36, borderRadius: 8, background: `${RED}12`, border: `1px solid ${RED}25`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <Icon size={16} color={RED} strokeWidth={2} />
+            </div>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: 13, color: BLACK }}>{titulo}</div>
+              <div style={{ fontSize: 11, color: GRAY3, marginTop: 1 }}>{sub}</div>
+            </div>
+          </div>
+        ))}
       </div>
 
       {/* CATEGORÍAS */}
@@ -5326,6 +5357,11 @@ export default function App() {
         @keyframes widgetIn { 0% { opacity: 0; transform: translateY(14px) scale(0.98); } 100% { opacity: 1; transform: translateY(0) scale(1); } }
         .oft-widget { animation: widgetIn 0.5s cubic-bezier(0.22,1,0.36,1) both; }
         .oft-widget:hover { transform: translateY(-3px); box-shadow: 0 12px 28px rgba(0,0,0,0.10); }
+        @keyframes heroFadeUp { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: translateY(0); } }
+        .oft-hero-badge { animation: heroFadeUp 0.6s ease both; }
+        .oft-hero-title { animation: heroFadeUp 0.7s 0.1s ease both; }
+        .oft-hero p { animation: heroFadeUp 0.7s 0.2s ease both; }
+        .oft-infobar > div { animation: heroFadeUp 0.5s ease both; }
         @keyframes barGrow { from { transform: scaleY(0); } to { transform: scaleY(1); } }
         .oft-bar-grow { transform-origin: bottom; animation: barGrow 0.7s cubic-bezier(0.22,1,0.36,1) both; }
         @keyframes lineDraw { from { stroke-dashoffset: 1000; } to { stroke-dashoffset: 0; } }
