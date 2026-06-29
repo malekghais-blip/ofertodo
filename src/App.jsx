@@ -1082,6 +1082,14 @@ function CompleteProfileModal() {
       await sb.post("usuarios", { nombre: nombre.trim(), email: completeProfile.email, telefono: telefono.trim(), es_admin: false });
       const perfil = await sb.get("usuarios", `?email=eq.${encodeURIComponent(completeProfile.email)}&limit=1`);
       setUser({ ...completeProfile.gUser, ...(perfil[0] || {}), token: completeProfile.token });
+      // Enviar email de bienvenida (sin bloquear si falla)
+      try {
+        fetch(SUPABASE_URL + "/functions/v1/bienvenida-cliente", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Authorization": "Bearer " + SUPABASE_KEY },
+          body: JSON.stringify({ nombre: nombre.trim(), email: completeProfile.email }),
+        });
+      } catch(e) {}
       showToast(`¡Cuenta creada! Bienvenido, ${nombre.split(" ")[0]}`);
       setCompleteProfile(null);
     } catch(e) { setErr("Error al guardar. Intenta de nuevo."); }
