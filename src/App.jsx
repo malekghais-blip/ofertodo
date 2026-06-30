@@ -3302,6 +3302,54 @@ function AdminView() {
     return { bruta, descuentos, retornos: montoRetornos, netas, envios, fleteRetorno, totales };
   })();
 
+  // ── ANÁLISIS DE STOCK (rotación, ingreso, sugerencia de compra) ──
+  // Usa SOLO ventas reales de la web (pedidosRealesTodos), sin importar el filtro de fecha del dashboard.
+  const LEAD_TIME_DIAS = 7; // tiempo que tarda en llegar la mercancía de tu proveedor
+  const analisisStock = (() => {
+    const map = {}; // producto_id -> { cantidad, ingreso, primeraFecha, ultimaFecha }
+    pedidosRealesTodos.forEach(o => {
+      (o.items || []).forEach(it => {
+        if (!it.producto_id) return;
+        const key = it.producto_id;
+        if (!map[key]) map[key] = { producto_id: key, cantidad: 0, ingreso: 0, primeraFecha: o.created_at, ultimaFecha: o.created_at };
+        map[key].cantidad += Number(it.cantidad || 0);
+        map[key].ingreso += Number(it.subtotal || 0);
+        if (new Date(o.created_at) < new Date(map[key].primeraFecha)) map[key].primeraFecha = o.created_at;
+        if (new Date(o.created_at) > new Date(map[key].ultimaFecha)) map[key].ultimaFecha = o.created_at;
+      });
+    });
+
+    const hoy = new Date();
+    const filas = Object.values(map).map(m => {
+      const prod = products.find(p => p.id === m.producto_id);
+      if (!prod) return null;
+      const diasDesdeInicio = Math.max(1, Math.ceil((hoy - new Date(m.primeraFecha)) / 86400000));
+      const velocidadDiaria = m.cantidad / diasDesdeInicio; // unidades vendidas por día
+      const costoUnit = Number(prod.costo || 0);
+      const margen = costoUnit > 0 ? m.ingreso - (costoUnit * m.cantidad) : null; // null = sin dato de costo
+      // Stock actual (si está sincronizado con Odoo)
+      const tieneStock = !!prod.stock_actualizado_at;
+      const stockActual = tieneStock ? Number(prod.stock || 0) : null;
+      // Días hasta agotar stock, según velocidad de venta actual
+      const diasHastaAgotar = (tieneStock && velocidadDiaria > 0) ? Math.floor(stockActual / velocidadDiaria) : null;
+      // Sugerencia de compra: cubrir ventas del lead time + un colchón de seguridad (otro lead time)
+      const sugerenciaCompra = Math.ceil(velocidadDiaria * LEAD_TIME_DIAS * 2);
+      // ¿Cuándo reponer? Si ya sabemos el stock, restamos lo que tardará en agotarse menos el lead time
+      let diasParaReponer = null;
+      if (diasHastaAgotar !== null) diasParaReponer = Math.max(0, diasHastaAgotar - LEAD_TIME_DIAS);
+      return {
+        ...m, prod, diasDesdeInicio, velocidadDiaria, margen, stockActual, diasHastaAgotar,
+        sugerenciaCompra, diasParaReponer, tieneStock,
+      };
+    }).filter(Boolean);
+
+    return filas;
+  })();
+
+  const rotacionOrdenado = [...analisisStock].sort((a, b) => b.velocidadDiaria - a.velocidadDiaria);
+  const ingresoOrdenado = [...analisisStock].sort((a, b) => b.ingreso - a.ingreso);
+  const urgentesReponer = analisisStock.filter(f => f.diasParaReponer !== null && f.diasParaReponer <= 3).sort((a, b) => a.diasParaReponer - b.diasParaReponer);
+
   // Mejores productos (por cantidad vendida, solo pedidos reales)
   const mejoresProductos = (() => {
     const map = {};
@@ -3885,6 +3933,7 @@ function AdminView() {
     ["categories", "Categorías", FolderOpen],
     ["descuentos", "Descuentos", Zap],
     ["retornos", "Retornos", RefreshCw],
+    ["analisis", "Análisis Stock", TrendingUp],
     ["shipping", "Envíos", Truck],
     ["users", "Clientes", Users],
   ];
@@ -5264,6 +5313,123 @@ function AdminView() {
             )}
           </>
         )}
+
+        {/* ═══════════ ANÁLISIS DE STOCK ═══════════ */}
+        {tab === "analisis" && (() => {
+          const money = (n) => "$" + Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+          return (
+          <>
+            <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 8, display: "flex", alignItems: "center", gap: 10 }}><TrendingUp size={24} color={RED} /> Análisis de Stock</div>
+            <p style={{ fontSize: 13, color: GRAY3, marginBottom: 24, maxWidth: 600 }}>
+              Basado solo en ventas reales de tu web. Tiempo de reposición de proveedor: <strong>{LEAD_TIME_DIAS} días</strong>.
+            </p>
+
+            {analisisStock.length === 0 ? (
+              <div style={{ background: WHITE, border: `1px dashed ${GRAY2}`, borderRadius: 14, padding: 40, textAlign: "center", color: GRAY3 }}>
+                <TrendingUp size={36} color={GRAY3} strokeWidth={1.4} style={{ marginBottom: 10 }} />
+                <div style={{ fontWeight: 700, marginBottom: 4 }}>Aún no hay suficientes ventas</div>
+                <div style={{ fontSize: 13 }}>El análisis aparecerá cuando tengas pedidos pagados con productos vinculados.</div>
+              </div>
+            ) : (
+              <>
+                {/* ALERTA: REPONER URGENTE */}
+                {urgentesReponer.length > 0 && (
+                  <div style={{ background: "#FFF3CD", border: "2px solid #856404", borderRadius: 14, padding: 18, marginBottom: 24 }}>
+                    <div style={{ fontWeight: 900, fontSize: 15, color: "#856404", marginBottom: 10, display: "flex", alignItems: "center", gap: 8 }}>
+                      ⚠️ Reponer pronto ({urgentesReponer.length})
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      {urgentesReponer.map(f => (
+                        <div key={f.producto_id} style={{ display: "flex", alignItems: "center", gap: 10, background: WHITE, borderRadius: 8, padding: "8px 12px" }}>
+                          {f.prod.imagen_url ? <img src={f.prod.imagen_url} style={{ width: 30, height: 30, borderRadius: 5, objectFit: "cover" }} /> : <div style={{ width: 30, height: 30, borderRadius: 5, background: GRAY }} />}
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontWeight: 700, fontSize: 13 }}>{f.prod.nombre}</div>
+                            <div style={{ fontSize: 11, color: GRAY3 }}>{f.prod.referencia || "—"} · Stock: {f.stockActual} uds</div>
+                          </div>
+                          <div style={{ textAlign: "right" }}>
+                            <div style={{ fontWeight: 900, color: f.diasParaReponer === 0 ? RED : "#856404", fontSize: 14 }}>
+                              {f.diasParaReponer === 0 ? "Reponer YA" : `Reponer en ${f.diasParaReponer} día${f.diasParaReponer === 1 ? "" : "s"}`}
+                            </div>
+                            <div style={{ fontSize: 11, color: GRAY3 }}>Comprar ~{f.sugerenciaCompra} uds</div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* GRID: ROTACIÓN + INGRESO */}
+                <div className="oft-dash-grid-2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 24 }}>
+                  {/* MEJOR ROTACIÓN */}
+                  <div className="oft-widget" style={{ background: WHITE, borderRadius: 14, padding: 20, border: `1px solid ${GRAY2}` }}>
+                    <div style={{ fontWeight: 800, marginBottom: 4, display: "flex", alignItems: "center", gap: 8 }}><RefreshCw size={17} color={RED} /> Mejor rotación</div>
+                    <div style={{ fontSize: 12, color: GRAY3, marginBottom: 14 }}>Unidades vendidas por día (promedio)</div>
+                    {rotacionOrdenado.slice(0, 5).map((f, i) => (
+                      <div key={f.producto_id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: i < 4 ? `1px solid ${GRAY2}` : "none" }}>
+                        <div style={{ fontSize: 14, fontWeight: 900, color: GRAY3, width: 18 }}>{i + 1}</div>
+                        {f.prod.imagen_url ? <img src={f.prod.imagen_url} style={{ width: 32, height: 32, borderRadius: 6, objectFit: "cover" }} /> : <div style={{ width: 32, height: 32, borderRadius: 6, background: GRAY }} />}
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontWeight: 700, fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.prod.nombre}</div>
+                          <div style={{ fontSize: 10, color: GRAY3 }}>{f.cantidad} uds en {f.diasDesdeInicio} días</div>
+                        </div>
+                        <div style={{ fontWeight: 900, fontSize: 13, color: RED }}>{f.velocidadDiaria.toFixed(2)}/día</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* MÁS CASH */}
+                  <div className="oft-widget" style={{ background: WHITE, borderRadius: 14, padding: 20, border: `1px solid ${GRAY2}` }}>
+                    <div style={{ fontWeight: 800, marginBottom: 4, display: "flex", alignItems: "center", gap: 8 }}><DollarSign size={17} color={RED} /> Más ingreso generado</div>
+                    <div style={{ fontSize: 12, color: GRAY3, marginBottom: 14 }}>Ingreso total por producto</div>
+                    {ingresoOrdenado.slice(0, 5).map((f, i) => (
+                      <div key={f.producto_id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: i < 4 ? `1px solid ${GRAY2}` : "none" }}>
+                        <div style={{ fontSize: 14, fontWeight: 900, color: GRAY3, width: 18 }}>{i + 1}</div>
+                        {f.prod.imagen_url ? <img src={f.prod.imagen_url} style={{ width: 32, height: 32, borderRadius: 6, objectFit: "cover" }} /> : <div style={{ width: 32, height: 32, borderRadius: 6, background: GRAY }} />}
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontWeight: 700, fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.prod.nombre}</div>
+                          <div style={{ fontSize: 10, color: GRAY3 }}>{f.margen !== null ? `Margen: ${money(f.margen)}` : "Margen: sin costo cargado"}</div>
+                        </div>
+                        <div style={{ fontWeight: 900, fontSize: 13, color: RED }}>{money(f.ingreso)}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* TABLA COMPLETA */}
+                <div style={{ background: WHITE, borderRadius: 14, border: `1px solid ${GRAY2}`, overflow: "hidden" }}>
+                  <div style={{ padding: "16px 20px", borderBottom: `1px solid ${GRAY2}`, fontWeight: 800 }}>Detalle completo por producto</div>
+                  <div className="oft-table-wrap" style={{ overflowX: "auto" }}>
+                    <table style={S.table}>
+                      <thead><tr>{["Producto","Vendidos","Vel./día","Ingreso","Margen","Stock","Días p/ agotar","Comprar","Reponer en"].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
+                      <tbody>
+                        {analisisStock.sort((a,b) => b.ingreso - a.ingreso).map(f => (
+                          <tr key={f.producto_id}>
+                            <td style={{ ...S.td, fontWeight: 700 }}>{f.prod.nombre}<div style={{ fontSize: 11, color: GRAY3, fontWeight: 400 }}>{f.prod.referencia || "—"}</div></td>
+                            <td style={S.td}>{f.cantidad}</td>
+                            <td style={S.td}>{f.velocidadDiaria.toFixed(2)}</td>
+                            <td style={{ ...S.td, fontWeight: 700 }}>{money(f.ingreso)}</td>
+                            <td style={S.td}>{f.margen !== null ? money(f.margen) : <span style={{ color: GRAY3 }}>—</span>}</td>
+                            <td style={S.td}>{f.tieneStock ? f.stockActual : <span style={{ color: GRAY3, fontSize: 11 }}>Sin Odoo</span>}</td>
+                            <td style={S.td}>{f.diasHastaAgotar !== null ? `${f.diasHastaAgotar} días` : <span style={{ color: GRAY3 }}>—</span>}</td>
+                            <td style={{ ...S.td, fontWeight: 700, color: RED }}>{f.sugerenciaCompra} uds</td>
+                            <td style={S.td}>
+                              {f.diasParaReponer !== null ? (
+                                <span style={{ fontWeight: 800, color: f.diasParaReponer <= 3 ? RED : "#856404" }}>
+                                  {f.diasParaReponer === 0 ? "Ya" : `${f.diasParaReponer}d`}
+                                </span>
+                              ) : <span style={{ color: GRAY3 }}>—</span>}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </>
+            )}
+          </>
+          );
+        })()}
 
         {/* ═══════════ ENVÍOS ═══════════ */}
         {tab === "shipping" && (
