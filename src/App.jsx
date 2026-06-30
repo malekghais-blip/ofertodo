@@ -7,7 +7,7 @@ import {
   FileSpreadsheet, FolderPlus, Zap, Lock, Users, BarChart3, DollarSign,
   TrendingUp, Wallet, ShoppingBag, Pencil as PencilIcon, Save,
   Building2, MapPin as MapPinIcon, Send, FilePlus, Download, FileText, Receipt,
-  Calendar as CalendarIcon
+  Calendar as CalendarIcon, Eye, EyeOff
 } from "lucide-react";
 
 // ════════════════════════════════════════════════════════════════
@@ -363,7 +363,7 @@ function NavBar() {
 // ═══════════════════════════════════════════════════════════════
 function HomeView() {
   const { setView, setCatalogCat, categories, products, addToCart } = useApp();
-  const featured = products.filter(p => p.activo && p.destacado);
+  const featured = products.filter(p => p.activo && p.visible_web !== false && p.destacado);
 
   return (
     <>
@@ -658,6 +658,14 @@ function ProductCard({ product }) {
           : <Package size={56} color={GRAY3} strokeWidth={1.3} />
         }
         {product.badge && <span style={{ position: "absolute", top: 10, left: 10, background: RED, color: WHITE, fontSize: 10, fontWeight: 800, padding: "3px 8px", borderRadius: 4, display: "inline-flex", alignItems: "center", gap: 4 }}><Sparkles size={11} /> {product.badge}</span>}
+        {/* Indicador de stock — solo se muestra si el producto está sincronizado con Odoo */}
+        {product.stock_actualizado_at && (
+          Number(product.stock) <= 0
+            ? <span style={{ position: "absolute", top: 10, right: 10, background: "#721C24", color: WHITE, fontSize: 10, fontWeight: 800, padding: "3px 8px", borderRadius: 4 }}>Agotado</span>
+            : Number(product.stock) <= 5
+              ? <span style={{ position: "absolute", top: 10, right: 10, background: "#856404", color: WHITE, fontSize: 10, fontWeight: 800, padding: "3px 8px", borderRadius: 4 }}>Pocas unidades</span>
+              : null
+        )}
         <span style={{ position: "absolute", bottom: 8, right: 8, background: "rgba(0,0,0,0.55)", color: WHITE, fontSize: 10, fontWeight: 700, padding: "3px 8px", borderRadius: 12, display: "inline-flex", alignItems: "center", gap: 4 }}><Search size={11} /> Ver</span>
       </div>
       <div className="oft-prod-body" style={{ padding: 16, display: "flex", flexDirection: "column", flex: 1 }}>
@@ -713,7 +721,7 @@ function CatalogoView() {
   useEffect(() => { setCatFilter(catalogCat || 0); }, [catalogCat]);
 
   const filtered = products.filter(p =>
-    p.activo &&
+    p.activo && p.visible_web !== false &&
     (catFilter === 0 || p.categoria_id === catFilter) &&
     (search === "" || p.nombre.toLowerCase().includes(search.toLowerCase()) || (p.referencia || "").toLowerCase().includes(search.toLowerCase()))
   );
@@ -3138,6 +3146,7 @@ function AdminView() {
   const bulkImgRef = useRef(null);
   // Filtro por categoría en la página de productos
   const [filtroCategoria, setFiltroCategoria] = useState("todas");
+  const [sincronizando, setSincronizando] = useState(false); // sincronización de stock con Odoo
   // Edición masiva (selección por checkboxes)
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState([]);
@@ -3594,6 +3603,38 @@ function AdminView() {
       setProducts(prev => prev.map(p => p.id === product.id ? { ...p, activo: !p.activo } : p));
       showToast(`Producto ${!product.activo ? "activado" : "desactivado"}`);
     } catch(e) { alert("Error"); }
+  };
+
+  const handleToggleWeb = async (product) => {
+    const nuevoValor = !(product.visible_web !== false); // si estaba visible (true/undefined), lo oculta
+    try {
+      await sb.patch("productos", product.id, { visible_web: !nuevoValor });
+      setProducts(prev => prev.map(p => p.id === product.id ? { ...p, visible_web: !nuevoValor } : p));
+      showToast(!nuevoValor ? "Producto visible en la web" : "Producto oculto de la web");
+    } catch(e) { alert("Error al cambiar visibilidad"); }
+  };
+
+  // Sincronizar stock con Odoo (botón manual en Productos)
+  const sincronizarOdoo = async () => {
+    setSincronizando(true);
+    try {
+      const resp = await fetch(SUPABASE_URL + "/functions/v1/sync-odoo-stock", {
+        method: "POST",
+        headers: { "Authorization": "Bearer " + SUPABASE_KEY, "Content-Type": "application/json" },
+      });
+      const data = await resp.json();
+      if (data.ok) {
+        showToast(`Stock actualizado: ${data.actualizados} producto(s)`);
+        // Recargar productos para ver el stock nuevo
+        const productosActualizados = await sb.get("productos", "?order=created_at.desc");
+        setProducts(productosActualizados || []);
+      } else {
+        showToast("Error al sincronizar: " + (data.error || "desconocido"));
+      }
+    } catch(e) {
+      showToast("Error al conectar con Odoo");
+    }
+    setSincronizando(false);
   };
 
   const handleDelete = async (product) => {
@@ -4394,6 +4435,9 @@ function AdminView() {
             <div className="oft-admin-head" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, flexWrap: "wrap", gap: 12 }}>
               <div style={{ fontSize: 22, fontWeight: 900, display: "flex", alignItems: "center", gap: 10 }}><Tag size={24} color={RED} /> Productos</div>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button style={{ ...S.btnOutline, display: "inline-flex", alignItems: "center", gap: 6, opacity: sincronizando ? 0.6 : 1 }} onClick={sincronizarOdoo} disabled={sincronizando}>
+                  <RefreshCw size={16} className={sincronizando ? "spin" : ""} /> {sincronizando ? "Sincronizando..." : "Sync con Odoo"}
+                </button>
                 <button style={{ ...S.btnRed, display: "inline-flex", alignItems: "center", gap: 6 }} onClick={() => { setShowBulkImg(!showBulkImg); setShowBulk(false); setShowProdForm(false); }}>
                   <ImageIcon size={16} /> Cargar fotos
                 </button>
@@ -4629,7 +4673,7 @@ function AdminView() {
             {(filtroCategoria === "todas" ? products : products.filter(p => p.categoria_id === filtroCategoria)).length > 0 && (
             <div className="oft-table-wrap oft-only-desktop" style={{ background: WHITE, borderRadius: 12, overflow: "auto" }}>
               <table style={S.table}>
-                <thead><tr>{[...(selectMode ? ["✓"] : []), "Foto","Ref","Producto","Categoría","x1","x6","x12","Estado","Acciones"].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
+                <thead><tr>{[...(selectMode ? ["✓"] : []), "Foto","Ref","Producto","Categoría","x1","x6","x12","Stock","Estado","Web","Acciones"].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
                 <tbody>
                   {(filtroCategoria === "todas" ? products : products.filter(p => p.categoria_id === filtroCategoria)).map(p => {
                     const isSel = selectedIds.includes(p.id);
@@ -4649,7 +4693,20 @@ function AdminView() {
                       <td style={S.td}>${p.precio_pieza}</td>
                       <td style={S.td}>${p.precio_media_docena}</td>
                       <td style={{ ...S.td, fontWeight: 700, color: RED }}>${p.precio_docena}</td>
+                      <td style={S.td}>
+                        {p.stock_actualizado_at ? (
+                          <span style={{ fontWeight: 700, color: Number(p.stock) > 5 ? "#155724" : Number(p.stock) > 0 ? "#856404" : RED }}>
+                            {Number(p.stock) > 0 ? Number(p.stock) : "Agotado"}
+                          </span>
+                        ) : <span style={{ color: GRAY3, fontSize: 12 }}>Sin Odoo</span>}
+                      </td>
                       <td style={S.td}><span style={{ background: p.activo ? "#D4EDDA" : GRAY2, color: p.activo ? "#155724" : BLACK, padding: "3px 8px", borderRadius: 12, fontSize: 12, fontWeight: 700 }}>{p.activo ? "Activo" : "Borrador"}</span></td>
+                      <td style={S.td}>
+                        <button onClick={() => handleToggleWeb(p)} title={p.visible_web !== false ? "Visible en la web — clic para ocultar" : "Oculto de la web — clic para mostrar"}
+                          style={{ background: "none", border: "none", cursor: "pointer", display: "flex", color: p.visible_web !== false ? "#155724" : GRAY3 }}>
+                          {p.visible_web !== false ? <Eye size={18} /> : <EyeOff size={18} />}
+                        </button>
+                      </td>
                       <td style={S.td}>
                         <div style={{ display: "flex", gap: 6 }}>
                           <button onClick={() => openEditProduct(p)} style={{ background: "none", border: `1px solid ${BLACK}`, color: BLACK, borderRadius: 6, padding: "4px 8px", fontSize: 12, cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}><PencilIcon size={13} /> Editar</button>
@@ -4700,6 +4757,18 @@ function AdminView() {
                         <div style={{ fontSize: 10, color: GRAY3, fontWeight: 600 }}>Docena</div>
                         <div style={{ fontSize: 14, fontWeight: 900, color: RED }}>${p.precio_docena}</div>
                       </div>
+                    </div>
+
+                    {/* Stock + Visibilidad web */}
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, fontSize: 12 }}>
+                      <span style={{ color: GRAY3 }}>
+                        Stock: {p.stock_actualizado_at
+                          ? <strong style={{ color: Number(p.stock) > 5 ? "#155724" : Number(p.stock) > 0 ? "#856404" : RED }}>{Number(p.stock) > 0 ? Number(p.stock) : "Agotado"}</strong>
+                          : <span style={{ color: GRAY3 }}>Sin Odoo</span>}
+                      </span>
+                      <button onClick={() => handleToggleWeb(p)} style={{ background: "none", border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 4, color: p.visible_web !== false ? "#155724" : GRAY3, fontSize: 12, fontWeight: 700 }}>
+                        {p.visible_web !== false ? <Eye size={15} /> : <EyeOff size={15} />} {p.visible_web !== false ? "Visible en web" : "Oculto de web"}
+                      </button>
                     </div>
 
                     {/* Acciones */}
