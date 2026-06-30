@@ -2047,7 +2047,24 @@ function CrearPedidoView() {
       if (i !== idx) return it;
       // Si cambia la presentación, se borra el precio editado (era para la otra presentación)
       if (field === "pres") return { ...it, pres: val, precioOverride: undefined };
+      if (field === "count") {
+        // Ajusta el arreglo de variantes (talla/color por pieza) al nuevo tamaño
+        const nuevoCount = Math.max(1, val);
+        const variantesActuales = it.variantes || [];
+        let nuevasVariantes = variantesActuales.slice(0, nuevoCount);
+        while (nuevasVariantes.length < nuevoCount) nuevasVariantes.push({ talla: "", color: "" });
+        return { ...it, count: nuevoCount, variantes: nuevasVariantes };
+      }
       return { ...it, [field]: val };
+    }));
+  };
+  // Actualiza la talla o color de UNA pieza específica dentro de un item
+  const updateVariantePieza = (idx, piezaIdx, campo, val) => {
+    setItems(prev => prev.map((it, i) => {
+      if (i !== idx) return it;
+      const variantes = [...(it.variantes || Array.from({ length: it.count }, () => ({ talla: "", color: "" })))];
+      variantes[piezaIdx] = { ...variantes[piezaIdx], [campo]: val };
+      return { ...it, variantes };
     }));
   };
   const removeItem = (idx) => setItems(prev => prev.filter((_, i) => i !== idx));
@@ -2063,6 +2080,20 @@ function CrearPedidoView() {
       if (!flexCompleto(pack)) {
         const meta = FLEX_META[pack.modo];
         alert(`El FLEXPACK ${pack.modo === "media" ? "media docena" : "docena"} #${i + 1} tiene ${flexPiezas(pack)} de ${meta} piezas. Complétalo o elimínalo.`);
+        return;
+      }
+    }
+    // Validar que cada pieza tenga su talla/color asignados (si el producto tiene variantes)
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      if (it.pres !== "pieza") continue;
+      const requiereTalla = it.product.tiene_tallas && (it.product.tallas || "").trim();
+      const requiereColor = it.product.tiene_colores && (it.product.colores || "").trim();
+      if (!requiereTalla && !requiereColor) continue;
+      const variantes = it.variantes && it.variantes.length === it.count ? it.variantes : [];
+      const asignadas = variantes.filter(v => (!requiereTalla || v.talla) && (!requiereColor || v.color)).length;
+      if (asignadas < it.count) {
+        alert(`"${it.product.nombre}" tiene ${asignadas} de ${it.count} piezas con talla/color asignados. Completa todas las piezas antes de generar el pedido.`);
         return;
       }
     }
@@ -2090,15 +2121,36 @@ function CrearPedidoView() {
         pagado: true, // los pedidos/cotizaciones creados por el admin se consideran confirmados
       });
       const pedidoId = pedido[0].id;
-      // Productos normales
+      // Productos normales — si es "pieza" y tiene variantes por pieza, se agrupan por combinación talla+color
       for (const it of items) {
-        const variante = [it.talla ? `Talla: ${it.talla}` : null, it.color ? `Color: ${it.color}` : null].filter(Boolean).join(" · ");
-        const nombreConVariante = variante ? `${it.product.nombre} (${variante})` : it.product.nombre;
-        await sb.post("pedido_items", {
-          pedido_id: pedidoId, producto_id: it.product.id, nombre_producto: nombreConVariante,
-          cantidad: presToPiezas(it.pres, it.count), precio_unitario: itemUnitPrice(it),
-          subtotal: itemTotal(it),
-        });
+        const tieneVariantesPorPieza = it.pres === "pieza" && it.variantes && it.variantes.length === it.count &&
+          ((it.product.tiene_tallas && (it.product.tallas || "").trim()) || (it.product.tiene_colores && (it.product.colores || "").trim()));
+        if (tieneVariantesPorPieza) {
+          // Agrupa las piezas por combinación exacta de talla+color
+          const grupos = {};
+          it.variantes.forEach(v => {
+            const key = `${v.talla || ""}|||${v.color || ""}`;
+            grupos[key] = (grupos[key] || 0) + 1;
+          });
+          for (const key of Object.keys(grupos)) {
+            const [talla, color] = key.split("|||");
+            const cantidadGrupo = grupos[key];
+            const variante = [talla ? `Talla: ${talla}` : null, color ? `Color: ${color}` : null].filter(Boolean).join(" · ");
+            const nombreConVariante = variante ? `${it.product.nombre} (${variante})` : it.product.nombre;
+            const precioUnit = itemUnitPrice(it);
+            await sb.post("pedido_items", {
+              pedido_id: pedidoId, producto_id: it.product.id, nombre_producto: nombreConVariante,
+              cantidad: cantidadGrupo, precio_unitario: precioUnit,
+              subtotal: precioUnit * cantidadGrupo,
+            });
+          }
+        } else {
+          await sb.post("pedido_items", {
+            pedido_id: pedidoId, producto_id: it.product.id, nombre_producto: it.product.nombre,
+            cantidad: presToPiezas(it.pres, it.count), precio_unitario: itemUnitPrice(it),
+            subtotal: itemTotal(it),
+          });
+        }
       }
       // Líneas de FLEXPACK
       for (const pack of flexPacks) {
@@ -2111,17 +2163,39 @@ function CrearPedidoView() {
           });
         }
       }
-      // Items para la factura (normales + flex)
+      // Items para la factura (normales + flex) — agrupa piezas con variantes por combinación talla+color
       const invoiceItems = [
-        ...items.map(it => {
-          const variante = [it.talla ? `Talla: ${it.talla}` : null, it.color ? `Color: ${it.color}` : null].filter(Boolean).join(" · ");
-          return {
-          nombre: variante ? `${it.product.nombre} (${variante})` : it.product.nombre, referencia: it.product.referencia,
-          presentacion: `${it.count} ${presLabelPlural(it.pres, it.count)}`,
-          piezas: presToPiezas(it.pres, it.count),
-          precioUnit: itemUnitPrice(it),
-          subtotal: itemTotal(it),
-        };}),
+        ...items.flatMap(it => {
+          const tieneVariantesPorPieza = it.pres === "pieza" && it.variantes && it.variantes.length === it.count &&
+            ((it.product.tiene_tallas && (it.product.tallas || "").trim()) || (it.product.tiene_colores && (it.product.colores || "").trim()));
+          if (tieneVariantesPorPieza) {
+            const grupos = {};
+            it.variantes.forEach(v => {
+              const key = `${v.talla || ""}|||${v.color || ""}`;
+              grupos[key] = (grupos[key] || 0) + 1;
+            });
+            const precioUnit = itemUnitPrice(it);
+            return Object.keys(grupos).map(key => {
+              const [talla, color] = key.split("|||");
+              const cantidadGrupo = grupos[key];
+              const variante = [talla ? `Talla: ${talla}` : null, color ? `Color: ${color}` : null].filter(Boolean).join(" · ");
+              return {
+                nombre: variante ? `${it.product.nombre} (${variante})` : it.product.nombre, referencia: it.product.referencia,
+                presentacion: `${cantidadGrupo} pieza${cantidadGrupo > 1 ? "s" : ""}`,
+                piezas: cantidadGrupo,
+                precioUnit,
+                subtotal: precioUnit * cantidadGrupo,
+              };
+            });
+          }
+          return [{
+            nombre: it.product.nombre, referencia: it.product.referencia,
+            presentacion: `${it.count} ${presLabelPlural(it.pres, it.count)}`,
+            piezas: presToPiezas(it.pres, it.count),
+            precioUnit: itemUnitPrice(it),
+            subtotal: itemTotal(it),
+          }];
+        }),
         ...flexPacks.flatMap(pack => pack.lineas.map(l => ({
           nombre: l.product.nombre, referencia: l.product.referencia,
           presentacion: pack.modo === "media" ? "FLEXPACK ½ doc" : "FLEXPACK docena",
@@ -2238,44 +2312,65 @@ function CrearPedidoView() {
                     )}
                   </div>
 
-                  {/* SELECTOR DE TALLA/COLOR — solo si es "Por pieza" y el producto tiene variantes */}
-                  {it.pres === "pieza" && (it.product.tiene_tallas || it.product.tiene_colores) && (
-                    <div style={{ marginTop: 8, background: GRAY, borderRadius: 8, padding: 10 }}>
-                      {it.product.tiene_tallas && (it.product.tallas || "").trim() && (
-                        <div style={{ marginBottom: it.product.tiene_colores ? 8 : 0 }}>
-                          <div style={{ fontSize: 11, fontWeight: 700, color: GRAY3, marginBottom: 5 }}>Talla</div>
-                          <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
-                            {it.product.tallas.split(",").map(s => s.trim()).filter(Boolean).map(t => {
-                              const active = it.talla === t;
-                              return (
-                                <button key={t} type="button" onClick={() => updateItem(idx, "talla", active ? "" : t)}
-                                  style={{ minWidth: 32, padding: "4px 8px", borderRadius: 6, border: `2px solid ${active ? RED : GRAY2}`, background: active ? RED : WHITE, color: active ? WHITE : BLACK, fontWeight: 800, fontSize: 11, cursor: "pointer" }}>
-                                  {t}
-                                </button>
-                              );
-                            })}
-                          </div>
+                  {/* ASIGNAR TALLA Y COLOR POR CADA PIEZA — solo si es "Por pieza" y el producto tiene variantes */}
+                  {it.pres === "pieza" && (it.product.tiene_tallas || it.product.tiene_colores) && (() => {
+                    const tallas = (it.product.tallas || "").split(",").map(s => s.trim()).filter(Boolean);
+                    const colores = (it.product.colores || "").split(",").map(s => s.trim()).filter(Boolean);
+                    const requiereTalla = it.product.tiene_tallas && tallas.length > 0;
+                    const requiereColor = it.product.tiene_colores && colores.length > 0;
+                    const variantes = it.variantes && it.variantes.length === it.count ? it.variantes : Array.from({ length: it.count }, () => ({ talla: "", color: "" }));
+                    const asignadas = variantes.filter(v => (!requiereTalla || v.talla) && (!requiereColor || v.color)).length;
+                    const completo = asignadas === it.count;
+                    return (
+                      <div style={{ marginTop: 8, background: GRAY, borderRadius: 8, padding: 10 }}>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                          <span style={{ fontSize: 12, fontWeight: 800 }}>Talla / color por pieza</span>
+                          <span style={{ fontSize: 11, fontWeight: 800, padding: "2px 8px", borderRadius: 10, background: completo ? "#D4EDDA" : "#FFF3CD", color: completo ? "#155724" : "#856404" }}>
+                            {asignadas}/{it.count} asignadas {completo ? "✓" : ""}
+                          </span>
                         </div>
-                      )}
-                      {it.product.tiene_colores && (it.product.colores || "").trim() && (
-                        <div>
-                          <div style={{ fontSize: 11, fontWeight: 700, color: GRAY3, marginBottom: 5 }}>Color</div>
-                          <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
-                            {it.product.colores.split(",").map(s => s.trim()).filter(Boolean).map(c => {
-                              const active = it.color === c;
-                              return (
-                                <button key={c} type="button" onClick={() => updateItem(idx, "color", active ? "" : c)}
-                                  style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 8px 3px 4px", borderRadius: 16, border: `2px solid ${active ? RED : GRAY2}`, background: active ? "#FFF5F5" : WHITE, cursor: "pointer" }}>
-                                  <span style={{ width: 13, height: 13, borderRadius: "50%", background: colorToHex(c), border: `1px solid ${GRAY2}` }} />
-                                  <span style={{ fontSize: 11, fontWeight: 700, color: active ? RED : BLACK }}>{c}</span>
-                                </button>
-                              );
-                            })}
-                          </div>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                          {variantes.map((v, piezaIdx) => {
+                            const piezaOk = (!requiereTalla || v.talla) && (!requiereColor || v.color);
+                            return (
+                              <div key={piezaIdx} style={{ background: WHITE, borderRadius: 8, padding: "8px 10px", border: `1.5px solid ${piezaOk ? "#A5D6A7" : GRAY2}` }}>
+                                <div style={{ fontSize: 11, fontWeight: 700, color: GRAY3, marginBottom: 6 }}>Pieza {piezaIdx + 1} de {it.count}</div>
+                                {requiereTalla && (
+                                  <div style={{ marginBottom: requiereColor ? 6 : 0 }}>
+                                    <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                                      {tallas.map(t => {
+                                        const active = v.talla === t;
+                                        return (
+                                          <button key={t} type="button" onClick={() => updateVariantePieza(idx, piezaIdx, "talla", active ? "" : t)}
+                                            style={{ minWidth: 28, padding: "3px 7px", borderRadius: 5, border: `2px solid ${active ? RED : GRAY2}`, background: active ? RED : WHITE, color: active ? WHITE : BLACK, fontWeight: 800, fontSize: 10, cursor: "pointer" }}>
+                                            {t}
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                )}
+                                {requiereColor && (
+                                  <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                                    {colores.map(c => {
+                                      const active = v.color === c;
+                                      return (
+                                        <button key={c} type="button" onClick={() => updateVariantePieza(idx, piezaIdx, "color", active ? "" : c)}
+                                          style={{ display: "inline-flex", alignItems: "center", gap: 3, padding: "2px 7px 2px 4px", borderRadius: 14, border: `2px solid ${active ? RED : GRAY2}`, background: active ? "#FFF5F5" : WHITE, cursor: "pointer" }}>
+                                          <span style={{ width: 11, height: 11, borderRadius: "50%", background: colorToHex(c), border: `1px solid ${GRAY2}` }} />
+                                          <span style={{ fontSize: 10, fontWeight: 700, color: active ? RED : BLACK }}>{c}</span>
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
                         </div>
-                      )}
-                    </div>
-                  )}
+                      </div>
+                    );
+                  })()}
                 </div>
                 );
               })}
