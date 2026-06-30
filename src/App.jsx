@@ -2092,8 +2092,10 @@ function CrearPedidoView() {
       const pedidoId = pedido[0].id;
       // Productos normales
       for (const it of items) {
+        const variante = [it.talla ? `Talla: ${it.talla}` : null, it.color ? `Color: ${it.color}` : null].filter(Boolean).join(" · ");
+        const nombreConVariante = variante ? `${it.product.nombre} (${variante})` : it.product.nombre;
         await sb.post("pedido_items", {
-          pedido_id: pedidoId, producto_id: it.product.id, nombre_producto: it.product.nombre,
+          pedido_id: pedidoId, producto_id: it.product.id, nombre_producto: nombreConVariante,
           cantidad: presToPiezas(it.pres, it.count), precio_unitario: itemUnitPrice(it),
           subtotal: itemTotal(it),
         });
@@ -2111,13 +2113,15 @@ function CrearPedidoView() {
       }
       // Items para la factura (normales + flex)
       const invoiceItems = [
-        ...items.map(it => ({
-          nombre: it.product.nombre, referencia: it.product.referencia,
+        ...items.map(it => {
+          const variante = [it.talla ? `Talla: ${it.talla}` : null, it.color ? `Color: ${it.color}` : null].filter(Boolean).join(" · ");
+          return {
+          nombre: variante ? `${it.product.nombre} (${variante})` : it.product.nombre, referencia: it.product.referencia,
           presentacion: `${it.count} ${presLabelPlural(it.pres, it.count)}`,
           piezas: presToPiezas(it.pres, it.count),
           precioUnit: itemUnitPrice(it),
           subtotal: itemTotal(it),
-        })),
+        };}),
         ...flexPacks.flatMap(pack => pack.lineas.map(l => ({
           nombre: l.product.nombre, referencia: l.product.referencia,
           presentacion: pack.modo === "media" ? "FLEXPACK ½ doc" : "FLEXPACK docena",
@@ -2233,6 +2237,45 @@ function CrearPedidoView() {
                       </button>
                     )}
                   </div>
+
+                  {/* SELECTOR DE TALLA/COLOR — solo si es "Por pieza" y el producto tiene variantes */}
+                  {it.pres === "pieza" && (it.product.tiene_tallas || it.product.tiene_colores) && (
+                    <div style={{ marginTop: 8, background: GRAY, borderRadius: 8, padding: 10 }}>
+                      {it.product.tiene_tallas && (it.product.tallas || "").trim() && (
+                        <div style={{ marginBottom: it.product.tiene_colores ? 8 : 0 }}>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: GRAY3, marginBottom: 5 }}>Talla</div>
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                            {it.product.tallas.split(",").map(s => s.trim()).filter(Boolean).map(t => {
+                              const active = it.talla === t;
+                              return (
+                                <button key={t} type="button" onClick={() => updateItem(idx, "talla", active ? "" : t)}
+                                  style={{ minWidth: 32, padding: "4px 8px", borderRadius: 6, border: `2px solid ${active ? RED : GRAY2}`, background: active ? RED : WHITE, color: active ? WHITE : BLACK, fontWeight: 800, fontSize: 11, cursor: "pointer" }}>
+                                  {t}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+                      {it.product.tiene_colores && (it.product.colores || "").trim() && (
+                        <div>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: GRAY3, marginBottom: 5 }}>Color</div>
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                            {it.product.colores.split(",").map(s => s.trim()).filter(Boolean).map(c => {
+                              const active = it.color === c;
+                              return (
+                                <button key={c} type="button" onClick={() => updateItem(idx, "color", active ? "" : c)}
+                                  style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 8px 3px 4px", borderRadius: 16, border: `2px solid ${active ? RED : GRAY2}`, background: active ? "#FFF5F5" : WHITE, cursor: "pointer" }}>
+                                  <span style={{ width: 13, height: 13, borderRadius: "50%", background: colorToHex(c), border: `1px solid ${GRAY2}` }} />
+                                  <span style={{ fontSize: 11, fontWeight: 700, color: active ? RED : BLACK }}>{c}</span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
                 );
               })}
