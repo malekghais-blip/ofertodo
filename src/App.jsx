@@ -640,8 +640,10 @@ function VariantPicker({ product, talla, setTalla, color, setColor }) {
 
 // ═══════════════════════════════════════════════════════════════
 //  DISTRIBUCIÓN DE TALLA/COLOR (info al cliente en media docena/docena)
+//  Colapsada por defecto: el cliente hace click para verla, con animación fluida.
 // ═══════════════════════════════════════════════════════════════
 function DistribucionInfo({ product, pres, count }) {
+  const [open, setOpen] = useState(false);
   if (pres === "pieza") return null;
   const distDocena = parseDistribucion(product.distribucion_docena);
   if (totalDistribucion(distDocena) === 0) return null;
@@ -652,16 +654,28 @@ function DistribucionInfo({ product, pres, count }) {
   if (entradas.length === 0) return null;
 
   return (
-    <div style={{ fontSize: 11, color: GRAY3, background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 8, padding: "8px 10px", marginTop: 8 }}>
-      <div style={{ fontWeight: 800, color: BLACK, marginBottom: 5 }}>
-        Esta {presLabel(pres)} incluye ({eje === "color" ? "colores" : "tallas"}):
-      </div>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
-        {entradas.map(([v, qty]) => (
-          <span key={v} style={{ background: GRAY, border: `1px solid ${GRAY2}`, borderRadius: 6, padding: "2px 7px", fontWeight: 700, fontSize: 11, color: BLACK }}>
-            {Number(qty) * count}× {v}
-          </span>
-        ))}
+    <div style={{ marginTop: 8, border: `1px solid ${GRAY2}`, borderRadius: 8, overflow: "hidden", background: WHITE }}>
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className="oft-btn-press"
+        style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", background: "transparent", border: "none", padding: "8px 10px", cursor: "pointer", fontSize: 11, fontWeight: 800, color: BLACK }}
+      >
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+          <Tag size={13} color={RED} /> Ver distribución por {presLabel(pres)} ({eje === "color" ? "colores" : "tallas"})
+        </span>
+        <ChevronDown size={15} color={GRAY3} style={{ transition: "transform 0.25s ease", transform: open ? "rotate(180deg)" : "rotate(0deg)", flexShrink: 0 }} />
+      </button>
+      <div style={{ display: "grid", gridTemplateRows: open ? "1fr" : "0fr", transition: "grid-template-rows 0.28s ease" }}>
+        <div style={{ overflow: "hidden" }}>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 5, padding: "0 10px 10px" }}>
+            {entradas.map(([v, qty]) => (
+              <span key={v} className="oft-chip-pop" style={{ background: GRAY, border: `1px solid ${GRAY2}`, borderRadius: 6, padding: "2px 7px", fontWeight: 700, fontSize: 11, color: BLACK }}>
+                {Number(qty) * count}× {v}
+              </span>
+            ))}
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -926,7 +940,7 @@ function ProductModal() {
                 <Sparkles size={13} /> {presBreakdown(pres, count, product)}
               </div>
             )}
-            <DistribucionInfo product={product} pres={pres} count={count} />
+            <DistribucionInfo key={product?.id} product={product} pres={pres} count={count} />
           </div>
 
           {/* BOTONES */}
@@ -4005,14 +4019,31 @@ function AdminView() {
     for (let line of lines) {
       if (line.toLowerCase().startsWith("referencia")) continue;
       const cols = line.split(",").map(c => c.trim());
-      const [referencia, nombre, descripcion, categoria_id, precio_pieza, precio_media_docena, precio_docena, badge] = cols;
+      const [referencia, nombre, descripcion, categoria_id, precio_pieza, precio_media_docena, precio_docena, badge, tallasCol, distCol] = cols;
       if (!nombre || !precio_pieza) { err++; continue; }
+
+      // Tallas + distribución por docena (opcionales) — dentro de la columna se separan con "|"
+      // Ej: tallas="30|32|34|36|38"  distribucion="2|4|3|2|1"  →  1 docena trae 2 de la 30, 4 de la 32, etc.
+      const tallasArr = (tallasCol || "").split("|").map(s => s.trim()).filter(Boolean);
+      const cantidadesArr = (distCol || "").split("|").map(s => s.trim()).filter(Boolean);
+      let tiene_tallas = false, tallas = "", distribucion_docena = "", distribucion_eje = "";
+      if (tallasArr.length > 0) {
+        tiene_tallas = true;
+        tallas = tallasArr.join(", ");
+        if (cantidadesArr.length === tallasArr.length) {
+          const distObj = {};
+          tallasArr.forEach((t, i) => { const q = Number(cantidadesArr[i]); if (q > 0) distObj[t] = q; });
+          if (Object.keys(distObj).length > 0) { distribucion_docena = JSON.stringify(distObj); distribucion_eje = "talla"; }
+        }
+      }
+
       try {
         const saved = await sb.post("productos", {
           referencia: referencia || "", nombre, descripcion: descripcion || "",
           categoria_id: Number(categoria_id) || categories[0]?.id || 1,
           precio_pieza: Number(precio_pieza) || 0, precio_media_docena: Number(precio_media_docena) || 0,
           precio_docena: Number(precio_docena) || 0, badge: badge || "", activo: true, imagen_url: "",
+          tiene_tallas, tallas, distribucion_docena, distribucion_eje,
         });
         newItems.push(saved[0]); ok++;
       } catch(e) { err++; }
@@ -4868,7 +4899,13 @@ function AdminView() {
                 <div style={{ fontWeight: 800, marginBottom: 8, display: "flex", alignItems: "center", gap: 8 }}><FileSpreadsheet size={18} color={RED} /> Carga masiva de productos</div>
                 <p style={{ fontSize: 13, color: GRAY3, marginBottom: 12 }}>Una línea por producto, valores separados por comas en este orden:</p>
                 <div style={{ background: GRAY, borderRadius: 8, padding: 12, fontSize: 12, fontFamily: "monospace", marginBottom: 12, overflowX: "auto" }}>
-                  referencia,nombre,descripcion,categoria_id,precio_pieza,precio_media_docena,precio_docena,badge
+                  referencia,nombre,descripcion,categoria_id,precio_pieza,precio_media_docena,precio_docena,badge,tallas,distribucion_docena
+                </div>
+                <div style={{ fontSize: 12, color: GRAY3, marginBottom: 4 }}>
+                  <strong>Tallas y distribución (opcional):</strong> las últimas 2 columnas. Las tallas van separadas por "|" y las cantidades de cada una <em>en 1 docena completa</em> van en el mismo orden, también separadas por "|". La media docena se calcula sola.
+                </div>
+                <div style={{ background: GRAY, borderRadius: 8, padding: 12, fontSize: 12, fontFamily: "monospace", marginBottom: 12, overflowX: "auto" }}>
+                  001,Zapatilla HPC,Descripción,1,3.50,19,36,NUEVO,30|32|34|36|38,2|4|3|2|1
                 </div>
                 <div style={{ fontSize: 12, color: GRAY3, marginBottom: 12 }}>
                   <strong>IDs de categoría:</strong> {categories.map(c => `${c.nombre}=${c.id}`).join(" · ")}
