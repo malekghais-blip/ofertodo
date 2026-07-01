@@ -3261,20 +3261,24 @@ function DistribucionEditor({ prodForm, setProdForm, activaTallas, activaColores
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  IMAGEN DE COTIZACIÓN (descargar/compartir desde el dashboard, sin editar)
+//  IMAGEN DE FACTURA / COTIZACIÓN (descargar/compartir desde el dashboard)
+//  Sirve tanto para pedidos (factura) como para cotizaciones — se adapta según order.tipo.
 // ═══════════════════════════════════════════════════════════════
-function CotizacionImageModal({ cotizacion, onClose }) {
+function OrderImageModal({ order, onClose }) {
   const { products } = useApp();
   const ref = useRef(null);
   const [busy, setBusy] = useState(false);
+  const esCot = order.tipo === "cotizacion";
+  const acento = esCot ? "#856404" : RED;
+  const etiqueta = esCot ? "Cotización" : "Factura";
   const money = (n) => "$" + Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  const fecha = cotizacion.created_at ? new Date(cotizacion.created_at) : new Date();
-  const items = cotizacion.items || [];
+  const fecha = order.created_at ? new Date(order.created_at) : new Date();
+  const items = order.items || [];
   const subtotal = items.reduce((s, it) => s + (Number(it.subtotal) || 0), 0);
-  const costoEnvio = Number(cotizacion.costo_envio) || 0;
-  const total = Number(cotizacion.total) || (subtotal + costoEnvio);
+  const costoEnvio = Number(order.costo_envio) || 0;
+  const total = Number(order.total) || (subtotal + costoEnvio);
 
-  // Renderiza la cotización a un ancho fijo (640px) fuera de pantalla,
+  // Renderiza el documento a un ancho fijo (640px) fuera de pantalla,
   // así la imagen nunca sale cortada en celular.
   const renderCanvas = async () => {
     const source = ref.current;
@@ -3305,10 +3309,10 @@ function CotizacionImageModal({ cotizacion, onClose }) {
       const canvas = await renderCanvas();
       // En celular: intenta usar "Compartir" para guardar en la galería/fotos
       const blob = await new Promise(res => canvas.toBlob(res, "image/png"));
-      const file = new File([blob], `${cotizacion.codigo}.png`, { type: "image/png" });
+      const file = new File([blob], `${order.codigo}.png`, { type: "image/png" });
       if (isMobile && navigator.canShare && navigator.canShare({ files: [file] })) {
         try {
-          await navigator.share({ files: [file], title: cotizacion.codigo });
+          await navigator.share({ files: [file], title: order.codigo });
           setBusy(false);
           return;
         } catch(shareErr) {
@@ -3316,7 +3320,7 @@ function CotizacionImageModal({ cotizacion, onClose }) {
         }
       }
       const link = document.createElement("a");
-      link.download = `${cotizacion.codigo}.png`;
+      link.download = `${order.codigo}.png`;
       link.href = canvas.toDataURL("image/png");
       link.click();
     } catch(e) { alert("Error generando imagen: " + e.message); }
@@ -3344,7 +3348,7 @@ function CotizacionImageModal({ cotizacion, onClose }) {
         pdf.addImage(imgData, "PNG", margin, position, imgW, imgH);
         heightLeft -= (pageH - margin * 2);
       }
-      pdf.save(`${cotizacion.codigo}.pdf`);
+      pdf.save(`${order.codigo}.pdf`);
     } catch(e) { alert("Error generando PDF: " + e.message); }
     setBusy(false);
   };
@@ -3354,7 +3358,7 @@ function CotizacionImageModal({ cotizacion, onClose }) {
       <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 16, maxWidth: 620, width: "92%", margin: "0 auto", overflow: "hidden" }} onClick={e => e.stopPropagation()}>
         {/* Barra superior con acciones */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", borderBottom: `1px solid ${GRAY2}`, background: GRAY, flexWrap: "wrap", gap: 8 }}>
-          <div style={{ fontWeight: 800, display: "flex", alignItems: "center", gap: 8 }}><ImageIcon size={18} color="#856404" /> Imagen de cotización</div>
+          <div style={{ fontWeight: 800, display: "flex", alignItems: "center", gap: 8 }}><ImageIcon size={18} color={acento} /> Imagen de {etiqueta.toLowerCase()}</div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <button onClick={downloadPNG} disabled={busy} className="oft-btn-press" style={{ ...S.btnRed, padding: "8px 14px", fontSize: 13, display: "inline-flex", alignItems: "center", gap: 6, opacity: busy ? 0.7 : 1 }}>
               <ImageIcon size={14} /> {busy ? "..." : "Descargar imagen"}
@@ -3366,7 +3370,7 @@ function CotizacionImageModal({ cotizacion, onClose }) {
           </div>
         </div>
 
-        {/* COTIZACIÓN (lo que se exporta) */}
+        {/* DOCUMENTO (lo que se exporta) */}
         <div style={{ padding: 20, maxHeight: "80vh", overflowY: "auto" }}>
           <div ref={ref} style={{ background: WHITE, padding: 28, fontFamily: "'Inter','Segoe UI',sans-serif", color: BLACK }}>
             {/* Encabezado con logo */}
@@ -3383,9 +3387,9 @@ function CotizacionImageModal({ cotizacion, onClose }) {
                 </div>
               </div>
               <div style={{ textAlign: "right" }}>
-                <div style={{ fontWeight: 900, fontSize: 20, color: "#856404", textTransform: "uppercase" }}>Cotización</div>
-                {cotizacion.num_factura && <div style={{ fontSize: 13, fontWeight: 700, marginTop: 4 }}>N° {cotizacion.num_factura}</div>}
-                <div style={{ fontSize: 11, color: GRAY3, marginTop: 2 }}>{cotizacion.codigo}</div>
+                <div style={{ fontWeight: 900, fontSize: 20, color: acento, textTransform: "uppercase" }}>{etiqueta}</div>
+                {order.num_factura && <div style={{ fontSize: 13, fontWeight: 700, marginTop: 4 }}>N° {order.num_factura}</div>}
+                <div style={{ fontSize: 11, color: GRAY3, marginTop: 2 }}>{order.codigo}</div>
                 <div style={{ fontSize: 11, color: GRAY3, marginTop: 4 }}>{fecha.toLocaleDateString("es-PA", { day: "2-digit", month: "long", year: "numeric" })}</div>
               </div>
             </div>
@@ -3394,15 +3398,15 @@ function CotizacionImageModal({ cotizacion, onClose }) {
             <div style={{ display: "flex", justifyContent: "space-between", gap: 20, marginBottom: 20, flexWrap: "wrap" }}>
               <div style={{ minWidth: 160 }}>
                 <div style={{ fontSize: 10, color: GRAY3, fontWeight: 700, textTransform: "uppercase", marginBottom: 4 }}>Cliente</div>
-                <div style={{ fontWeight: 800, fontSize: 14 }}>{cotizacion.nombre_cliente || "—"}</div>
-                {cotizacion.telefono && <div style={{ fontSize: 12, color: GRAY3 }}>{cotizacion.telefono}</div>}
-                {cotizacion.direccion && <div style={{ fontSize: 12, color: GRAY3 }}>{cotizacion.direccion}</div>}
+                <div style={{ fontWeight: 800, fontSize: 14 }}>{order.nombre_cliente || "—"}</div>
+                {order.telefono && <div style={{ fontSize: 12, color: GRAY3 }}>{order.telefono}</div>}
+                {order.direccion && <div style={{ fontSize: 12, color: GRAY3 }}>{order.direccion}</div>}
               </div>
-              {cotizacion.empresa_envio_nombre && (
+              {order.empresa_envio_nombre && (
                 <div style={{ minWidth: 160, textAlign: "right" }}>
                   <div style={{ fontSize: 10, color: GRAY3, fontWeight: 700, textTransform: "uppercase", marginBottom: 4 }}>Envío</div>
-                  <div style={{ fontWeight: 700, fontSize: 13 }}>{cotizacion.empresa_envio_nombre}</div>
-                  {cotizacion.sucursal_nombre && <div style={{ fontSize: 12, color: GRAY3 }}>{cotizacion.sucursal_nombre}</div>}
+                  <div style={{ fontWeight: 700, fontSize: 13 }}>{order.empresa_envio_nombre}</div>
+                  {order.sucursal_nombre && <div style={{ fontSize: 12, color: GRAY3 }}>{order.sucursal_nombre}</div>}
                 </div>
               )}
             </div>
@@ -3451,20 +3455,25 @@ function CotizacionImageModal({ cotizacion, onClose }) {
                 <div style={{ display: "flex", justifyContent: "space-between", padding: "10px 12px", background: RED, color: WHITE, borderRadius: 8, fontWeight: 900, fontSize: 16, marginTop: 4 }}>
                   <span>TOTAL</span><span>{money(total)}</span>
                 </div>
+                {order.pagado === true && !esCot && (
+                  <div style={{ textAlign: "center", marginTop: 6, fontSize: 11, fontWeight: 800, color: "#155724" }}>✓ PAGADO</div>
+                )}
               </div>
             </div>
 
             {/* Notas */}
-            {cotizacion.notas && (
+            {order.notas && (
               <div style={{ background: GRAY, borderRadius: 8, padding: 12, marginBottom: 16 }}>
                 <div style={{ fontSize: 10, color: GRAY3, fontWeight: 700, textTransform: "uppercase", marginBottom: 4 }}>Notas</div>
-                <div style={{ fontSize: 12 }}>{cotizacion.notas}</div>
+                <div style={{ fontSize: 12 }}>{order.notas}</div>
               </div>
             )}
 
             {/* Pie */}
             <div style={{ textAlign: "center", fontSize: 10, color: GRAY3, borderTop: `1px solid ${GRAY2}`, paddingTop: 12 }}>
-              Esta cotización es válida por 7 días. Los precios pueden variar según disponibilidad.
+              {esCot
+                ? "Esta cotización es válida por 7 días. Los precios pueden variar según disponibilidad."
+                : "¡Gracias por tu compra! El pago se coordina por WhatsApp."}
               <br />Ofertodo · Distribuidora · Panamá
             </div>
           </div>
@@ -3683,6 +3692,7 @@ function AdminView() {
   const [pedidoAEliminar, setPedidoAEliminar] = useState(null); // pedido pendiente de eliminar (confirmación)
   const [cotizacionAEditar, setCotizacionAEditar] = useState(null); // cotización que se está editando
   const [cotizacionImagen, setCotizacionImagen] = useState(null); // cotización a la que se le está generando la imagen
+  const [facturaImagen, setFacturaImagen] = useState(null); // pedido al que se le está generando la imagen de factura
   const [nuevoCliente, setNuevoCliente] = useState(null); // {nombre, telefono, email} o null; modal crear cliente
   const [guardandoCliente, setGuardandoCliente] = useState(false);
   // ── DESCUENTOS ──
@@ -4904,6 +4914,9 @@ function AdminView() {
                             <button onClick={() => setShippingLabel(o)} title="Generar guía de envío" style={{ background: "none", border: `1.5px solid ${BLACK}`, color: BLACK, borderRadius: 6, padding: "6px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}>
                               <Truck size={14} /> Guía
                             </button>
+                            <button onClick={() => setFacturaImagen(o)} title="Descargar imagen/PDF de la factura" style={{ background: "none", border: `1.5px solid ${RED}`, color: RED, borderRadius: 6, padding: "6px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                              <ImageIcon size={14} /> Factura
+                            </button>
                             <button onClick={() => setPedidoAEliminar(o)} title="Eliminar pedido" style={{ background: "none", border: `1.5px solid ${RED}`, color: RED, borderRadius: 6, padding: "6px 9px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}>
                               <Trash2 size={14} />
                             </button>
@@ -4949,13 +4962,16 @@ function AdminView() {
                       {ORDER_STATUS.map((s,i) => <option key={i} value={i}>{s}</option>)}
                     </select>
 
-                    {/* Avisar + Guía + Eliminar */}
-                    <div style={{ display: "flex", gap: 8 }}>
+                    {/* Avisar + Guía + Factura + Eliminar */}
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                       <button onClick={() => notifyWhatsApp(o, o.estado)} style={{ ...S.btnWA, flex: 1, justifyContent: "center", padding: 12 }}>
                         <MessageCircle size={16} /> Avisar
                       </button>
                       <button onClick={() => setShippingLabel(o)} style={{ background: BLACK, color: WHITE, border: "none", borderRadius: 10, padding: "12px 16px", fontSize: 14, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}>
                         <Truck size={16} /> Guía
+                      </button>
+                      <button onClick={() => setFacturaImagen(o)} style={{ background: "none", color: RED, border: `1.5px solid ${RED}`, borderRadius: 10, padding: "12px 14px", fontSize: 14, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}>
+                        <ImageIcon size={16} /> Factura
                       </button>
                       <button onClick={() => setPedidoAEliminar(o)} title="Eliminar" style={{ background: "none", color: RED, border: `1.5px solid ${RED}`, borderRadius: 10, padding: "12px 14px", cursor: "pointer", display: "inline-flex", alignItems: "center" }}>
                         <Trash2 size={16} />
@@ -4968,6 +4984,8 @@ function AdminView() {
             )}
             {/* MODAL GUÍA DE ENVÍO */}
             {shippingLabel && <ShippingLabelModal order={shippingLabel} onClose={() => setShippingLabel(null)} />}
+            {/* MODAL IMAGEN/PDF DE FACTURA */}
+            {facturaImagen && <OrderImageModal order={facturaImagen} onClose={() => setFacturaImagen(null)} />}
             {/* MODAL CONFIRMAR ELIMINACIÓN */}
             {pedidoAEliminar && (
               <div className="oft-overlay" style={S.overlay} onClick={() => !eliminando && setPedidoAEliminar(null)}>
@@ -5006,8 +5024,8 @@ function AdminView() {
 
         {/* MODAL IMAGEN DE COTIZACIÓN (disponible desde el dashboard) */}
         {cotizacionImagen && (
-          <CotizacionImageModal
-            cotizacion={cotizacionImagen}
+          <OrderImageModal
+            order={cotizacionImagen}
             onClose={() => setCotizacionImagen(null)}
           />
         )}
