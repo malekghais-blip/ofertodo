@@ -640,7 +640,10 @@ function VariantPicker({ product, talla, setTalla, color, setColor }) {
 
 // ═══════════════════════════════════════════════════════════════
 //  DISTRIBUCIÓN DE TALLA/COLOR (info al cliente en media docena/docena)
-//  Colapsada por defecto: el cliente hace click para verla, con animación fluida.
+//  Colapsada por defecto: el cliente hace click para verla.
+//  Usa el mismo patrón de animación liviano que el resto de la app
+//  (montar/desmontar + .oft-detail-open) en vez de animar grid-template-rows,
+//  que en celular se sentía lento por el reflow continuo.
 // ═══════════════════════════════════════════════════════════════
 function DistribucionInfo({ product, pres, count }) {
   const [open, setOpen] = useState(false);
@@ -659,24 +662,22 @@ function DistribucionInfo({ product, pres, count }) {
         type="button"
         onClick={() => setOpen(o => !o)}
         className="oft-btn-press"
-        style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", background: "transparent", border: "none", padding: "8px 10px", cursor: "pointer", fontSize: 11, fontWeight: 800, color: BLACK }}
+        style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", background: "transparent", border: "none", padding: "8px 10px", cursor: "pointer", fontSize: 11, fontWeight: 800, color: BLACK, WebkitTapHighlightColor: "transparent" }}
       >
         <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
           <Tag size={13} color={RED} /> Ver distribución por {presLabel(pres)} ({eje === "color" ? "colores" : "tallas"})
         </span>
-        <ChevronDown size={15} color={GRAY3} style={{ transition: "transform 0.25s ease", transform: open ? "rotate(180deg)" : "rotate(0deg)", flexShrink: 0 }} />
+        <ChevronDown size={15} color={GRAY3} style={{ transition: "transform 0.2s ease", transform: open ? "rotate(180deg)" : "rotate(0deg)", flexShrink: 0 }} />
       </button>
-      <div style={{ display: "grid", gridTemplateRows: open ? "1fr" : "0fr", transition: "grid-template-rows 0.28s ease" }}>
-        <div style={{ overflow: "hidden" }}>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 5, padding: "0 10px 10px" }}>
-            {entradas.map(([v, qty]) => (
-              <span key={v} className="oft-chip-pop" style={{ background: GRAY, border: `1px solid ${GRAY2}`, borderRadius: 6, padding: "2px 7px", fontWeight: 700, fontSize: 11, color: BLACK }}>
-                {Number(qty) * count}× {v}
-              </span>
-            ))}
-          </div>
+      {open && (
+        <div className="oft-detail-open" style={{ display: "flex", flexWrap: "wrap", gap: 5, padding: "0 10px 10px" }}>
+          {entradas.map(([v, qty]) => (
+            <span key={v} className="oft-chip-pop" style={{ background: GRAY, border: `1px solid ${GRAY2}`, borderRadius: 6, padding: "2px 7px", fontWeight: 700, fontSize: 11, color: BLACK }}>
+              {Number(qty) * count}× {v}
+            </span>
+          ))}
         </div>
-      </div>
+      )}
     </div>
   );
 }
@@ -3260,6 +3261,220 @@ function DistribucionEditor({ prodForm, setProdForm, activaTallas, activaColores
 }
 
 // ═══════════════════════════════════════════════════════════════
+//  IMAGEN DE COTIZACIÓN (descargar/compartir desde el dashboard, sin editar)
+// ═══════════════════════════════════════════════════════════════
+function CotizacionImageModal({ cotizacion, onClose }) {
+  const { products } = useApp();
+  const ref = useRef(null);
+  const [busy, setBusy] = useState(false);
+  const money = (n) => "$" + Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const fecha = cotizacion.created_at ? new Date(cotizacion.created_at) : new Date();
+  const items = cotizacion.items || [];
+  const subtotal = items.reduce((s, it) => s + (Number(it.subtotal) || 0), 0);
+  const costoEnvio = Number(cotizacion.costo_envio) || 0;
+  const total = Number(cotizacion.total) || (subtotal + costoEnvio);
+
+  // Renderiza la cotización a un ancho fijo (640px) fuera de pantalla,
+  // así la imagen nunca sale cortada en celular.
+  const renderCanvas = async () => {
+    const source = ref.current;
+    const clone = source.cloneNode(true);
+    const holder = document.createElement("div");
+    holder.style.position = "fixed";
+    holder.style.left = "-10000px";
+    holder.style.top = "0";
+    holder.style.width = "640px";
+    holder.style.background = "#ffffff";
+    clone.style.width = "640px";
+    clone.style.maxWidth = "640px";
+    holder.appendChild(clone);
+    document.body.appendChild(holder);
+    try {
+      return await window.html2canvas(clone, { scale: 2, backgroundColor: "#ffffff", useCORS: true, width: 640, windowWidth: 640 });
+    } finally {
+      document.body.removeChild(holder);
+    }
+  };
+
+  const isMobile = typeof window !== "undefined" && window.innerWidth <= 768;
+
+  const downloadPNG = async () => {
+    if (!window.html2canvas) { alert("Cargando generador de imagen, intenta de nuevo en unos segundos."); return; }
+    setBusy(true);
+    try {
+      const canvas = await renderCanvas();
+      // En celular: intenta usar "Compartir" para guardar en la galería/fotos
+      const blob = await new Promise(res => canvas.toBlob(res, "image/png"));
+      const file = new File([blob], `${cotizacion.codigo}.png`, { type: "image/png" });
+      if (isMobile && navigator.canShare && navigator.canShare({ files: [file] })) {
+        try {
+          await navigator.share({ files: [file], title: cotizacion.codigo });
+          setBusy(false);
+          return;
+        } catch(shareErr) {
+          if (shareErr.name === "AbortError") { setBusy(false); return; }
+        }
+      }
+      const link = document.createElement("a");
+      link.download = `${cotizacion.codigo}.png`;
+      link.href = canvas.toDataURL("image/png");
+      link.click();
+    } catch(e) { alert("Error generando imagen: " + e.message); }
+    setBusy(false);
+  };
+
+  const downloadPDF = async () => {
+    if (!window.html2canvas || !window.jspdf) { alert("Cargando generador de PDF, intenta de nuevo en unos segundos."); return; }
+    setBusy(true);
+    try {
+      const canvas = await renderCanvas();
+      const imgData = canvas.toDataURL("image/png");
+      const { jsPDF } = window.jspdf;
+      const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+      const pageW = 210, pageH = 297, margin = 10;
+      const imgW = pageW - margin * 2;
+      const imgH = (canvas.height * imgW) / canvas.width;
+      let heightLeft = imgH;
+      let position = margin;
+      pdf.addImage(imgData, "PNG", margin, position, imgW, imgH);
+      heightLeft -= (pageH - margin * 2);
+      while (heightLeft > 0) {
+        pdf.addPage();
+        position = margin - (imgH - heightLeft);
+        pdf.addImage(imgData, "PNG", margin, position, imgW, imgH);
+        heightLeft -= (pageH - margin * 2);
+      }
+      pdf.save(`${cotizacion.codigo}.pdf`);
+    } catch(e) { alert("Error generando PDF: " + e.message); }
+    setBusy(false);
+  };
+
+  return (
+    <div className="oft-overlay oft-overlay-doc" style={{ ...S.overlay, alignItems: "flex-start", overflowY: "auto", padding: "20px 0" }} onClick={onClose}>
+      <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 16, maxWidth: 620, width: "92%", margin: "0 auto", overflow: "hidden" }} onClick={e => e.stopPropagation()}>
+        {/* Barra superior con acciones */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", borderBottom: `1px solid ${GRAY2}`, background: GRAY, flexWrap: "wrap", gap: 8 }}>
+          <div style={{ fontWeight: 800, display: "flex", alignItems: "center", gap: 8 }}><ImageIcon size={18} color="#856404" /> Imagen de cotización</div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button onClick={downloadPNG} disabled={busy} className="oft-btn-press" style={{ ...S.btnRed, padding: "8px 14px", fontSize: 13, display: "inline-flex", alignItems: "center", gap: 6, opacity: busy ? 0.7 : 1 }}>
+              <ImageIcon size={14} /> {busy ? "..." : "Descargar imagen"}
+            </button>
+            <button onClick={downloadPDF} disabled={busy} className="oft-btn-press" style={{ ...S.btnOutline, padding: "8px 14px", fontSize: 13, display: "inline-flex", alignItems: "center", gap: 6, opacity: busy ? 0.7 : 1 }}>
+              <Download size={14} /> PDF
+            </button>
+            <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", display: "flex", padding: 4 }}><X size={22} /></button>
+          </div>
+        </div>
+
+        {/* COTIZACIÓN (lo que se exporta) */}
+        <div style={{ padding: 20, maxHeight: "80vh", overflowY: "auto" }}>
+          <div ref={ref} style={{ background: WHITE, padding: 28, fontFamily: "'Inter','Segoe UI',sans-serif", color: BLACK }}>
+            {/* Encabezado con logo */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", borderBottom: `3px solid ${RED}`, paddingBottom: 16, marginBottom: 20 }}>
+              <div>
+                <div style={{ display: "flex", alignItems: "center", fontWeight: 900, fontSize: 26, letterSpacing: -1 }}>
+                  <span style={{ color: RED }}>Ofer</span>
+                  <span style={{ background: RED, color: WHITE, padding: "0 8px", borderRadius: 4, marginLeft: 2 }}>todo</span>
+                </div>
+                <div style={{ fontSize: 11, color: GRAY3, marginTop: 6, lineHeight: 1.5 }}>
+                  Distribuidora · Panamá<br />
+                  WhatsApp: +507 6720-0474<br />
+                  Colón, Panamá
+                </div>
+              </div>
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontWeight: 900, fontSize: 20, color: "#856404", textTransform: "uppercase" }}>Cotización</div>
+                {cotizacion.num_factura && <div style={{ fontSize: 13, fontWeight: 700, marginTop: 4 }}>N° {cotizacion.num_factura}</div>}
+                <div style={{ fontSize: 11, color: GRAY3, marginTop: 2 }}>{cotizacion.codigo}</div>
+                <div style={{ fontSize: 11, color: GRAY3, marginTop: 4 }}>{fecha.toLocaleDateString("es-PA", { day: "2-digit", month: "long", year: "numeric" })}</div>
+              </div>
+            </div>
+
+            {/* Datos del cliente */}
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 20, marginBottom: 20, flexWrap: "wrap" }}>
+              <div style={{ minWidth: 160 }}>
+                <div style={{ fontSize: 10, color: GRAY3, fontWeight: 700, textTransform: "uppercase", marginBottom: 4 }}>Cliente</div>
+                <div style={{ fontWeight: 800, fontSize: 14 }}>{cotizacion.nombre_cliente || "—"}</div>
+                {cotizacion.telefono && <div style={{ fontSize: 12, color: GRAY3 }}>{cotizacion.telefono}</div>}
+                {cotizacion.direccion && <div style={{ fontSize: 12, color: GRAY3 }}>{cotizacion.direccion}</div>}
+              </div>
+              {cotizacion.empresa_envio_nombre && (
+                <div style={{ minWidth: 160, textAlign: "right" }}>
+                  <div style={{ fontSize: 10, color: GRAY3, fontWeight: 700, textTransform: "uppercase", marginBottom: 4 }}>Envío</div>
+                  <div style={{ fontWeight: 700, fontSize: 13 }}>{cotizacion.empresa_envio_nombre}</div>
+                  {cotizacion.sucursal_nombre && <div style={{ fontSize: 12, color: GRAY3 }}>{cotizacion.sucursal_nombre}</div>}
+                </div>
+              )}
+            </div>
+
+            {/* Tabla de productos */}
+            <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 16 }}>
+              <thead>
+                <tr style={{ background: GRAY }}>
+                  <th style={{ textAlign: "left", padding: "8px 10px", fontSize: 11, fontWeight: 700, color: GRAY3 }}>Producto</th>
+                  <th style={{ textAlign: "center", padding: "8px 6px", fontSize: 11, fontWeight: 700, color: GRAY3 }}>Cant.</th>
+                  <th style={{ textAlign: "right", padding: "8px 6px", fontSize: 11, fontWeight: 700, color: GRAY3 }}>P. Unit</th>
+                  <th style={{ textAlign: "right", padding: "8px 10px", fontSize: 11, fontWeight: 700, color: GRAY3 }}>Subtotal</th>
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((it, i) => {
+                  const prod = products.find(p => p.id === it.producto_id);
+                  return (
+                    <tr key={it.id || i} style={{ borderBottom: `1px solid ${GRAY2}` }}>
+                      <td style={{ padding: "9px 10px", fontSize: 12 }}>
+                        <div style={{ fontWeight: 700 }}>{it.nombre_producto}</div>
+                        {prod?.referencia && <div style={{ fontSize: 10, color: GRAY3 }}>Ref: {prod.referencia}</div>}
+                      </td>
+                      <td style={{ textAlign: "center", padding: "9px 6px", fontSize: 12 }}>{it.cantidad}</td>
+                      <td style={{ textAlign: "right", padding: "9px 6px", fontSize: 12 }}>{money(it.precio_unitario)}</td>
+                      <td style={{ textAlign: "right", padding: "9px 10px", fontSize: 12, fontWeight: 700 }}>{money(it.subtotal)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+
+            {/* Total */}
+            <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 16 }}>
+              <div style={{ minWidth: 240 }}>
+                {costoEnvio > 0 && (
+                  <>
+                    <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 12px", fontSize: 13, color: GRAY3 }}>
+                      <span>Subtotal</span><span>{money(subtotal)}</span>
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 12px", fontSize: 13, color: GRAY3 }}>
+                      <span>Envío</span><span>+{money(costoEnvio)}</span>
+                    </div>
+                  </>
+                )}
+                <div style={{ display: "flex", justifyContent: "space-between", padding: "10px 12px", background: RED, color: WHITE, borderRadius: 8, fontWeight: 900, fontSize: 16, marginTop: 4 }}>
+                  <span>TOTAL</span><span>{money(total)}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Notas */}
+            {cotizacion.notas && (
+              <div style={{ background: GRAY, borderRadius: 8, padding: 12, marginBottom: 16 }}>
+                <div style={{ fontSize: 10, color: GRAY3, fontWeight: 700, textTransform: "uppercase", marginBottom: 4 }}>Notas</div>
+                <div style={{ fontSize: 12 }}>{cotizacion.notas}</div>
+              </div>
+            )}
+
+            {/* Pie */}
+            <div style={{ textAlign: "center", fontSize: 10, color: GRAY3, borderTop: `1px solid ${GRAY2}`, paddingTop: 12 }}>
+              Esta cotización es válida por 7 días. Los precios pueden variar según disponibilidad.
+              <br />Ofertodo · Distribuidora · Panamá
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
 //  EDITAR COTIZACIÓN
 // ═══════════════════════════════════════════════════════════════
 function EditCotizacionModal({ cotizacion, empresas, sucursales, onClose, onSaved, showToast }) {
@@ -3467,6 +3682,7 @@ function AdminView() {
   const [shippingLabel, setShippingLabel] = useState(null); // pedido para la guía de envío
   const [pedidoAEliminar, setPedidoAEliminar] = useState(null); // pedido pendiente de eliminar (confirmación)
   const [cotizacionAEditar, setCotizacionAEditar] = useState(null); // cotización que se está editando
+  const [cotizacionImagen, setCotizacionImagen] = useState(null); // cotización a la que se le está generando la imagen
   const [nuevoCliente, setNuevoCliente] = useState(null); // {nombre, telefono, email} o null; modal crear cliente
   const [guardandoCliente, setGuardandoCliente] = useState(false);
   // ── DESCUENTOS ──
@@ -4626,6 +4842,9 @@ function AdminView() {
                           <button onClick={() => setCotizacionAEditar(o)} className="oft-btn-press" style={{ flex: 1, justifyContent: "center", background: "none", color: BLACK, border: `1.5px solid ${BLACK}`, borderRadius: 8, padding: "9px", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
                             <PencilIcon size={15} /> Editar
                           </button>
+                          <button onClick={() => setCotizacionImagen(o)} className="oft-btn-press" style={{ flex: 1, justifyContent: "center", background: "none", color: "#856404", border: "1.5px solid #856404", borderRadius: 8, padding: "9px", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
+                            <ImageIcon size={15} /> Imagen
+                          </button>
                           <button onClick={() => convertirAPedido(o)} className="oft-btn-press" style={{ flex: 1, justifyContent: "center", background: RED, color: WHITE, border: "none", borderRadius: 8, padding: "9px", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
                             <CheckCircle2 size={15} /> A pedido
                           </button>
@@ -4782,6 +5001,14 @@ function AdminView() {
             showToast={showToast}
             onClose={() => setCotizacionAEditar(null)}
             onSaved={(actualizada) => { setOrders(prev => prev.map(o => o.id === actualizada.id ? actualizada : o)); setCotizacionAEditar(null); }}
+          />
+        )}
+
+        {/* MODAL IMAGEN DE COTIZACIÓN (disponible desde el dashboard) */}
+        {cotizacionImagen && (
+          <CotizacionImageModal
+            cotizacion={cotizacionImagen}
+            onClose={() => setCotizacionImagen(null)}
           />
         )}
 
