@@ -319,6 +319,59 @@ function cartItemLabel(item) {
   return `${item.qty} pzs`;
 }
 
+// ═══════════════════════════════════════════════════════════════
+//  DISTRIBUCIÓN DE TALLA/COLOR POR DOCENA
+// ═══════════════════════════════════════════════════════════════
+// El admin define cuántas piezas de cada talla (o color) trae 1 docena completa (12 pzs),
+// por ejemplo: { "30": 2, "32": 4, "34": 3, "36": 2, "38": 1 }.
+// La distribución de la MEDIA DOCENA se calcula siempre en automático a partir de esta:
+//  1) cada variante presente recibe la mitad (redondeado hacia abajo) de su cantidad en la docena,
+//     con un mínimo de 1 para que la media docena incluya todas las tallas/colores;
+//  2) las piezas que sobren para llegar a 6 se reparten empezando por la variante con
+//     más unidades en la docena (la que más se repite).
+function parseDistribucion(json) {
+  if (!json) return {};
+  try {
+    const obj = typeof json === "string" ? JSON.parse(json) : json;
+    return obj && typeof obj === "object" ? obj : {};
+  } catch { return {}; }
+}
+function totalDistribucion(dist) {
+  return Object.values(dist || {}).reduce((s, v) => s + (Number(v) || 0), 0);
+}
+function mediaDocenaDesdeDistribucion(distDocena) {
+  const entradas = Object.entries(distDocena || {}).filter(([, qty]) => Number(qty) > 0);
+  if (entradas.length === 0) return {};
+
+  const media = {};
+  entradas.forEach(([k, qty]) => { media[k] = Math.max(1, Math.floor(Number(qty) / 2)); });
+  let restante = 6 - Object.values(media).reduce((a, b) => a + b, 0);
+
+  if (restante < 0) {
+    // Caso raro: más de 6 tallas/colores distintos en la docena — no caben todas en 6 piezas.
+    // Se recorta empezando por las variantes con MENOS unidades en la docena.
+    const asc = [...entradas].sort((a, b) => Number(a[1]) - Number(b[1]));
+    let i = 0;
+    while (restante < 0 && i < asc.length * 3) {
+      const [k] = asc[i % asc.length];
+      if (media[k] > 0) { media[k] -= 1; restante += 1; }
+      i++;
+    }
+    Object.keys(media).forEach(k => { if (media[k] <= 0) delete media[k]; });
+    return media;
+  }
+
+  // Reparte lo que falta para llegar a 6, priorizando la variante que más se repite en la docena
+  const desc = [...entradas].sort((a, b) => Number(b[1]) - Number(a[1]));
+  let i = 0;
+  while (restante > 0) {
+    const [k] = desc[i % desc.length];
+    media[k] += 1;
+    restante -= 1;
+    i++;
+  }
+  return media;
+}
 
 function NavBar() {
   const { view, setView, cart, cartPulse, user, setUser, setShowLogin, setShowCart } = useApp();
@@ -586,6 +639,35 @@ function VariantPicker({ product, talla, setTalla, color, setColor }) {
 }
 
 // ═══════════════════════════════════════════════════════════════
+//  DISTRIBUCIÓN DE TALLA/COLOR (info al cliente en media docena/docena)
+// ═══════════════════════════════════════════════════════════════
+function DistribucionInfo({ product, pres, count }) {
+  if (pres === "pieza") return null;
+  const distDocena = parseDistribucion(product.distribucion_docena);
+  if (totalDistribucion(distDocena) === 0) return null;
+
+  const eje = product.distribucion_eje === "color" ? "color" : "talla";
+  const dist = pres === "docena" ? distDocena : mediaDocenaDesdeDistribucion(distDocena);
+  const entradas = Object.entries(dist).filter(([, qty]) => Number(qty) > 0);
+  if (entradas.length === 0) return null;
+
+  return (
+    <div style={{ fontSize: 11, color: GRAY3, background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 8, padding: "8px 10px", marginTop: 8 }}>
+      <div style={{ fontWeight: 800, color: BLACK, marginBottom: 5 }}>
+        Esta {presLabel(pres)} incluye ({eje === "color" ? "colores" : "tallas"}):
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+        {entradas.map(([v, qty]) => (
+          <span key={v} style={{ background: GRAY, border: `1px solid ${GRAY2}`, borderRadius: 6, padding: "2px 7px", fontWeight: 700, fontSize: 11, color: BLACK }}>
+            {Number(qty) * count}× {v}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
 //  PRODUCT CARD
 // ═══════════════════════════════════════════════════════════════
 function ProductCard({ product }) {
@@ -689,6 +771,7 @@ function ProductCard({ product }) {
               <Sparkles size={12} style={{ flexShrink: 0 }} /> <span>{presBreakdown(pres, count, product)}</span>
             </div>
           )}
+          <DistribucionInfo product={product} pres={pres} count={count} />
         </div>
         {/* Empuja los botones al fondo para alinear todas las tarjetas */}
         <div style={{ marginTop: "auto" }} />
@@ -843,6 +926,7 @@ function ProductModal() {
                 <Sparkles size={13} /> {presBreakdown(pres, count, product)}
               </div>
             )}
+            <DistribucionInfo product={product} pres={pres} count={count} />
           </div>
 
           {/* BOTONES */}
@@ -3090,6 +3174,78 @@ function ChipAdder({ valor, onChange, placeholder, color }) {
 }
 
 // ═══════════════════════════════════════════════════════════════
+//  EDITOR DE DISTRIBUCIÓN POR DOCENA (admin — talla o color)
+// ═══════════════════════════════════════════════════════════════
+function DistribucionEditor({ prodForm, setProdForm }) {
+  const tieneTallas = prodForm.tiene_tallas && (prodForm.tallas || "").trim();
+  const tieneColores = prodForm.tiene_colores && (prodForm.colores || "").trim();
+  if (!tieneTallas && !tieneColores) return null;
+
+  const eje = prodForm.distribucion_eje || (tieneTallas ? "talla" : "color");
+  const variantes = (eje === "talla" ? prodForm.tallas : prodForm.colores).split(",").map(s => s.trim()).filter(Boolean);
+  const dist = parseDistribucion(prodForm.distribucion_docena);
+
+  const setQty = (v, qty) => {
+    const n = Math.max(0, Math.min(12, Number(qty.replace(/[^0-9]/g, "")) || 0));
+    const nuevo = { ...dist, [v]: n };
+    setProdForm({ ...prodForm, distribucion_docena: JSON.stringify(nuevo), distribucion_eje: eje });
+  };
+
+  const cambiarEje = (nuevoEje) => {
+    setProdForm({ ...prodForm, distribucion_eje: nuevoEje, distribucion_docena: "" });
+  };
+
+  const total = variantes.reduce((s, v) => s + (Number(dist[v]) || 0), 0);
+  const diff = 12 - total;
+  const distActiva = Object.fromEntries(variantes.map(v => [v, Number(dist[v]) || 0]));
+  const media = mediaDocenaDesdeDistribucion(distActiva);
+
+  return (
+    <div style={{ marginTop: 14, paddingTop: 14, borderTop: `1px dashed ${GRAY2}` }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4, flexWrap: "wrap", gap: 8 }}>
+        <span style={{ fontWeight: 700, fontSize: 13 }}>Distribución por docena (opcional)</span>
+        {tieneTallas && tieneColores && (
+          <select style={{ ...S.input, width: "auto", padding: "4px 8px", marginBottom: 0, fontSize: 12 }}
+            value={eje} onChange={e => cambiarEje(e.target.value)}>
+            <option value="talla">Distribuir por talla</option>
+            <option value="color">Distribuir por color</option>
+          </select>
+        )}
+      </div>
+      <p style={{ fontSize: 12, color: GRAY3, marginBottom: 10 }}>
+        Indica cuántas piezas de cada {eje} trae 1 docena completa (deben sumar 12). La media docena se calcula sola: incluye todas las {eje === "color" ? "colores" : "tallas"} y repite primero la que más se repite en la docena.
+      </p>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
+        {variantes.map(v => (
+          <div key={v} style={{ display: "flex", alignItems: "center", gap: 6, background: WHITE, border: `1.5px solid ${GRAY2}`, borderRadius: 10, padding: "6px 10px" }}>
+            <span style={{ fontSize: 13, fontWeight: 700 }}>{v}</span>
+            <input
+              type="number" min="0" max="12" inputMode="numeric"
+              value={dist[v] || ""} placeholder="0"
+              onChange={e => setQty(v, e.target.value)}
+              style={{ width: 44, border: "none", borderBottom: `2px solid ${GRAY2}`, textAlign: "center", fontWeight: 800, fontSize: 14, outline: "none" }}
+            />
+          </div>
+        ))}
+      </div>
+      <div style={{ fontSize: 12, fontWeight: 700, color: diff === 0 && total > 0 ? "#1FA64A" : RED }}>
+        Total: {total} / 12 {total === 0 ? "" : diff === 0 ? "✓ Completo" : diff > 0 ? `— faltan ${diff}` : `— sobran ${-diff}`}
+      </div>
+      {diff === 0 && total > 0 && (
+        <div style={{ background: WHITE, borderRadius: 10, padding: "10px 12px", border: `1px solid ${GRAY2}`, marginTop: 10 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: GRAY3, marginBottom: 6 }}>Media docena (automático)</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {Object.entries(media).map(([v, qty]) => (
+              <span key={v} style={{ fontSize: 12, fontWeight: 700, background: GRAY, borderRadius: 8, padding: "3px 8px" }}>{qty}× {v}</span>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
 //  EDITAR COTIZACIÓN
 // ═══════════════════════════════════════════════════════════════
 function EditCotizacionModal({ cotizacion, empresas, sucursales, onClose, onSaved, showToast }) {
@@ -3272,7 +3428,7 @@ function AdminView() {
   const [bulkLoading, setBulkLoading] = useState(false);
   const [newCatName, setNewCatName] = useState("");
   const [catUploading, setCatUploading] = useState(null); // id de categoría subiendo icono
-  const emptyProd = { referencia: "", nombre: "", descripcion: "", categoria_id: categories[0]?.id || 1, precio_pieza: "", precio_media_docena: "", precio_docena: "", badge: "", activo: true, destacado: false, imagen_url: "", tiene_tallas: false, tiene_colores: false, tallas: "", colores: "" };
+  const emptyProd = { referencia: "", nombre: "", descripcion: "", categoria_id: categories[0]?.id || 1, precio_pieza: "", precio_media_docena: "", precio_docena: "", badge: "", activo: true, destacado: false, imagen_url: "", tiene_tallas: false, tiene_colores: false, tallas: "", colores: "", distribucion_docena: "", distribucion_eje: "" };
   const [prodForm, setProdForm] = useState(emptyProd);
   const fileInputRef = useRef(null);
   const catFileRef = useRef(null);
@@ -3757,7 +3913,7 @@ function AdminView() {
   // ── GUARDAR / EDITAR PRODUCTO ──────────────────────────────────
   const openNewProduct = () => { setProdForm(emptyProd); setEditingId(null); setShowProdForm(true); setShowBulk(false); };
   const openEditProduct = (p) => {
-    setProdForm({ referencia: p.referencia || "", nombre: p.nombre || "", descripcion: p.descripcion || "", categoria_id: p.categoria_id || categories[0]?.id || 1, precio_pieza: p.precio_pieza, precio_media_docena: p.precio_media_docena, precio_docena: p.precio_docena, badge: p.badge || "", activo: p.activo, destacado: p.destacado || false, imagen_url: p.imagen_url || "", tiene_tallas: p.tiene_tallas || false, tiene_colores: p.tiene_colores || false, tallas: p.tallas || "", colores: p.colores || "" });
+    setProdForm({ referencia: p.referencia || "", nombre: p.nombre || "", descripcion: p.descripcion || "", categoria_id: p.categoria_id || categories[0]?.id || 1, precio_pieza: p.precio_pieza, precio_media_docena: p.precio_media_docena, precio_docena: p.precio_docena, badge: p.badge || "", activo: p.activo, destacado: p.destacado || false, imagen_url: p.imagen_url || "", tiene_tallas: p.tiene_tallas || false, tiene_colores: p.tiene_colores || false, tallas: p.tallas || "", colores: p.colores || "", distribucion_docena: p.distribucion_docena || "", distribucion_eje: p.distribucion_eje || "" });
     setEditingId(p.id);
     setShowProdForm(true);
     setShowBulk(false);
@@ -4817,6 +4973,9 @@ function AdminView() {
                   {prodForm.tiene_colores && (
                     <ChipAdder valor={prodForm.colores} onChange={v => setProdForm({...prodForm, colores: v})} placeholder="Ej: Rojo, Azul, Negro..." color={BLACK} />
                   )}
+
+                  {/* DISTRIBUCIÓN POR DOCENA (calcula la media docena automáticamente) */}
+                  <DistribucionEditor prodForm={prodForm} setProdForm={setProdForm} />
                 </div>
 
                 <div style={{ display: "flex", gap: 10 }}>
