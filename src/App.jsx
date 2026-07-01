@@ -2268,16 +2268,6 @@ function CrearPedidoView() {
           });
         }
       }
-      // Marca el PEDIDO como pagado ahora que ya existen sus items (la cotización ya se guardó pagada arriba).
-      // Este UPDATE de false→true es lo que dispara la sincronización con Odoo, igual que en el flujo web.
-      if (tipo !== "cotizacion") {
-        try {
-          await sb.patch("pedidos", pedidoId, { pagado: true });
-        } catch(e) {
-          showToast("Pedido creado, pero hubo un problema marcándolo como pagado. Revísalo en Pedidos.");
-        }
-      }
-
       // Items para la factura (normales + flex) — agrupa piezas con variantes por combinación talla+color
       const invoiceItems = [
         ...items.flatMap(it => {
@@ -2319,6 +2309,40 @@ function CrearPedidoView() {
           subtotal: flexUnitPrice(l.product, pack.modo) * l.piezas,
         }))),
       ];
+
+      if (tipo !== "cotizacion") {
+        // Marca el PEDIDO como pagado ahora que ya existen sus items.
+        try {
+          await sb.patch("pedidos", pedidoId, { pagado: true });
+        } catch(e) {
+          showToast("Pedido creado, pero hubo un problema marcándolo como pagado. Revísalo en Pedidos.");
+        }
+        // Crea la venta en Odoo directamente.
+        // IMPORTANTE: la sincronización con Odoo NO está en un trigger de la base de datos —
+        // vive dentro de la función "yappy-ipn", que Yappy llama únicamente cuando confirma un
+        // pago real. Un pedido manual del admin nunca pasa por Yappy, así que ese webhook nunca
+        // se dispara para estos pedidos. Por eso llamamos aquí, directo, a la misma función que
+        // usa yappy-ipn ("crear-venta-odoo") con los mismos datos que ella le manda.
+        // No bloquea el flujo si falla (igual que en yappy-ipn).
+        try {
+          await fetch(`${SUPABASE_URL}/functions/v1/crear-venta-odoo`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              codigo, nombre_cliente: cliente.nombre, email_cliente: null,
+              telefono: cliente.telefono, direccion: cliente.direccion,
+              items: invoiceItems.map(it => ({
+                referencia: it.referencia, nombre_producto: it.nombre,
+                cantidad: it.piezas, precio_unitario: it.precioUnit,
+              })),
+            }),
+          });
+        } catch(e) {
+          console.error("Error creando venta en Odoo:", e);
+          showToast("Pedido creado, pero no se pudo sincronizar con Odoo. Avísale a soporte.");
+        }
+      }
+
       // Datos para la factura
       setInvoice({
         codigo, numFactura, tipo, fecha: new Date(),
