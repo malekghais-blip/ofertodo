@@ -3190,9 +3190,9 @@ function ChipAdder({ valor, onChange, placeholder, color }) {
 // ═══════════════════════════════════════════════════════════════
 //  EDITOR DE DISTRIBUCIÓN POR DOCENA (admin — talla o color)
 // ═══════════════════════════════════════════════════════════════
-function DistribucionEditor({ prodForm, setProdForm }) {
-  const tieneTallas = prodForm.tiene_tallas && (prodForm.tallas || "").trim();
-  const tieneColores = prodForm.tiene_colores && (prodForm.colores || "").trim();
+function DistribucionEditor({ prodForm, setProdForm, activaTallas, activaColores }) {
+  const tieneTallas = (activaTallas !== undefined ? activaTallas : prodForm.tiene_tallas) && (prodForm.tallas || "").trim();
+  const tieneColores = (activaColores !== undefined ? activaColores : prodForm.tiene_colores) && (prodForm.colores || "").trim();
   if (!tieneTallas && !tieneColores) return null;
 
   const eje = prodForm.distribucion_eje || (tieneTallas ? "talla" : "color");
@@ -3462,7 +3462,7 @@ function AdminView() {
   const [bulkEditLoading, setBulkEditLoading] = useState(false);
   const [showBulkDelete, setShowBulkDelete] = useState(false);
   const [bulkDeleteLoading, setBulkDeleteLoading] = useState(false);
-  const emptyBulkEdit = { nombre: "", precio_pieza: "", precio_media_docena: "", precio_docena: "", badge: "", descripcion: "", activo: "", destacado: "", tiene_tallas: "", tallas: "", tiene_colores: "", colores: "" };
+  const emptyBulkEdit = { nombre: "", precio_pieza: "", precio_media_docena: "", precio_docena: "", badge: "", descripcion: "", activo: "", destacado: "", tiene_tallas: "", tallas: "", tiene_colores: "", colores: "", distribucion_docena: "", distribucion_eje: "" };
   const [bulkEdit, setBulkEdit] = useState(emptyBulkEdit);
   const [shippingLabel, setShippingLabel] = useState(null); // pedido para la guía de envío
   const [pedidoAEliminar, setPedidoAEliminar] = useState(null); // pedido pendiente de eliminar (confirmación)
@@ -4115,6 +4115,12 @@ function AdminView() {
     // Colores: igual
     if (bulkEdit.tiene_colores === "1") { patch.tiene_colores = true; if (bulkEdit.colores.trim() !== "") patch.colores = bulkEdit.colores.trim(); }
     if (bulkEdit.tiene_colores === "0") { patch.tiene_colores = false; }
+    // Distribución por docena: se aplica LA MISMA distribución a todos los seleccionados
+    // (útil cuando son variantes del mismo modelo — ej. mismo tenis en distintos colores, misma corrida de tallas)
+    if (bulkEdit.distribucion_docena && bulkEdit.distribucion_docena.trim() !== "") {
+      patch.distribucion_docena = bulkEdit.distribucion_docena;
+      patch.distribucion_eje = bulkEdit.distribucion_eje || "talla";
+    }
     if (Object.keys(patch).length === 0) { alert("Llena al menos un campo para aplicar."); return; }
     setBulkEditLoading(true);
     let ok = 0, err = 0;
@@ -5240,6 +5246,21 @@ function AdminView() {
                   {bulkEdit.tiene_colores === "1" && (
                     <ChipAdder valor={bulkEdit.colores} onChange={v => setBulkEdit({...bulkEdit, colores: v})} placeholder="Ej: Rojo, Azul, Negro..." color={BLACK} />
                   )}
+
+                  {/* DISTRIBUCIÓN POR DOCENA — se aplica igual a todos los seleccionados */}
+                  {(bulkEdit.tiene_tallas === "1" || bulkEdit.tiene_colores === "1") ? (
+                    <>
+                      <p style={{ fontSize: 12, color: GRAY3, margin: "10px 0 0" }}>
+                        Esta misma distribución se aplicará a los <strong>{selectedIds.length}</strong> productos seleccionados (útil si son el mismo modelo en distintos colores, con la misma corrida de tallas).
+                      </p>
+                      <DistribucionEditor
+                        prodForm={bulkEdit}
+                        setProdForm={setBulkEdit}
+                        activaTallas={bulkEdit.tiene_tallas === "1"}
+                        activaColores={bulkEdit.tiene_colores === "1"}
+                      />
+                    </>
+                  ) : null}
 
                   <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
                     <button style={{ ...S.btnRed, flex: 1, justifyContent: "center", opacity: bulkEditLoading ? 0.7 : 1, display: "inline-flex", alignItems: "center", gap: 6 }} onClick={handleBulkEdit} disabled={bulkEditLoading}>
