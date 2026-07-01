@@ -2217,7 +2217,13 @@ function CrearPedidoView() {
         empresa_envio_id: empresaId, empresa_envio_nombre: empresaSel?.nombre || "",
         sucursal_id: sucursalId, sucursal_nombre: sucursalSel?.nombre || "",
         tipo, num_factura: numFactura, creado_por_admin: true, costo_envio: costoEnvio,
-        pagado: true, // los pedidos/cotizaciones creados por el admin se consideran confirmados
+        // Las cotizaciones se marcan pagadas de una vez (no son ventas reales).
+        // Los PEDIDOS se insertan como NO pagados y se marcan pagados en un segundo paso
+        // (más abajo, después de crear los items) — igual que el flujo web con Yappy.
+        // Esto es importante porque la sincronización con Odoo está enganchada al cambio
+        // de "pagado" de false → true, no a la creación del registro: si se inserta ya
+        // pagado=true de una vez, esa transición nunca ocurre y la venta no llega a Odoo.
+        pagado: tipo === "cotizacion" ? true : false,
       });
       const pedidoId = pedido[0].id;
       // Productos normales — si es "pieza" y tiene variantes por pieza, se agrupan por combinación talla+color
@@ -2262,6 +2268,16 @@ function CrearPedidoView() {
           });
         }
       }
+      // Marca el PEDIDO como pagado ahora que ya existen sus items (la cotización ya se guardó pagada arriba).
+      // Este UPDATE de false→true es lo que dispara la sincronización con Odoo, igual que en el flujo web.
+      if (tipo !== "cotizacion") {
+        try {
+          await sb.patch("pedidos", pedidoId, { pagado: true });
+        } catch(e) {
+          showToast("Pedido creado, pero hubo un problema marcándolo como pagado. Revísalo en Pedidos.");
+        }
+      }
+
       // Items para la factura (normales + flex) — agrupa piezas con variantes por combinación talla+color
       const invoiceItems = [
         ...items.flatMap(it => {
