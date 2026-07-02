@@ -351,6 +351,41 @@ function parseDistribucion(json) {
 function totalDistribucion(dist) {
   return Object.values(dist || {}).reduce((s, v) => s + (Number(v) || 0), 0);
 }
+
+// ═══════════════════════════════════════════════════════════════
+//  ÁREA/UBICACIÓN DE UNA VENTA
+// ═══════════════════════════════════════════════════════════════
+// Lista de provincias y ciudades/distritos principales de Panamá, usada para
+// reconocer la zona dentro de una dirección de texto libre cuando el pedido
+// no tiene una sucursal de destino asignada. El orden importa: los nombres
+// más específicos van primero para no confundirlos con la provincia genérica
+// (ej. "La Chorrera" antes que "Panamá Oeste", "Panamá Oeste" antes que "Panamá").
+const PANAMA_ZONAS = [
+  "Panamá Oeste", "La Chorrera", "Arraiján", "Capira", "Chame", "San Carlos",
+  "Bocas del Toro", "Changuinola", "Almirante", "Bastimentos",
+  "Coclé", "Penonomé", "Aguadulce", "Antón", "Natá", "Olá",
+  "Colón", "Sabanitas", "Cristóbal", "Portobelo", "Santa Isabel",
+  "Chiriquí", "David", "Boquete", "Puerto Armuelles", "Volcán", "Bugaba", "Dolega",
+  "Darién", "Metetí", "La Palma", "Yaviza",
+  "Herrera", "Chitré", "Ocú", "Los Pozos", "Parita",
+  "Los Santos", "Las Tablas", "Guararé", "Pedasí", "Tonosí",
+  "Veraguas", "Santiago", "Soná", "Atalaya", "Santa Fe",
+  "Guna Yala", "Emberá", "Ngäbe-Buglé",
+  "San Miguelito", "Tocumen", "Pacora", "Chilibre", "Las Cumbres", "Juan Díaz",
+  "Panamá", // provincia/ciudad genérica — al final por ser la más amplia
+];
+function resolverAreaVenta(pedido) {
+  if (pedido.sucursal_nombre && pedido.sucursal_nombre.trim()) {
+    return pedido.sucursal_nombre.trim();
+  }
+  const texto = `${pedido.direccion || ""}`.toLowerCase();
+  if (!texto.trim()) return "Sin dirección";
+  for (const zona of PANAMA_ZONAS) {
+    if (texto.includes(zona.toLowerCase())) return zona;
+  }
+  return "Otra zona";
+}
+
 function mediaDocenaDesdeDistribucion(distDocena) {
   const entradas = Object.entries(distDocena || {}).filter(([, qty]) => Number(qty) > 0);
   if (entradas.length === 0) return {};
@@ -3548,6 +3583,7 @@ function StockRankingModal({ tipo, items, onClose }) {
     reponer: { title: "Reponer pronto", accent: "#856404" },
     rotacion: { title: "Mejor rotación", accent: RED },
     ingreso: { title: "Más ingreso generado", accent: RED },
+    zona: { title: "Ventas por zona", accent: RED },
   }[tipo];
 
   return createPortal(
@@ -3559,8 +3595,20 @@ function StockRankingModal({ tipo, items, onClose }) {
         </div>
         <div style={{ padding: "6px 18px 18px", maxHeight: "75vh", overflowY: "auto" }}>
           {items.length === 0 ? (
-            <div style={{ textAlign: "center", color: GRAY3, padding: "30px 0", fontSize: 13 }}>No hay productos en esta lista.</div>
-          ) : items.map((f, i) => (
+            <div style={{ textAlign: "center", color: GRAY3, padding: "30px 0", fontSize: 13 }}>No hay datos suficientes todavía.</div>
+          ) : tipo === "zona" ? items.map((f, i) => (
+            <div key={f.area} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 0", borderBottom: i < items.length - 1 ? `1px solid ${GRAY2}` : "none" }}>
+              <div style={{ fontSize: 13, fontWeight: 900, color: GRAY3, width: 22, flexShrink: 0 }}>{i + 1}</div>
+              <div style={{ width: 34, height: 34, borderRadius: 6, background: GRAY, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                <MapPin size={16} color={RED} />
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 700, fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.area}</div>
+                <div style={{ fontSize: 11, color: GRAY3 }}>{f.pedidos} pedido{f.pedidos === 1 ? "" : "s"}</div>
+              </div>
+              <div style={{ fontWeight: 900, fontSize: 13, color: RED, flexShrink: 0 }}>{money(f.total)}</div>
+            </div>
+          )) : items.map((f, i) => (
             <div key={f.producto_id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 0", borderBottom: i < items.length - 1 ? `1px solid ${GRAY2}` : "none" }}>
               <div style={{ fontSize: 13, fontWeight: 900, color: GRAY3, width: 22, flexShrink: 0 }}>{i + 1}</div>
               {f.prod.imagen_url ? <img src={f.prod.imagen_url} style={{ width: 34, height: 34, borderRadius: 6, objectFit: "cover", flexShrink: 0 }} /> : <div style={{ width: 34, height: 34, borderRadius: 6, background: GRAY, flexShrink: 0 }} />}
@@ -3803,7 +3851,7 @@ function AdminView() {
   const [cotizacionAEditar, setCotizacionAEditar] = useState(null); // cotización que se está editando
   const [cotizacionImagen, setCotizacionImagen] = useState(null); // cotización a la que se le está generando la imagen
   const [facturaImagen, setFacturaImagen] = useState(null); // pedido al que se le está generando la imagen de factura
-  const [rankingModal, setRankingModal] = useState(null); // null | "reponer" | "rotacion" | "ingreso" — para ver el top 50 en Análisis de Stock
+  const [rankingModal, setRankingModal] = useState(null); // null | "reponer" | "rotacion" | "ingreso" | "zona" — para ver el top 50 en Análisis de Stock
   const [nuevoCliente, setNuevoCliente] = useState(null); // {nombre, telefono, email} o null; modal crear cliente
   const [guardandoCliente, setGuardandoCliente] = useState(false);
   // ── DESCUENTOS ──
@@ -3994,6 +4042,20 @@ function AdminView() {
   const rotacionOrdenado = [...analisisStock].sort((a, b) => b.velocidadDiaria - a.velocidadDiaria);
   const ingresoOrdenado = [...analisisStock].sort((a, b) => b.ingreso - a.ingreso);
   const urgentesReponer = analisisStock.filter(f => f.diasParaReponer !== null && f.diasParaReponer <= 3).sort((a, b) => a.diasParaReponer - b.diasParaReponer);
+
+  // ── VENTAS POR ÁREA/UBICACIÓN ──────────────────────────────────
+  // Prioridad: 1) sucursal de destino (ya es un valor limpio, elegido de una lista)
+  //            2) si no hay sucursal, busca una provincia/ciudad conocida dentro de la dirección de texto libre
+  const ventasPorArea = (() => {
+    const mapa = {};
+    orders.filter(o => o.tipo !== "cotizacion" && o.pagado !== false).forEach(o => {
+      const area = resolverAreaVenta(o);
+      if (!mapa[area]) mapa[area] = { area, total: 0, pedidos: 0 };
+      mapa[area].total += Number(o.total) || 0;
+      mapa[area].pedidos += 1;
+    });
+    return Object.values(mapa).sort((a, b) => b.total - a.total);
+  })();
 
   // Mejores productos (por cantidad vendida, solo pedidos reales)
   const mejoresProductos = (() => {
@@ -5171,7 +5233,12 @@ function AdminView() {
         {rankingModal && (
           <StockRankingModal
             tipo={rankingModal}
-            items={(rankingModal === "reponer" ? urgentesReponer : rankingModal === "rotacion" ? rotacionOrdenado : ingresoOrdenado).slice(0, 50)}
+            items={(
+              rankingModal === "reponer" ? urgentesReponer :
+              rankingModal === "rotacion" ? rotacionOrdenado :
+              rankingModal === "ingreso" ? ingresoOrdenado :
+              ventasPorArea
+            ).slice(0, 50)}
             onClose={() => setRankingModal(null)}
           />
         )}
@@ -6154,6 +6221,33 @@ function AdminView() {
                       </button>
                     )}
                   </div>
+                </div>
+
+                {/* VENTAS POR ZONA/UBICACIÓN */}
+                <div style={{ background: WHITE, borderRadius: 14, padding: 20, border: `1px solid ${GRAY2}`, marginBottom: 24 }}>
+                  <div style={{ fontWeight: 800, marginBottom: 4, display: "flex", alignItems: "center", gap: 8 }}><MapPin size={17} color={RED} /> Ventas por zona</div>
+                  <div style={{ fontSize: 12, color: GRAY3, marginBottom: 14 }}>Según sucursal de destino, o la dirección del cliente cuando no hay sucursal</div>
+                  {ventasPorArea.length === 0 ? (
+                    <div style={{ fontSize: 13, color: GRAY3, padding: "10px 0" }}>Todavía no hay pedidos suficientes para mostrar zonas.</div>
+                  ) : (
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px 24px" }}>
+                      {ventasPorArea.slice(0, 10).map((f, i) => (
+                        <div key={f.area} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: `1px solid ${GRAY2}` }}>
+                          <div style={{ fontSize: 13, fontWeight: 900, color: GRAY3, width: 18 }}>{i + 1}</div>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontWeight: 700, fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.area}</div>
+                            <div style={{ fontSize: 10, color: GRAY3 }}>{f.pedidos} pedido{f.pedidos === 1 ? "" : "s"}</div>
+                          </div>
+                          <div style={{ fontWeight: 900, fontSize: 13, color: RED }}>{money(f.total)}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {ventasPorArea.length > 10 && (
+                    <button onClick={() => setRankingModal("zona")} className="oft-btn-press" style={{ marginTop: 12, background: "none", border: "none", color: RED, fontWeight: 800, fontSize: 12, cursor: "pointer", padding: 0, textDecoration: "underline" }}>
+                      Ver las {Math.min(ventasPorArea.length, 50)} zonas →
+                    </button>
+                  )}
                 </div>
 
                 {/* TABLA COMPLETA */}
