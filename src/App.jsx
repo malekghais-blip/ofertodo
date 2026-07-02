@@ -6507,7 +6507,8 @@ export default function App() {
         @keyframes spin { to { transform: rotate(360deg); } }
         .spin { animation: spin 0.8s linear infinite; }
         * { box-sizing: border-box; }
-        html, body { margin: 0; padding: 0; overflow-x: hidden; max-width: 100%; }
+        html, body { margin: 0; padding: 0; overflow-x: hidden; max-width: 100%; font-family: 'Inter','Segoe UI',sans-serif; }
+        input, button, textarea, select { font-family: inherit; }
         img { max-width: 100%; }
         /* La tabla nunca desborda: scroll horizontal dentro de su marco (web y celular) */
         .oft-table-wrap { max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
