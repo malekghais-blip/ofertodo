@@ -109,24 +109,14 @@ const RED = "#E31E24", RED_D = "#B01519", BLACK = "#111", GRAY = "#F5F5F5", GRAY
 const AppCtx = createContext(null);
 const useApp = () => useContext(AppCtx);
 
-// Bloquea el scroll del fondo mientras un modal está abierto.
-// En celular, sin esto, el popup queda técnicamente en la pantalla pero el navegador
-// no lo "asienta" bien hasta que el usuario mueve el dedo — por eso a veces hay que
-// hacer scroll para encontrarlo. Este patrón (fijar el body y restaurar la posición
-// exacta al cerrar) es el que usan la mayoría de librerías de modales por lo mismo.
+// Bloquea el scroll del fondo mientras un modal está abierto (versión simple y segura:
+// solo pausa el scroll, sin tocar position/top/left del body, para no interferir con
+// barras fijas ni con el layout del resto de la app).
 function useLockBodyScroll() {
   useEffect(() => {
-    const scrollY = window.scrollY;
-    const original = document.body.style.cssText;
-    document.body.style.position = "fixed";
-    document.body.style.top = `-${scrollY}px`;
-    document.body.style.left = "0";
-    document.body.style.right = "0";
+    const original = document.body.style.overflow;
     document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.cssText = original;
-      window.scrollTo(0, scrollY);
-    };
+    return () => { document.body.style.overflow = original; };
   }, []);
 }
 
