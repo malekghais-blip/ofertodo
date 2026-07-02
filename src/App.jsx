@@ -109,6 +109,27 @@ const RED = "#E31E24", RED_D = "#B01519", BLACK = "#111", GRAY = "#F5F5F5", GRAY
 const AppCtx = createContext(null);
 const useApp = () => useContext(AppCtx);
 
+// Bloquea el scroll del fondo mientras un modal está abierto.
+// En celular, sin esto, el popup queda técnicamente en la pantalla pero el navegador
+// no lo "asienta" bien hasta que el usuario mueve el dedo — por eso a veces hay que
+// hacer scroll para encontrarlo. Este patrón (fijar el body y restaurar la posición
+// exacta al cerrar) es el que usan la mayoría de librerías de modales por lo mismo.
+function useLockBodyScroll() {
+  useEffect(() => {
+    const scrollY = window.scrollY;
+    const original = document.body.style.cssText;
+    document.body.style.position = "fixed";
+    document.body.style.top = `-${scrollY}px`;
+    document.body.style.left = "0";
+    document.body.style.right = "0";
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.cssText = original;
+      window.scrollTo(0, scrollY);
+    };
+  }, []);
+}
+
 // ─── HOOK RESPONSIVE ────────────────────────────────────────────
 function useIsMobile() {
   const [isMobile, setIsMobile] = useState(typeof window !== "undefined" ? window.innerWidth <= 768 : false);
@@ -2772,6 +2793,7 @@ function CrearPedidoView() {
 //  FACTURA (genera PDF + PNG)
 // ═══════════════════════════════════════════════════════════════
 function InvoiceModal({ invoice, onClose }) {
+  useLockBodyScroll();
   const ref = useRef(null);
   const [busy, setBusy] = useState(false);
   const money = (n) => "$" + Number(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -2857,7 +2879,7 @@ function InvoiceModal({ invoice, onClose }) {
   };
 
   return (
-    <div className="oft-overlay oft-overlay-doc" style={{ ...S.overlay, alignItems: "flex-start", overflowY: "auto", padding: "20px 0" }} onClick={onClose}>
+    <div className="oft-overlay oft-overlay-doc" style={{ ...S.overlay, alignItems: "flex-start", overflowY: "auto", padding: "20px 0", WebkitOverflowScrolling: "touch", overscrollBehavior: "contain" }} onClick={onClose}>
       <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 16, maxWidth: 620, width: "92%", margin: "0 auto", overflow: "hidden" }} onClick={e => e.stopPropagation()}>
         {/* Barra superior con acciones - siempre visible arriba */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", borderBottom: `1px solid ${GRAY2}`, background: GRAY, flexWrap: "wrap", gap: 8 }}>
@@ -2991,6 +3013,7 @@ function InvoiceModal({ invoice, onClose }) {
 //  GUÍA DE ENVÍO INTERNA (para empaque y despacho — NO para el cliente)
 // ═══════════════════════════════════════════════════════════════
 function ShippingLabelModal({ order, onClose }) {
+  useLockBodyScroll();
   const ref = useRef(null);
   const [busy, setBusy] = useState(false);
   const fecha = order.created_at ? new Date(order.created_at) : new Date();
@@ -3060,7 +3083,7 @@ function ShippingLabelModal({ order, onClose }) {
   };
 
   return (
-    <div className="oft-overlay oft-overlay-doc" style={{ ...S.overlay, alignItems: "flex-start", overflowY: "auto", padding: "20px 0" }} onClick={onClose}>
+    <div className="oft-overlay oft-overlay-doc" style={{ ...S.overlay, alignItems: "flex-start", overflowY: "auto", padding: "20px 0", WebkitOverflowScrolling: "touch", overscrollBehavior: "contain" }} onClick={onClose}>
       <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 16, maxWidth: 620, width: "92%", margin: "0 auto", overflow: "hidden" }} onClick={e => e.stopPropagation()}>
         {/* Barra superior - siempre visible arriba */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", borderBottom: `1px solid ${GRAY2}`, background: GRAY, flexWrap: "wrap", gap: 8 }}>
@@ -3305,6 +3328,7 @@ function DistribucionEditor({ prodForm, setProdForm, activaTallas, activaColores
 //  Sirve tanto para pedidos (factura) como para cotizaciones — se adapta según order.tipo.
 // ═══════════════════════════════════════════════════════════════
 function OrderImageModal({ order, onClose }) {
+  useLockBodyScroll();
   const { products } = useApp();
   const ref = useRef(null);
   const [busy, setBusy] = useState(false);
@@ -3394,7 +3418,7 @@ function OrderImageModal({ order, onClose }) {
   };
 
   return (
-    <div className="oft-overlay oft-overlay-doc" style={{ ...S.overlay, alignItems: "flex-start", overflowY: "auto", padding: "20px 0" }} onClick={onClose}>
+    <div className="oft-overlay oft-overlay-doc" style={{ ...S.overlay, alignItems: "flex-start", overflowY: "auto", padding: "20px 0", WebkitOverflowScrolling: "touch", overscrollBehavior: "contain" }} onClick={onClose}>
       <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 16, maxWidth: 620, width: "92%", margin: "0 auto", overflow: "hidden" }} onClick={e => e.stopPropagation()}>
         {/* Barra superior con acciones */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", borderBottom: `1px solid ${GRAY2}`, background: GRAY, flexWrap: "wrap", gap: 8 }}>
@@ -3527,6 +3551,7 @@ function OrderImageModal({ order, onClose }) {
 //  EDITAR COTIZACIÓN
 // ═══════════════════════════════════════════════════════════════
 function EditCotizacionModal({ cotizacion, empresas, sucursales, onClose, onSaved, showToast }) {
+  useLockBodyScroll();
   const money = (n) => "$" + Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   // Líneas editables (a partir de los items guardados)
   const [lineas, setLineas] = useState(() => (cotizacion.items || []).map(it => ({
@@ -3589,7 +3614,7 @@ function EditCotizacionModal({ cotizacion, empresas, sucursales, onClose, onSave
   };
 
   return (
-    <div className="oft-overlay oft-overlay-doc" style={{ ...S.overlay, alignItems: "flex-start", overflowY: "auto", padding: "20px 0" }} onClick={() => !guardando && onClose()}>
+    <div className="oft-overlay oft-overlay-doc" style={{ ...S.overlay, alignItems: "flex-start", overflowY: "auto", padding: "20px 0", WebkitOverflowScrolling: "touch", overscrollBehavior: "contain" }} onClick={() => !guardando && onClose()}>
       <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 16, maxWidth: 560, width: "92%", margin: "0 auto", overflow: "hidden" }} onClick={e => e.stopPropagation()}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 18px", borderBottom: `1px solid ${GRAY2}`, background: GRAY }}>
           <div style={{ fontWeight: 800, display: "flex", alignItems: "center", gap: 8 }}><PencilIcon size={17} color={RED} /> Editar cotización {cotizacion.codigo}</div>
@@ -5658,7 +5683,7 @@ function AdminView() {
 
             {/* MODAL CREAR / EDITAR DESCUENTO */}
             {descForm && (
-              <div className="oft-overlay oft-overlay-doc" style={{ ...S.overlay, alignItems: "flex-start", overflowY: "auto", padding: "20px 16px" }} onClick={() => !guardandoDesc && setDescForm(null)}>
+              <div className="oft-overlay oft-overlay-doc" style={{ ...S.overlay, alignItems: "flex-start", overflowY: "auto", padding: "20px 16px", WebkitOverflowScrolling: "touch", overscrollBehavior: "contain" }} onClick={() => !guardandoDesc && setDescForm(null)}>
                 <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 16, maxWidth: 460, width: "92%", margin: "0 auto", padding: 24 }} onClick={e => e.stopPropagation()}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
                     <div style={{ fontWeight: 800, fontSize: 18, display: "flex", alignItems: "center", gap: 8 }}><Zap size={18} color={RED} /> {descForm.id ? "Editar" : "Nuevo"} descuento</div>
@@ -5838,7 +5863,7 @@ function AdminView() {
 
             {/* MODAL CREAR / EDITAR RETORNO */}
             {retornoForm && (
-              <div className="oft-overlay oft-overlay-doc" style={{ ...S.overlay, alignItems: "flex-start", overflowY: "auto", padding: "20px 16px" }} onClick={() => !guardandoRetorno && setRetornoForm(null)}>
+              <div className="oft-overlay oft-overlay-doc" style={{ ...S.overlay, alignItems: "flex-start", overflowY: "auto", padding: "20px 16px", WebkitOverflowScrolling: "touch", overscrollBehavior: "contain" }} onClick={() => !guardandoRetorno && setRetornoForm(null)}>
                 <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 16, maxWidth: 480, width: "92%", margin: "0 auto", padding: 24 }} onClick={e => e.stopPropagation()}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
                     <div style={{ fontWeight: 800, fontSize: 18, display: "flex", alignItems: "center", gap: 8 }}><RefreshCw size={18} color={RED} /> {retornoForm.id ? "Editar" : "Nuevo"} retorno</div>
