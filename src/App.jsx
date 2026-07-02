@@ -4005,6 +4005,32 @@ function AdminView() {
       await sb.patch("pedidos", cot.id, { tipo: "pedido", codigo: nuevoCodigo, estado: 0, created_at: ahora });
       setOrders(prev => prev.map(o => o.id === cot.id ? { ...o, tipo: "pedido", codigo: nuevoCodigo, estado: 0, created_at: ahora } : o));
       showToast(`¡Cotización convertida en pedido ${nuevoCodigo}!`);
+
+      // Crea la venta en Odoo. Esta conversión tampoco pasa por Yappy (igual que un pedido
+      // manual nuevo), así que llamamos directo a la misma función que usa yappy-ipn.
+      try {
+        const itemsOdoo = (cot.items || []).map(it => {
+          const prod = products.find(p => p.id === it.producto_id);
+          return {
+            referencia: prod?.referencia || null,
+            nombre_producto: it.nombre_producto,
+            cantidad: it.cantidad,
+            precio_unitario: it.precio_unitario,
+          };
+        });
+        await fetch(`${SUPABASE_URL}/functions/v1/crear-venta-odoo`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            codigo: nuevoCodigo, nombre_cliente: cot.nombre_cliente, email_cliente: null,
+            telefono: cot.telefono, direccion: cot.direccion,
+            items: itemsOdoo,
+          }),
+        });
+      } catch(e) {
+        console.error("Error creando venta en Odoo:", e);
+        showToast("Pedido creado, pero no se pudo sincronizar con Odoo. Avísale a soporte.");
+      }
     } catch(e) { alert("Error al convertir: " + (e.message || e)); }
   };
 
