@@ -163,7 +163,7 @@ function CategoryIcon({ cat, name, size = 28, color = RED }) {
 //  STYLES
 // ═══════════════════════════════════════════════════════════════
 const S = {
-  app: { fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif", background: WHITE, color: BLACK, minHeight: "100vh" },
+  app: { fontFamily: "Helvetica, Arial, sans-serif", background: WHITE, color: BLACK, minHeight: "100vh" },
   nav: { background: WHITE, borderBottom: `2px solid ${RED}`, padding: "0 24px", display: "flex", alignItems: "center", justifyContent: "space-between", height: 60, position: "sticky", top: 0, zIndex: 100, boxShadow: "0 2px 8px rgba(0,0,0,0.08)" },
   btnRed: { background: RED, color: WHITE, border: "none", borderRadius: 8, padding: "10px 20px", fontWeight: 700, fontSize: 14, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6, transition: "background 0.2s" },
   btnBlack: { background: BLACK, color: WHITE, border: "none", borderRadius: 8, padding: "10px 20px", fontWeight: 700, fontSize: 14, cursor: "pointer" },
@@ -2888,7 +2888,7 @@ function InvoiceModal({ invoice, onClose }) {
 
         {/* FACTURA (lo que se exporta) */}
         <div style={{ padding: 20, maxHeight: "80vh", overflowY: "auto" }}>
-          <div ref={ref} style={{ background: WHITE, padding: 28, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif", color: BLACK }}>
+          <div ref={ref} style={{ background: WHITE, padding: 28, fontFamily: "Helvetica, Arial, sans-serif", color: BLACK }}>
             {/* Encabezado con logo */}
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", borderBottom: `3px solid ${RED}`, paddingBottom: 16, marginBottom: 20 }}>
               <div>
@@ -3045,7 +3045,7 @@ function ShippingLabelModal({ order, onClose }) {
       <style>
         * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
         @page { margin: 12mm; }
-        html, body { margin: 0; padding: 0; background: #ffffff; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
+        html, body { margin: 0; padding: 0; background: #ffffff; font-family: Helvetica, Arial, sans-serif; }
       </style>`;
     // Usa un iframe OCULTO en la misma página: no abre ventana nueva, así no recarga
     // la app ni cierra la sesión en celular.
@@ -3092,7 +3092,7 @@ function ShippingLabelModal({ order, onClose }) {
 
         {/* GUÍA (lo que se exporta) */}
         <div style={{ padding: 20, maxHeight: "80vh", overflowY: "auto" }}>
-          <div ref={ref} style={{ background: WHITE, padding: 26, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif", color: BLACK, border: `2px solid ${BLACK}` }}>
+          <div ref={ref} style={{ background: WHITE, padding: 26, fontFamily: "Helvetica, Arial, sans-serif", color: BLACK, border: `2px solid ${BLACK}` }}>
             {/* Encabezado */}
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", borderBottom: `2px solid ${BLACK}`, paddingBottom: 12, marginBottom: 16 }}>
               <div>
@@ -3427,7 +3427,7 @@ function OrderImageModal({ order, onClose }) {
 
         {/* DOCUMENTO (lo que se exporta) */}
         <div style={{ padding: 20, maxHeight: "80vh", overflowY: "auto" }}>
-          <div ref={ref} style={{ background: WHITE, padding: 28, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif", color: BLACK }}>
+          <div ref={ref} style={{ background: WHITE, padding: 28, fontFamily: "Helvetica, Arial, sans-serif", color: BLACK }}>
             {/* Encabezado con logo */}
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", borderBottom: `3px solid ${RED}`, paddingBottom: 16, marginBottom: 20 }}>
               <div>
@@ -6507,7 +6507,7 @@ export default function App() {
         @keyframes spin { to { transform: rotate(360deg); } }
         .spin { animation: spin 0.8s linear infinite; }
         * { box-sizing: border-box; }
-        html, body { margin: 0; padding: 0; overflow-x: hidden; max-width: 100%; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
+        html, body { margin: 0; padding: 0; overflow-x: hidden; max-width: 100%; font-family: Helvetica, Arial, sans-serif; }
         input, button, textarea, select { font-family: inherit; }
         img { max-width: 100%; }
         /* La tabla nunca desborda: scroll horizontal dentro de su marco (web y celular) */
