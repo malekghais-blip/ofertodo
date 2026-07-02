@@ -1,4 +1,5 @@
 import { useState, useEffect, createContext, useContext, useRef } from "react";
+import { createPortal } from "react-dom";
 import {
   ShoppingCart, Search, Trash2, MessageCircle, X, Package, CheckCircle2,
   MapPin, CreditCard, LayoutGrid, FolderOpen, Tag, Truck, Headphones,
@@ -2868,7 +2869,7 @@ function InvoiceModal({ invoice, onClose }) {
     setBusy(false);
   };
 
-  return (
+  return createPortal(
     <div className="oft-overlay oft-overlay-doc" style={{ ...S.overlay, alignItems: "flex-start", overflowY: "auto", padding: "20px 0", WebkitOverflowScrolling: "touch", overscrollBehavior: "contain" }} onClick={onClose}>
       <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 16, maxWidth: 620, width: "92%", margin: "0 auto", overflow: "hidden" }} onClick={e => e.stopPropagation()}>
         {/* Barra superior con acciones - siempre visible arriba */}
@@ -2996,7 +2997,7 @@ function InvoiceModal({ invoice, onClose }) {
         </div>
       </div>
     </div>
-  );
+  , document.body);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -3072,7 +3073,7 @@ function ShippingLabelModal({ order, onClose }) {
     setTimeout(lanzarImpresion, 500);
   };
 
-  return (
+  return createPortal(
     <div className="oft-overlay oft-overlay-doc" style={{ ...S.overlay, alignItems: "flex-start", overflowY: "auto", padding: "20px 0", WebkitOverflowScrolling: "touch", overscrollBehavior: "contain" }} onClick={onClose}>
       <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 16, maxWidth: 620, width: "92%", margin: "0 auto", overflow: "hidden" }} onClick={e => e.stopPropagation()}>
         {/* Barra superior - siempre visible arriba */}
@@ -3194,7 +3195,7 @@ function ShippingLabelModal({ order, onClose }) {
         </div>
       </div>
     </div>
-  );
+  , document.body);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -3407,7 +3408,7 @@ function OrderImageModal({ order, onClose }) {
     setBusy(false);
   };
 
-  return (
+  return createPortal(
     <div className="oft-overlay oft-overlay-doc" style={{ ...S.overlay, alignItems: "flex-start", overflowY: "auto", padding: "20px 0", WebkitOverflowScrolling: "touch", overscrollBehavior: "contain" }} onClick={onClose}>
       <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 16, maxWidth: 620, width: "92%", margin: "0 auto", overflow: "hidden" }} onClick={e => e.stopPropagation()}>
         {/* Barra superior con acciones */}
@@ -3534,7 +3535,7 @@ function OrderImageModal({ order, onClose }) {
         </div>
       </div>
     </div>
-  );
+  , document.body);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -3603,7 +3604,7 @@ function EditCotizacionModal({ cotizacion, empresas, sucursales, onClose, onSave
     setGuardando(false);
   };
 
-  return (
+  return createPortal(
     <div className="oft-overlay oft-overlay-doc" style={{ ...S.overlay, alignItems: "flex-start", overflowY: "auto", padding: "20px 0", WebkitOverflowScrolling: "touch", overscrollBehavior: "contain" }} onClick={() => !guardando && onClose()}>
       <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 16, maxWidth: 560, width: "92%", margin: "0 auto", overflow: "hidden" }} onClick={e => e.stopPropagation()}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 18px", borderBottom: `1px solid ${GRAY2}`, background: GRAY }}>
@@ -3701,7 +3702,7 @@ function EditCotizacionModal({ cotizacion, empresas, sucursales, onClose, onSave
         </div>
       </div>
     </div>
-  );
+  , document.body);
 }
 
 // ═══════════════════════════════════════════════════════════════
