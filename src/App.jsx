@@ -3539,6 +3539,60 @@ function OrderImageModal({ order, onClose }) {
 }
 
 // ═══════════════════════════════════════════════════════════════
+//  RANKING COMPLETO DE ANÁLISIS DE STOCK (top 50) — Reponer / Rotación / Ingreso
+// ═══════════════════════════════════════════════════════════════
+function StockRankingModal({ tipo, items, onClose }) {
+  useLockBodyScroll();
+  const money = (n) => "$" + Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const config = {
+    reponer: { title: "Reponer pronto", accent: "#856404" },
+    rotacion: { title: "Mejor rotación", accent: RED },
+    ingreso: { title: "Más ingreso generado", accent: RED },
+  }[tipo];
+
+  return createPortal(
+    <div className="oft-overlay oft-overlay-doc" style={{ ...S.overlay, alignItems: "flex-start", overflowY: "auto", padding: "20px 0", WebkitOverflowScrolling: "touch", overscrollBehavior: "contain" }} onClick={onClose}>
+      <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 16, maxWidth: 620, width: "92%", margin: "0 auto", overflow: "hidden" }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 18px", borderBottom: `1px solid ${GRAY2}`, background: GRAY }}>
+          <div style={{ fontWeight: 800, fontSize: 15, color: config.accent }}>{config.title} — Top {items.length}</div>
+          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", display: "flex", padding: 4 }}><X size={22} /></button>
+        </div>
+        <div style={{ padding: "6px 18px 18px", maxHeight: "75vh", overflowY: "auto" }}>
+          {items.length === 0 ? (
+            <div style={{ textAlign: "center", color: GRAY3, padding: "30px 0", fontSize: 13 }}>No hay productos en esta lista.</div>
+          ) : items.map((f, i) => (
+            <div key={f.producto_id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 0", borderBottom: i < items.length - 1 ? `1px solid ${GRAY2}` : "none" }}>
+              <div style={{ fontSize: 13, fontWeight: 900, color: GRAY3, width: 22, flexShrink: 0 }}>{i + 1}</div>
+              {f.prod.imagen_url ? <img src={f.prod.imagen_url} style={{ width: 34, height: 34, borderRadius: 6, objectFit: "cover", flexShrink: 0 }} /> : <div style={{ width: 34, height: 34, borderRadius: 6, background: GRAY, flexShrink: 0 }} />}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 700, fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.prod.nombre}</div>
+                <div style={{ fontSize: 11, color: GRAY3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {tipo === "reponer" && `${f.prod.referencia || "—"} · Stock: ${f.stockActual} uds`}
+                  {tipo === "rotacion" && `${f.cantidad} uds en ${f.diasDesdeInicio} días`}
+                  {tipo === "ingreso" && (f.margen !== null ? `Margen: ${money(f.margen)}` : "Margen: sin costo cargado")}
+                </div>
+              </div>
+              <div style={{ textAlign: "right", flexShrink: 0 }}>
+                {tipo === "reponer" && (
+                  <>
+                    <div style={{ fontWeight: 900, color: f.diasParaReponer === 0 ? RED : "#856404", fontSize: 13 }}>
+                      {f.diasParaReponer === 0 ? "Reponer YA" : `${f.diasParaReponer} día${f.diasParaReponer === 1 ? "" : "s"}`}
+                    </div>
+                    <div style={{ fontSize: 10, color: GRAY3 }}>Comprar ~{f.sugerenciaCompra} uds</div>
+                  </>
+                )}
+                {tipo === "rotacion" && <div style={{ fontWeight: 900, fontSize: 13, color: RED }}>{f.velocidadDiaria.toFixed(2)}/día</div>}
+                {tipo === "ingreso" && <div style={{ fontWeight: 900, fontSize: 13, color: RED }}>{money(f.ingreso)}</div>}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  , document.body);
+}
+
+// ═══════════════════════════════════════════════════════════════
 //  EDITAR COTIZACIÓN
 // ═══════════════════════════════════════════════════════════════
 function EditCotizacionModal({ cotizacion, empresas, sucursales, onClose, onSaved, showToast }) {
@@ -3749,6 +3803,7 @@ function AdminView() {
   const [cotizacionAEditar, setCotizacionAEditar] = useState(null); // cotización que se está editando
   const [cotizacionImagen, setCotizacionImagen] = useState(null); // cotización a la que se le está generando la imagen
   const [facturaImagen, setFacturaImagen] = useState(null); // pedido al que se le está generando la imagen de factura
+  const [rankingModal, setRankingModal] = useState(null); // null | "reponer" | "rotacion" | "ingreso" — para ver el top 50 en Análisis de Stock
   const [nuevoCliente, setNuevoCliente] = useState(null); // {nombre, telefono, email} o null; modal crear cliente
   const [guardandoCliente, setGuardandoCliente] = useState(false);
   // ── DESCUENTOS ──
@@ -5112,6 +5167,15 @@ function AdminView() {
           />
         )}
 
+        {/* MODAL TOP 50 — ANÁLISIS DE STOCK */}
+        {rankingModal && (
+          <StockRankingModal
+            tipo={rankingModal}
+            items={(rankingModal === "reponer" ? urgentesReponer : rankingModal === "rotacion" ? rotacionOrdenado : ingresoOrdenado).slice(0, 50)}
+            onClose={() => setRankingModal(null)}
+          />
+        )}
+
         {/* MODAL CREAR CLIENTE */}
         {nuevoCliente && (
           <div className="oft-overlay" style={S.overlay} onClick={() => !guardandoCliente && setNuevoCliente(null)}>
@@ -6021,7 +6085,7 @@ function AdminView() {
                       ⚠️ Reponer pronto ({urgentesReponer.length})
                     </div>
                     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                      {urgentesReponer.map(f => (
+                      {urgentesReponer.slice(0, 5).map(f => (
                         <div key={f.producto_id} style={{ display: "flex", alignItems: "center", gap: 10, background: WHITE, borderRadius: 8, padding: "8px 12px" }}>
                           {f.prod.imagen_url ? <img src={f.prod.imagen_url} style={{ width: 30, height: 30, borderRadius: 5, objectFit: "cover" }} /> : <div style={{ width: 30, height: 30, borderRadius: 5, background: GRAY }} />}
                           <div style={{ flex: 1, minWidth: 0 }}>
@@ -6037,6 +6101,11 @@ function AdminView() {
                         </div>
                       ))}
                     </div>
+                    {urgentesReponer.length > 5 && (
+                      <button onClick={() => setRankingModal("reponer")} className="oft-btn-press" style={{ marginTop: 12, background: "none", border: "none", color: "#856404", fontWeight: 800, fontSize: 13, cursor: "pointer", padding: 0, textDecoration: "underline" }}>
+                        Ver los {Math.min(urgentesReponer.length, 50)} productos →
+                      </button>
+                    )}
                   </div>
                 )}
 
@@ -6057,6 +6126,11 @@ function AdminView() {
                         <div style={{ fontWeight: 900, fontSize: 13, color: RED }}>{f.velocidadDiaria.toFixed(2)}/día</div>
                       </div>
                     ))}
+                    {rotacionOrdenado.length > 5 && (
+                      <button onClick={() => setRankingModal("rotacion")} className="oft-btn-press" style={{ marginTop: 10, background: "none", border: "none", color: RED, fontWeight: 800, fontSize: 12, cursor: "pointer", padding: 0, textDecoration: "underline" }}>
+                        Ver los {Math.min(rotacionOrdenado.length, 50)} productos →
+                      </button>
+                    )}
                   </div>
 
                   {/* MÁS CASH */}
@@ -6074,6 +6148,11 @@ function AdminView() {
                         <div style={{ fontWeight: 900, fontSize: 13, color: RED }}>{money(f.ingreso)}</div>
                       </div>
                     ))}
+                    {ingresoOrdenado.length > 5 && (
+                      <button onClick={() => setRankingModal("ingreso")} className="oft-btn-press" style={{ marginTop: 10, background: "none", border: "none", color: RED, fontWeight: 800, fontSize: 12, cursor: "pointer", padding: 0, textDecoration: "underline" }}>
+                        Ver los {Math.min(ingresoOrdenado.length, 50)} productos →
+                      </button>
+                    )}
                   </div>
                 </div>
 
