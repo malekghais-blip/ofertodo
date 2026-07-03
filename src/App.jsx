@@ -1229,10 +1229,15 @@ function LoginModal() {
         sb.setSession(res);
         const users = await sb.get("usuarios", `?email=eq.${encodeURIComponent(email)}&limit=1`);
         let factorVerificado = null;
+        // ── DIAGNÓSTICO TEMPORAL: muestra en pantalla qué encontró, para saber qué arreglar ──
         try {
           const factores = await sb.mfaListFactors();
           factorVerificado = factores.find(f => f.status === "verified") || null;
-        } catch(e) {}
+          showToast(`DEBUG 2FA: encontré ${factores.length} factor(es). ${factores.map(f => f.status).join(", ") || "(ninguno)"}`);
+        } catch(e) {
+          showToast("DEBUG 2FA: error al consultar factores → " + (e.message || String(e)));
+        }
+        // ── FIN DIAGNÓSTICO TEMPORAL ──
         if (factorVerificado) {
           // Esta cuenta tiene 2FA activado: pide el código antes de terminar de entrar
           setMfaPaso({ factorId: factorVerificado.id, res, users });
