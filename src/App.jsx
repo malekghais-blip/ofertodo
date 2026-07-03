@@ -1223,21 +1223,21 @@ function LoginModal() {
     setLoading(true); setErr("");
     try {
       const res = await sb.signIn(email, pass);
-      if (res.error) { setErr(res.error.message || "Credenciales incorrectas"); }
-      else {
+      // IMPORTANTE: nos fijamos en si realmente llegó un access_token, no en si "hay un campo error"
+      // (Supabase puede devolver el error en formatos distintos según la versión — confiar solo en
+      // detectar el error es justo lo que dejaba entrar a cualquiera con credenciales inválidas).
+      if (!res.access_token || !res.user) {
+        const msg = res.error_description || res.msg || (typeof res.error === "string" ? res.error : res.error?.message) || "Correo o contraseña incorrectos";
+        setErr(msg === "invalid_grant" ? "Correo o contraseña incorrectos" : msg);
+      } else {
         // Activa la sesión (aunque sea parcial) para poder consultar el perfil y, si aplica, el 2do factor
         sb.setSession(res);
         const users = await sb.get("usuarios", `?email=eq.${encodeURIComponent(email)}&limit=1`);
         let factorVerificado = null;
-        // ── DIAGNÓSTICO TEMPORAL: muestra en pantalla qué encontró, para saber qué arreglar ──
         try {
           const factores = await sb.mfaListFactors();
           factorVerificado = factores.find(f => f.status === "verified") || null;
-          showToast(`DEBUG 2FA: encontré ${factores.length} factor(es). ${factores.map(f => f.status).join(", ") || "(ninguno)"}`);
-        } catch(e) {
-          showToast("DEBUG 2FA: error al consultar factores → " + (e.message || String(e)));
-        }
-        // ── FIN DIAGNÓSTICO TEMPORAL ──
+        } catch(e) {}
         if (factorVerificado) {
           // Esta cuenta tiene 2FA activado: pide el código antes de terminar de entrar
           setMfaPaso({ factorId: factorVerificado.id, res, users });
