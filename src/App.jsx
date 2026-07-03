@@ -24,16 +24,73 @@ const YAPPY_FN_CREAR = SUPABASE_URL + "/functions/v1/crear-orden-yappy"; // Edge
 
 // ─── Supabase client minimalista (sin instalar paquetes) ────────
 const sb = {
-  headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Content-Type": "application/json", "Prefer": "return=representation" },
+  // Sesión del usuario logueado (se llena con setSession al iniciar sesión o al restaurar
+  // desde localStorage). Mientras no haya sesión, se usa la llave pública (anon) normal.
+  session: null,
+
+  setSession(s) {
+    if (!s || !s.access_token) { this.session = null; return; }
+    this.session = {
+      access_token: s.access_token,
+      refresh_token: s.refresh_token || null,
+      // expires_at viene en segundos-epoch desde Supabase; si solo viene expires_in, lo calculamos
+      expires_at: s.expires_at || (s.expires_in ? Math.floor(Date.now() / 1000) + Number(s.expires_in) : null),
+    };
+  },
+  clearSession() { this.session = null; },
+
+  // Antes de cada petición, si el token está por vencer (o ya venció), lo renueva
+  // usando el refresh_token. Si algo falla, sigue con lo que haya (nunca rompe la petición).
+  async ensureFreshToken() {
+    if (!this.session || !this.session.refresh_token) return;
+    const margenSeg = 60;
+    const ahora = Math.floor(Date.now() / 1000);
+    if (this.session.expires_at && this.session.expires_at - ahora > margenSeg) return;
+    try {
+      const r = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
+        method: "POST",
+        headers: { "apikey": SUPABASE_KEY, "Content-Type": "application/json" },
+        body: JSON.stringify({ refresh_token: this.session.refresh_token }),
+      });
+      const data = await r.json();
+      if (data.access_token) {
+        this.setSession(data);
+        // Actualiza también lo guardado en localStorage para que sobreviva un refresh de página
+        try {
+          const stored = JSON.parse(localStorage.getItem("oft_user") || "null");
+          if (stored) {
+            stored.token = data.access_token;
+            stored.refresh_token = data.refresh_token || stored.refresh_token;
+            stored.expires_at = this.session.expires_at;
+            localStorage.setItem("oft_user", JSON.stringify(stored));
+          }
+        } catch(e) {}
+      }
+    } catch(e) { /* si falla la renovación, se sigue con el token anterior */ }
+  },
+
+  // Headers para peticiones de datos: usan el token de la persona logueada si existe,
+  // o la llave pública (anon) si nadie ha iniciado sesión.
+  dataHeaders() {
+    const token = this.session?.access_token || SUPABASE_KEY;
+    return { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${token}`, "Content-Type": "application/json", "Prefer": "return=representation" };
+  },
+  // Headers para login/registro: siempre con la llave pública (antes de tener sesión propia)
+  authHeaders() {
+    return { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Content-Type": "application/json" };
+  },
+
   url: (table, query = "") => `${SUPABASE_URL}/rest/v1/${table}${query}`,
 
   async get(table, query = "") {
-    const r = await fetch(this.url(table, query), { headers: this.headers });
+    await this.ensureFreshToken();
+    const r = await fetch(this.url(table, query), { headers: this.dataHeaders() });
     if (!r.ok) throw new Error(await r.text());
     return r.json();
   },
   async post(table, body) {
-    const r = await fetch(this.url(table), { method: "POST", headers: this.headers, body: JSON.stringify(body) });
+    await this.ensureFreshToken();
+    const r = await fetch(this.url(table), { method: "POST", headers: this.dataHeaders(), body: JSON.stringify(body) });
     if (!r.ok) throw new Error(await r.text());
     return r.json();
   },
@@ -42,7 +99,8 @@ const sb = {
     if (id === undefined || id === null || id === "") {
       throw new Error("patch: id inválido, operación cancelada por seguridad");
     }
-    const r = await fetch(this.url(table, `?id=eq.${encodeURIComponent(id)}`), { method: "PATCH", headers: this.headers, body: JSON.stringify(body) });
+    await this.ensureFreshToken();
+    const r = await fetch(this.url(table, `?id=eq.${encodeURIComponent(id)}`), { method: "PATCH", headers: this.dataHeaders(), body: JSON.stringify(body) });
     if (!r.ok) throw new Error(await r.text());
     return r.json();
   },
@@ -51,17 +109,18 @@ const sb = {
     if (id === undefined || id === null || id === "") {
       throw new Error("delete: id inválido, operación cancelada por seguridad");
     }
-    const r = await fetch(this.url(table, `?id=eq.${encodeURIComponent(id)}`), { method: "DELETE", headers: this.headers });
+    await this.ensureFreshToken();
+    const r = await fetch(this.url(table, `?id=eq.${encodeURIComponent(id)}`), { method: "DELETE", headers: this.dataHeaders() });
     if (!r.ok) throw new Error(await r.text());
     return true;
   },
   // Auth
   async signUp(email, password, meta) {
-    const r = await fetch(`${SUPABASE_URL}/auth/v1/signup`, { method: "POST", headers: this.headers, body: JSON.stringify({ email, password, data: meta }) });
+    const r = await fetch(`${SUPABASE_URL}/auth/v1/signup`, { method: "POST", headers: this.authHeaders(), body: JSON.stringify({ email, password, data: meta }) });
     return r.json();
   },
   async signIn(email, password) {
-    const r = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, { method: "POST", headers: this.headers, body: JSON.stringify({ email, password }) });
+    const r = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, { method: "POST", headers: this.authHeaders(), body: JSON.stringify({ email, password }) });
     return r.json();
   },
   // Inicia sesión con Google (OAuth). Redirige a Google y vuelve a la app.
@@ -88,7 +147,7 @@ const sb = {
       method: "POST",
       headers: {
         "apikey": SUPABASE_KEY,
-        "Authorization": `Bearer ${SUPABASE_KEY}`,
+        "Authorization": `Bearer ${this.session?.access_token || SUPABASE_KEY}`,
         "Content-Type": file.type || "application/octet-stream",
         "x-upsert": "true",
         "cache-control": "3600",
@@ -1118,8 +1177,10 @@ function LoginModal() {
       const res = await sb.signIn(email, pass);
       if (res.error) { setErr(res.error.message || "Credenciales incorrectas"); }
       else {
+        // Activa la sesión YA para que la búsqueda del perfil salga autenticada
+        sb.setSession(res);
         const users = await sb.get("usuarios", `?email=eq.${encodeURIComponent(email)}&limit=1`);
-        setUser({ ...res.user, ...(users[0] || {}), token: res.access_token });
+        setUser({ ...res.user, ...(users[0] || {}), token: res.access_token, refresh_token: res.refresh_token, expires_at: sb.session?.expires_at });
         showToast("¡Bienvenido de vuelta!");
         setShowLogin(false);
       }
@@ -1233,7 +1294,7 @@ function CompleteProfileModal() {
     try {
       await sb.post("usuarios", { nombre: nombre.trim(), email: completeProfile.email, telefono: telefono.trim(), es_admin: false });
       const perfil = await sb.get("usuarios", `?email=eq.${encodeURIComponent(completeProfile.email)}&limit=1`);
-      setUser({ ...completeProfile.gUser, ...(perfil[0] || {}), token: completeProfile.token });
+      setUser({ ...completeProfile.gUser, ...(perfil[0] || {}), token: completeProfile.token, refresh_token: completeProfile.refresh_token, expires_at: completeProfile.expires_at });
       // Enviar email de bienvenida (sin bloquear si falla)
       try {
         fetch(SUPABASE_URL + "/functions/v1/bienvenida-cliente", {
@@ -6915,17 +6976,22 @@ export default function App() {
       const u = localStorage.getItem("oft_user");
       if (!u) return null;
       const parsed = JSON.parse(u);
-      // Verificar que el token no expiró (exp en segundos Unix)
-      if (parsed?.exp && Date.now() / 1000 > parsed.exp) {
+      // Si el token venció Y no hay refresh_token para renovarlo solo, se cierra la sesión.
+      // Si sí hay refresh_token, se deja pasar: sb lo va a renovar solo en la próxima petición.
+      if (parsed?.expires_at && Date.now() / 1000 > parsed.expires_at && !parsed?.refresh_token) {
         localStorage.removeItem("oft_user");
         localStorage.removeItem("oft_view");
         return null;
       }
+      // Activa la sesión en el cliente sb para que las peticiones salgan autenticadas desde ya
+      sb.setSession({ access_token: parsed?.token, refresh_token: parsed?.refresh_token, expires_at: parsed?.expires_at });
       return parsed;
     } catch(e) { return null; }
   });
   const setUser = (u) => {
     setUserRaw(u);
+    if (u) sb.setSession({ access_token: u.token, refresh_token: u.refresh_token, expires_at: u.expires_at });
+    else sb.clearSession();
     try {
       if (u) localStorage.setItem("oft_user", JSON.stringify(u));
       else { localStorage.removeItem("oft_user"); localStorage.removeItem("oft_view"); }
@@ -7000,7 +7066,7 @@ export default function App() {
     const procesarRetornoGoogle = async () => {
       const hash = window.location.hash || "";
       const query = window.location.search || "";
-      let token = null;
+      let token = null, refreshToken = null, expiresIn = null;
 
       // ¿Hubo un error devuelto por Google/Supabase?
       if (hash.includes("error") || query.includes("error=")) {
@@ -7013,7 +7079,10 @@ export default function App() {
 
       // Formato 1 (implicit): #access_token=...
       if (hash.includes("access_token")) {
-        token = new URLSearchParams(hash.substring(1)).get("access_token");
+        const hashParams = new URLSearchParams(hash.substring(1));
+        token = hashParams.get("access_token");
+        refreshToken = hashParams.get("refresh_token");
+        expiresIn = hashParams.get("expires_in");
       }
       // Formato 2 (PKCE): ?code=...
       else if (query.includes("code=")) {
@@ -7030,12 +7099,16 @@ export default function App() {
             });
             const data = await r.json();
             token = data.access_token || null;
+            refreshToken = data.refresh_token || null;
+            expiresIn = data.expires_in || null;
             if (!token) alert("No se pudo completar el inicio con Google (código). Detalle: " + (data.error_description || data.msg || JSON.stringify(data)).toString().slice(0, 200));
           } catch(e) { alert("Error de conexión al validar Google: " + e.message); }
         }
       }
 
       if (token) {
+        // Activa la sesión YA, antes de buscar el perfil, para que esa consulta salga autenticada
+        sb.setSession({ access_token: token, refresh_token: refreshToken, expires_in: expiresIn });
         try {
           const r = await fetch(`${SUPABASE_URL}/auth/v1/user`, { headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${token}` } });
           const gUser = await r.json();
@@ -7045,10 +7118,10 @@ export default function App() {
             let perfil = [];
             try { perfil = await sb.get("usuarios", `?email=eq.${encodeURIComponent(gUser.email)}&limit=1`); } catch(e) {}
             if (perfil && perfil.length > 0) {
-              setUser({ ...gUser, ...perfil[0], token });
+              setUser({ ...gUser, ...perfil[0], token, refresh_token: refreshToken, expires_at: sb.session?.expires_at });
               showToast(`¡Bienvenido de vuelta, ${perfil[0].nombre?.split(" ")[0] || ""}!`);
             } else {
-              setCompleteProfile({ email: gUser.email, nombre, token, gUser });
+              setCompleteProfile({ email: gUser.email, nombre, token, refresh_token: refreshToken, expires_at: sb.session?.expires_at, gUser });
             }
           } else {
             alert("Google no devolvió un correo válido. Intenta de nuevo.");
