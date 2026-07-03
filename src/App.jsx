@@ -2093,6 +2093,7 @@ function CrearPedidoView() {
   const [clientesLista, setClientesLista] = useState([]); // clientes registrados para buscar
   const [busquedaCliente, setBusquedaCliente] = useState(""); // texto de búsqueda de cliente
   const [mostrarClientes, setMostrarClientes] = useState(false); // muestra el desplegable de resultados
+  const [clienteForm, setClienteForm] = useState(null); // null | {} — modal para crear cliente directo desde aquí
   // Carga la lista de clientes para poder buscarlos al crear el pedido
   useEffect(() => {
     sb.get("usuarios", "?es_admin=eq.false&order=nombre.asc").then(d => setClientesLista(d || [])).catch(() => {});
@@ -2728,7 +2729,18 @@ function CrearPedidoView() {
         {/* COLUMNA DERECHA: datos del cliente */}
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           <div style={{ background: WHITE, borderRadius: 16, padding: 20, border: `1px solid ${GRAY2}` }}>
-            <div style={{ fontWeight: 800, marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}><User size={18} color={RED} /> Datos del cliente</div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+              <div style={{ fontWeight: 800, display: "flex", alignItems: "center", gap: 8 }}><User size={18} color={RED} /> Datos del cliente</div>
+              {!cliente.id && (
+                <button
+                  onClick={() => setClienteForm({ nombre: cliente.nombre, telefono: cliente.telefono })}
+                  className="oft-btn-press"
+                  style={{ background: "none", border: "none", color: RED, fontWeight: 700, fontSize: 12, cursor: "pointer", padding: 0, display: "inline-flex", alignItems: "center", gap: 4 }}
+                >
+                  <Plus size={14} /> Crear cliente
+                </button>
+              )}
+            </div>
 
             {/* BUSCAR CLIENTE EXISTENTE */}
             <div style={{ position: "relative", marginBottom: 14 }}>
@@ -2782,6 +2794,19 @@ function CrearPedidoView() {
             <label style={S.label}>Dirección / referencia</label>
             <input style={S.input} placeholder="Opcional" value={cliente.direccion} onChange={e => setCliente({ ...cliente, direccion: e.target.value })} />
           </div>
+
+          {clienteForm && (
+            <ClienteFormModal
+              cliente={clienteForm}
+              showToast={showToast}
+              onClose={() => setClienteForm(null)}
+              onSaved={(saved) => {
+                setClientesLista(prev => [saved, ...prev]);
+                // Selecciona automáticamente al cliente recién creado, así el pedido queda ligado a él
+                setCliente({ id: saved.id, nombre: saved.nombre || "", telefono: saved.telefono || "", direccion: cliente.direccion });
+              }}
+            />
+          )}
 
           <div style={{ background: WHITE, borderRadius: 16, padding: 20, border: `1px solid ${GRAY2}` }}>
             <div style={{ fontWeight: 800, marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}><Truck size={18} color={RED} /> Envío (opcional)</div>
@@ -3574,7 +3599,74 @@ function OrderImageModal({ order, onClose }) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  RANKING COMPLETO DE ANÁLISIS DE STOCK (top 50) — Reponer / Rotación / Ingreso
+//  CREAR / EDITAR CLIENTE (reutilizable — desde la sección Clientes
+//  o directo desde el formulario de Nuevo Pedido/Cotización)
+// ═══════════════════════════════════════════════════════════════
+function ClienteFormModal({ cliente, onClose, onSaved, showToast }) {
+  useLockBodyScroll();
+  const esEdicion = !!cliente?.id;
+  const [form, setForm] = useState({
+    nombre: cliente?.nombre || "",
+    telefono: cliente?.telefono || "",
+    email: cliente?.email && !cliente.email.includes("@ofertodo.local") ? cliente.email : "",
+  });
+  const [guardando, setGuardando] = useState(false);
+
+  const guardar = async () => {
+    if (!form.nombre.trim()) { showToast("Escribe el nombre del cliente"); return; }
+    setGuardando(true);
+    try {
+      if (esEdicion) {
+        const payload = {
+          nombre: form.nombre.trim(),
+          telefono: form.telefono.trim(),
+          email: form.email.trim() || cliente.email,
+        };
+        const fila = await sb.patch("usuarios", cliente.id, payload);
+        onSaved({ ...cliente, ...(Array.isArray(fila) && fila[0] ? fila[0] : payload) });
+        showToast("Cliente actualizado");
+      } else {
+        // Email opcional: si no ponen, generamos uno interno para identificarlo
+        const email = form.email.trim() || `cliente_${Date.now()}@ofertodo.local`;
+        const fila = await sb.post("usuarios", {
+          nombre: form.nombre.trim(), telefono: form.telefono.trim(), email, es_admin: false,
+        });
+        onSaved(Array.isArray(fila) && fila[0] ? fila[0] : fila);
+        showToast("Cliente creado");
+      }
+      onClose();
+    } catch(e) {
+      showToast("Error: " + (e.message || "no se pudo guardar"));
+    }
+    setGuardando(false);
+  };
+
+  return createPortal(
+    <div className="oft-overlay" style={S.overlay} onClick={() => !guardando && onClose()}>
+      <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 16, maxWidth: 420, width: "92%", padding: 24 }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+          <div style={{ fontWeight: 800, fontSize: 17 }}>{esEdicion ? "Editar cliente" : "Crear cliente"}</div>
+          <button onClick={() => !guardando && onClose()} style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}><X size={22} /></button>
+        </div>
+        <label style={S.label}>Nombre *</label>
+        <input style={S.input} placeholder="Nombre del cliente" value={form.nombre} onChange={e => setForm({ ...form, nombre: e.target.value })} autoFocus />
+        <label style={S.label}>WhatsApp / Teléfono</label>
+        <input style={S.input} placeholder="Ej: 6720-0474" value={form.telefono} onChange={e => setForm({ ...form, telefono: e.target.value })} />
+        <label style={S.label}>Correo (opcional)</label>
+        <input style={S.input} placeholder="correo@ejemplo.com" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} />
+        <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
+          <button onClick={() => !guardando && onClose()} disabled={guardando} className="oft-btn-press" style={{ ...S.btnOutline, flex: 1, justifyContent: "center" }}>Cancelar</button>
+          <button onClick={guardar} disabled={guardando} className="oft-btn-press" style={{ ...S.btnRed, flex: 1, justifyContent: "center", opacity: guardando ? 0.7 : 1 }}>
+            {guardando ? "Guardando..." : esEdicion ? "Guardar cambios" : "Crear cliente"}
+          </button>
+        </div>
+      </div>
+    </div>
+  , document.body);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  RANKING COMPLETO DE ANÁLISIS DE STOCK (top 50) — Reponer / Rotación / Ingreso / Zona
 // ═══════════════════════════════════════════════════════════════
 function StockRankingModal({ tipo, items, onClose }) {
   useLockBodyScroll();
@@ -3852,8 +3944,7 @@ function AdminView() {
   const [cotizacionImagen, setCotizacionImagen] = useState(null); // cotización a la que se le está generando la imagen
   const [facturaImagen, setFacturaImagen] = useState(null); // pedido al que se le está generando la imagen de factura
   const [rankingModal, setRankingModal] = useState(null); // null | "reponer" | "rotacion" | "ingreso" | "zona" — para ver el top 50 en Análisis de Stock
-  const [nuevoCliente, setNuevoCliente] = useState(null); // {nombre, telefono, email} o null; modal crear cliente
-  const [guardandoCliente, setGuardandoCliente] = useState(false);
+  const [clienteForm, setClienteForm] = useState(null); // null | {} (crear) | {id,...} (editar)
   // ── DESCUENTOS ──
   const [descuentos, setDescuentos] = useState([]); // lista de códigos de descuento
   const [descForm, setDescForm] = useState(null); // formulario crear/editar descuento o null
@@ -4167,28 +4258,6 @@ function AdminView() {
       setPedidoAEliminar(null);
     } catch(e) { alert("Error al eliminar: " + (e.message || e)); }
     setEliminando(false);
-  };
-
-  // ── CREAR CLIENTE MANUALMENTE ──────────────────────────────────
-  const crearClienteManual = async () => {
-    if (!nuevoCliente?.nombre?.trim()) { showToast("Escribe el nombre del cliente"); return; }
-    setGuardandoCliente(true);
-    try {
-      // Email opcional: si no ponen, generamos uno interno para identificarlo
-      const email = (nuevoCliente.email || "").trim() || `cliente_${Date.now()}@ofertodo.local`;
-      const fila = await sb.post("usuarios", {
-        nombre: nuevoCliente.nombre.trim(),
-        telefono: (nuevoCliente.telefono || "").trim(),
-        email,
-        es_admin: false,
-      });
-      if (Array.isArray(fila) && fila[0]) setUsers(prev => [fila[0], ...prev]);
-      showToast("Cliente creado");
-      setNuevoCliente(null);
-    } catch(e) {
-      showToast("Error: " + (e.message || "no se pudo crear"));
-    }
-    setGuardandoCliente(false);
   };
 
   // ── DESCUENTOS: crear / editar / eliminar / activar ────────────
@@ -5243,28 +5312,16 @@ function AdminView() {
           />
         )}
 
-        {/* MODAL CREAR CLIENTE */}
-        {nuevoCliente && (
-          <div className="oft-overlay" style={S.overlay} onClick={() => !guardandoCliente && setNuevoCliente(null)}>
-            <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 16, maxWidth: 420, width: "92%", padding: 24 }} onClick={e => e.stopPropagation()}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-                <div style={{ fontWeight: 800, fontSize: 18, display: "flex", alignItems: "center", gap: 8 }}><Users size={18} color={RED} /> Nuevo cliente</div>
-                <button onClick={() => setNuevoCliente(null)} style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}><X size={22} /></button>
-              </div>
-              <label style={S.label}>Nombre *</label>
-              <input style={S.input} placeholder="Nombre del cliente" value={nuevoCliente.nombre} onChange={e => setNuevoCliente({ ...nuevoCliente, nombre: e.target.value })} autoFocus />
-              <label style={S.label}>WhatsApp / Teléfono</label>
-              <input style={S.input} placeholder="Ej: 6720-0474" value={nuevoCliente.telefono} onChange={e => setNuevoCliente({ ...nuevoCliente, telefono: e.target.value })} />
-              <label style={S.label}>Email (opcional)</label>
-              <input style={S.input} placeholder="correo@ejemplo.com" value={nuevoCliente.email} onChange={e => setNuevoCliente({ ...nuevoCliente, email: e.target.value })} />
-              <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
-                <button onClick={() => setNuevoCliente(null)} disabled={guardandoCliente} className="oft-btn-press" style={{ ...S.btnOutline, flex: 1, justifyContent: "center" }}>Cancelar</button>
-                <button onClick={crearClienteManual} disabled={guardandoCliente} className="oft-btn-press" style={{ ...S.btnRed, flex: 1, justifyContent: "center", opacity: guardandoCliente ? 0.7 : 1 }}>
-                  {guardandoCliente ? "Guardando..." : "Crear cliente"}
-                </button>
-              </div>
-            </div>
-          </div>
+        {/* MODAL CREAR/EDITAR CLIENTE */}
+        {clienteForm && (
+          <ClienteFormModal
+            cliente={clienteForm}
+            showToast={showToast}
+            onClose={() => setClienteForm(null)}
+            onSaved={(saved) => {
+              setUsers(prev => clienteForm.id ? prev.map(u => u.id === saved.id ? saved : u) : [saved, ...prev]);
+            }}
+          />
         )}
 
         {/* ═══════════ PRODUCTOS ═══════════ */}
@@ -6409,7 +6466,7 @@ function AdminView() {
                 }} className="oft-btn-press" style={{ ...S.btnOutline, padding: "10px 18px", fontSize: 14, display: "inline-flex", alignItems: "center", gap: 6 }}>
                   <FileSpreadsheet size={16} /> Exportar Excel
                 </button>
-                <button onClick={() => setNuevoCliente({ nombre: "", telefono: "", email: "" })} className="oft-btn-press" style={{ ...S.btnRed, padding: "10px 18px", fontSize: 14 }}>
+                <button onClick={() => setClienteForm({})} className="oft-btn-press" style={{ ...S.btnRed, padding: "10px 18px", fontSize: 14 }}>
                   <Plus size={16} /> Crear cliente
                 </button>
               </div>
@@ -6424,10 +6481,10 @@ function AdminView() {
               {/* TABLA (solo escritorio) */}
               <div className="oft-table-wrap oft-only-desktop" style={{ background: WHITE, borderRadius: 12, overflow: "auto" }}>
                 <table style={S.table}>
-                  <thead><tr>{["Nombre","Email","WhatsApp","Pedidos","Registrado"].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
+                  <thead><tr>{["Nombre","Email","WhatsApp","Pedidos","Registrado",""].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
                   <tbody>
                     {users.length === 0 ? (
-                      <tr><td colSpan={5} style={{ ...S.td, textAlign: "center", color: GRAY3, padding: 30 }}>Aún no hay clientes registrados</td></tr>
+                      <tr><td colSpan={6} style={{ ...S.td, textAlign: "center", color: GRAY3, padding: 30 }}>Aún no hay clientes registrados</td></tr>
                     ) : users.map(u => {
                       const pedidosUser = orders.filter(o => o.usuario_id === u.id).length;
                       return (
@@ -6437,6 +6494,11 @@ function AdminView() {
                           <td style={S.td}>{u.telefono || "-"}</td>
                           <td style={{ ...S.td, fontWeight: 700, color: RED }}>{pedidosUser}</td>
                           <td style={S.td}>{u.created_at ? new Date(u.created_at).toLocaleDateString() : "-"}</td>
+                          <td style={S.td}>
+                            <button onClick={() => setClienteForm(u)} title="Editar cliente" style={{ background: "none", border: `1.5px solid ${BLACK}`, color: BLACK, borderRadius: 6, padding: "6px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                              <PencilIcon size={13} /> Editar
+                            </button>
+                          </td>
                         </tr>
                       );
                     })}
@@ -6469,6 +6531,9 @@ function AdminView() {
                         <div style={{ display: "flex", alignItems: "center", gap: 5 }}><MessageCircle size={13} /> {u.telefono || "Sin WhatsApp"}</div>
                         <div style={{ display: "flex", alignItems: "center", gap: 5, marginLeft: "auto" }}><ClipboardList size={13} /> {u.created_at ? new Date(u.created_at).toLocaleDateString() : "-"}</div>
                       </div>
+                      <button onClick={() => setClienteForm(u)} className="oft-btn-press" style={{ width: "100%", marginTop: 12, justifyContent: "center", background: "none", color: BLACK, border: `1.5px solid ${BLACK}`, borderRadius: 8, padding: "9px", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
+                        <PencilIcon size={15} /> Editar cliente
+                      </button>
                     </div>
                   );
                 })}
