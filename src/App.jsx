@@ -1384,6 +1384,48 @@ function RegisterModal() {
 // ═══════════════════════════════════════════════════════════════
 //  COMPLETAR PERFIL (después de registrarse con Google)
 // ═══════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════
+//  2FA AL INICIAR SESIÓN CON GOOGLE (cuenta con verificación en dos pasos activada)
+// ═══════════════════════════════════════════════════════════════
+function GoogleMfaModal() {
+  const { googleMfaPaso, setGoogleMfaPaso, setUser, showToast } = useApp();
+  const [codigo, setCodigo] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState("");
+
+  const confirmar = async () => {
+    if (codigo.trim().length < 6) { setErr("Escribe el código de 6 dígitos"); return; }
+    setLoading(true); setErr("");
+    try {
+      const ch = await sb.mfaChallenge(googleMfaPaso.factorId);
+      if (!ch.id) { setErr("No se pudo verificar, intenta de nuevo"); setLoading(false); return; }
+      const v = await sb.mfaVerify(googleMfaPaso.factorId, ch.id, codigo.trim());
+      if (v.error || !v.access_token) { setErr("Código incorrecto"); setLoading(false); return; }
+      sb.setSession(v);
+      const { gUser, perfil } = googleMfaPaso;
+      setUser({ ...gUser, ...(perfil[0] || {}), token: v.access_token, refresh_token: v.refresh_token, expires_at: sb.session?.expires_at });
+      showToast(`¡Bienvenido de vuelta, ${perfil[0]?.nombre?.split(" ")[0] || ""}!`);
+      setGoogleMfaPaso(null);
+    } catch(e) { setErr("Error de conexión"); }
+    setLoading(false);
+  };
+
+  return (
+    <div className="oft-overlay" style={S.overlay} onClick={() => setGoogleMfaPaso(null)}>
+      <div className="oft-modal-sheet oft-modal oft-auth-pop" style={S.modal} onClick={e => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}><Logo height={28} /><button onClick={() => setGoogleMfaPaso(null)} style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}><X size={22} /></button></div>
+        <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 8, display: "flex", alignItems: "center", gap: 8 }}><Lock size={19} color={RED} /> Verificación en dos pasos</div>
+        <p style={{ fontSize: 13, color: GRAY3, marginBottom: 18 }}>Esta cuenta tiene 2FA activado. Abre tu app de autenticación y escribe el código de 6 dígitos.</p>
+        <input style={{ ...S.input, textAlign: "center", fontSize: 20, letterSpacing: 4, fontWeight: 800 }} maxLength={6} inputMode="numeric" placeholder="000000" value={codigo} onChange={e => setCodigo(e.target.value.replace(/\D/g, ""))} onKeyDown={e => e.key === "Enter" && confirmar()} autoFocus />
+        {err && <div style={{ color: RED, fontSize: 13, marginBottom: 12 }}>{err}</div>}
+        <button style={{ ...S.btnRed, width: "100%", justifyContent: "center", padding: 14, fontSize: 15, opacity: loading ? 0.7 : 1, marginTop: 8 }} onClick={confirmar} disabled={loading}>
+          {loading ? "Verificando..." : "Confirmar"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function CompleteProfileModal() {
   const { completeProfile, setCompleteProfile, setUser, showToast } = useApp();
   const [nombre, setNombre] = useState(completeProfile?.nombre || "");
@@ -7281,6 +7323,7 @@ export default function App() {
   const [quickView, setQuickView] = useState(null); // producto a mostrar en detalle
   const [catalogCat, setCatalogCat] = useState(0); // categoría a abrir en el catálogo (0 = todas)
   const [completeProfile, setCompleteProfile] = useState(null); // usuario de Google que debe completar sus datos
+  const [googleMfaPaso, setGoogleMfaPaso] = useState(null); // pide el código 2FA cuando el login fue con Google
   const [pendingCheckout, setPendingCheckout] = useState(false); // el cliente quería pagar y tuvo que loguearse
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -7372,8 +7415,18 @@ export default function App() {
             let perfil = [];
             try { perfil = await sb.get("usuarios", `?email=eq.${encodeURIComponent(gUser.email)}&limit=1`); } catch(e) {}
             if (perfil && perfil.length > 0) {
-              setUser({ ...gUser, ...perfil[0], token, refresh_token: refreshToken, expires_at: sb.session?.expires_at });
-              showToast(`¡Bienvenido de vuelta, ${perfil[0].nombre?.split(" ")[0] || ""}!`);
+              let factorVerificado = null;
+              try {
+                const factores = await sb.mfaListFactors();
+                factorVerificado = factores.find(f => f.status === "verified") || null;
+              } catch(e) {}
+              if (factorVerificado) {
+                // Esta cuenta tiene 2FA activado: pide el código antes de terminar de entrar
+                setGoogleMfaPaso({ factorId: factorVerificado.id, gUser, perfil, token, refresh_token: refreshToken, expires_at: sb.session?.expires_at });
+              } else {
+                setUser({ ...gUser, ...perfil[0], token, refresh_token: refreshToken, expires_at: sb.session?.expires_at });
+                showToast(`¡Bienvenido de vuelta, ${perfil[0].nombre?.split(" ")[0] || ""}!`);
+              }
             } else {
               setCompleteProfile({ email: gUser.email, nombre, token, refresh_token: refreshToken, expires_at: sb.session?.expires_at, gUser });
             }
@@ -7428,7 +7481,7 @@ export default function App() {
   }, []);
 
   const isAdmin = view === "admin";
-  const ctx = { view, setView, cart, setCart, addToCart, cartPulse, user, setUser, showLogin, setShowLogin, showRegister, setShowRegister, showCart, setShowCart, quickView, setQuickView, catalogCat, setCatalogCat, completeProfile, setCompleteProfile, pendingCheckout, setPendingCheckout, products, setProducts, categories, setCategories, empresas, setEmpresas, sucursales, setSucursales, loading, showToast };
+  const ctx = { view, setView, cart, setCart, addToCart, cartPulse, user, setUser, showLogin, setShowLogin, showRegister, setShowRegister, showCart, setShowCart, quickView, setQuickView, catalogCat, setCatalogCat, completeProfile, setCompleteProfile, googleMfaPaso, setGoogleMfaPaso, pendingCheckout, setPendingCheckout, products, setProducts, categories, setCategories, empresas, setEmpresas, sucursales, setSucursales, loading, showToast };
 
   return (
     <AppCtx.Provider value={ctx}>
@@ -7607,6 +7660,7 @@ export default function App() {
         {showLogin && <LoginModal />}
         {showRegister && <RegisterModal />}
         {completeProfile && <CompleteProfileModal />}
+        {googleMfaPaso && <GoogleMfaModal />}
         {quickView && <ProductModal />}
         {!isAdmin && <FloatingCart />}
         <Toast msg={toastMsg} />
