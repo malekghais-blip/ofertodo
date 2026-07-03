@@ -139,6 +139,37 @@ const sb = {
     const redirectTo = encodeURIComponent(window.location.origin);
     window.location.href = `${SUPABASE_URL}/auth/v1/authorize?provider=google&redirect_to=${redirectTo}&code_challenge=${challenge}&code_challenge_method=s256`;
   },
+  // ── MFA / Verificación en dos pasos (TOTP tipo Google Authenticator) ──
+  mfaHeaders() {
+    return { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${this.session?.access_token || SUPABASE_KEY}`, "Content-Type": "application/json" };
+  },
+  async mfaListFactors() {
+    const r = await fetch(`${SUPABASE_URL}/auth/v1/user`, { headers: this.mfaHeaders() });
+    const data = await r.json();
+    return (data.factors || []).filter(f => f.factor_type === "totp");
+  },
+  async mfaEnroll() {
+    const r = await fetch(`${SUPABASE_URL}/auth/v1/factors`, {
+      method: "POST", headers: this.mfaHeaders(),
+      body: JSON.stringify({ factor_type: "totp", friendly_name: "Autenticador" }),
+    });
+    return r.json(); // { id, totp: { qr_code, secret, uri } }
+  },
+  async mfaChallenge(factorId) {
+    const r = await fetch(`${SUPABASE_URL}/auth/v1/factors/${factorId}/challenge`, { method: "POST", headers: this.mfaHeaders() });
+    return r.json(); // { id, expires_at }
+  },
+  async mfaVerify(factorId, challengeId, code) {
+    const r = await fetch(`${SUPABASE_URL}/auth/v1/factors/${factorId}/verify`, {
+      method: "POST", headers: this.mfaHeaders(),
+      body: JSON.stringify({ challenge_id: challengeId, code }),
+    });
+    return r.json(); // éxito: { access_token, refresh_token, ... } sesión nueva ya con 2do factor confirmado
+  },
+  async mfaUnenroll(factorId) {
+    const r = await fetch(`${SUPABASE_URL}/auth/v1/factors/${factorId}`, { method: "DELETE", headers: this.mfaHeaders() });
+    return r.json();
+  },
   // Storage
   uploadUrl(bucket, path) { return `${SUPABASE_URL}/storage/v1/object/${bucket}/${path}`; },
   publicUrl(bucket, path) { return `${SUPABASE_URL}/storage/v1/object/public/${bucket}/${path}`; },
@@ -1170,6 +1201,9 @@ function CartModal() {
 function LoginModal() {
   const { setShowLogin, setShowRegister, setUser, showToast } = useApp();
   const [email, setEmail] = useState(""), [pass, setPass] = useState(""), [loading, setLoading] = useState(false), [err, setErr] = useState("");
+  // Paso de verificación en dos pasos (solo aparece si la cuenta lo tiene activado)
+  const [mfaPaso, setMfaPaso] = useState(null); // null | { factorId, res, users }
+  const [mfaCodigo, setMfaCodigo] = useState("");
 
   const handle = async () => {
     setLoading(true); setErr("");
@@ -1177,16 +1211,66 @@ function LoginModal() {
       const res = await sb.signIn(email, pass);
       if (res.error) { setErr(res.error.message || "Credenciales incorrectas"); }
       else {
-        // Activa la sesión YA para que la búsqueda del perfil salga autenticada
+        // Activa la sesión (aunque sea parcial) para poder consultar el perfil y, si aplica, el 2do factor
         sb.setSession(res);
         const users = await sb.get("usuarios", `?email=eq.${encodeURIComponent(email)}&limit=1`);
-        setUser({ ...res.user, ...(users[0] || {}), token: res.access_token, refresh_token: res.refresh_token, expires_at: sb.session?.expires_at });
-        showToast("¡Bienvenido de vuelta!");
-        setShowLogin(false);
+        let factorVerificado = null;
+        try {
+          const factores = await sb.mfaListFactors();
+          factorVerificado = factores.find(f => f.status === "verified") || null;
+        } catch(e) {}
+        if (factorVerificado) {
+          // Esta cuenta tiene 2FA activado: pide el código antes de terminar de entrar
+          setMfaPaso({ factorId: factorVerificado.id, res, users });
+        } else {
+          setUser({ ...res.user, ...(users[0] || {}), token: res.access_token, refresh_token: res.refresh_token, expires_at: sb.session?.expires_at });
+          showToast("¡Bienvenido de vuelta!");
+          setShowLogin(false);
+        }
       }
     } catch(e) { setErr("Error de conexión. Verifica tu configuración de Supabase."); }
     setLoading(false);
   };
+
+  const confirmarMfa = async () => {
+    if (mfaCodigo.trim().length < 6) { setErr("Escribe el código de 6 dígitos"); return; }
+    setLoading(true); setErr("");
+    try {
+      const ch = await sb.mfaChallenge(mfaPaso.factorId);
+      if (!ch.id) { setErr("No se pudo verificar, intenta de nuevo"); setLoading(false); return; }
+      const v = await sb.mfaVerify(mfaPaso.factorId, ch.id, mfaCodigo.trim());
+      if (v.error || !v.access_token) {
+        setErr("Código incorrecto");
+        setLoading(false);
+        return;
+      }
+      sb.setSession(v);
+      setUser({ ...mfaPaso.res.user, ...(mfaPaso.users[0] || {}), token: v.access_token, refresh_token: v.refresh_token, expires_at: sb.session?.expires_at });
+      showToast("¡Bienvenido de vuelta!");
+      setShowLogin(false);
+    } catch(e) { setErr("Error de conexión"); }
+    setLoading(false);
+  };
+
+  if (mfaPaso) {
+    return (
+      <div className="oft-overlay" style={S.overlay} onClick={() => setShowLogin(false)}>
+        <div className="oft-modal-sheet oft-modal oft-auth-pop" style={S.modal} onClick={e => e.stopPropagation()}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}><Logo height={28} /><button onClick={() => setShowLogin(false)} style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}><X size={22} /></button></div>
+          <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 8, display: "flex", alignItems: "center", gap: 8 }}><Lock size={19} color={RED} /> Verificación en dos pasos</div>
+          <p style={{ fontSize: 13, color: GRAY3, marginBottom: 18 }}>Abre tu app de autenticación (Google Authenticator, Authy, etc.) y escribe el código de 6 dígitos.</p>
+          <input style={{ ...S.input, textAlign: "center", fontSize: 20, letterSpacing: 4, fontWeight: 800 }} maxLength={6} inputMode="numeric" placeholder="000000" value={mfaCodigo} onChange={e => setMfaCodigo(e.target.value.replace(/\D/g, ""))} onKeyDown={e => e.key === "Enter" && confirmarMfa()} autoFocus />
+          {err && <div style={{ color: RED, fontSize: 13, marginBottom: 12 }}>{err}</div>}
+          <button style={{ ...S.btnRed, width: "100%", justifyContent: "center", padding: 14, fontSize: 15, opacity: loading ? 0.7 : 1, marginTop: 8 }} onClick={confirmarMfa} disabled={loading}>
+            {loading ? "Verificando..." : "Confirmar"}
+          </button>
+          <div style={{ textAlign: "center", marginTop: 16, fontSize: 13, color: GRAY3, cursor: "pointer" }} onClick={() => { setMfaPaso(null); setMfaCodigo(""); setErr(""); }}>
+            ← Volver
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="oft-overlay" style={S.overlay} onClick={() => setShowLogin(false)}>
@@ -3666,6 +3750,149 @@ function OrderImageModal({ order, onClose }) {
 // ═══════════════════════════════════════════════════════════════
 //  AGREGAR MIEMBRO DEL EQUIPO (admin / operador)
 // ═══════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════
+//  VERIFICACIÓN EN DOS PASOS (2FA / TOTP) — activar o desactivar
+// ═══════════════════════════════════════════════════════════════
+function MfaSetupModal({ onClose }) {
+  useLockBodyScroll();
+  const { showToast, user, setUser } = useApp();
+  const [cargando, setCargando] = useState(true);
+  const [factor, setFactor] = useState(null); // factor verificado existente, o null
+  const [enrolando, setEnrolando] = useState(null); // { factorId, qr, secret } mientras se activa
+  const [codigo, setCodigo] = useState("");
+  const [guardando, setGuardando] = useState(false);
+  const [confirmarQuitar, setConfirmarQuitar] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const factores = await sb.mfaListFactors();
+        const verificado = factores.find(f => f.status === "verified");
+        setFactor(verificado || null);
+      } catch(e) {}
+      setCargando(false);
+    })();
+  }, []);
+
+  const activar = async () => {
+    setGuardando(true);
+    try {
+      const r = await sb.mfaEnroll();
+      if (r.error || !r.id) { showToast("Error: " + (r.error?.message || r.message || "no se pudo iniciar la activación")); setGuardando(false); return; }
+      setEnrolando({ factorId: r.id, qr: r.totp?.qr_code || "", secret: r.totp?.secret || "" });
+    } catch(e) { showToast("Error de conexión"); }
+    setGuardando(false);
+  };
+
+  const confirmarCodigo = async () => {
+    if (codigo.trim().length < 6) { showToast("Escribe el código de 6 dígitos"); return; }
+    setGuardando(true);
+    try {
+      const ch = await sb.mfaChallenge(enrolando.factorId);
+      if (!ch.id) { showToast("Error: " + (ch.error?.message || "no se pudo generar el reto")); setGuardando(false); return; }
+      const v = await sb.mfaVerify(enrolando.factorId, ch.id, codigo.trim());
+      if (v.error || !v.access_token) {
+        showToast("Código incorrecto, intenta de nuevo");
+        setGuardando(false);
+        return;
+      }
+      // La verificación devuelve una sesión nueva (ya con el 2do factor confirmado) — la activamos
+      sb.setSession(v);
+      const nuevoUser = { ...user, token: v.access_token, refresh_token: v.refresh_token, expires_at: sb.session?.expires_at };
+      setUser(nuevoUser);
+      setFactor({ id: enrolando.factorId, status: "verified" });
+      setEnrolando(null);
+      setCodigo("");
+      showToast("¡Verificación en dos pasos activada!");
+    } catch(e) { showToast("Error de conexión"); }
+    setGuardando(false);
+  };
+
+  const quitar = async () => {
+    setGuardando(true);
+    try {
+      await sb.mfaUnenroll(factor.id);
+      setFactor(null);
+      setConfirmarQuitar(false);
+      showToast("Verificación en dos pasos desactivada");
+    } catch(e) { showToast("Error al desactivar"); }
+    setGuardando(false);
+  };
+
+  return createPortal(
+    <div className="oft-overlay" style={S.overlay} onClick={() => !guardando && onClose()}>
+      <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 16, maxWidth: 420, width: "92%", padding: 24 }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+          <div style={{ fontWeight: 800, fontSize: 18, display: "flex", alignItems: "center", gap: 8 }}><Lock size={18} color={RED} /> Verificación en dos pasos</div>
+          <button onClick={() => !guardando && onClose()} style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}><X size={22} /></button>
+        </div>
+
+        {cargando ? <Spinner /> : enrolando ? (
+          <>
+            <p style={{ fontSize: 13, color: GRAY3, marginBottom: 14 }}>
+              Escanea este código con Google Authenticator, Authy, o cualquier app similar en tu celular.
+            </p>
+            <div style={{ background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 12, padding: 16, display: "flex", justifyContent: "center", marginBottom: 14 }}>
+              {enrolando.qr && enrolando.qr.trim().startsWith("<svg")
+                ? <div style={{ width: 180, height: 180 }} dangerouslySetInnerHTML={{ __html: enrolando.qr }} />
+                : <img src={enrolando.qr} alt="Código QR" style={{ width: 180, height: 180 }} />
+              }
+            </div>
+            {enrolando.secret && (
+              <div style={{ fontSize: 11, color: GRAY3, textAlign: "center", marginBottom: 14 }}>
+                ¿No puedes escanear? Ingresa este código manual:<br />
+                <span style={{ fontFamily: "monospace", fontWeight: 700, fontSize: 13, color: BLACK, letterSpacing: 1 }}>{enrolando.secret}</span>
+              </div>
+            )}
+            <label style={S.label}>Código de 6 dígitos de la app</label>
+            <input style={{ ...S.input, textAlign: "center", fontSize: 20, letterSpacing: 4, fontWeight: 800 }} maxLength={6} inputMode="numeric" placeholder="000000" value={codigo} onChange={e => setCodigo(e.target.value.replace(/\D/g, ""))} autoFocus />
+            <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
+              <button onClick={() => { setEnrolando(null); setCodigo(""); }} disabled={guardando} className="oft-btn-press" style={{ ...S.btnOutline, flex: 1, justifyContent: "center" }}>Cancelar</button>
+              <button onClick={confirmarCodigo} disabled={guardando} className="oft-btn-press" style={{ ...S.btnRed, flex: 1, justifyContent: "center", opacity: guardando ? 0.7 : 1 }}>
+                {guardando ? "Verificando..." : "Confirmar"}
+              </button>
+            </div>
+          </>
+        ) : factor ? (
+          <>
+            <div style={{ background: "#EAF7EF", border: "1.5px solid #1FA64A", borderRadius: 10, padding: 14, display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+              <CheckCircle2 size={20} color="#1FA64A" />
+              <div style={{ fontSize: 13, fontWeight: 700, color: "#1FA64A" }}>Activada — tu cuenta pide un código extra al iniciar sesión</div>
+            </div>
+            {!confirmarQuitar ? (
+              <button onClick={() => setConfirmarQuitar(true)} className="oft-btn-press" style={{ ...S.btnOutline, width: "100%", justifyContent: "center", color: RED, borderColor: RED }}>
+                Desactivar verificación en dos pasos
+              </button>
+            ) : (
+              <>
+                <p style={{ fontSize: 13, color: GRAY3, marginBottom: 14 }}>¿Seguro? Tu cuenta quedará protegida solo con la contraseña.</p>
+                <div style={{ display: "flex", gap: 10 }}>
+                  <button onClick={() => setConfirmarQuitar(false)} className="oft-btn-press" style={{ ...S.btnOutline, flex: 1, justifyContent: "center" }}>Cancelar</button>
+                  <button onClick={quitar} disabled={guardando} className="oft-btn-press" style={{ ...S.btnRed, flex: 1, justifyContent: "center", opacity: guardando ? 0.7 : 1 }}>
+                    {guardando ? "..." : "Sí, desactivar"}
+                  </button>
+                </div>
+              </>
+            )}
+          </>
+        ) : (
+          <>
+            <p style={{ fontSize: 13, color: GRAY3, marginBottom: 16 }}>
+              Agrega una capa extra de seguridad: además de tu contraseña, vas a necesitar un código de 6 dígitos generado por una app en tu celular (Google Authenticator, Authy, etc.) cada vez que inicies sesión.
+            </p>
+            <button onClick={activar} disabled={guardando} className="oft-btn-press" style={{ ...S.btnRed, width: "100%", justifyContent: "center", opacity: guardando ? 0.7 : 1 }}>
+              {guardando ? "Iniciando..." : "Activar verificación en dos pasos"}
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  , document.body);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  AGREGAR MIEMBRO DEL EQUIPO (admin / operador)
+// ═══════════════════════════════════════════════════════════════
 function EquipoFormModal({ onClose, onSaved, showToast }) {
   useLockBodyScroll();
   const [form, setForm] = useState({ nombre: "", email: "", telefono: "", password: "", rol: "operador" });
@@ -4104,6 +4331,7 @@ function AdminView() {
   const [clienteForm, setClienteForm] = useState(null); // null | {} (crear) | {id,...} (editar)
   const [equipoForm, setEquipoForm] = useState(false); // true = mostrar modal de agregar miembro
   const [miembroAQuitar, setMiembroAQuitar] = useState(null); // usuario del equipo a quitar (confirmación)
+  const [mfaModal, setMfaModal] = useState(false); // true = mostrar modal de verificación en dos pasos
   // ── DESCUENTOS ──
   const [descuentos, setDescuentos] = useState([]); // lista de códigos de descuento
   const [descForm, setDescForm] = useState(null); // formulario crear/editar descuento o null
@@ -4947,6 +5175,10 @@ function AdminView() {
           <div onClick={() => setView("home")} className="oft-admin-tab" style={{ padding: "11px 16px", marginBottom: 4, cursor: "pointer", fontWeight: 600, fontSize: 14, color: GRAY3, background: "transparent", borderRadius: 10, display: "flex", alignItems: "center", gap: 11, transition: "all 0.18s ease" }}>
             <Home size={18} strokeWidth={2} /> <span className="oft-admin-tab-label">Ver tienda</span>
           </div>
+          {/* Seguridad (2FA) — cualquier miembro del equipo gestiona la suya, sin importar el rol */}
+          <div onClick={() => setMfaModal(true)} className="oft-admin-tab" style={{ padding: "11px 16px", marginBottom: 4, cursor: "pointer", fontWeight: 600, fontSize: 14, color: GRAY3, background: "transparent", borderRadius: 10, display: "flex", alignItems: "center", gap: 11, transition: "all 0.18s ease" }}>
+            <Lock size={18} strokeWidth={2} /> <span className="oft-admin-tab-label">Seguridad</span>
+          </div>
           {/* Cerrar sesión — dentro de tabs para que salga en móvil también */}
           <div onClick={() => { setUser(null); setView("home"); }} className="oft-admin-tab" style={{ padding: "11px 16px", marginBottom: 4, cursor: "pointer", fontWeight: 700, fontSize: 14, color: RED, background: "transparent", borderRadius: 10, display: "flex", alignItems: "center", gap: 11, transition: "all 0.18s ease" }}>
             <LogOut size={18} strokeWidth={2} /> <span className="oft-admin-tab-label">Salir</span>
@@ -5602,6 +5834,9 @@ function AdminView() {
             }}
           />
         )}
+
+        {/* MODAL VERIFICACIÓN EN DOS PASOS */}
+        {mfaModal && <MfaSetupModal onClose={() => setMfaModal(false)} />}
 
         {/* MODAL AGREGAR AL EQUIPO */}
         {equipoForm && (
