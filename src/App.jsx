@@ -144,9 +144,23 @@ const sb = {
     return { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${this.session?.access_token || SUPABASE_KEY}`, "Content-Type": "application/json" };
   },
   async mfaListFactors() {
-    const r = await fetch(`${SUPABASE_URL}/auth/v1/user`, { headers: this.mfaHeaders() });
-    const data = await r.json();
-    return (data.factors || []).filter(f => f.factor_type === "totp");
+    // Endpoint dedicado para listar factores — más confiable que asumir
+    // que vienen incluidos dentro de la respuesta de /auth/v1/user.
+    // Como respaldo, si no devuelve nada usable, se intenta también por /auth/v1/user
+    // (algunas versiones de Supabase los incluyen ahí en vez de en el endpoint dedicado).
+    try {
+      const r = await fetch(`${SUPABASE_URL}/auth/v1/factors`, { headers: this.mfaHeaders() });
+      if (r.ok) {
+        const data = await r.json();
+        const lista = Array.isArray(data) ? data : (data?.factors || []);
+        if (lista.length > 0) return lista.filter(f => f.factor_type === "totp");
+      }
+    } catch(e) {}
+    try {
+      const r2 = await fetch(`${SUPABASE_URL}/auth/v1/user`, { headers: this.mfaHeaders() });
+      const data2 = await r2.json();
+      return (data2?.factors || []).filter(f => f.factor_type === "totp");
+    } catch(e) { return []; }
   },
   async mfaEnroll() {
     const r = await fetch(`${SUPABASE_URL}/auth/v1/factors`, {
