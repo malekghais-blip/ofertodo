@@ -3602,6 +3602,97 @@ function OrderImageModal({ order, onClose }) {
 //  CREAR / EDITAR CLIENTE (reutilizable — desde la sección Clientes
 //  o directo desde el formulario de Nuevo Pedido/Cotización)
 // ═══════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════
+//  AGREGAR MIEMBRO DEL EQUIPO (admin / operador)
+// ═══════════════════════════════════════════════════════════════
+function EquipoFormModal({ onClose, onSaved, showToast }) {
+  useLockBodyScroll();
+  const [form, setForm] = useState({ nombre: "", email: "", telefono: "", password: "", rol: "operador" });
+  const [guardando, setGuardando] = useState(false);
+  const [verPass, setVerPass] = useState(false);
+
+  const guardar = async () => {
+    if (!form.nombre.trim()) { showToast("Escribe el nombre"); return; }
+    if (!form.email.trim()) { showToast("Escribe el correo"); return; }
+    if (form.password.length < 6) { showToast("La contraseña debe tener al menos 6 caracteres"); return; }
+    setGuardando(true);
+    try {
+      const resp = await fetch(`${SUPABASE_URL}/functions/v1/crear-usuario-equipo`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          nombre: form.nombre.trim(), email: form.email.trim(), telefono: form.telefono.trim(),
+          password: form.password, rol: form.rol,
+        }),
+      });
+      const data = await resp.json();
+      if (!resp.ok || data.error) {
+        showToast("Error: " + (data.error || "no se pudo crear"));
+      } else {
+        onSaved(data.usuario);
+        showToast(`${form.rol === "admin" ? "Administrador" : "Operador"} agregado al equipo`);
+        onClose();
+      }
+    } catch(e) {
+      showToast("Error de conexión al crear el usuario");
+    }
+    setGuardando(false);
+  };
+
+  return createPortal(
+    <div className="oft-overlay" style={S.overlay} onClick={() => !guardando && onClose()}>
+      <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 16, maxWidth: 440, width: "92%", padding: 24 }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+          <div style={{ fontWeight: 800, fontSize: 18, display: "flex", alignItems: "center", gap: 8 }}><Lock size={18} color={RED} /> Agregar al equipo</div>
+          <button onClick={() => !guardando && onClose()} style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}><X size={22} /></button>
+        </div>
+
+        <label style={S.label}>Nombre *</label>
+        <input style={S.input} placeholder="Nombre completo" value={form.nombre} onChange={e => setForm({ ...form, nombre: e.target.value })} autoFocus />
+        <label style={S.label}>Correo *</label>
+        <input style={S.input} type="email" placeholder="correo@ejemplo.com" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} />
+        <label style={S.label}>WhatsApp / Teléfono</label>
+        <input style={S.input} placeholder="Ej: 6720-0474" value={form.telefono} onChange={e => setForm({ ...form, telefono: e.target.value })} />
+        <label style={S.label}>Contraseña temporal *</label>
+        <div style={{ position: "relative" }}>
+          <input style={{ ...S.input, paddingRight: 40 }} type={verPass ? "text" : "password"} placeholder="Mínimo 6 caracteres" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} />
+          <button type="button" onClick={() => setVerPass(v => !v)} style={{ position: "absolute", right: 10, top: 12, background: "none", border: "none", cursor: "pointer", display: "flex", color: GRAY3 }}>
+            {verPass ? <EyeOff size={17} /> : <Eye size={17} />}
+          </button>
+        </div>
+
+        <label style={S.label}>Función</label>
+        <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+          {[["admin", "Administrador", "Módulo completo"], ["operador", "Operador", "Acceso limitado"]].map(([val, label, sub]) => (
+            <button
+              key={val} type="button" onClick={() => setForm({ ...form, rol: val })}
+              className="oft-btn-press"
+              style={{ flex: 1, textAlign: "left", padding: "10px 12px", borderRadius: 10, border: `2px solid ${form.rol === val ? RED : GRAY2}`, background: form.rol === val ? "#FFF5F5" : WHITE, cursor: "pointer" }}
+            >
+              <div style={{ fontWeight: 800, fontSize: 13, color: form.rol === val ? RED : BLACK }}>{label}</div>
+              <div style={{ fontSize: 11, color: GRAY3 }}>{sub}</div>
+            </button>
+          ))}
+        </div>
+
+        {form.rol === "operador" && (
+          <div style={{ background: GRAY, borderRadius: 10, padding: 12, fontSize: 12, color: GRAY3, marginBottom: 16 }}>
+            El operador podrá ver: Inicio (ventas del día, pedidos y cotizaciones recientes), Pedidos, Crear pedido/cotización, Retornos, y Clientes (solo crear, no editar). No verá Productos, Categorías, Descuentos, Análisis de Stock, Envíos ni Equipo.
+          </div>
+        )}
+
+        <button onClick={guardar} disabled={guardando} className="oft-btn-press" style={{ ...S.btnRed, width: "100%", justifyContent: "center", opacity: guardando ? 0.7 : 1 }}>
+          {guardando ? "Creando..." : "Crear cuenta"}
+        </button>
+      </div>
+    </div>
+  , document.body);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  CREAR / EDITAR CLIENTE (reutilizable — desde la sección Clientes
+//  o directo desde el formulario de Nuevo Pedido/Cotización)
+// ═══════════════════════════════════════════════════════════════
 function ClienteFormModal({ cliente, onClose, onSaved, showToast }) {
   useLockBodyScroll();
   const esEdicion = !!cliente?.id;
@@ -3903,7 +3994,12 @@ function EditCotizacionModal({ cotizacion, empresas, sucursales, onClose, onSave
 //  ADMIN PANEL
 // ═══════════════════════════════════════════════════════════════
 function AdminView() {
-  const { products, setProducts, categories, setCategories, empresas, setEmpresas, sucursales, setSucursales, showToast, setView, setUser } = useApp();
+  const { products, setProducts, categories, setCategories, empresas, setEmpresas, sucursales, setSucursales, showToast, setView, setUser, user } = useApp();
+  // Rol del usuario actual: 'admin' = módulo completo, 'operador' = acceso limitado.
+  // Los admins creados antes de este cambio pueden no tener "rol" guardado todavía — por
+  // compatibilidad, si es_admin es true y no tiene rol, se trata como admin completo.
+  const esAdminCompleto = user?.rol === "admin" || (user?.es_admin && !user?.rol);
+  const esOperador = user?.rol === "operador";
   const [tab, setTab] = useState("dashboard");
   const [orders, setOrders] = useState([]);
   const [users, setUsers] = useState([]);
@@ -3945,6 +4041,8 @@ function AdminView() {
   const [facturaImagen, setFacturaImagen] = useState(null); // pedido al que se le está generando la imagen de factura
   const [rankingModal, setRankingModal] = useState(null); // null | "reponer" | "rotacion" | "ingreso" | "zona" — para ver el top 50 en Análisis de Stock
   const [clienteForm, setClienteForm] = useState(null); // null | {} (crear) | {id,...} (editar)
+  const [equipoForm, setEquipoForm] = useState(false); // true = mostrar modal de agregar miembro
+  const [miembroAQuitar, setMiembroAQuitar] = useState(null); // usuario del equipo a quitar (confirmación)
   // ── DESCUENTOS ──
   const [descuentos, setDescuentos] = useState([]); // lista de códigos de descuento
   const [descForm, setDescForm] = useState(null); // formulario crear/editar descuento o null
@@ -4750,7 +4848,13 @@ function AdminView() {
     } catch(e) { alert("Error: " + e.message); }
   };
 
-  const tabs = [
+  const tabs = esOperador ? [
+    ["dashboard", "Inicio", BarChart3],
+    ["orders", "Pedidos", Package],
+    ["crear", "Crear", FilePlus],
+    ["retornos", "Retornos", RefreshCw],
+    ["users", "Clientes", Users],
+  ] : [
     ["dashboard", "Dashboard", BarChart3],
     ["orders", "Pedidos", Package],
     ["crear", "Crear", FilePlus],
@@ -4761,6 +4865,7 @@ function AdminView() {
     ["analisis", "Análisis Stock", TrendingUp],
     ["shipping", "Envíos", Truck],
     ["users", "Clientes", Users],
+    ["equipo", "Equipo", Lock],
   ];
 
   const money = (n) => "$" + Number(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -4797,6 +4902,8 @@ function AdminView() {
         {/* ═══════════ DASHBOARD ═══════════ */}
         {tab === "dashboard" && (
           <>
+            {esAdminCompleto ? (
+            <>
             <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 24, display: "flex", alignItems: "center", gap: 10 }}><BarChart3 size={24} color={RED} /> Dashboard</div>
             {loadingData ? <Spinner /> : (
               <>
@@ -5134,6 +5241,117 @@ function AdminView() {
                 </div>
               </>
             )}
+            </>
+            ) : (
+            <>
+              <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 24, display: "flex", alignItems: "center", gap: 10 }}><BarChart3 size={24} color={RED} /> Inicio</div>
+              {loadingData ? <Spinner /> : (
+                <>
+                  {/* VENTAS DE HOY */}
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 16, marginBottom: 28 }}>
+                    {(() => {
+                      const hoyStr = new Date().toDateString();
+                      const pedidosHoy = pedidosReales.filter(o => new Date(o.created_at).toDateString() === hoyStr);
+                      const ventasHoyTotal = pedidosHoy.reduce((s, o) => s + (Number(o.total) || 0), 0);
+                      return [
+                        ["Ventas de hoy", money(ventasHoyTotal), DollarSign, RED],
+                        ["Pedidos de hoy", pedidosHoy.length, ShoppingBag, "#004085"],
+                        ["Cotizaciones activas", cotizaciones.length, FileText, "#856404"],
+                      ].map(([label, val, Icon, color]) => (
+                        <div key={label} style={S.statCard}><Icon size={20} color={color} strokeWidth={1.8} /><div style={{ fontSize: 28, fontWeight: 900, color }}>{val}</div><div style={{ fontSize: 13, color: GRAY3 }}>{label}</div></div>
+                      ));
+                    })()}
+                  </div>
+
+                  {/* ÓRDENES RECIENTES */}
+                  <div style={{ background: WHITE, borderRadius: 14, padding: 24, border: `1px solid ${GRAY2}` }}>
+                    <div style={{ fontWeight: 800, marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}><ClipboardList size={18} color={RED} /> Órdenes Recientes</div>
+                    {pedidosReales.length === 0 ? (
+                      <div style={{ textAlign: "center", padding: 30, color: GRAY3, fontSize: 13 }}>Aún no hay órdenes</div>
+                    ) : pedidosReales.slice(0, 5).map(o => {
+                      const firstItem = (o.items || [])[0];
+                      const prod = firstItem ? products.find(p => p.id === firstItem.producto_id) : null;
+                      return (
+                        <div key={o.id} style={{ display: "flex", alignItems: "center", gap: 14, padding: "12px 0", borderBottom: `1px solid ${GRAY2}` }}>
+                          {prod?.imagen_url
+                            ? <img src={prod.imagen_url} style={{ width: 44, height: 44, borderRadius: 8, objectFit: "cover" }} />
+                            : <div style={{ width: 44, height: 44, borderRadius: 8, background: GRAY, display: "flex", alignItems: "center", justifyContent: "center" }}><Package size={20} color={GRAY3} /></div>
+                          }
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontWeight: 700, fontSize: 14 }}>{o.codigo} · {o.nombre_cliente}</div>
+                            <div style={{ fontSize: 12, color: GRAY3 }}>{(o.items || []).length} producto(s) · {new Date(o.created_at).toLocaleDateString()}</div>
+                          </div>
+                          <div style={{ fontWeight: 800, color: RED }}>{money(o.total)}</div>
+                          <StatusBadge index={o.estado} />
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* COTIZACIONES RECIENTES */}
+                  <div style={{ background: WHITE, borderRadius: 14, padding: 24, border: `1px solid ${GRAY2}`, marginTop: 24 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 4 }}>
+                      <div style={{ fontWeight: 800, display: "flex", alignItems: "center", gap: 8 }}><FileText size={18} color="#856404" /> Cotizaciones Recientes</div>
+                      {cotizaciones.length > 0 && (
+                        <div style={{ position: "relative", width: 220, maxWidth: "100%" }}>
+                          <Search size={14} color={GRAY3} style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)" }} />
+                          <input
+                            style={{ width: "100%", padding: "8px 10px 8px 32px", borderRadius: 20, border: `1.5px solid ${GRAY2}`, fontSize: 13, outline: "none", boxSizing: "border-box" }}
+                            placeholder="Buscar por cliente..."
+                            value={busquedaCotizacion}
+                            onChange={e => setBusquedaCotizacion(e.target.value)}
+                          />
+                          {busquedaCotizacion && (
+                            <button onClick={() => setBusquedaCotizacion("")} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", display: "flex", color: GRAY3 }}><X size={15} /></button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    <div style={{ fontSize: 12, color: GRAY3, marginBottom: 16 }}>Las cotizaciones no cuentan como ventas</div>
+                    {(() => {
+                      const q = busquedaCotizacion.trim().toLowerCase();
+                      const cotizacionesFiltradas = q
+                        ? cotizaciones.filter(o => (o.nombre_cliente || "").toLowerCase().includes(q) || (o.codigo || "").toLowerCase().includes(q))
+                        : cotizaciones;
+                      if (cotizaciones.length === 0) return <div style={{ textAlign: "center", padding: 30, color: GRAY3, fontSize: 13 }}>Aún no hay cotizaciones</div>;
+                      if (cotizacionesFiltradas.length === 0) return <div style={{ textAlign: "center", padding: 30, color: GRAY3, fontSize: 13 }}>No se encontró ninguna cotización de "{busquedaCotizacion}"</div>;
+                      return (q ? cotizacionesFiltradas : cotizacionesFiltradas.slice(0, 5)).map(o => {
+                      const firstItem = (o.items || [])[0];
+                      const prod = firstItem ? products.find(p => p.id === firstItem.producto_id) : null;
+                      return (
+                        <div key={o.id} style={{ padding: "12px 0", borderBottom: `1px solid ${GRAY2}` }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                            {prod?.imagen_url
+                              ? <img src={prod.imagen_url} style={{ width: 44, height: 44, borderRadius: 8, objectFit: "cover" }} />
+                              : <div style={{ width: 44, height: 44, borderRadius: 8, background: GRAY, display: "flex", alignItems: "center", justifyContent: "center" }}><FileText size={20} color={GRAY3} /></div>
+                            }
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontWeight: 700, fontSize: 14 }}>{o.codigo} · {o.nombre_cliente}</div>
+                              <div style={{ fontSize: 12, color: GRAY3 }}>{(o.items || []).length} producto(s) · {new Date(o.created_at).toLocaleDateString()}</div>
+                            </div>
+                            <div style={{ fontWeight: 800, color: "#856404" }}>{money(o.total)}</div>
+                            <span style={{ background: "#FFF3CD", color: "#856404", padding: "3px 10px", borderRadius: 12, fontSize: 11, fontWeight: 700 }}>Cotización</span>
+                          </div>
+                          <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                            <button onClick={() => setCotizacionAEditar(o)} className="oft-btn-press" style={{ flex: 1, justifyContent: "center", background: "none", color: BLACK, border: `1.5px solid ${BLACK}`, borderRadius: 8, padding: "9px", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
+                              <PencilIcon size={15} /> Editar
+                            </button>
+                            <button onClick={() => setCotizacionImagen(o)} className="oft-btn-press" style={{ flex: 1, justifyContent: "center", background: "none", color: "#856404", border: "1.5px solid #856404", borderRadius: 8, padding: "9px", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
+                              <ImageIcon size={15} /> Imagen
+                            </button>
+                            <button onClick={() => convertirAPedido(o)} className="oft-btn-press" style={{ flex: 1, justifyContent: "center", background: RED, color: WHITE, border: "none", borderRadius: 8, padding: "9px", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
+                              <CheckCircle2 size={15} /> A pedido
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    });
+                    })()}
+                  </div>
+                </>
+              )}
+            </>
+            )}
           </>
         )}
 
@@ -5324,8 +5542,45 @@ function AdminView() {
           />
         )}
 
+        {/* MODAL AGREGAR AL EQUIPO */}
+        {equipoForm && (
+          <EquipoFormModal
+            showToast={showToast}
+            onClose={() => setEquipoForm(false)}
+            onSaved={(nuevo) => setUsers(prev => [nuevo, ...prev])}
+          />
+        )}
+
+        {/* CONFIRMAR QUITAR DEL EQUIPO */}
+        {miembroAQuitar && (
+          <div className="oft-overlay" style={S.overlay} onClick={() => setMiembroAQuitar(null)}>
+            <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 16, maxWidth: 380, width: "92%", padding: 24, textAlign: "center" }} onClick={e => e.stopPropagation()}>
+              <div style={{ fontWeight: 800, fontSize: 17, marginBottom: 8 }}>¿Quitar a {miembroAQuitar.nombre} del equipo?</div>
+              <p style={{ fontSize: 13, color: GRAY3, marginBottom: 20 }}>Perderá acceso al panel de administrador. Su cuenta y su historial no se eliminan, solo se le quita el acceso.</p>
+              <div style={{ display: "flex", gap: 10 }}>
+                <button onClick={() => setMiembroAQuitar(null)} className="oft-btn-press" style={{ ...S.btnOutline, flex: 1, justifyContent: "center" }}>Cancelar</button>
+                <button
+                  onClick={async () => {
+                    try {
+                      await sb.patch("usuarios", miembroAQuitar.id, { es_admin: false, rol: null });
+                      setUsers(prev => prev.map(u => u.id === miembroAQuitar.id ? { ...u, es_admin: false, rol: null } : u));
+                      showToast("Se quitó del equipo");
+                    } catch(e) {
+                      showToast("Error: " + (e.message || "no se pudo quitar"));
+                    }
+                    setMiembroAQuitar(null);
+                  }}
+                  className="oft-btn-press" style={{ ...S.btnRed, flex: 1, justifyContent: "center" }}
+                >
+                  Quitar
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* ═══════════ PRODUCTOS ═══════════ */}
-        {tab === "products" && (
+        {tab === "products" && esAdminCompleto && (
           <>
             <div className="oft-admin-head" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, flexWrap: "wrap", gap: 12 }}>
               <div style={{ fontSize: 22, fontWeight: 900, display: "flex", alignItems: "center", gap: 10 }}><Tag size={24} color={RED} /> Productos</div>
@@ -5790,7 +6045,7 @@ function AdminView() {
         )}
 
         {/* ═══════════ CATEGORÍAS ═══════════ */}
-        {tab === "categories" && (
+        {tab === "categories" && esAdminCompleto && (
           <>
             <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 24, display: "flex", alignItems: "center", gap: 10 }}><FolderOpen size={24} color={RED} /> Categorías</div>
             <div style={{ background: WHITE, borderRadius: 16, padding: 20, marginBottom: 20, border: `1px solid ${GRAY2}`, display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap" }}>
@@ -5828,7 +6083,7 @@ function AdminView() {
         )}
 
         {/* ═══════════ DESCUENTOS ═══════════ */}
-        {tab === "descuentos" && (
+        {tab === "descuentos" && esAdminCompleto && (
           <>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24, flexWrap: "wrap", gap: 12 }}>
               <div style={{ fontSize: 22, fontWeight: 900, display: "flex", alignItems: "center", gap: 10 }}><Zap size={24} color={RED} /> Descuentos</div>
@@ -6185,7 +6440,7 @@ function AdminView() {
         )}
 
         {/* ═══════════ ANÁLISIS DE STOCK ═══════════ */}
-        {tab === "analisis" && (() => {
+        {tab === "analisis" && esAdminCompleto && (() => {
           const money = (n) => "$" + Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
           return (
           <>
@@ -6344,7 +6599,7 @@ function AdminView() {
         })()}
 
         {/* ═══════════ ENVÍOS ═══════════ */}
-        {tab === "shipping" && (
+        {tab === "shipping" && esAdminCompleto && (
           <>
             <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 24, display: "flex", alignItems: "center", gap: 10 }}><Truck size={24} color={RED} /> Empresas de Envío</div>
 
@@ -6495,9 +6750,11 @@ function AdminView() {
                           <td style={{ ...S.td, fontWeight: 700, color: RED }}>{pedidosUser}</td>
                           <td style={S.td}>{u.created_at ? new Date(u.created_at).toLocaleDateString() : "-"}</td>
                           <td style={S.td}>
-                            <button onClick={() => setClienteForm(u)} title="Editar cliente" style={{ background: "none", border: `1.5px solid ${BLACK}`, color: BLACK, borderRadius: 6, padding: "6px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}>
-                              <PencilIcon size={13} /> Editar
-                            </button>
+                            {esAdminCompleto && (
+                              <button onClick={() => setClienteForm(u)} title="Editar cliente" style={{ background: "none", border: `1.5px solid ${BLACK}`, color: BLACK, borderRadius: 6, padding: "6px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                                <PencilIcon size={13} /> Editar
+                              </button>
+                            )}
                           </td>
                         </tr>
                       );
@@ -6531,15 +6788,96 @@ function AdminView() {
                         <div style={{ display: "flex", alignItems: "center", gap: 5 }}><MessageCircle size={13} /> {u.telefono || "Sin WhatsApp"}</div>
                         <div style={{ display: "flex", alignItems: "center", gap: 5, marginLeft: "auto" }}><ClipboardList size={13} /> {u.created_at ? new Date(u.created_at).toLocaleDateString() : "-"}</div>
                       </div>
-                      <button onClick={() => setClienteForm(u)} className="oft-btn-press" style={{ width: "100%", marginTop: 12, justifyContent: "center", background: "none", color: BLACK, border: `1.5px solid ${BLACK}`, borderRadius: 8, padding: "9px", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
-                        <PencilIcon size={15} /> Editar cliente
-                      </button>
+                      {esAdminCompleto && (
+                        <button onClick={() => setClienteForm(u)} className="oft-btn-press" style={{ width: "100%", marginTop: 12, justifyContent: "center", background: "none", color: BLACK, border: `1.5px solid ${BLACK}`, borderRadius: 8, padding: "9px", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
+                          <PencilIcon size={15} /> Editar cliente
+                        </button>
+                      )}
                     </div>
                   );
                 })}
               </div>
               </>
             )}
+          </>
+        )}
+
+        {/* ═══════════ EQUIPO (solo admin completo) ═══════════ */}
+        {tab === "equipo" && esAdminCompleto && (
+          <>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12, marginBottom: 24 }}>
+              <div style={{ fontSize: 22, fontWeight: 900, display: "flex", alignItems: "center", gap: 10 }}><Lock size={24} color={RED} /> Equipo</div>
+              <button onClick={() => setEquipoForm(true)} className="oft-btn-press" style={{ ...S.btnRed, padding: "10px 18px", fontSize: 14 }}>
+                <Plus size={16} /> Agregar al equipo
+              </button>
+            </div>
+            <p style={{ fontSize: 13, color: GRAY3, marginBottom: 24, maxWidth: 560 }}>
+              Los <strong>administradores</strong> tienen acceso al módulo completo. Los <strong>operadores</strong> solo ven Inicio, Pedidos, Crear pedido/cotización, Retornos, y Clientes (pueden crear clientes nuevos, pero no editarlos).
+            </p>
+            {loadingData ? <Spinner /> : (() => {
+              const miembros = users.filter(u => u.es_admin);
+              return miembros.length === 0 ? (
+                <div style={{ textAlign: "center", padding: 40, color: GRAY3 }}>Aún no hay miembros en el equipo</div>
+              ) : (
+                <>
+                {/* TABLA (solo escritorio) */}
+                <div className="oft-table-wrap oft-only-desktop" style={{ background: WHITE, borderRadius: 12, overflow: "auto" }}>
+                  <table style={S.table}>
+                    <thead><tr>{["Nombre","Email","WhatsApp","Función",""].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
+                    <tbody>
+                      {miembros.map(m => (
+                        <tr key={m.id}>
+                          <td style={{ ...S.td, fontWeight: 700 }}>{m.nombre}</td>
+                          <td style={S.td}>{m.email}</td>
+                          <td style={S.td}>{m.telefono || "-"}</td>
+                          <td style={S.td}>
+                            <span style={{ fontSize: 11, fontWeight: 800, padding: "3px 10px", borderRadius: 12, background: m.rol === "admin" ? "#FFD9DB" : "#FFF3CD", color: m.rol === "admin" ? RED : "#856404" }}>
+                              {m.rol === "admin" ? "Administrador" : m.rol === "operador" ? "Operador" : "Admin (antiguo)"}
+                            </span>
+                          </td>
+                          <td style={S.td}>
+                            {m.email !== user?.email && (
+                              <button onClick={() => setMiembroAQuitar(m)} title="Quitar del equipo" style={{ background: "none", border: `1.5px solid ${RED}`, color: RED, borderRadius: 6, padding: "6px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                                <Trash2 size={13} /> Quitar
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* TARJETAS (solo celular) */}
+                <div className="oft-only-mobile" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                  {miembros.map(m => (
+                    <div key={m.id} style={{ background: WHITE, borderRadius: 14, border: `1px solid ${GRAY2}`, padding: 16 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                        <div style={{ width: 46, height: 46, borderRadius: "50%", background: `linear-gradient(135deg, ${RED}, ${RED_D})`, color: WHITE, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 900, fontSize: 18, flexShrink: 0 }}>
+                          {(m.nombre || "?").charAt(0).toUpperCase()}
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontWeight: 800, fontSize: 15 }}>{m.nombre}</div>
+                          <div style={{ fontSize: 12, color: GRAY3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.email}</div>
+                        </div>
+                        <span style={{ fontSize: 11, fontWeight: 800, padding: "3px 10px", borderRadius: 12, background: m.rol === "admin" ? "#FFD9DB" : "#FFF3CD", color: m.rol === "admin" ? RED : "#856404", flexShrink: 0 }}>
+                          {m.rol === "admin" ? "Admin" : m.rol === "operador" ? "Operador" : "Admin"}
+                        </span>
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 12, paddingTop: 12, borderTop: `1px solid ${GRAY2}`, fontSize: 12, color: GRAY3 }}>
+                        <MessageCircle size={13} /> {m.telefono || "Sin WhatsApp"}
+                      </div>
+                      {m.email !== user?.email && (
+                        <button onClick={() => setMiembroAQuitar(m)} className="oft-btn-press" style={{ width: "100%", marginTop: 12, justifyContent: "center", background: "none", color: RED, border: `1.5px solid ${RED}`, borderRadius: 8, padding: "9px", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
+                          <Trash2 size={15} /> Quitar del equipo
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                </>
+              );
+            })()}
           </>
         )}
        </div>
