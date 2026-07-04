@@ -5834,7 +5834,7 @@ function AdminView() {
             {/* MODAL IMAGEN/PDF DE FACTURA */}
             {facturaImagen && <OrderImageModal order={facturaImagen} onClose={() => setFacturaImagen(null)} />}
             {/* MODAL CONFIRMAR ELIMINACIÓN */}
-            {pedidoAEliminar && (
+            {pedidoAEliminar && createPortal(
               <div className="oft-overlay" style={S.overlay} onClick={() => !eliminando && setPedidoAEliminar(null)}>
                 <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 16, maxWidth: 400, width: "90%", padding: 24, textAlign: "center" }} onClick={e => e.stopPropagation()}>
                   <div style={{ width: 56, height: 56, borderRadius: "50%", background: "#FBE0E0", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
@@ -5853,7 +5853,7 @@ function AdminView() {
                   </div>
                 </div>
               </div>
-            )}
+            , document.body)}
           </>
         )}
 
@@ -5916,7 +5916,7 @@ function AdminView() {
         )}
 
         {/* CONFIRMAR QUITAR DEL EQUIPO */}
-        {miembroAQuitar && (
+        {miembroAQuitar && createPortal(
           <div className="oft-overlay" style={S.overlay} onClick={() => setMiembroAQuitar(null)}>
             <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 16, maxWidth: 380, width: "92%", padding: 24, textAlign: "center" }} onClick={e => e.stopPropagation()}>
               <div style={{ fontWeight: 800, fontSize: 17, marginBottom: 8 }}>¿Quitar a {miembroAQuitar.nombre} del equipo?</div>
@@ -5941,7 +5941,7 @@ function AdminView() {
               </div>
             </div>
           </div>
-        )}
+        , document.body)}
 
         {/* ═══════════ PRODUCTOS ═══════════ */}
         {tab === "products" && esAdminCompleto && (
@@ -6306,7 +6306,7 @@ function AdminView() {
             </div>
 
             {/* MODAL DE CONFIRMACIÓN DE ELIMINACIÓN MASIVA */}
-            {showBulkDelete && (
+            {showBulkDelete && createPortal(
               <div className="oft-overlay" style={S.overlay} onClick={() => setShowBulkDelete(false)}>
                 <div className="oft-modal-sheet oft-qv-pop" style={{ ...S.modal, maxWidth: 420, textAlign: "center" }} onClick={e => e.stopPropagation()}>
                   <div style={{ width: 64, height: 64, borderRadius: "50%", background: "#FFF5F5", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
@@ -6324,10 +6324,10 @@ function AdminView() {
                   </div>
                 </div>
               </div>
-            )}
+            , document.body)}
 
             {/* MODAL DE EDICIÓN MASIVA */}
-            {showBulkEdit && (
+            {showBulkEdit && createPortal(
               <div className="oft-overlay" style={S.overlay} onClick={() => setShowBulkEdit(false)}>
                 <div className="oft-modal-sheet oft-qv-pop" style={{ ...S.modal, maxWidth: 520 }} onClick={e => e.stopPropagation()}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
@@ -6404,7 +6404,7 @@ function AdminView() {
                   </div>
                 </div>
               </div>
-            )}
+            , document.body)}
           </>
         )}
 
