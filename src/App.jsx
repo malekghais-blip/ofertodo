@@ -2581,7 +2581,7 @@ function CrearPedidoView() {
         try {
           await fetch(`${SUPABASE_URL}/functions/v1/crear-venta-odoo`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: sb.dataHeaders(),
             body: JSON.stringify({
               codigo, nombre_cliente: cliente.nombre, email_cliente: null,
               telefono: cliente.telefono, direccion: cliente.direccion,
@@ -3968,7 +3968,7 @@ function EquipoFormModal({ onClose, onSaved, showToast }) {
     try {
       const resp = await fetch(`${SUPABASE_URL}/functions/v1/crear-usuario-equipo`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: sb.dataHeaders(),
         body: JSON.stringify({
           nombre: form.nombre.trim(), email: form.email.trim(), telefono: form.telefono.trim(),
           password: form.password, rol: form.rol,
@@ -4676,7 +4676,7 @@ function AdminView() {
         });
         await fetch(`${SUPABASE_URL}/functions/v1/crear-venta-odoo`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: sb.dataHeaders(),
           body: JSON.stringify({
             codigo: nuevoCodigo, nombre_cliente: cot.nombre_cliente, email_cliente: null,
             telefono: cot.telefono, direccion: cot.direccion,
@@ -4918,7 +4918,7 @@ function AdminView() {
     try {
       const resp = await fetch(SUPABASE_URL + "/functions/v1/sync-odoo-stock", {
         method: "POST",
-        headers: { "Authorization": "Bearer " + SUPABASE_KEY, "Content-Type": "application/json" },
+        headers: sb.dataHeaders(),
       });
       const data = await resp.json();
       if (data.ok) {
