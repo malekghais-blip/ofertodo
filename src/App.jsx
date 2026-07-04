@@ -75,6 +75,13 @@ const sb = {
     const token = this.session?.access_token || SUPABASE_KEY;
     return { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${token}`, "Content-Type": "application/json", "Prefer": "return=representation" };
   },
+  // Headers para llamar Edge Functions (Odoo, crear equipo, etc.) — igual que dataHeaders
+  // pero SIN "Prefer", que es un header solo para tablas (PostgREST) y que las Edge Functions
+  // no permiten en su configuración CORS — mandarlo hace que el navegador bloquee la petición.
+  functionHeaders() {
+    const token = this.session?.access_token || SUPABASE_KEY;
+    return { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${token}`, "Content-Type": "application/json" };
+  },
   // Headers para login/registro: siempre con la llave pública (antes de tener sesión propia)
   authHeaders() {
     return { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Content-Type": "application/json" };
@@ -2581,7 +2588,7 @@ function CrearPedidoView() {
         try {
           await fetch(`${SUPABASE_URL}/functions/v1/crear-venta-odoo`, {
             method: "POST",
-            headers: sb.dataHeaders(),
+            headers: sb.functionHeaders(),
             body: JSON.stringify({
               codigo, nombre_cliente: cliente.nombre, email_cliente: null,
               telefono: cliente.telefono, direccion: cliente.direccion,
@@ -3968,7 +3975,7 @@ function EquipoFormModal({ onClose, onSaved, showToast }) {
     try {
       const resp = await fetch(`${SUPABASE_URL}/functions/v1/crear-usuario-equipo`, {
         method: "POST",
-        headers: sb.dataHeaders(),
+        headers: sb.functionHeaders(),
         body: JSON.stringify({
           nombre: form.nombre.trim(), email: form.email.trim(), telefono: form.telefono.trim(),
           password: form.password, rol: form.rol,
@@ -4676,7 +4683,7 @@ function AdminView() {
         });
         await fetch(`${SUPABASE_URL}/functions/v1/crear-venta-odoo`, {
           method: "POST",
-          headers: sb.dataHeaders(),
+          headers: sb.functionHeaders(),
           body: JSON.stringify({
             codigo: nuevoCodigo, nombre_cliente: cot.nombre_cliente, email_cliente: null,
             telefono: cot.telefono, direccion: cot.direccion,
@@ -4918,7 +4925,7 @@ function AdminView() {
     try {
       const resp = await fetch(SUPABASE_URL + "/functions/v1/sync-odoo-stock", {
         method: "POST",
-        headers: sb.dataHeaders(),
+        headers: sb.functionHeaders(),
       });
       const data = await resp.json();
       if (data.ok) {
