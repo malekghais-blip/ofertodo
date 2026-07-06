@@ -4380,6 +4380,7 @@ function AdminView() {
   const bulkImgRef = useRef(null);
   // Filtro por categoría en la página de productos
   const [filtroCategoria, setFiltroCategoria] = useState("todas");
+  const [busquedaProducto, setBusquedaProducto] = useState(""); // búsqueda por referencia (o nombre) en Productos
   const [sincronizando, setSincronizando] = useState(false); // sincronización de stock con Odoo
   // Edición masiva (selección por checkboxes)
   const [selectMode, setSelectMode] = useState(false);
@@ -5205,6 +5206,14 @@ function AdminView() {
     } catch(e) { alert("Error: " + e.message); }
   };
 
+  // Lista de productos según la categoría elegida y, si hay texto escrito, filtrada
+  // además por referencia (o nombre, por si acaso) — usada en la sección Productos.
+  const productosPorCategoria = filtroCategoria === "todas" ? products : products.filter(p => p.categoria_id === filtroCategoria);
+  const busquedaProductoQ = busquedaProducto.trim().toLowerCase();
+  const productosFiltrados = busquedaProductoQ
+    ? productosPorCategoria.filter(p => (p.referencia || "").toLowerCase().includes(busquedaProductoQ) || (p.nombre || "").toLowerCase().includes(busquedaProductoQ))
+    : productosPorCategoria;
+
   const tabs = esOperador ? [
     ["dashboard", "Inicio", BarChart3],
     ["orders", "Pedidos", Package],
@@ -5985,6 +5994,20 @@ function AdminView() {
               })}
             </div>
 
+            {/* BÚSQUEDA POR REFERENCIA */}
+            <div style={{ position: "relative", maxWidth: 340, marginBottom: 16 }}>
+              <Search size={16} color={GRAY3} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)" }} />
+              <input
+                style={{ width: "100%", padding: "10px 12px 10px 36px", borderRadius: 10, border: `1.5px solid ${GRAY2}`, fontSize: 14, outline: "none", boxSizing: "border-box" }}
+                placeholder="Buscar por referencia..."
+                value={busquedaProducto}
+                onChange={e => setBusquedaProducto(e.target.value)}
+              />
+              {busquedaProducto && (
+                <button onClick={() => setBusquedaProducto("")} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", display: "flex", color: GRAY3 }}><X size={16} /></button>
+              )}
+            </div>
+
             {selectMode && (
               <div style={{ background: "#FFF5F5", border: `2px solid ${RED}`, borderRadius: 12, padding: "12px 16px", marginBottom: 16, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
                 <span style={{ fontWeight: 700, fontSize: 14 }}>{selectedIds.length} seleccionado(s)</span>
@@ -6162,11 +6185,22 @@ function AdminView() {
               </div>
             )}
 
-            {/* ESTADO VACÍO: categoría sin productos */}
+            {/* ESTADO VACÍO: categoría sin productos, o búsqueda sin resultados */}
             {(() => {
-              const lista = filtroCategoria === "todas" ? products : products.filter(p => p.categoria_id === filtroCategoria);
+              const lista = productosFiltrados;
               if (lista.length === 0) {
                 const catNombre = filtroCategoria === "todas" ? "" : (categories.find(c => c.id === filtroCategoria)?.nombre || "");
+                if (busquedaProductoQ) {
+                  return (
+                    <div style={{ background: WHITE, borderRadius: 16, padding: "40px 24px", border: `2px dashed ${GRAY2}`, textAlign: "center" }}>
+                      <div style={{ width: 64, height: 64, borderRadius: "50%", background: GRAY, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
+                        <Search size={28} color={GRAY3} strokeWidth={1.5} />
+                      </div>
+                      <div style={{ fontWeight: 800, fontSize: 17, marginBottom: 6 }}>Sin resultados para "{busquedaProducto}"</div>
+                      <p style={{ fontSize: 14, color: GRAY3 }}>Revisa que la referencia esté bien escrita, o borra la búsqueda para ver todos.</p>
+                    </div>
+                  );
+                }
                 return (
                   <div style={{ background: WHITE, borderRadius: 16, padding: "40px 24px", border: `2px dashed ${GRAY2}`, textAlign: "center" }}>
                     <div style={{ width: 64, height: 64, borderRadius: "50%", background: GRAY, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
@@ -6193,12 +6227,12 @@ function AdminView() {
             })()}
 
             {/* TABLA (solo escritorio) */}
-            {(filtroCategoria === "todas" ? products : products.filter(p => p.categoria_id === filtroCategoria)).length > 0 && (
+            {productosFiltrados.length > 0 && (
             <div className="oft-table-wrap oft-only-desktop" style={{ background: WHITE, borderRadius: 12, overflow: "auto" }}>
               <table style={S.table}>
                 <thead><tr>{[...(selectMode ? ["✓"] : []), "Foto","Ref","Producto","Categoría","x1","x6","x12","Stock","Estado","Web","Acciones"].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
                 <tbody>
-                  {(filtroCategoria === "todas" ? products : products.filter(p => p.categoria_id === filtroCategoria)).map(p => {
+                  {productosFiltrados.map(p => {
                     const isSel = selectedIds.includes(p.id);
                     return (
                     <tr key={p.id} style={{ background: isSel ? "#FFF5F5" : "transparent" }}>
@@ -6247,7 +6281,7 @@ function AdminView() {
 
             {/* TARJETAS (solo celular) */}
             <div className="oft-only-mobile" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              {(filtroCategoria === "todas" ? products : products.filter(p => p.categoria_id === filtroCategoria)).map(p => {
+              {productosFiltrados.map(p => {
                 const isSel = selectedIds.includes(p.id);
                 return (
                   <div key={p.id} style={{ background: WHITE, borderRadius: 14, border: `2px solid ${isSel ? RED : GRAY2}`, padding: 14 }}>
