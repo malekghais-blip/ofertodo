@@ -2594,7 +2594,10 @@ function CrearPedidoView() {
               telefono: cliente.telefono, direccion: cliente.direccion,
               items: invoiceItems.map(it => ({
                 referencia: it.referencia, nombre_producto: it.nombre,
-                cantidad: it.piezas, precio_unitario: it.precioUnit,
+                cantidad: it.piezas,
+                // Precio real POR PIEZA (derivado del subtotal, que siempre es correcto),
+                // no el precio de la docena/media docena completa — así Odoo no infla el total.
+                precio_unitario: it.piezas > 0 ? it.subtotal / it.piezas : it.precioUnit,
               })),
             }),
           });
@@ -4675,11 +4678,17 @@ function AdminView() {
       try {
         const itemsOdoo = (cot.items || []).map(it => {
           const prod = products.find(p => p.id === it.producto_id);
+          const cantidad = Number(it.cantidad) || 0;
+          // El "precio_unitario" guardado a veces es el precio de la docena/media docena
+          // completa, no el de 1 pieza (aunque "cantidad" sí está en piezas) — para Odoo
+          // necesitamos el precio real POR PIEZA, así que lo derivamos del subtotal (que
+          // siempre es correcto) en vez de usar precio_unitario tal cual.
+          const precioPorPieza = cantidad > 0 ? Number(it.subtotal) / cantidad : Number(it.precio_unitario) || 0;
           return {
             referencia: prod?.referencia || null,
             nombre_producto: it.nombre_producto,
             cantidad: it.cantidad,
-            precio_unitario: it.precio_unitario,
+            precio_unitario: precioPorPieza,
           };
         });
         await fetch(`${SUPABASE_URL}/functions/v1/crear-venta-odoo`, {
