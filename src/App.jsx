@@ -3282,6 +3282,7 @@ function InvoiceModal({ invoice, onClose }) {
 // ═══════════════════════════════════════════════════════════════
 function ShippingLabelModal({ order, onClose }) {
   useLockBodyScroll();
+  const { products } = useApp();
   const ref = useRef(null);
   const [busy, setBusy] = useState(false);
   const fecha = order.created_at ? new Date(order.created_at) : new Date();
@@ -3439,19 +3440,24 @@ function ShippingLabelModal({ order, onClose }) {
                 <tr style={{ background: GRAY }}>
                   <th style={{ width: 28, padding: "8px 6px", fontSize: 11, fontWeight: 700, color: GRAY3, textAlign: "center" }}>✓</th>
                   <th style={{ textAlign: "left", padding: "8px 10px", fontSize: 11, fontWeight: 700, color: GRAY3 }}>Producto</th>
+                  <th style={{ textAlign: "left", padding: "8px 6px", fontSize: 11, fontWeight: 700, color: GRAY3 }}>Ref.</th>
                   <th style={{ textAlign: "center", padding: "8px 6px", fontSize: 11, fontWeight: 700, color: GRAY3 }}>Cant.</th>
                 </tr>
               </thead>
               <tbody>
-                {(order.items || []).map((it, i) => (
-                  <tr key={i} style={{ borderBottom: `1px solid ${GRAY2}` }}>
-                    <td style={{ textAlign: "center", padding: "10px 6px" }}>
-                      <span style={{ display: "inline-block", width: 18, height: 18, border: `2px solid ${BLACK}`, borderRadius: 4 }} />
-                    </td>
-                    <td style={{ padding: "10px", fontSize: 13, fontWeight: 700 }}>{it.nombre_producto}</td>
-                    <td style={{ textAlign: "center", padding: "10px 6px", fontSize: 15, fontWeight: 900 }}>{it.cantidad}</td>
-                  </tr>
-                ))}
+                {(order.items || []).map((it, i) => {
+                  const prod = products.find(p => p.id === it.producto_id);
+                  return (
+                    <tr key={i} style={{ borderBottom: `1px solid ${GRAY2}` }}>
+                      <td style={{ textAlign: "center", padding: "10px 6px" }}>
+                        <span style={{ display: "inline-block", width: 18, height: 18, border: `2px solid ${BLACK}`, borderRadius: 4 }} />
+                      </td>
+                      <td style={{ padding: "10px", fontSize: 13, fontWeight: 700 }}>{it.nombre_producto}</td>
+                      <td style={{ padding: "10px 6px", fontSize: 13, fontWeight: 700, color: GRAY3 }}>{prod?.referencia || "—"}</td>
+                      <td style={{ textAlign: "center", padding: "10px 6px", fontSize: 15, fontWeight: 900 }}>{it.cantidad}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
 
