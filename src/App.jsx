@@ -2592,6 +2592,7 @@ function CrearPedidoView() {
             body: JSON.stringify({
               codigo, nombre_cliente: cliente.nombre, email_cliente: null,
               telefono: cliente.telefono, direccion: cliente.direccion,
+              costo_envio: costoEnvio, empresa_envio: empresaSel?.nombre || "",
               items: invoiceItems.map(it => ({
                 referencia: it.referencia, nombre_producto: it.nombre,
                 cantidad: it.piezas,
@@ -4697,6 +4698,7 @@ function AdminView() {
           body: JSON.stringify({
             codigo: nuevoCodigo, nombre_cliente: cot.nombre_cliente, email_cliente: null,
             telefono: cot.telefono, direccion: cot.direccion,
+            costo_envio: cot.costo_envio, empresa_envio: cot.empresa_envio_nombre,
             items: itemsOdoo,
           }),
         });
