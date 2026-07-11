@@ -572,6 +572,171 @@ function NavBar() {
 // ═══════════════════════════════════════════════════════════════
 //  HOME
 // ═══════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════
+//  PÁGINAS LEGALES: Términos, Devoluciones, Privacidad
+// ═══════════════════════════════════════════════════════════════
+function LegalPageView() {
+  const { view, setView } = useApp();
+
+  const Seccion = ({ titulo, children }) => (
+    <div style={{ marginBottom: 28 }}>
+      <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 10 }}>{titulo}</div>
+      <div style={{ fontSize: 14, color: "#333", lineHeight: 1.7 }}>{children}</div>
+    </div>
+  );
+
+  const contenidos = {
+    terminos: {
+      titulo: "Términos y Condiciones",
+      body: (
+        <>
+          <Seccion titulo="1. Sobre Ofertodo">
+            Ofertodo (ofertodo.com.pa) es una distribuidora de ropa, calzado y accesorios con sede en Colón, Panamá,
+            dedicada a la venta al por mayor a comerciantes y revendedores en todo el país. Al usar este sitio, aceptas
+            los presentes términos y condiciones en su totalidad.
+          </Seccion>
+          <Seccion titulo="2. Modalidades de venta">
+            Los productos se ofrecen por pieza, media docena y docena, con precios distintos según la cantidad
+            comprada. Los precios mostrados en el sitio están sujetos a cambio sin previo aviso y no incluyen costos
+            de envío, los cuales se calculan aparte según la empresa transportista y el destino elegido.
+          </Seccion>
+          <Seccion titulo="3. Cuentas de usuario">
+            Para realizar una compra es necesario crear una cuenta con datos de contacto válidos (nombre, teléfono,
+            correo). Eres responsable de mantener la confidencialidad de tu acceso y de la exactitud de la
+            información que proporciones.
+          </Seccion>
+          <Seccion titulo="4. Pedidos y confirmación">
+            Un pedido se considera confirmado una vez que el pago haya sido procesado exitosamente. Ofertodo se
+            reserva el derecho de cancelar o ajustar un pedido en caso de error en el precio, falta de disponibilidad
+            de inventario, o sospecha de fraude, notificando al cliente por WhatsApp o correo.
+          </Seccion>
+          <Seccion titulo="5. Métodos de pago">
+            Actualmente aceptamos pagos a través de Yappy. Próximamente estará disponible el pago con tarjeta de
+            crédito/débito a través de una pasarela de pago autorizada. Toda la información de pago se procesa
+            directamente por el proveedor de pagos correspondiente; Ofertodo no almacena datos de tarjetas.
+          </Seccion>
+          <Seccion titulo="6. Envíos">
+            Los envíos se realizan a través de empresas transportistas independientes (Servientrega, Transportes
+            Ferguson, Uno Express, entre otras). Los tiempos de entrega dependen de la empresa transportista y el
+            destino, y no son garantizados por Ofertodo.
+          </Seccion>
+          <Seccion titulo="7. Propiedad intelectual">
+            El contenido de este sitio (marca "Ofertodo", el concepto FlexPack, imágenes, textos y diseño) es
+            propiedad de Ofertodo y no puede reproducirse sin autorización.
+          </Seccion>
+          <Seccion titulo="8. Limitación de responsabilidad">
+            Ofertodo no se hace responsable por retrasos, daños o pérdidas ocasionados por terceros (empresas de
+            envío, pasarelas de pago) fuera de su control directo.
+          </Seccion>
+          <Seccion titulo="9. Cambios a estos términos">
+            Estos términos pueden actualizarse en cualquier momento. La versión vigente siempre estará disponible en
+            esta misma página.
+          </Seccion>
+          <Seccion titulo="10. Ley aplicable">
+            Estos términos se rigen por las leyes de la República de Panamá.
+          </Seccion>
+        </>
+      ),
+    },
+    devoluciones: {
+      titulo: "Política de Devoluciones y Cancelaciones",
+      body: (
+        <>
+          <Seccion titulo="1. Plazo para reportar un problema">
+            Si tu pedido llega incompleto, dañado, o con un producto distinto al solicitado, debes reportarlo dentro
+            de las 48 horas siguientes a la recepción, escribiendo a nuestro WhatsApp o correo con tu número de
+            pedido y fotos del producto/empaque.
+          </Seccion>
+          <Seccion titulo="2. Condiciones para una devolución">
+            El producto debe estar sin usar, en su empaque original, y con las etiquetas puestas. No se aceptan
+            devoluciones de productos usados, lavados, o dañados por mal uso del cliente.
+          </Seccion>
+          <Seccion titulo="3. Productos no elegibles para devolución">
+            Por tratarse de venta al por mayor, los pedidos ya despachados no pueden cancelarse una vez el paquete
+            salió de nuestras instalaciones, salvo en los casos de error de nuestra parte (producto equivocado o
+            defectuoso) descritos en el punto 1.
+          </Seccion>
+          <Seccion titulo="4. Proceso">
+            Una vez recibido tu reporte con evidencia fotográfica, evaluamos el caso en un plazo de 1 a 3 días
+            hábiles. Si procede, coordinamos según el caso: reposición del producto, nota de crédito para tu próxima
+            compra, o reembolso por el mismo medio de pago utilizado.
+          </Seccion>
+          <Seccion titulo="5. Costos de envío en devoluciones">
+            Si el error fue nuestro (producto equivocado, defecto de fábrica), Ofertodo cubre el costo de envío de la
+            devolución/reposición. Si la devolución es por cambio de opinión del cliente (no aplica a pedidos ya
+            despachados, ver punto 3), el costo de envío corre por cuenta del cliente.
+          </Seccion>
+          <Seccion titulo="6. Daños ocurridos durante el transporte">
+            Si el paquete llega visiblemente dañado, te recomendamos documentarlo con fotos antes de abrirlo. Estos
+            casos se gestionan junto con la empresa transportista correspondiente.
+          </Seccion>
+          <Seccion titulo="7. Contacto">
+            Para iniciar cualquier reclamo, escríbenos por WhatsApp al +507 6720-0474 o al correo info@ofertodo.com,
+            indicando tu código de pedido.
+          </Seccion>
+        </>
+      ),
+    },
+    privacidad: {
+      titulo: "Política de Privacidad",
+      body: (
+        <>
+          <Seccion titulo="1. Datos que recopilamos">
+            Cuando creas una cuenta o realizas un pedido, recopilamos: nombre, número de teléfono, dirección de envío
+            y correo electrónico. Si compras por Yappy, el procesamiento del pago lo realiza Yappy directamente;
+            Ofertodo no almacena datos de tarjetas ni claves de acceso a billeteras digitales.
+          </Seccion>
+          <Seccion titulo="2. Para qué usamos tus datos">
+            Usamos tu información para: procesar y despachar tus pedidos, contactarte por WhatsApp o correo sobre el
+            estado de tu compra, coordinar el envío con la empresa transportista elegida, y brindarte soporte al
+            cliente.
+          </Seccion>
+          <Seccion titulo="3. Con quién se comparte tu información">
+            Compartimos únicamente los datos necesarios para completar tu pedido con: la empresa transportista que
+            elegiste (nombre, teléfono, dirección), y el procesador de pagos correspondiente (Yappy, y
+            próximamente una pasarela de tarjetas autorizada). No vendemos ni alquilamos tu información a terceros
+            con fines publicitarios.
+          </Seccion>
+          <Seccion titulo="4. Dónde se almacenan tus datos">
+            Tu información se almacena en servidores de Supabase con medidas de seguridad técnicas (acceso
+            restringido y cifrado en tránsito).
+          </Seccion>
+          <Seccion titulo="5. Tus derechos">
+            De acuerdo con la Ley 81 de 2019 sobre Protección de Datos Personales de Panamá, puedes solicitar en
+            cualquier momento acceder, corregir, o solicitar la eliminación de tus datos personales, escribiéndonos a
+            info@ofertodo.com.
+          </Seccion>
+          <Seccion titulo="6. Retención de datos">
+            Conservamos tu información mientras mantengas una cuenta activa con nosotros, o según lo requiera la ley
+            para fines contables/fiscales.
+          </Seccion>
+          <Seccion titulo="7. Cambios a esta política">
+            Podemos actualizar esta política ocasionalmente. Cualquier cambio se reflejará en esta misma página con
+            su fecha de actualización.
+          </Seccion>
+          <Seccion titulo="8. Contacto">
+            Para cualquier consulta sobre el uso de tus datos, escríbenos a info@ofertodo.com o al WhatsApp
+            +507 6720-0474.
+          </Seccion>
+        </>
+      ),
+    },
+  };
+
+  const data = contenidos[view] || contenidos.terminos;
+
+  return (
+    <div style={{ ...S.section, maxWidth: 760 }}>
+      <div onClick={() => setView("home")} style={{ display: "inline-flex", alignItems: "center", gap: 6, color: GRAY3, fontSize: 13, fontWeight: 700, cursor: "pointer", marginBottom: 20 }}>
+        <ChevronDown size={14} style={{ transform: "rotate(90deg)" }} /> Volver al inicio
+      </div>
+      <div style={{ fontSize: 26, fontWeight: 900, marginBottom: 8 }}>{data.titulo}</div>
+      <div style={{ fontSize: 12, color: GRAY3, marginBottom: 32 }}>Última actualización: julio 2026</div>
+      {data.body}
+    </div>
+  );
+}
+
 function HomeView() {
   const { setView, setCatalogCat, categories, products, addToCart } = useApp();
   const featured = products.filter(p => p.activo && p.visible_web !== false && p.destacado);
@@ -657,6 +822,14 @@ function HomeView() {
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}><Truck size={14} /> A todo Panamá</div>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}><Package size={14} /> Mínimo: 1 docena</div>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}><Zap size={14} /> Despacho rápido</div>
+            </div>
+          </div>
+          <div>
+            <div style={{ fontWeight: 700, marginBottom: 10 }}>Legal</div>
+            <div style={{ fontSize: 13, color: "#aaa", lineHeight: 2.2, display: "flex", flexDirection: "column", gap: 2 }}>
+              <span onClick={() => setView("terminos")} style={{ cursor: "pointer" }}>Términos y Condiciones</span>
+              <span onClick={() => setView("devoluciones")} style={{ cursor: "pointer" }}>Devoluciones</span>
+              <span onClick={() => setView("privacidad")} style={{ cursor: "pointer" }}>Privacidad</span>
             </div>
           </div>
         </div>
@@ -7705,6 +7878,7 @@ export default function App() {
         {!isAdmin && <NavBar />}
         {view === "home" && <HomeView />}
         {view === "catalogo" && <CatalogoView />}
+        {(view === "terminos" || view === "devoluciones" || view === "privacidad") && <LegalPageView />}
         {view === "checkout" && <CheckoutView />}
         {view === "dashboard" && user && <DashboardView />}
         {view === "admin" && user?.es_admin && <AdminView />}
