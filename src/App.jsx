@@ -671,7 +671,7 @@ function LegalPageView() {
             casos se gestionan junto con la empresa transportista correspondiente.
           </Seccion>
           <Seccion titulo="7. Contacto">
-            Para iniciar cualquier reclamo, escríbenos por WhatsApp al +507 6720-0474 o al correo info@ofertodo.com,
+            Para iniciar cualquier reclamo, escríbenos por WhatsApp al +507 6720-0474 o al correo soporte@ofertodo.com.pa,
             indicando tu código de pedido.
           </Seccion>
         </>
@@ -704,7 +704,7 @@ function LegalPageView() {
           <Seccion titulo="5. Tus derechos">
             De acuerdo con la Ley 81 de 2019 sobre Protección de Datos Personales de Panamá, puedes solicitar en
             cualquier momento acceder, corregir, o solicitar la eliminación de tus datos personales, escribiéndonos a
-            info@ofertodo.com.
+            soporte@ofertodo.com.pa.
           </Seccion>
           <Seccion titulo="6. Retención de datos">
             Conservamos tu información mientras mantengas una cuenta activa con nosotros, o según lo requiera la ley
@@ -715,7 +715,7 @@ function LegalPageView() {
             su fecha de actualización.
           </Seccion>
           <Seccion titulo="8. Contacto">
-            Para cualquier consulta sobre el uso de tus datos, escríbenos a info@ofertodo.com o al WhatsApp
+            Para cualquier consulta sobre el uso de tus datos, escríbenos a soporte@ofertodo.com.pa o al WhatsApp
             +507 6720-0474.
           </Seccion>
         </>
@@ -812,7 +812,7 @@ function HomeView() {
             <div style={{ fontWeight: 700, marginBottom: 10 }}>Contacto</div>
             <div style={{ fontSize: 13, color: "#aaa", lineHeight: 2.2 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}><MessageCircle size={14} /> WhatsApp: +507 6720-0474</div>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}><User size={14} /> info@ofertodo.com</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}><User size={14} /> soporte@ofertodo.com.pa</div>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}><MapPin size={14} /> Colón, Panamá</div>
             </div>
           </div>
