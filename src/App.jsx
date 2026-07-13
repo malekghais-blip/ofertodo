@@ -1026,6 +1026,10 @@ function ProductCard({ product }) {
   const total = presTotal(product, pres, count);
   const imgUrl = product.imagen_url || null;
   const btnRef = useRef(null);
+  // Solo bloqueamos la compra cuando se agota un producto PROPIO (sin proveedor).
+  // Los productos de proveedor externo siempre se pueden comprar — el stock ahí
+  // se maneja yendo a comprarle al proveedor cuando llega el pedido.
+  const agotadoBloqueado = !product.proveedor_id && product.stock_actualizado_at && Number(product.stock) <= 0;
 
   // ¿Este producto tiene variantes y el cliente eligió "Por pieza"?
   const tieneVariantes = (product.tiene_tallas && (product.tallas || "").trim()) || (product.tiene_colores && (product.colores || "").trim());
@@ -1127,8 +1131,8 @@ function ProductCard({ product }) {
           </button>
         ) : (
         <div style={{ display: "flex", gap: 8 }}>
-          <button ref={btnRef} className="oft-btn-press" style={{ ...S.btnRed, flex: 1, justifyContent: "center", background: added ? "#25D366" : RED, transition: "background 0.3s" }} onClick={handleAdd}>
-            {added ? <><CheckCircle2 size={16} className="oft-check-pop" /> ¡Agregado!</> : <><Plus size={15} strokeWidth={2.5} /> Agregar al pedido</>}
+          <button ref={btnRef} className="oft-btn-press" disabled={agotadoBloqueado} style={{ ...S.btnRed, flex: 1, justifyContent: "center", background: agotadoBloqueado ? GRAY3 : (added ? "#25D366" : RED), transition: "background 0.3s", cursor: agotadoBloqueado ? "not-allowed" : "pointer", opacity: agotadoBloqueado ? 0.7 : 1 }} onClick={agotadoBloqueado ? undefined : handleAdd}>
+            {agotadoBloqueado ? "Agotado" : added ? <><CheckCircle2 size={16} className="oft-check-pop" /> ¡Agregado!</> : <><Plus size={15} strokeWidth={2.5} /> Agregar al pedido</>}
           </button>
           <button className="oft-btn-press" style={S.btnWA} onClick={() => { let m = `Hola Ofertodo, me interesa: ${product.nombre}`; if (product.referencia) m += ` (Ref: ${product.referencia})`; if (product.imagen_url) m += `\n\n📷 Foto:\n${product.imagen_url}`; window.open(`https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(m)}`, "_blank"); }}><MessageCircle size={16} /></button>
         </div>
@@ -1206,6 +1210,7 @@ function ProductModal() {
   if (!product) return null;
   const total = presTotal(product, pres, count);
   const imgUrl = product.imagen_url || null;
+  const agotadoBloqueado = !product.proveedor_id && product.stock_actualizado_at && Number(product.stock) <= 0;
 
   const tieneVariantes = (product.tiene_tallas && (product.tallas || "").trim()) || (product.tiene_colores && (product.colores || "").trim());
   const modoConsulta = pres === "pieza" && tieneVariantes;
@@ -1282,8 +1287,8 @@ function ProductModal() {
             </button>
           ) : (
           <div style={{ display: "flex", gap: 10 }}>
-            <button className="oft-btn-press" style={{ ...S.btnRed, flex: 1, justifyContent: "center", padding: 14, fontSize: 15, background: added ? "#25D366" : RED, transition: "background 0.3s" }} onClick={handleAdd}>
-              {added ? <><CheckCircle2 size={17} className="oft-check-pop" /> ¡Agregado!</> : <><Plus size={16} strokeWidth={2.5} /> Agregar al pedido</>}
+            <button className="oft-btn-press" disabled={agotadoBloqueado} style={{ ...S.btnRed, flex: 1, justifyContent: "center", padding: 14, fontSize: 15, background: agotadoBloqueado ? GRAY3 : (added ? "#25D366" : RED), transition: "background 0.3s", cursor: agotadoBloqueado ? "not-allowed" : "pointer", opacity: agotadoBloqueado ? 0.7 : 1 }} onClick={agotadoBloqueado ? undefined : handleAdd}>
+              {agotadoBloqueado ? "Agotado" : added ? <><CheckCircle2 size={17} className="oft-check-pop" /> ¡Agregado!</> : <><Plus size={16} strokeWidth={2.5} /> Agregar al pedido</>}
             </button>
             <button className="oft-btn-press" style={{ ...S.btnWA, padding: "14px 16px" }} onClick={() => { let m = `Hola Ofertodo, me interesa: ${product.nombre}`; if (product.referencia) m += ` (Ref: ${product.referencia})`; if (product.imagen_url) m += `\n\n📷 Foto:\n${product.imagen_url}`; window.open(`https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(m)}`, "_blank"); }}><MessageCircle size={18} /></button>
           </div>
@@ -4004,6 +4009,65 @@ function OrderImageModal({ order, onClose }) {
 // ═══════════════════════════════════════════════════════════════
 //  VERIFICACIÓN EN DOS PASOS (2FA / TOTP) — activar o desactivar
 // ═══════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════
+//  CREAR / EDITAR PROVEEDOR
+// ═══════════════════════════════════════════════════════════════
+function ProveedorFormModal({ proveedor, onClose, onSaved, showToast }) {
+  useLockBodyScroll();
+  const esEdicion = !!proveedor?.id;
+  const [form, setForm] = useState({
+    nombre: proveedor?.nombre || "", telefono: proveedor?.telefono || "",
+    direccion: proveedor?.direccion || "", notas: proveedor?.notas || "",
+  });
+  const [guardando, setGuardando] = useState(false);
+
+  const guardar = async () => {
+    if (!form.nombre.trim()) { showToast("Escribe el nombre del proveedor"); return; }
+    setGuardando(true);
+    try {
+      const datos = { nombre: form.nombre.trim(), telefono: form.telefono.trim(), direccion: form.direccion.trim(), notas: form.notas.trim() };
+      if (esEdicion) {
+        const fila = await sb.patch("proveedores", proveedor.id, datos);
+        onSaved({ ...proveedor, ...(Array.isArray(fila) && fila[0] ? fila[0] : datos) });
+        showToast("Proveedor actualizado");
+      } else {
+        const fila = await sb.post("proveedores", { ...datos, activo: true });
+        onSaved(Array.isArray(fila) && fila[0] ? fila[0] : fila);
+        showToast("Proveedor creado");
+      }
+      onClose();
+    } catch(e) {
+      showToast("Error: " + (e.message || "no se pudo guardar"));
+    }
+    setGuardando(false);
+  };
+
+  return createPortal(
+    <div className="oft-overlay" style={S.overlay} onClick={() => !guardando && onClose()}>
+      <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 16, maxWidth: 420, width: "92%", padding: 24 }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+          <div style={{ fontWeight: 800, fontSize: 18 }}>{esEdicion ? "Editar proveedor" : "Nuevo proveedor"}</div>
+          <button onClick={() => !guardando && onClose()} style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}><X size={22} /></button>
+        </div>
+        <label style={S.label}>Nombre *</label>
+        <input style={S.input} placeholder="Nombre del proveedor" value={form.nombre} onChange={e => setForm({ ...form, nombre: e.target.value })} autoFocus />
+        <label style={S.label}>Teléfono / WhatsApp</label>
+        <input style={S.input} placeholder="Ej: 6720-0474" value={form.telefono} onChange={e => setForm({ ...form, telefono: e.target.value })} />
+        <label style={S.label}>Dirección</label>
+        <input style={S.input} placeholder="Opcional" value={form.direccion} onChange={e => setForm({ ...form, direccion: e.target.value })} />
+        <label style={S.label}>Notas</label>
+        <textarea style={{ ...S.input, minHeight: 70, resize: "vertical" }} placeholder="Ej: precio distribuidor, condiciones acordadas..." value={form.notas} onChange={e => setForm({ ...form, notas: e.target.value })} />
+        <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
+          <button onClick={() => !guardando && onClose()} disabled={guardando} className="oft-btn-press" style={{ ...S.btnOutline, flex: 1, justifyContent: "center" }}>Cancelar</button>
+          <button onClick={guardar} disabled={guardando} className="oft-btn-press" style={{ ...S.btnRed, flex: 1, justifyContent: "center", opacity: guardando ? 0.7 : 1 }}>
+            {guardando ? "Guardando..." : esEdicion ? "Guardar cambios" : "Crear proveedor"}
+          </button>
+        </div>
+      </div>
+    </div>
+  , document.body);
+}
+
 function MfaSetupModal({ onClose }) {
   useLockBodyScroll();
   const { showToast, user, setUser } = useApp();
@@ -4551,7 +4615,7 @@ function AdminView() {
   const [bulkLoading, setBulkLoading] = useState(false);
   const [newCatName, setNewCatName] = useState("");
   const [catUploading, setCatUploading] = useState(null); // id de categoría subiendo icono
-  const emptyProd = { referencia: "", nombre: "", descripcion: "", categoria_id: categories[0]?.id || 1, precio_pieza: "", precio_media_docena: "", precio_docena: "", badge: "", activo: true, destacado: false, imagen_url: "", tiene_tallas: false, tiene_colores: false, tallas: "", colores: "", distribucion_docena: "", distribucion_eje: "" };
+  const emptyProd = { referencia: "", nombre: "", descripcion: "", categoria_id: categories[0]?.id || 1, precio_pieza: "", precio_media_docena: "", precio_docena: "", badge: "", activo: true, destacado: false, imagen_url: "", tiene_tallas: false, tiene_colores: false, tallas: "", colores: "", distribucion_docena: "", distribucion_eje: "", proveedor_id: null };
   const [prodForm, setProdForm] = useState(emptyProd);
   const fileInputRef = useRef(null);
   const catFileRef = useRef(null);
@@ -4584,6 +4648,8 @@ function AdminView() {
   const [equipoForm, setEquipoForm] = useState(false); // true = mostrar modal de agregar miembro
   const [miembroAQuitar, setMiembroAQuitar] = useState(null); // usuario del equipo a quitar (confirmación)
   const [mfaModal, setMfaModal] = useState(false); // true = mostrar modal de verificación en dos pasos
+  const [proveedorForm, setProveedorForm] = useState(null); // null | {} (crear) | {id,...} (editar)
+  const [proveedorAEliminar, setProveedorAEliminar] = useState(null); // proveedor a eliminar (confirmación)
   // ── DESCUENTOS ──
   const [descuentos, setDescuentos] = useState([]); // lista de códigos de descuento
   const [descForm, setDescForm] = useState(null); // formulario crear/editar descuento o null
@@ -4592,6 +4658,7 @@ function AdminView() {
   const [busquedaCotizacion, setBusquedaCotizacion] = useState(""); // buscar cotización por nombre de cliente
   // ── RETORNOS ──
   const [retornos, setRetornos] = useState([]);
+  const [proveedores, setProveedores] = useState([]); // proveedores externos (productos que no son propios)
   const [retornoForm, setRetornoForm] = useState(null); // null | objeto del formulario
   const [guardandoRetorno, setGuardandoRetorno] = useState(false);
   const [busquedaRetorno, setBusquedaRetorno] = useState("");
@@ -4618,6 +4685,8 @@ function AdminView() {
         sb.get("descuentos", "?order=created_at.desc").then(d => setDescuentos(d || [])).catch(() => {});
         // Cargar retornos
         sb.get("retornos", "?order=created_at.desc").then(d => setRetornos(d || [])).catch(() => {});
+        // Cargar proveedores
+        sb.get("proveedores", "?order=nombre.asc").then(d => setProveedores(d || [])).catch(() => {});
         // Cargar items de cada pedido para estadísticas de mejores productos
         const ordersWithItems = await Promise.all(ordersData.map(async o => {
           const items = await sb.get("pedido_items", `?pedido_id=eq.${o.id}`).catch(() => []);
@@ -5067,7 +5136,7 @@ function AdminView() {
   // ── GUARDAR / EDITAR PRODUCTO ──────────────────────────────────
   const openNewProduct = () => { setProdForm(emptyProd); setEditingId(null); setShowProdForm(true); setShowBulk(false); };
   const openEditProduct = (p) => {
-    setProdForm({ referencia: p.referencia || "", nombre: p.nombre || "", descripcion: p.descripcion || "", categoria_id: p.categoria_id || categories[0]?.id || 1, precio_pieza: p.precio_pieza, precio_media_docena: p.precio_media_docena, precio_docena: p.precio_docena, badge: p.badge || "", activo: p.activo, destacado: p.destacado || false, imagen_url: p.imagen_url || "", tiene_tallas: p.tiene_tallas || false, tiene_colores: p.tiene_colores || false, tallas: p.tallas || "", colores: p.colores || "", distribucion_docena: p.distribucion_docena || "", distribucion_eje: p.distribucion_eje || "" });
+    setProdForm({ referencia: p.referencia || "", nombre: p.nombre || "", descripcion: p.descripcion || "", categoria_id: p.categoria_id || categories[0]?.id || 1, precio_pieza: p.precio_pieza, precio_media_docena: p.precio_media_docena, precio_docena: p.precio_docena, badge: p.badge || "", activo: p.activo, destacado: p.destacado || false, imagen_url: p.imagen_url || "", tiene_tallas: p.tiene_tallas || false, tiene_colores: p.tiene_colores || false, tallas: p.tallas || "", colores: p.colores || "", distribucion_docena: p.distribucion_docena || "", distribucion_eje: p.distribucion_eje || "", proveedor_id: p.proveedor_id || null });
     setEditingId(p.id);
     setShowProdForm(true);
     setShowBulk(false);
@@ -5404,6 +5473,26 @@ function AdminView() {
     ? productosPorCategoria.filter(p => (p.referencia || "").toLowerCase().includes(busquedaProductoQ) || (p.nombre || "").toLowerCase().includes(busquedaProductoQ))
     : productosPorCategoria;
 
+  // Ventas e ingresos generados por cada proveedor externo (todo el historial, no solo el rango
+  // de fechas del dashboard) — recorre todos los pedidos reales y agrupa por proveedor del producto.
+  const ventasPorProveedor = (() => {
+    const mapa = {};
+    proveedores.forEach(pv => { mapa[pv.id] = { proveedor: pv, ingreso: 0, unidades: 0, pedidos: new Set() }; });
+    pedidosRealesTodos.forEach(o => {
+      (o.items || []).forEach(it => {
+        const prod = products.find(p => p.id === it.producto_id);
+        if (prod?.proveedor_id && mapa[prod.proveedor_id]) {
+          mapa[prod.proveedor_id].ingreso += Number(it.subtotal) || 0;
+          mapa[prod.proveedor_id].unidades += Number(it.cantidad) || 0;
+          mapa[prod.proveedor_id].pedidos.add(o.id);
+        }
+      });
+    });
+    return Object.values(mapa)
+      .map(v => ({ ...v, pedidos: v.pedidos.size }))
+      .sort((a, b) => b.ingreso - a.ingreso);
+  })();
+
   const tabs = esOperador ? [
     ["dashboard", "Inicio", BarChart3],
     ["orders", "Pedidos", Package],
@@ -5419,6 +5508,7 @@ function AdminView() {
     ["descuentos", "Descuentos", Zap],
     ["retornos", "Retornos", RefreshCw],
     ["analisis", "Análisis Stock", TrendingUp],
+    ["proveedores", "Proveedores", Building2],
     ["shipping", "Envíos", Truck],
     ["users", "Clientes", Users],
     ["equipo", "Equipo", Lock],
@@ -6105,6 +6195,47 @@ function AdminView() {
         {/* MODAL VERIFICACIÓN EN DOS PASOS */}
         {mfaModal && <MfaSetupModal onClose={() => setMfaModal(false)} />}
 
+        {/* MODAL CREAR/EDITAR PROVEEDOR */}
+        {proveedorForm && (
+          <ProveedorFormModal
+            proveedor={proveedorForm}
+            showToast={showToast}
+            onClose={() => setProveedorForm(null)}
+            onSaved={(saved) => setProveedores(prev => proveedorForm.id ? prev.map(p => p.id === saved.id ? saved : p) : [saved, ...prev])}
+          />
+        )}
+
+        {/* CONFIRMAR ELIMINAR PROVEEDOR */}
+        {proveedorAEliminar && createPortal(
+          <div className="oft-overlay" style={S.overlay} onClick={() => setProveedorAEliminar(null)}>
+            <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 16, maxWidth: 380, width: "92%", padding: 24, textAlign: "center" }} onClick={e => e.stopPropagation()}>
+              <div style={{ fontWeight: 800, fontSize: 17, marginBottom: 8 }}>¿Eliminar a "{proveedorAEliminar.nombre}"?</div>
+              <p style={{ fontSize: 13, color: GRAY3, marginBottom: 20 }}>
+                Los productos que ya tenías vinculados a este proveedor NO se borran, solo quedan sin proveedor asignado (pasan a tratarse como productos propios).
+              </p>
+              <div style={{ display: "flex", gap: 10 }}>
+                <button onClick={() => setProveedorAEliminar(null)} className="oft-btn-press" style={{ ...S.btnOutline, flex: 1, justifyContent: "center" }}>Cancelar</button>
+                <button
+                  onClick={async () => {
+                    try {
+                      await sb.delete("proveedores", proveedorAEliminar.id);
+                      setProveedores(prev => prev.filter(p => p.id !== proveedorAEliminar.id));
+                      setProducts(prev => prev.map(p => p.proveedor_id === proveedorAEliminar.id ? { ...p, proveedor_id: null } : p));
+                      showToast("Proveedor eliminado");
+                    } catch(e) {
+                      showToast("Error: " + (e.message || "no se pudo eliminar"));
+                    }
+                    setProveedorAEliminar(null);
+                  }}
+                  className="oft-btn-press" style={{ ...S.btnRed, flex: 1, justifyContent: "center" }}
+                >
+                  Sí, eliminar
+                </button>
+              </div>
+            </div>
+          </div>
+        , document.body)}
+
         {/* MODAL AGREGAR AL EQUIPO */}
         {equipoForm && (
           <EquipoFormModal
@@ -6308,6 +6439,12 @@ function AdminView() {
                       {categories.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
                     </select>
                   </div>
+                  <div><label style={S.label}>Proveedor</label>
+                    <select style={{ ...S.input }} value={prodForm.proveedor_id || ""} onChange={e => setProdForm({...prodForm, proveedor_id: e.target.value ? Number(e.target.value) : null})}>
+                      <option value="">Producto propio de Ofertodo</option>
+                      {proveedores.map(pv => <option key={pv.id} value={pv.id}>{pv.nombre}</option>)}
+                    </select>
+                  </div>
                   <div><label style={S.label}>Estado</label>
                     <select style={{ ...S.input }} value={prodForm.activo ? "1" : "0"} onChange={e => setProdForm({...prodForm,activo:e.target.value === "1"})}>
                       <option value="1">Activo</option>
@@ -6435,13 +6572,22 @@ function AdminView() {
                         {p.imagen_url ? <img src={p.imagen_url} style={{ width: 36, height: 36, borderRadius: 6, objectFit: "cover" }} /> : <div style={{ width: 36, height: 36, borderRadius: 6, background: GRAY, display: "flex", alignItems: "center", justifyContent: "center" }}><Package size={16} color={GRAY3} /></div>}
                       </td>
                       <td style={{ ...S.td, fontWeight: 700 }}>{p.referencia || "—"}</td>
-                      <td style={S.td}>{p.nombre}</td>
+                      <td style={S.td}>
+                        {p.nombre}
+                        {p.proveedor_id && (
+                          <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 800, background: "#E7F1FF", color: "#004085", padding: "2px 7px", borderRadius: 10 }}>
+                            {proveedores.find(pv => pv.id === p.proveedor_id)?.nombre || "Proveedor"}
+                          </span>
+                        )}
+                      </td>
                       <td style={S.td}>{categories.find(c=>c.id===p.categoria_id)?.nombre || "-"}</td>
                       <td style={S.td}>${p.precio_pieza}</td>
                       <td style={S.td}>${p.precio_media_docena}</td>
                       <td style={{ ...S.td, fontWeight: 700, color: RED }}>${p.precio_docena}</td>
                       <td style={S.td}>
-                        {p.stock_actualizado_at ? (
+                        {p.proveedor_id ? (
+                          <span style={{ color: GRAY3, fontSize: 12 }}>Bajo pedido</span>
+                        ) : p.stock_actualizado_at ? (
                           <span style={{ fontWeight: 700, color: Number(p.stock) > 5 ? "#155724" : Number(p.stock) > 0 ? "#856404" : RED }}>
                             {Number(p.stock) > 0 ? Number(p.stock) : "Agotado"}
                           </span>
@@ -7185,6 +7331,79 @@ function AdminView() {
           </>
           );
         })()}
+
+        {/* ═══════════ PROVEEDORES ═══════════ */}
+        {tab === "proveedores" && esAdminCompleto && (
+          <>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12, marginBottom: 8 }}>
+              <div style={{ fontSize: 22, fontWeight: 900, display: "flex", alignItems: "center", gap: 10 }}><Building2 size={24} color={RED} /> Proveedores</div>
+              <button onClick={() => setProveedorForm({})} className="oft-btn-press" style={{ ...S.btnRed, padding: "10px 18px", fontSize: 14 }}>
+                <Plus size={16} /> Nuevo proveedor
+              </button>
+            </div>
+            <p style={{ fontSize: 13, color: GRAY3, marginBottom: 24, maxWidth: 640 }}>
+              Productos de proveedores externos (comprados bajo pedido) — nunca se bloquean por falta de stock en la
+              web, ya que la disponibilidad real se confirma yendo directo al proveedor cuando llega el pedido.
+            </p>
+            {proveedores.length === 0 ? (
+              <div style={{ background: WHITE, borderRadius: 16, padding: "40px 24px", border: `2px dashed ${GRAY2}`, textAlign: "center" }}>
+                <div style={{ width: 64, height: 64, borderRadius: "50%", background: GRAY, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
+                  <Building2 size={30} color={GRAY3} strokeWidth={1.5} />
+                </div>
+                <div style={{ fontWeight: 800, fontSize: 17, marginBottom: 6 }}>Aún no tienes proveedores registrados</div>
+                <p style={{ fontSize: 14, color: GRAY3 }}>Agrégalos aquí para poder diferenciar sus productos y ver sus ventas por separado.</p>
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                {ventasPorProveedor.map(v => {
+                  const pv = v.proveedor;
+                  const numProductos = products.filter(p => p.proveedor_id === pv.id).length;
+                  return (
+                    <div key={pv.id} style={{ background: WHITE, borderRadius: 14, border: `1px solid ${GRAY2}`, padding: 20 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12 }}>
+                        <div>
+                          <div style={{ fontWeight: 800, fontSize: 17, display: "flex", alignItems: "center", gap: 8 }}>
+                            {pv.nombre}
+                            {!pv.activo && <span style={{ fontSize: 10, fontWeight: 800, background: GRAY, color: GRAY3, padding: "2px 8px", borderRadius: 10 }}>INACTIVO</span>}
+                          </div>
+                          {pv.telefono && <div style={{ fontSize: 13, color: GRAY3, marginTop: 2 }}>{pv.telefono}</div>}
+                          {pv.direccion && <div style={{ fontSize: 13, color: GRAY3 }}>{pv.direccion}</div>}
+                        </div>
+                        <div style={{ display: "flex", gap: 8 }}>
+                          <button onClick={() => setProveedorForm(pv)} className="oft-btn-press" style={{ background: "none", border: `1.5px solid ${BLACK}`, color: BLACK, borderRadius: 8, padding: "8px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                            <PencilIcon size={13} /> Editar
+                          </button>
+                          <button onClick={() => setProveedorAEliminar(pv)} className="oft-btn-press" style={{ background: "none", border: `1.5px solid ${RED}`, color: RED, borderRadius: 8, padding: "8px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
+                      </div>
+                      {pv.notas && <div style={{ fontSize: 12, color: GRAY3, marginTop: 8, background: GRAY, borderRadius: 8, padding: "8px 10px" }}>{pv.notas}</div>}
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 10, marginTop: 16, paddingTop: 16, borderTop: `1px solid ${GRAY2}` }}>
+                        <div>
+                          <div style={{ fontSize: 20, fontWeight: 900, color: RED }}>{money(v.ingreso)}</div>
+                          <div style={{ fontSize: 11, color: GRAY3 }}>Ingreso generado</div>
+                        </div>
+                        <div>
+                          <div style={{ fontSize: 20, fontWeight: 900 }}>{v.unidades}</div>
+                          <div style={{ fontSize: 11, color: GRAY3 }}>Unidades vendidas</div>
+                        </div>
+                        <div>
+                          <div style={{ fontSize: 20, fontWeight: 900 }}>{v.pedidos}</div>
+                          <div style={{ fontSize: 11, color: GRAY3 }}>Pedidos</div>
+                        </div>
+                        <div>
+                          <div style={{ fontSize: 20, fontWeight: 900 }}>{numProductos}</div>
+                          <div style={{ fontSize: 11, color: GRAY3 }}>Productos en catálogo</div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </>
+        )}
 
         {/* ═══════════ ENVÍOS ═══════════ */}
         {tab === "shipping" && esAdminCompleto && (
