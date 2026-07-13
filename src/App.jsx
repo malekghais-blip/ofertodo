@@ -5228,8 +5228,16 @@ function AdminView() {
     for (let line of lines) {
       if (line.toLowerCase().startsWith("referencia")) continue;
       const cols = line.split(",").map(c => c.trim());
-      const [referencia, nombre, descripcion, categoria_id, precio_pieza, precio_media_docena, precio_docena, badge, tallasCol, distCol] = cols;
+      const [referencia, nombre, descripcion, categoria_id, precio_pieza, precio_media_docena, precio_docena, badge, tallasCol, distCol, proveedorCol] = cols;
       if (!nombre || !precio_pieza) { err++; continue; }
+
+      // Proveedor (opcional): se escribe el NOMBRE del proveedor tal cual está creado en la
+      // pestaña Proveedores — si coincide, el producto queda vinculado a él automáticamente.
+      let proveedor_id = null;
+      if (proveedorCol) {
+        const encontrado = proveedores.find(pv => pv.nombre.trim().toLowerCase() === proveedorCol.trim().toLowerCase());
+        if (encontrado) proveedor_id = encontrado.id;
+      }
 
       // Tallas + distribución por docena (opcionales) — dentro de la columna se separan con "|"
       // Ej: tallas="30|32|34|36|38"  distribucion="2|4|3|2|1"  →  1 docena trae 2 de la 30, 4 de la 32, etc.
@@ -5252,7 +5260,7 @@ function AdminView() {
           categoria_id: Number(categoria_id) || categories[0]?.id || 1,
           precio_pieza: Number(precio_pieza) || 0, precio_media_docena: Number(precio_media_docena) || 0,
           precio_docena: Number(precio_docena) || 0, badge: badge || "", activo: true, imagen_url: "",
-          tiene_tallas, tallas, distribucion_docena, distribucion_eje,
+          tiene_tallas, tallas, distribucion_docena, distribucion_eje, proveedor_id,
         });
         newItems.push(saved[0]); ok++;
       } catch(e) { err++; }
@@ -6383,14 +6391,23 @@ function AdminView() {
                 <div style={{ fontWeight: 800, marginBottom: 8, display: "flex", alignItems: "center", gap: 8 }}><FileSpreadsheet size={18} color={RED} /> Carga masiva de productos</div>
                 <p style={{ fontSize: 13, color: GRAY3, marginBottom: 12 }}>Una línea por producto, valores separados por comas en este orden:</p>
                 <div style={{ background: GRAY, borderRadius: 8, padding: 12, fontSize: 12, fontFamily: "monospace", marginBottom: 12, overflowX: "auto" }}>
-                  referencia,nombre,descripcion,categoria_id,precio_pieza,precio_media_docena,precio_docena,badge,tallas,distribucion_docena
+                  referencia,nombre,descripcion,categoria_id,precio_pieza,precio_media_docena,precio_docena,badge,tallas,distribucion_docena,proveedor
                 </div>
                 <div style={{ fontSize: 12, color: GRAY3, marginBottom: 4 }}>
-                  <strong>Tallas y distribución (opcional):</strong> las últimas 2 columnas. Las tallas van separadas por "|" y las cantidades de cada una <em>en 1 docena completa</em> van en el mismo orden, también separadas por "|". La media docena se calcula sola.
+                  <strong>Tallas y distribución (opcional):</strong> las últimas 2 columnas antes de proveedor. Las tallas van separadas por "|" y las cantidades de cada una <em>en 1 docena completa</em> van en el mismo orden, también separadas por "|". La media docena se calcula sola.
+                </div>
+                <div style={{ fontSize: 12, color: GRAY3, marginBottom: 12 }}>
+                  <strong>Proveedor (opcional):</strong> escribe el nombre exacto de un proveedor ya creado en la pestaña "Proveedores" — si coincide, el producto queda vinculado a él (no se bloquea por falta de stock). Si lo dejas vacío, el producto es propio de Ofertodo.
                 </div>
                 <div style={{ background: GRAY, borderRadius: 8, padding: 12, fontSize: 12, fontFamily: "monospace", marginBottom: 12, overflowX: "auto" }}>
-                  001,Zapatilla HPC,Descripción,1,3.50,19,36,NUEVO,30|32|34|36|38,2|4|3|2|1
+                  001,Zapatilla HPC,Descripción,1,3.50,19,36,NUEVO,30|32|34|36|38,2|4|3|2|1,<br />
+                  002,Perfume XYZ,Descripción,2,8,45,85,,,,Distribuidora El Puerto
                 </div>
+                {proveedores.length > 0 && (
+                  <div style={{ fontSize: 12, color: GRAY3, marginBottom: 12 }}>
+                    <strong>Proveedores ya creados:</strong> {proveedores.map(pv => pv.nombre).join(" · ")}
+                  </div>
+                )}
                 <div style={{ fontSize: 12, color: GRAY3, marginBottom: 12 }}>
                   <strong>IDs de categoría:</strong> {categories.map(c => `${c.nombre}=${c.id}`).join(" · ")}
                 </div>
