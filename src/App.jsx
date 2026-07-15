@@ -1018,7 +1018,7 @@ function DistribucionInfo({ product, pres, count }) {
 // ═══════════════════════════════════════════════════════════════
 function ProductCard({ product }) {
   const { addToCart, showToast, setQuickView } = useApp();
-  const [pres, setPres] = useState("docena");
+  const [pres, setPres] = useState(product.venta_por_unidad ? "pieza" : "docena");
   const [count, setCount] = useState(1);
   const [added, setAdded] = useState(false);
   const [talla, setTalla] = useState("");
@@ -1199,7 +1199,7 @@ function CatalogoView() {
 // ═══════════════════════════════════════════════════════════════
 function ProductModal() {
   const { quickView: product, setQuickView, addToCart, showToast } = useApp();
-  const [pres, setPres] = useState("docena");
+  const [pres, setPres] = useState(product?.venta_por_unidad ? "pieza" : "docena");
   const [count, setCount] = useState(1);
   const [added, setAdded] = useState(false);
   const [talla, setTalla] = useState("");
@@ -4615,7 +4615,7 @@ function AdminView() {
   const [bulkLoading, setBulkLoading] = useState(false);
   const [newCatName, setNewCatName] = useState("");
   const [catUploading, setCatUploading] = useState(null); // id de categoría subiendo icono
-  const emptyProd = { referencia: "", nombre: "", descripcion: "", categoria_id: categories[0]?.id || 1, precio_pieza: "", precio_media_docena: "", precio_docena: "", badge: "", activo: true, destacado: false, imagen_url: "", tiene_tallas: false, tiene_colores: false, tallas: "", colores: "", distribucion_docena: "", distribucion_eje: "", proveedor_id: null };
+  const emptyProd = { referencia: "", nombre: "", descripcion: "", categoria_id: categories[0]?.id || 1, precio_pieza: "", precio_media_docena: "", precio_docena: "", badge: "", activo: true, destacado: false, imagen_url: "", tiene_tallas: false, tiene_colores: false, tallas: "", colores: "", distribucion_docena: "", distribucion_eje: "", proveedor_id: null, venta_por_unidad: false };
   const [prodForm, setProdForm] = useState(emptyProd);
   const fileInputRef = useRef(null);
   const catFileRef = useRef(null);
@@ -5136,7 +5136,7 @@ function AdminView() {
   // ── GUARDAR / EDITAR PRODUCTO ──────────────────────────────────
   const openNewProduct = () => { setProdForm(emptyProd); setEditingId(null); setShowProdForm(true); setShowBulk(false); };
   const openEditProduct = (p) => {
-    setProdForm({ referencia: p.referencia || "", nombre: p.nombre || "", descripcion: p.descripcion || "", categoria_id: p.categoria_id || categories[0]?.id || 1, precio_pieza: p.precio_pieza, precio_media_docena: p.precio_media_docena, precio_docena: p.precio_docena, badge: p.badge || "", activo: p.activo, destacado: p.destacado || false, imagen_url: p.imagen_url || "", tiene_tallas: p.tiene_tallas || false, tiene_colores: p.tiene_colores || false, tallas: p.tallas || "", colores: p.colores || "", distribucion_docena: p.distribucion_docena || "", distribucion_eje: p.distribucion_eje || "", proveedor_id: p.proveedor_id || null });
+    setProdForm({ referencia: p.referencia || "", nombre: p.nombre || "", descripcion: p.descripcion || "", categoria_id: p.categoria_id || categories[0]?.id || 1, precio_pieza: p.precio_pieza, precio_media_docena: p.precio_media_docena, precio_docena: p.precio_docena, badge: p.badge || "", activo: p.activo, destacado: p.destacado || false, imagen_url: p.imagen_url || "", tiene_tallas: p.tiene_tallas || false, tiene_colores: p.tiene_colores || false, tallas: p.tallas || "", colores: p.colores || "", distribucion_docena: p.distribucion_docena || "", distribucion_eje: p.distribucion_eje || "", proveedor_id: p.proveedor_id || null, venta_por_unidad: p.venta_por_unidad || false });
     setEditingId(p.id);
     setShowProdForm(true);
     setShowBulk(false);
@@ -5228,7 +5228,7 @@ function AdminView() {
     for (let line of lines) {
       if (line.toLowerCase().startsWith("referencia")) continue;
       const cols = line.split(",").map(c => c.trim());
-      const [referencia, nombre, descripcion, categoria_id, precio_pieza, precio_media_docena, precio_docena, badge, tallasCol, distCol, proveedorCol] = cols;
+      const [referencia, nombre, descripcion, categoria_id, precio_pieza, precio_media_docena, precio_docena, badge, tallasCol, distCol, proveedorCol, ventaUnidadCol] = cols;
       if (!nombre || !precio_pieza) { err++; continue; }
 
       // Proveedor (opcional): se escribe el NOMBRE del proveedor tal cual está creado en la
@@ -5238,6 +5238,9 @@ function AdminView() {
         const encontrado = proveedores.find(pv => pv.nombre.trim().toLowerCase() === proveedorCol.trim().toLowerCase());
         if (encontrado) proveedor_id = encontrado.id;
       }
+
+      // Venta por unidad (opcional): S/SI/1 para activarlo — la tarjeta abre en "Pieza" por defecto
+      const venta_por_unidad = ["s", "si", "sí", "1", "true"].includes((ventaUnidadCol || "").trim().toLowerCase());
 
       // Tallas + distribución por docena (opcionales) — dentro de la columna se separan con "|"
       // Ej: tallas="30|32|34|36|38"  distribucion="2|4|3|2|1"  →  1 docena trae 2 de la 30, 4 de la 32, etc.
@@ -5260,7 +5263,7 @@ function AdminView() {
           categoria_id: Number(categoria_id) || categories[0]?.id || 1,
           precio_pieza: Number(precio_pieza) || 0, precio_media_docena: Number(precio_media_docena) || 0,
           precio_docena: Number(precio_docena) || 0, badge: badge || "", activo: true, imagen_url: "",
-          tiene_tallas, tallas, distribucion_docena, distribucion_eje, proveedor_id,
+          tiene_tallas, tallas, distribucion_docena, distribucion_eje, proveedor_id, venta_por_unidad,
         });
         newItems.push(saved[0]); ok++;
       } catch(e) { err++; }
@@ -6391,17 +6394,20 @@ function AdminView() {
                 <div style={{ fontWeight: 800, marginBottom: 8, display: "flex", alignItems: "center", gap: 8 }}><FileSpreadsheet size={18} color={RED} /> Carga masiva de productos</div>
                 <p style={{ fontSize: 13, color: GRAY3, marginBottom: 12 }}>Una línea por producto, valores separados por comas en este orden:</p>
                 <div style={{ background: GRAY, borderRadius: 8, padding: 12, fontSize: 12, fontFamily: "monospace", marginBottom: 12, overflowX: "auto" }}>
-                  referencia,nombre,descripcion,categoria_id,precio_pieza,precio_media_docena,precio_docena,badge,tallas,distribucion_docena,proveedor
+                  referencia,nombre,descripcion,categoria_id,precio_pieza,precio_media_docena,precio_docena,badge,tallas,distribucion_docena,proveedor,venta_unidad
                 </div>
                 <div style={{ fontSize: 12, color: GRAY3, marginBottom: 4 }}>
                   <strong>Tallas y distribución (opcional):</strong> las últimas 2 columnas antes de proveedor. Las tallas van separadas por "|" y las cantidades de cada una <em>en 1 docena completa</em> van en el mismo orden, también separadas por "|". La media docena se calcula sola.
                 </div>
-                <div style={{ fontSize: 12, color: GRAY3, marginBottom: 12 }}>
+                <div style={{ fontSize: 12, color: GRAY3, marginBottom: 4 }}>
                   <strong>Proveedor (opcional):</strong> escribe el nombre exacto de un proveedor ya creado en la pestaña "Proveedores" — si coincide, el producto queda vinculado a él (no se bloquea por falta de stock). Si lo dejas vacío, el producto es propio de Ofertodo.
                 </div>
+                <div style={{ fontSize: 12, color: GRAY3, marginBottom: 12 }}>
+                  <strong>Venta por unidad (opcional):</strong> escribe "SI" para que la tarjeta de ese producto abra directo en "Pieza" en vez de "Docena" — ideal para artículos que no son de ropa (perfumes, desechables, etc.). Déjalo vacío para el comportamiento normal.
+                </div>
                 <div style={{ background: GRAY, borderRadius: 8, padding: 12, fontSize: 12, fontFamily: "monospace", marginBottom: 12, overflowX: "auto" }}>
-                  001,Zapatilla HPC,Descripción,1,3.50,19,36,NUEVO,30|32|34|36|38,2|4|3|2|1,<br />
-                  002,Perfume XYZ,Descripción,2,8,45,85,,,,Distribuidora El Puerto
+                  001,Zapatilla HPC,Descripción,1,3.50,19,36,NUEVO,30|32|34|36|38,2|4|3|2|1,,<br />
+                  002,Perfume XYZ,Descripción,2,8,45,85,,,,Distribuidora El Puerto,SI
                 </div>
                 {proveedores.length > 0 && (
                   <div style={{ fontSize: 12, color: GRAY3, marginBottom: 12 }}>
@@ -6461,6 +6467,13 @@ function AdminView() {
                       <option value="">Producto propio de Ofertodo</option>
                       {proveedores.map(pv => <option key={pv.id} value={pv.id}>{pv.nombre}</option>)}
                     </select>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, background: WHITE, border: `1.5px solid ${GRAY2}`, borderRadius: 10, padding: "10px 14px" }}>
+                    <input type="checkbox" id="venta_por_unidad" checked={!!prodForm.venta_por_unidad} onChange={e => setProdForm({...prodForm, venta_por_unidad: e.target.checked})} style={{ width: 18, height: 18 }} />
+                    <label htmlFor="venta_por_unidad" style={{ fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+                      Venta por unidad
+                      <div style={{ fontSize: 11, color: GRAY3, fontWeight: 400 }}>La tarjeta abre en "Pieza" por defecto (ideal para no-ropa: perfumes, desechables, etc.)</div>
+                    </label>
                   </div>
                   <div><label style={S.label}>Estado</label>
                     <select style={{ ...S.input }} value={prodForm.activo ? "1" : "0"} onChange={e => setProdForm({...prodForm,activo:e.target.value === "1"})}>
