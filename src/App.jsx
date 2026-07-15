@@ -1033,7 +1033,7 @@ function ProductCard({ product }) {
 
   // ¿Este producto tiene variantes y el cliente eligió "Por pieza"?
   const tieneVariantes = (product.tiene_tallas && (product.tallas || "").trim()) || (product.tiene_colores && (product.colores || "").trim());
-  const modoConsulta = pres === "pieza" && tieneVariantes;
+  const modoConsulta = pres === "pieza" && tieneVariantes && !product.venta_por_unidad;
 
   // Consultar por WhatsApp con la talla y el color elegidos
   const consultarWhatsApp = () => {
@@ -1213,7 +1213,7 @@ function ProductModal() {
   const agotadoBloqueado = !product.proveedor_id && product.stock_actualizado_at && Number(product.stock) <= 0;
 
   const tieneVariantes = (product.tiene_tallas && (product.tallas || "").trim()) || (product.tiene_colores && (product.colores || "").trim());
-  const modoConsulta = pres === "pieza" && tieneVariantes;
+  const modoConsulta = pres === "pieza" && tieneVariantes && !product.venta_por_unidad;
 
   const consultarWhatsApp = () => {
     if (product.tiene_tallas && (product.tallas || "").trim() && !talla) { showToast("Elige una talla primero"); return; }
