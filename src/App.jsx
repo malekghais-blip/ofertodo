@@ -1764,7 +1764,8 @@ function YappyButton({ pedido, onExito, onCancelar }) {
 //  CHECKOUT
 // ═══════════════════════════════════════════════════════════════
 function CheckoutView() {
-  const { cart, setCart, user, setView, showToast, empresas, sucursales } = useApp();
+  const { cart, setCart, user, setView, showToast, empresas, sucursales, localesRetiro, retiroLocalHabilitado } = useApp();
+  const [localRetiroId, setLocalRetiroId] = useState(null);
   const [address, setAddress] = useState(""), [notes, setNotes] = useState(""), [loading, setLoading] = useState(false), [placed, setPlaced] = useState(null);
   const [nombre, setNombre] = useState(user?.nombre || "");
   const [telefono, setTelefono] = useState(user?.telefono || "");
@@ -1850,6 +1851,7 @@ function CheckoutView() {
 
     if (modoEntrega === "local") {
       // Retiro en el local: no hay empresa de envío ni sucursal, ni costo de envío
+      if (localesRetiro.length > 1 && !localRetiroId) { alert("Por favor elige en cuál local vas a retirar tu pedido."); return; }
       empresaFinalId = null;
       empresaFinalNombre = "";
       sucursalFinalId = null;
@@ -1877,12 +1879,14 @@ function CheckoutView() {
       // orderId corto para Yappy (máx 15 caracteres alfanuméricos)
       const yappyOrderId = "OFT" + Date.now().toString().slice(-10);
       const codigo = `OFT-${Date.now().toString().slice(-6)}`;
+      const localElegido = modoEntrega === "local" ? (localesRetiro.find(l => l.id === localRetiroId) || localesRetiro[0] || null) : null;
       const pedido = await sb.post("pedidos", {
         codigo, usuario_id: user.id, nombre_cliente: nombre, telefono: telefono,
         direccion: address, notas: notes, total, estado: 0,
         empresa_envio_id: empresaFinalId, empresa_envio_nombre: empresaFinalNombre,
         sucursal_id: sucursalFinalId, sucursal_nombre: sucursalFinalNombre,
         retiro_local: modoEntrega === "local",
+        local_retiro_id: localElegido?.id || null, local_retiro_nombre: localElegido?.nombre || null,
         pagado: false, yappy_order_id: yappyOrderId,
         descuento_codigo: descuentoAplicado?.codigo || null,
         descuento_monto: montoDescuento > 0 ? Number(montoDescuento.toFixed(2)) : 0,
@@ -1919,7 +1923,7 @@ function CheckoutView() {
           <CheckCircle2 size={14} /> Pagado con Yappy
         </div>
         {modoEntrega === "local"
-          ? <div style={{ marginTop: 10, fontSize: 13, color: "#856404", display: "flex", alignItems: "center", gap: 6, fontWeight: 700 }}><Home size={14} /> Retiro en el local</div>
+          ? <div style={{ marginTop: 10, fontSize: 13, color: "#856404", display: "flex", alignItems: "center", gap: 6, fontWeight: 700 }}><Home size={14} /> Retiro en el local{(() => { const l = localesRetiro.find(x => x.id === localRetiroId) || (localesRetiro.length === 1 ? localesRetiro[0] : null); return l ? `: ${l.nombre}` : ""; })()}</div>
           : empresaSel && <div style={{ marginTop: 10, fontSize: 13, color: GRAY3, display: "flex", alignItems: "center", gap: 6 }}><Truck size={14} /> {empresaSel.nombre}{sucursalSel ? ` · ${sucursalSel.nombre}` : ""}</div>}
       </div>
       <button style={{ ...S.btnRed, justifyContent: "center", margin: "0 auto" }} onClick={() => setView("dashboard")}>Ver estado de mi pedido</button>
@@ -1989,7 +1993,7 @@ function CheckoutView() {
       {/* MODO DE ENTREGA */}
       <div style={{ background: WHITE, borderRadius: 12, padding: 24, marginBottom: 16, border: `1px solid ${GRAY2}` }}>
         <div style={{ fontWeight: 800, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}><Truck size={18} /> ¿Cómo quieres recibir tu pedido? *</div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 6 }}>
+        <div style={{ display: "grid", gridTemplateColumns: retiroLocalHabilitado ? "1fr 1fr 1fr" : "1fr 1fr", gap: 10, marginBottom: 6 }}>
           <div onClick={() => setModoEntrega("sucursal")}
             style={{ border: `2px solid ${modoEntrega === "sucursal" ? RED : GRAY2}`, background: modoEntrega === "sucursal" ? "#FFF5F5" : WHITE, borderRadius: 10, padding: 16, cursor: "pointer", textAlign: "center" }}>
             <Building2 size={28} color={modoEntrega === "sucursal" ? RED : GRAY3} strokeWidth={1.6} />
@@ -2002,22 +2006,52 @@ function CheckoutView() {
             <div style={{ fontWeight: 800, fontSize: 14, marginTop: 8 }}>Puerta a puerta</div>
             <div style={{ fontSize: 11, color: GRAY3, marginTop: 2 }}>Te lo llevamos por Servientrega</div>
           </div>
-          <div onClick={() => setModoEntrega("local")}
-            style={{ border: `2px solid ${modoEntrega === "local" ? RED : GRAY2}`, background: modoEntrega === "local" ? "#FFF5F5" : WHITE, borderRadius: 10, padding: 16, cursor: "pointer", textAlign: "center" }}>
-            <Home size={28} color={modoEntrega === "local" ? RED : GRAY3} strokeWidth={1.6} />
-            <div style={{ fontWeight: 800, fontSize: 14, marginTop: 8 }}>Retiro en el local</div>
-            <div style={{ fontSize: 11, color: GRAY3, marginTop: 2 }}>Pasas tú mismo a recogerlo</div>
-          </div>
+          {retiroLocalHabilitado && (
+            <div onClick={() => setModoEntrega("local")}
+              style={{ border: `2px solid ${modoEntrega === "local" ? RED : GRAY2}`, background: modoEntrega === "local" ? "#FFF5F5" : WHITE, borderRadius: 10, padding: 16, cursor: "pointer", textAlign: "center" }}>
+              <Home size={28} color={modoEntrega === "local" ? RED : GRAY3} strokeWidth={1.6} />
+              <div style={{ fontWeight: 800, fontSize: 14, marginTop: 8 }}>Retiro en el local</div>
+              <div style={{ fontSize: 11, color: GRAY3, marginTop: 2 }}>Pasas tú mismo a recogerlo</div>
+            </div>
+          )}
         </div>
       </div>
 
-      {/* AVISO RETIRO EN EL LOCAL */}
-      {modoEntrega === "local" && (
-        <div style={{ background: "#FFF5F5", border: `1.5px solid ${RED}`, borderRadius: 12, padding: 16, marginBottom: 16, display: "flex", alignItems: "center", gap: 12 }}>
-          <Home size={22} color={RED} />
-          <div style={{ fontSize: 13 }}>
-            <strong>Retiro en nuestro local en Colón, Panamá.</strong> Te avisaremos por WhatsApp apenas esté listo para que pases a recogerlo — sin costo de envío.
-          </div>
+      {/* AVISO / SELECCIÓN RETIRO EN EL LOCAL */}
+      {modoEntrega === "local" && retiroLocalHabilitado && (
+        <div style={{ background: "#FFF5F5", border: `1.5px solid ${RED}`, borderRadius: 12, padding: 16, marginBottom: 16 }}>
+          {localesRetiro.length === 0 ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <Home size={22} color={RED} />
+              <div style={{ fontSize: 13 }}>
+                <strong>Retiro en nuestro local en Colón, Panamá.</strong> Te avisaremos por WhatsApp apenas esté listo para que pases a recogerlo — sin costo de envío.
+              </div>
+            </div>
+          ) : localesRetiro.length === 1 ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <Home size={22} color={RED} />
+              <div style={{ fontSize: 13 }}>
+                <strong>Retiro en: {localesRetiro[0].nombre}</strong>{localesRetiro[0].direccion ? ` — ${localesRetiro[0].direccion}` : ""}. Te avisaremos por WhatsApp apenas esté listo — sin costo de envío.
+              </div>
+            </div>
+          ) : (
+            <>
+              <div style={{ fontWeight: 800, fontSize: 13, marginBottom: 10, display: "flex", alignItems: "center", gap: 8 }}><Home size={18} color={RED} /> ¿En cuál local deseas retirarlo? *</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {localesRetiro.map(loc => (
+                  <div key={loc.id} onClick={() => setLocalRetiroId(loc.id)}
+                    style={{ border: `2px solid ${localRetiroId === loc.id ? RED : GRAY2}`, background: localRetiroId === loc.id ? WHITE : "#FFFAFA", borderRadius: 10, padding: "10px 14px", cursor: "pointer", display: "flex", alignItems: "center", gap: 10 }}>
+                    <Home size={16} color={localRetiroId === loc.id ? RED : GRAY3} />
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 700, fontSize: 13 }}>{loc.nombre}</div>
+                      {loc.direccion && <div style={{ fontSize: 11, color: GRAY3 }}>{loc.direccion}</div>}
+                    </div>
+                    {localRetiroId === loc.id && <CheckCircle2 size={16} color={RED} />}
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
         </div>
       )}
 
@@ -2522,7 +2556,7 @@ function ProgressTracker({ estado, compact, retiro = false }) {
 //  CREAR PEDIDO MANUAL (ADMIN)
 // ═══════════════════════════════════════════════════════════════
 function CrearPedidoView() {
-  const { products, empresas, sucursales, showToast } = useApp();
+  const { products, empresas, sucursales, localesRetiro, showToast } = useApp();
   const [items, setItems] = useState([]); // { product, pres, count }
   const [search, setSearch] = useState("");
   const [cliente, setCliente] = useState({ id: null, nombre: "", telefono: "", direccion: "" });
@@ -2541,6 +2575,7 @@ function CrearPedidoView() {
   const [descuento, setDescuento] = useState(""); // porcentaje
   const [envio, setEnvio] = useState(""); // costo de envío
   const [retiroLocal, setRetiroLocal] = useState(false); // true = el cliente retira en el local, sin envío
+  const [localRetiroId, setLocalRetiroId] = useState(null); // en cuál local específico (si hay más de uno)
   const [redondeo, setRedondeo] = useState("arriba"); // "arriba" | "abajo" | "no"
   const [saving, setSaving] = useState(false);
   const [invoice, setInvoice] = useState(null); // datos de la factura generada
@@ -2696,12 +2731,14 @@ function CrearPedidoView() {
       if (!numFactura) numFactura = Number(Date.now().toString().slice(-6));
 
       const codigo = (tipo === "cotizacion" ? "COT-" : "OFT-") + numFactura;
+      const localElegidoAdmin = retiroLocal ? (localesRetiro.find(l => l.id === localRetiroId) || (localesRetiro.length === 1 ? localesRetiro[0] : null)) : null;
       const pedido = await sb.post("pedidos", {
         codigo, usuario_id: cliente.id || null, nombre_cliente: cliente.nombre, telefono: cliente.telefono,
         direccion: cliente.direccion, notas, total, estado: 0,
         empresa_envio_id: empresaId, empresa_envio_nombre: empresaSel?.nombre || "",
         sucursal_id: sucursalId, sucursal_nombre: sucursalSel?.nombre || "",
         retiro_local: retiroLocal,
+        local_retiro_id: localElegidoAdmin?.id || null, local_retiro_nombre: localElegidoAdmin?.nombre || null,
         tipo, num_factura: numFactura, creado_por_admin: true, costo_envio: costoEnvio,
         // Las cotizaciones se marcan pagadas de una vez (no son ventas reales).
         // Los PEDIDOS se insertan como NO pagados y se marcan pagados en un segundo paso
@@ -2848,7 +2885,7 @@ function CrearPedidoView() {
 
   const resetForm = () => {
     setItems([]); setFlexPacks([]); setFlexActiveId(null); setCliente({ nombre: "", telefono: "", direccion: "" }); setNotas("");
-    setEmpresaId(null); setSucursalId(null); setRetiroLocal(false); setTipo("pedido"); setDescuento(""); setEnvio(""); setRedondeo("arriba"); setInvoice(null);
+    setEmpresaId(null); setSucursalId(null); setRetiroLocal(false); setLocalRetiroId(null); setTipo("pedido"); setDescuento(""); setEnvio(""); setRedondeo("arriba"); setInvoice(null);
   };
 
   return (
@@ -3273,6 +3310,12 @@ function CrearPedidoView() {
                   </select>
                 )}
               </>
+            )}
+            {retiroLocal && localesRetiro.length > 1 && (
+              <select style={{ ...S.input, marginBottom: 0 }} value={localRetiroId || ""} onChange={e => setLocalRetiroId(e.target.value ? Number(e.target.value) : null)}>
+                <option value="">¿En cuál local retira?</option>
+                {localesRetiro.map(loc => <option key={loc.id} value={loc.id}>{loc.nombre}</option>)}
+              </select>
             )}
           </div>
 
@@ -4127,6 +4170,62 @@ function ProveedorFormModal({ proveedor, onClose, onSaved, showToast }) {
   , document.body);
 }
 
+// ═══════════════════════════════════════════════════════════════
+//  CREAR / EDITAR LOCAL DE RETIRO
+// ═══════════════════════════════════════════════════════════════
+function LocalRetiroFormModal({ local, onClose, onSaved, showToast }) {
+  useLockBodyScroll();
+  const esEdicion = !!local?.id;
+  const [form, setForm] = useState({
+    nombre: local?.nombre || "", direccion: local?.direccion || "", telefono: local?.telefono || "",
+  });
+  const [guardando, setGuardando] = useState(false);
+
+  const guardar = async () => {
+    if (!form.nombre.trim()) { showToast("Escribe el nombre del local"); return; }
+    setGuardando(true);
+    try {
+      const datos = { nombre: form.nombre.trim(), direccion: form.direccion.trim(), telefono: form.telefono.trim() };
+      if (esEdicion) {
+        const fila = await sb.patch("locales_retiro", local.id, datos);
+        onSaved({ ...local, ...(Array.isArray(fila) && fila[0] ? fila[0] : datos) });
+        showToast("Local actualizado");
+      } else {
+        const fila = await sb.post("locales_retiro", { ...datos, activo: true });
+        onSaved(Array.isArray(fila) && fila[0] ? fila[0] : fila);
+        showToast("Local creado");
+      }
+      onClose();
+    } catch(e) {
+      showToast("Error: " + (e.message || "no se pudo guardar"));
+    }
+    setGuardando(false);
+  };
+
+  return createPortal(
+    <div className="oft-overlay" style={S.overlay} onClick={() => !guardando && onClose()}>
+      <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 16, maxWidth: 420, width: "92%", padding: 24 }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+          <div style={{ fontWeight: 800, fontSize: 18 }}>{esEdicion ? "Editar local" : "Nuevo local de retiro"}</div>
+          <button onClick={() => !guardando && onClose()} style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}><X size={22} /></button>
+        </div>
+        <label style={S.label}>Nombre *</label>
+        <input style={S.input} placeholder="Ej: Local Colón Centro" value={form.nombre} onChange={e => setForm({ ...form, nombre: e.target.value })} autoFocus />
+        <label style={S.label}>Dirección</label>
+        <input style={S.input} placeholder="Dirección exacta del local" value={form.direccion} onChange={e => setForm({ ...form, direccion: e.target.value })} />
+        <label style={S.label}>Teléfono</label>
+        <input style={S.input} placeholder="Ej: 6720-0474" value={form.telefono} onChange={e => setForm({ ...form, telefono: e.target.value })} />
+        <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
+          <button onClick={() => !guardando && onClose()} disabled={guardando} className="oft-btn-press" style={{ ...S.btnOutline, flex: 1, justifyContent: "center" }}>Cancelar</button>
+          <button onClick={guardar} disabled={guardando} className="oft-btn-press" style={{ ...S.btnRed, flex: 1, justifyContent: "center", opacity: guardando ? 0.7 : 1 }}>
+            {guardando ? "Guardando..." : esEdicion ? "Guardar cambios" : "Crear local"}
+          </button>
+        </div>
+      </div>
+    </div>
+  , document.body);
+}
+
 function MfaSetupModal({ onClose }) {
   useLockBodyScroll();
   const { showToast, user, setUser } = useApp();
@@ -4656,7 +4755,7 @@ function EditCotizacionModal({ cotizacion, empresas, sucursales, onClose, onSave
 //  ADMIN PANEL
 // ═══════════════════════════════════════════════════════════════
 function AdminView() {
-  const { products, setProducts, categories, setCategories, empresas, setEmpresas, sucursales, setSucursales, showToast, setView, setUser, user } = useApp();
+  const { products, setProducts, categories, setCategories, empresas, setEmpresas, sucursales, setSucursales, localesRetiro, setLocalesRetiro, retiroLocalHabilitado, setRetiroLocalHabilitado, showToast, setView, setUser, user } = useApp();
   // Rol del usuario actual: 'admin' = módulo completo, 'operador' = acceso limitado.
   // Los admins creados antes de este cambio pueden no tener "rol" guardado todavía — por
   // compatibilidad, si es_admin es true y no tiene rol, se trata como admin completo.
@@ -4708,6 +4807,9 @@ function AdminView() {
   const [miembroAQuitar, setMiembroAQuitar] = useState(null); // usuario del equipo a quitar (confirmación)
   const [mfaModal, setMfaModal] = useState(false); // true = mostrar modal de verificación en dos pasos
   const [proveedorForm, setProveedorForm] = useState(null); // null | {} (crear) | {id,...} (editar)
+  const [localForm, setLocalForm] = useState(null); // null | {} (crear) | {id,...} (editar) — local de retiro
+  const [localAEliminar, setLocalAEliminar] = useState(null); // local de retiro a eliminar (confirmación)
+  const [guardandoToggleRetiro, setGuardandoToggleRetiro] = useState(false);
   const [proveedorAEliminar, setProveedorAEliminar] = useState(null); // proveedor a eliminar (confirmación)
   // ── DESCUENTOS ──
   const [descuentos, setDescuentos] = useState([]); // lista de códigos de descuento
@@ -5587,6 +5689,7 @@ function AdminView() {
     ["retornos", "Retornos", RefreshCw],
     ["analisis", "Análisis Stock", TrendingUp],
     ["proveedores", "Proveedores", Building2],
+    ["retirolocal", "Retiro en Local", Home],
     ["shipping", "Envíos", Truck],
     ["users", "Clientes", Users],
     ["equipo", "Equipo", Lock],
@@ -6310,6 +6413,46 @@ function AdminView() {
                       showToast("Error: " + (e.message || "no se pudo eliminar"));
                     }
                     setProveedorAEliminar(null);
+                  }}
+                  className="oft-btn-press" style={{ ...S.btnRed, flex: 1, justifyContent: "center" }}
+                >
+                  Sí, eliminar
+                </button>
+              </div>
+            </div>
+          </div>
+        , document.body)}
+
+        {/* MODAL CREAR/EDITAR LOCAL DE RETIRO */}
+        {localForm && (
+          <LocalRetiroFormModal
+            local={localForm}
+            showToast={showToast}
+            onClose={() => setLocalForm(null)}
+            onSaved={(saved) => setLocalesRetiro(prev => localForm.id ? prev.map(l => l.id === saved.id ? saved : l) : [saved, ...prev])}
+          />
+        )}
+
+        {/* CONFIRMAR ELIMINAR LOCAL DE RETIRO */}
+        {localAEliminar && createPortal(
+          <div className="oft-overlay" style={S.overlay} onClick={() => setLocalAEliminar(null)}>
+            <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 16, maxWidth: 380, width: "92%", padding: 24, textAlign: "center" }} onClick={e => e.stopPropagation()}>
+              <div style={{ fontWeight: 800, fontSize: 17, marginBottom: 8 }}>¿Eliminar "{localAEliminar.nombre}"?</div>
+              <p style={{ fontSize: 13, color: GRAY3, marginBottom: 20 }}>
+                Los pedidos que ya se registraron con este local mantienen su información, solo dejará de aparecer como opción para pedidos nuevos.
+              </p>
+              <div style={{ display: "flex", gap: 10 }}>
+                <button onClick={() => setLocalAEliminar(null)} className="oft-btn-press" style={{ ...S.btnOutline, flex: 1, justifyContent: "center" }}>Cancelar</button>
+                <button
+                  onClick={async () => {
+                    try {
+                      await sb.delete("locales_retiro", localAEliminar.id);
+                      setLocalesRetiro(prev => prev.filter(l => l.id !== localAEliminar.id));
+                      showToast("Local eliminado");
+                    } catch(e) {
+                      showToast("Error: " + (e.message || "no se pudo eliminar"));
+                    }
+                    setLocalAEliminar(null);
                   }}
                   className="oft-btn-press" style={{ ...S.btnRed, flex: 1, justifyContent: "center" }}
                 >
@@ -7508,6 +7651,92 @@ function AdminView() {
           </>
         )}
 
+        {/* ═══════════ RETIRO EN LOCAL ═══════════ */}
+        {tab === "retirolocal" && esAdminCompleto && (
+          <>
+            <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 24, display: "flex", alignItems: "center", gap: 10 }}><Home size={24} color={RED} /> Retiro en Local</div>
+
+            {/* INTERRUPTOR: habilitar/deshabilitar para clientes */}
+            <div style={{ background: WHITE, borderRadius: 16, border: `1px solid ${GRAY2}`, padding: 20, marginBottom: 24 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+                <div>
+                  <div style={{ fontWeight: 800, fontSize: 15 }}>Mostrar "Retiro en el local" a los clientes</div>
+                  <div style={{ fontSize: 13, color: GRAY3, marginTop: 4, maxWidth: 480 }}>
+                    Si lo apagas, esta opción desaparece del checkout de tu web — pero tú desde el admin siempre
+                    vas a poder seguir creando pedidos manuales con retiro en el local, sin importar este ajuste.
+                  </div>
+                </div>
+                <button
+                  onClick={async () => {
+                    setGuardandoToggleRetiro(true);
+                    const nuevoValor = !retiroLocalHabilitado;
+                    try {
+                      const resp = await fetch(`${SUPABASE_URL}/rest/v1/configuracion?clave=eq.retiro_local_habilitado`, {
+                        method: "PATCH",
+                        headers: sb.dataHeaders(),
+                        body: JSON.stringify({ valor: nuevoValor }),
+                      });
+                      if (!resp.ok) throw new Error(await resp.text());
+                      setRetiroLocalHabilitado(nuevoValor);
+                      showToast(nuevoValor ? "Retiro en el local activado para clientes" : "Retiro en el local desactivado para clientes");
+                    } catch(e) {
+                      showToast("Error: " + (e.message || "no se pudo cambiar"));
+                    }
+                    setGuardandoToggleRetiro(false);
+                  }}
+                  disabled={guardandoToggleRetiro}
+                  className="oft-btn-press"
+                  style={{ flexShrink: 0, width: 56, height: 32, borderRadius: 20, border: "none", cursor: "pointer", background: retiroLocalHabilitado ? RED : GRAY2, position: "relative", transition: "background 0.2s", opacity: guardandoToggleRetiro ? 0.6 : 1 }}
+                >
+                  <span style={{ position: "absolute", top: 3, left: retiroLocalHabilitado ? 27 : 3, width: 26, height: 26, borderRadius: "50%", background: WHITE, transition: "left 0.2s", boxShadow: "0 1px 4px rgba(0,0,0,0.3)" }} />
+                </button>
+              </div>
+            </div>
+
+            {/* LOCALES DE RETIRO */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <div style={{ fontWeight: 800, fontSize: 16 }}>Locales disponibles</div>
+              <button onClick={() => setLocalForm({})} className="oft-btn-press" style={{ ...S.btnRed, padding: "9px 16px", fontSize: 13 }}>
+                <Plus size={15} /> Nuevo local
+              </button>
+            </div>
+            {localesRetiro.length === 0 ? (
+              <div style={{ background: WHITE, borderRadius: 16, padding: "40px 24px", border: `2px dashed ${GRAY2}`, textAlign: "center" }}>
+                <div style={{ width: 64, height: 64, borderRadius: "50%", background: GRAY, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
+                  <Home size={30} color={GRAY3} strokeWidth={1.5} />
+                </div>
+                <div style={{ fontWeight: 800, fontSize: 17, marginBottom: 6 }}>Aún no tienes locales registrados</div>
+                <p style={{ fontSize: 14, color: GRAY3 }}>Con un solo local no hace falta que el cliente elija — se usa automáticamente. Agrega más cuando abras nuevas sucursales propias.</p>
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                {localesRetiro.map(loc => (
+                  <div key={loc.id} style={{ background: WHITE, borderRadius: 14, border: `1px solid ${GRAY2}`, padding: 18, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                      <div style={{ width: 44, height: 44, borderRadius: 10, background: GRAY, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                        <Home size={20} color={RED} />
+                      </div>
+                      <div>
+                        <div style={{ fontWeight: 800, fontSize: 15 }}>{loc.nombre}</div>
+                        {loc.direccion && <div style={{ fontSize: 13, color: GRAY3 }}>{loc.direccion}</div>}
+                        {loc.telefono && <div style={{ fontSize: 13, color: GRAY3 }}>{loc.telefono}</div>}
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button onClick={() => setLocalForm(loc)} className="oft-btn-press" style={{ background: "none", border: `1.5px solid ${BLACK}`, color: BLACK, borderRadius: 8, padding: "8px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                        <PencilIcon size={13} /> Editar
+                      </button>
+                      <button onClick={() => setLocalAEliminar(loc)} className="oft-btn-press" style={{ background: "none", border: `1.5px solid ${RED}`, color: RED, borderRadius: 8, padding: "8px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+
         {/* ═══════════ ENVÍOS ═══════════ */}
         {tab === "shipping" && esAdminCompleto && (
           <>
@@ -7882,6 +8111,8 @@ export default function App() {
   const [categories, setCategories] = useState([]);
   const [empresas, setEmpresas] = useState([]);
   const [sucursales, setSucursales] = useState([]);
+  const [localesRetiro, setLocalesRetiro] = useState([]); // locales propios donde se puede retirar
+  const [retiroLocalHabilitado, setRetiroLocalHabilitado] = useState(true); // si el cliente ve la opción en el checkout
   const [loading, setLoading] = useState(true);
 
   // Guarda el carrito en el navegador cada vez que cambia
@@ -8008,6 +8239,15 @@ export default function App() {
           setEmpresas(emps);
           setSucursales(sucs);
         } catch(e2) { console.warn("Empresas de envío no cargadas:", e2.message); }
+        // Retiro en el local: locales disponibles + si está habilitado para clientes
+        try {
+          const [locales, config] = await Promise.all([
+            sb.get("locales_retiro", "?activo=eq.true&order=id"),
+            sb.get("configuracion", "?clave=eq.retiro_local_habilitado&limit=1"),
+          ]);
+          setLocalesRetiro(locales || []);
+          if (config && config[0]) setRetiroLocalHabilitado(config[0].valor === true || config[0].valor === "true");
+        } catch(e3) { console.warn("Config de retiro en local no cargada:", e3.message); }
       } catch(e) {
         console.warn("⚠️ Supabase no configurado. Usando datos demo.", e.message);
         // DATOS DEMO cuando Supabase no está configurado
@@ -8034,7 +8274,7 @@ export default function App() {
   }, []);
 
   const isAdmin = view === "admin";
-  const ctx = { view, setView, cart, setCart, addToCart, cartPulse, user, setUser, showLogin, setShowLogin, showRegister, setShowRegister, showCart, setShowCart, quickView, setQuickView, catalogCat, setCatalogCat, completeProfile, setCompleteProfile, googleMfaPaso, setGoogleMfaPaso, pendingCheckout, setPendingCheckout, products, setProducts, categories, setCategories, empresas, setEmpresas, sucursales, setSucursales, loading, showToast };
+  const ctx = { view, setView, cart, setCart, addToCart, cartPulse, user, setUser, showLogin, setShowLogin, showRegister, setShowRegister, showCart, setShowCart, quickView, setQuickView, catalogCat, setCatalogCat, completeProfile, setCompleteProfile, googleMfaPaso, setGoogleMfaPaso, pendingCheckout, setPendingCheckout, products, setProducts, categories, setCategories, empresas, setEmpresas, sucursales, setSucursales, localesRetiro, setLocalesRetiro, retiroLocalHabilitado, setRetiroLocalHabilitado, loading, showToast };
 
   return (
     <AppCtx.Provider value={ctx}>
