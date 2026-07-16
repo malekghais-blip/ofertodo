@@ -244,14 +244,21 @@ function useIsMobile() {
 }
 
 // ─── ORDEN ESTADOS ──────────────────────────────────────────────
-const ORDER_STATUS = ["Pedido realizado", "Empacando pedido...", "Listo para envío", "Pedido enviado"];
+// Dos flujos distintos según cómo se entrega el pedido: envío a domicilio, o retiro en el local.
+const ORDER_STATUS_ENVIO = ["Pedido realizado", "Empacando pedido...", "Listo para envío", "Pedido enviado"];
+const ORDER_STATUS_RETIRO = ["Pedido realizado", "Empacando pedido...", "Pedido listo para retiro", "Pedido retirado"];
+// Se mantiene ORDER_STATUS como alias del flujo de envío, por compatibilidad con lo que ya existía.
+const ORDER_STATUS = ORDER_STATUS_ENVIO;
+function estadosDe(order) { return order?.retiro_local ? ORDER_STATUS_RETIRO : ORDER_STATUS_ENVIO; }
 const STATUS_COLORS = [
   { bg: GRAY2, color: BLACK },
   { bg: "#FFF3CD", color: "#856404" },
   { bg: "#D4EDDA", color: "#155724" },
   { bg: "#CCE5FF", color: "#004085" },
 ];
-const STATUS_ICONS = [ClipboardList, RefreshCw, Package, Truck];
+const STATUS_ICONS_ENVIO = [ClipboardList, RefreshCw, Package, Truck];
+const STATUS_ICONS_RETIRO = [ClipboardList, RefreshCw, Package, CheckCircle2];
+const STATUS_ICONS = STATUS_ICONS_ENVIO;
 
 // ─── ICONOS DE CATEGORÍA (imagen subida o icono futurista) ──────
 function CategoryIcon({ cat, name, size = 28, color = RED }) {
@@ -326,12 +333,14 @@ function Spinner() {
   );
 }
 
-function StatusBadge({ index }) {
+function StatusBadge({ index, retiro = false }) {
   const s = STATUS_COLORS[index] || STATUS_COLORS[0];
-  const Icon = STATUS_ICONS[index] || ClipboardList;
+  const iconos = retiro ? STATUS_ICONS_RETIRO : STATUS_ICONS_ENVIO;
+  const etiquetas = retiro ? ORDER_STATUS_RETIRO : ORDER_STATUS_ENVIO;
+  const Icon = iconos[index] || ClipboardList;
   return (
     <span style={{ background: s.bg, color: s.color, padding: "4px 10px", borderRadius: 20, fontSize: 12, fontWeight: 700, whiteSpace: "nowrap", display: "inline-flex", alignItems: "center", gap: 5 }}>
-      <Icon size={13} strokeWidth={2.2} /> {ORDER_STATUS[index]}
+      <Icon size={13} strokeWidth={2.2} /> {etiquetas[index]}
     </span>
   );
 }
@@ -1839,7 +1848,13 @@ function CheckoutView() {
     // Definir empresa, sucursal y dirección según el modo de entrega
     let empresaFinalId, empresaFinalNombre, sucursalFinalId, sucursalFinalNombre;
 
-    if (modoEntrega === "puerta") {
+    if (modoEntrega === "local") {
+      // Retiro en el local: no hay empresa de envío ni sucursal, ni costo de envío
+      empresaFinalId = null;
+      empresaFinalNombre = "";
+      sucursalFinalId = null;
+      sucursalFinalNombre = "";
+    } else if (modoEntrega === "puerta") {
       // Puerta a puerta: Servientrega automático + dirección obligatoria + sin sucursal
       if (!servientrega) { alert("El envío puerta a puerta no está disponible por ahora. Por favor elige una sucursal."); return; }
       if (!address.trim()) { alert("Para envío puerta a puerta, la dirección es obligatoria."); return; }
@@ -1867,6 +1882,7 @@ function CheckoutView() {
         direccion: address, notas: notes, total, estado: 0,
         empresa_envio_id: empresaFinalId, empresa_envio_nombre: empresaFinalNombre,
         sucursal_id: sucursalFinalId, sucursal_nombre: sucursalFinalNombre,
+        retiro_local: modoEntrega === "local",
         pagado: false, yappy_order_id: yappyOrderId,
         descuento_codigo: descuentoAplicado?.codigo || null,
         descuento_monto: montoDescuento > 0 ? Number(montoDescuento.toFixed(2)) : 0,
@@ -1902,7 +1918,9 @@ function CheckoutView() {
         <div style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "#D4EDDA", color: "#155724", padding: "4px 12px", borderRadius: 20, fontWeight: 700, fontSize: 13, marginBottom: 4 }}>
           <CheckCircle2 size={14} /> Pagado con Yappy
         </div>
-        {empresaSel && <div style={{ marginTop: 10, fontSize: 13, color: GRAY3, display: "flex", alignItems: "center", gap: 6 }}><Truck size={14} /> {empresaSel.nombre}{sucursalSel ? ` · ${sucursalSel.nombre}` : ""}</div>}
+        {modoEntrega === "local"
+          ? <div style={{ marginTop: 10, fontSize: 13, color: "#856404", display: "flex", alignItems: "center", gap: 6, fontWeight: 700 }}><Home size={14} /> Retiro en el local</div>
+          : empresaSel && <div style={{ marginTop: 10, fontSize: 13, color: GRAY3, display: "flex", alignItems: "center", gap: 6 }}><Truck size={14} /> {empresaSel.nombre}{sucursalSel ? ` · ${sucursalSel.nombre}` : ""}</div>}
       </div>
       <button style={{ ...S.btnRed, justifyContent: "center", margin: "0 auto" }} onClick={() => setView("dashboard")}>Ver estado de mi pedido</button>
     </div>
@@ -1971,7 +1989,7 @@ function CheckoutView() {
       {/* MODO DE ENTREGA */}
       <div style={{ background: WHITE, borderRadius: 12, padding: 24, marginBottom: 16, border: `1px solid ${GRAY2}` }}>
         <div style={{ fontWeight: 800, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}><Truck size={18} /> ¿Cómo quieres recibir tu pedido? *</div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 6 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 6 }}>
           <div onClick={() => setModoEntrega("sucursal")}
             style={{ border: `2px solid ${modoEntrega === "sucursal" ? RED : GRAY2}`, background: modoEntrega === "sucursal" ? "#FFF5F5" : WHITE, borderRadius: 10, padding: 16, cursor: "pointer", textAlign: "center" }}>
             <Building2 size={28} color={modoEntrega === "sucursal" ? RED : GRAY3} strokeWidth={1.6} />
@@ -1984,8 +2002,24 @@ function CheckoutView() {
             <div style={{ fontWeight: 800, fontSize: 14, marginTop: 8 }}>Puerta a puerta</div>
             <div style={{ fontSize: 11, color: GRAY3, marginTop: 2 }}>Te lo llevamos por Servientrega</div>
           </div>
+          <div onClick={() => setModoEntrega("local")}
+            style={{ border: `2px solid ${modoEntrega === "local" ? RED : GRAY2}`, background: modoEntrega === "local" ? "#FFF5F5" : WHITE, borderRadius: 10, padding: 16, cursor: "pointer", textAlign: "center" }}>
+            <Home size={28} color={modoEntrega === "local" ? RED : GRAY3} strokeWidth={1.6} />
+            <div style={{ fontWeight: 800, fontSize: 14, marginTop: 8 }}>Retiro en el local</div>
+            <div style={{ fontSize: 11, color: GRAY3, marginTop: 2 }}>Pasas tú mismo a recogerlo</div>
+          </div>
         </div>
       </div>
+
+      {/* AVISO RETIRO EN EL LOCAL */}
+      {modoEntrega === "local" && (
+        <div style={{ background: "#FFF5F5", border: `1.5px solid ${RED}`, borderRadius: 12, padding: 16, marginBottom: 16, display: "flex", alignItems: "center", gap: 12 }}>
+          <Home size={22} color={RED} />
+          <div style={{ fontSize: 13 }}>
+            <strong>Retiro en nuestro local en Colón, Panamá.</strong> Te avisaremos por WhatsApp apenas esté listo para que pases a recogerlo — sin costo de envío.
+          </div>
+        </div>
+      )}
 
       {/* EMPRESA DE ENVÍO (solo si recoge en sucursal) */}
       {modoEntrega === "sucursal" && (
@@ -2316,10 +2350,14 @@ function DashboardView() {
                     </div>
 
                     {/* BARRA DE PROGRESO ANIMADA */}
-                    <ProgressTracker estado={o.estado} />
+                    <ProgressTracker estado={o.estado} retiro={o.retiro_local} />
 
-                    {/* INFO ENVÍO */}
-                    {o.empresa_envio_nombre && (
+                    {/* INFO ENVÍO O RETIRO */}
+                    {o.retiro_local ? (
+                      <div style={{ marginTop: 18, fontSize: 13, color: "#856404", display: "flex", alignItems: "center", gap: 6, background: "#FFF3CD", borderRadius: 8, padding: "10px 12px", fontWeight: 700 }}>
+                        <Home size={15} /> Retiro en el local
+                      </div>
+                    ) : o.empresa_envio_nombre && (
                       <div style={{ marginTop: 18, fontSize: 13, color: GRAY3, display: "flex", alignItems: "center", gap: 6, background: GRAY, borderRadius: 8, padding: "10px 12px" }}>
                         <Truck size={15} color={RED} /> {o.empresa_envio_nombre}{o.sucursal_nombre ? ` · ${o.sucursal_nombre}` : ""}
                       </div>
@@ -2361,7 +2399,7 @@ function DashboardView() {
                     </div>
                     <div style={{ textAlign: "right", flexShrink: 0 }}>
                       <div style={{ fontWeight: 900, fontSize: 15 }}>{money(o.total)}</div>
-                      <div style={{ marginTop: 4 }}><StatusBadge index={o.estado} /></div>
+                      <div style={{ marginTop: 4 }}><StatusBadge index={o.estado} retiro={o.retiro_local} /></div>
                     </div>
                     <div style={{ flexShrink: 0 }}>{isOpen ? <ChevronUp size={18} color={GRAY3} /> : <ChevronDown size={18} color={GRAY3} />}</div>
                   </div>
@@ -2370,7 +2408,7 @@ function DashboardView() {
                   {isOpen && (
                     <div className="oft-detail-open" style={{ borderTop: `1px solid ${GRAY2}`, padding: 16, background: "#FAFAFA" }}>
                       {/* progreso */}
-                      <ProgressTracker estado={o.estado} compact />
+                      <ProgressTracker estado={o.estado} compact retiro={o.retiro_local} />
 
                       {/* productos con imagen */}
                       <div style={{ fontWeight: 700, fontSize: 14, margin: "18px 0 10px" }}>Productos</div>
@@ -2400,9 +2438,14 @@ function DashboardView() {
                         </div>
                         <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 8 }}>
                           <span style={{ color: GRAY3, display: "flex", alignItems: "center", gap: 6 }}><RefreshCw size={14} /> Estado</span>
-                          <StatusBadge index={o.estado} />
+                          <StatusBadge index={o.estado} retiro={o.retiro_local} />
                         </div>
-                        {o.empresa_envio_nombre && (
+                        {o.retiro_local ? (
+                          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 8 }}>
+                            <span style={{ color: GRAY3, display: "flex", alignItems: "center", gap: 6 }}><Home size={14} /> Entrega</span>
+                            <span style={{ fontWeight: 700, color: "#856404" }}>Retiro en el local</span>
+                          </div>
+                        ) : o.empresa_envio_nombre && (
                           <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 8 }}>
                             <span style={{ color: GRAY3, display: "flex", alignItems: "center", gap: 6 }}><Truck size={14} /> Envío</span>
                             <span style={{ fontWeight: 600, textAlign: "right" }}>{o.empresa_envio_nombre}{o.sucursal_nombre ? <><br /><span style={{ fontSize: 11, color: GRAY3 }}>{o.sucursal_nombre}</span></> : ""}</span>
@@ -2437,8 +2480,10 @@ function DashboardView() {
 }
 
 // ─── BARRA DE PROGRESO DEL PEDIDO ───────────────────────────────
-function ProgressTracker({ estado, compact }) {
-  const pct = (estado / (ORDER_STATUS.length - 1)) * 100;
+function ProgressTracker({ estado, compact, retiro = false }) {
+  const etiquetas = retiro ? ORDER_STATUS_RETIRO : ORDER_STATUS_ENVIO;
+  const iconos = retiro ? STATUS_ICONS_RETIRO : STATUS_ICONS_ENVIO;
+  const pct = (estado / (etiquetas.length - 1)) * 100;
   return (
     <div>
       <div style={{ position: "relative", display: "flex", justifyContent: "space-between", marginTop: compact ? 8 : 4 }}>
@@ -2447,8 +2492,8 @@ function ProgressTracker({ estado, compact }) {
         {/* línea de progreso animada */}
         <div className="oft-progress-fill" style={{ position: "absolute", top: 18, left: 18, height: 4, background: `linear-gradient(90deg, ${RED}, ${RED_D})`, borderRadius: 2, zIndex: 1, width: `calc((100% - 36px) * ${pct / 100})` }} />
         {/* pasos */}
-        {ORDER_STATUS.map((s, i) => {
-          const SIcon = STATUS_ICONS[i];
+        {etiquetas.map((s, i) => {
+          const SIcon = iconos[i];
           const done = i <= estado;
           const current = i === estado;
           return (
@@ -2495,6 +2540,7 @@ function CrearPedidoView() {
   const [tipo, setTipo] = useState("pedido"); // 'pedido' | 'cotizacion'
   const [descuento, setDescuento] = useState(""); // porcentaje
   const [envio, setEnvio] = useState(""); // costo de envío
+  const [retiroLocal, setRetiroLocal] = useState(false); // true = el cliente retira en el local, sin envío
   const [redondeo, setRedondeo] = useState("arriba"); // "arriba" | "abajo" | "no"
   const [saving, setSaving] = useState(false);
   const [invoice, setInvoice] = useState(null); // datos de la factura generada
@@ -2655,6 +2701,7 @@ function CrearPedidoView() {
         direccion: cliente.direccion, notas, total, estado: 0,
         empresa_envio_id: empresaId, empresa_envio_nombre: empresaSel?.nombre || "",
         sucursal_id: sucursalId, sucursal_nombre: sucursalSel?.nombre || "",
+        retiro_local: retiroLocal,
         tipo, num_factura: numFactura, creado_por_admin: true, costo_envio: costoEnvio,
         // Las cotizaciones se marcan pagadas de una vez (no son ventas reales).
         // Los PEDIDOS se insertan como NO pagados y se marcan pagados en un segundo paso
@@ -2801,7 +2848,7 @@ function CrearPedidoView() {
 
   const resetForm = () => {
     setItems([]); setFlexPacks([]); setFlexActiveId(null); setCliente({ nombre: "", telefono: "", direccion: "" }); setNotas("");
-    setEmpresaId(null); setSucursalId(null); setTipo("pedido"); setDescuento(""); setEnvio(""); setRedondeo("arriba"); setInvoice(null);
+    setEmpresaId(null); setSucursalId(null); setRetiroLocal(false); setTipo("pedido"); setDescuento(""); setEnvio(""); setRedondeo("arriba"); setInvoice(null);
   };
 
   return (
@@ -3205,15 +3252,27 @@ function CrearPedidoView() {
 
           <div style={{ background: WHITE, borderRadius: 16, padding: 20, border: `1px solid ${GRAY2}` }}>
             <div style={{ fontWeight: 800, marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}><Truck size={18} color={RED} /> Envío (opcional)</div>
-            <select style={S.input} value={empresaId || ""} onChange={e => { setEmpresaId(e.target.value ? Number(e.target.value) : null); setSucursalId(null); }}>
-              <option value="">Sin empresa de envío</option>
-              {empresasActivas.map(emp => <option key={emp.id} value={emp.id}>{emp.nombre}</option>)}
-            </select>
-            {empresaId && sucursalesEmpresa.length > 0 && (
-              <select style={{ ...S.input, marginBottom: 0 }} value={sucursalId || ""} onChange={e => setSucursalId(e.target.value ? Number(e.target.value) : null)}>
-                <option value="">Elige sucursal</option>
-                {sucursalesEmpresa.map(suc => <option key={suc.id} value={suc.id}>{suc.nombre}</option>)}
-              </select>
+            <div onClick={() => { setRetiroLocal(v => !v); setEmpresaId(null); setSucursalId(null); setEnvio(""); }}
+              style={{ display: "flex", alignItems: "center", gap: 10, background: retiroLocal ? "#FFF5F5" : GRAY, border: `1.5px solid ${retiroLocal ? RED : GRAY2}`, borderRadius: 10, padding: "10px 14px", marginBottom: 12, cursor: "pointer" }}>
+              <input type="checkbox" checked={retiroLocal} onChange={() => {}} style={{ width: 18, height: 18, pointerEvents: "none" }} />
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}><Home size={14} color={retiroLocal ? RED : GRAY3} /> Retiro en el local</div>
+                <div style={{ fontSize: 11, color: GRAY3 }}>El cliente pasa a recogerlo, sin empresa de envío ni costo</div>
+              </div>
+            </div>
+            {!retiroLocal && (
+              <>
+                <select style={S.input} value={empresaId || ""} onChange={e => { setEmpresaId(e.target.value ? Number(e.target.value) : null); setSucursalId(null); }}>
+                  <option value="">Sin empresa de envío</option>
+                  {empresasActivas.map(emp => <option key={emp.id} value={emp.id}>{emp.nombre}</option>)}
+                </select>
+                {empresaId && sucursalesEmpresa.length > 0 && (
+                  <select style={{ ...S.input, marginBottom: 0 }} value={sucursalId || ""} onChange={e => setSucursalId(e.target.value ? Number(e.target.value) : null)}>
+                    <option value="">Elige sucursal</option>
+                    {sucursalesEmpresa.map(suc => <option key={suc.id} value={suc.id}>{suc.nombre}</option>)}
+                  </select>
+                )}
+              </>
             )}
           </div>
 
@@ -4873,12 +4932,20 @@ function AdminView() {
     const nombre = order.nombre_cliente || "Cliente";
     const codigo = order.codigo;
     const envio = order.empresa_envio_nombre ? `\n🚚 Envío: ${order.empresa_envio_nombre}${order.sucursal_nombre ? ` - ${order.sucursal_nombre}` : ""}` : "";
-    const mensajes = [
+    const direccionLocal = "\n📍 Puedes pasar a recogerlo a nuestro local en Colón.";
+    const mensajesEnvio = [
       `¡Hola ${nombre}! 👋\n\nTu pedido *${codigo}* en Ofertodo ha sido *recibido* ✅\n\nEstamos procesándolo y pronto comenzaremos a empacarlo.${envio}\n\n¡Gracias por tu compra! 🛍️`,
       `¡Hola ${nombre}! 📦\n\nTu pedido *${codigo}* ya está siendo *empacado* con cuidado.\n\nTe avisaremos cuando esté listo para envío.${envio}\n\n¡Gracias por tu paciencia! 🙌`,
       `¡Hola ${nombre}! ✅\n\n¡Buenas noticias! Tu pedido *${codigo}* está *listo para envío* 🎉\n\nPronto será despachado.${envio}\n\n¡Ya casi lo tienes! 🚀`,
       `¡Hola ${nombre}! 🚚\n\nTu pedido *${codigo}* ha sido *enviado* 📨\n\nYa va en camino hacia ti.${envio}\n\n¡Gracias por comprar en Ofertodo! ❤️`,
     ];
+    const mensajesRetiro = [
+      `¡Hola ${nombre}! 👋\n\nTu pedido *${codigo}* en Ofertodo ha sido *recibido* ✅\n\nEstamos procesándolo y pronto comenzaremos a empacarlo.\n\n¡Gracias por tu compra! 🛍️`,
+      `¡Hola ${nombre}! 📦\n\nTu pedido *${codigo}* ya está siendo *empacado* con cuidado.\n\nTe avisaremos apenas esté listo para que pases a recogerlo.\n\n¡Gracias por tu paciencia! 🙌`,
+      `¡Hola ${nombre}! ✅\n\n¡Buenas noticias! Tu pedido *${codigo}* está *listo para retiro* 🎉${direccionLocal}\n\n¡Te esperamos! 🚀`,
+      `¡Hola ${nombre}! 🎉\n\nConfirmamos que tu pedido *${codigo}* fue *retirado* correctamente.\n\n¡Gracias por comprar en Ofertodo! ❤️`,
+    ];
+    const mensajes = order.retiro_local ? mensajesRetiro : mensajesEnvio;
     return mensajes[status] || "";
   };
 
@@ -4903,7 +4970,7 @@ function AdminView() {
       showToast("Estado actualizado");
       // Notificación semi-automática por WhatsApp
       if (order) {
-        const ok = confirm(`Estado actualizado a "${ORDER_STATUS[newStatus]}".\n\n¿Notificar al cliente por WhatsApp?`);
+        const ok = confirm(`Estado actualizado a "${estadosDe(order)[newStatus]}".\n\n¿Notificar al cliente por WhatsApp?`);
         if (ok) notifyWhatsApp({ ...order, estado: newStatus }, newStatus);
       }
     } catch(e) { alert("Error al actualizar estado"); }
@@ -5834,7 +5901,7 @@ function AdminView() {
                           <div style={{ fontSize: 12, color: GRAY3 }}>{(o.items || []).length} producto(s) · {new Date(o.created_at).toLocaleDateString()}</div>
                         </div>
                         <div style={{ fontWeight: 800, color: RED }}>{money(o.total)}</div>
-                        <StatusBadge index={o.estado} />
+                        <StatusBadge index={o.estado} retiro={o.retiro_local} />
                       </div>
                     );
                   })}
@@ -5943,7 +6010,7 @@ function AdminView() {
                             <div style={{ fontSize: 12, color: GRAY3 }}>{(o.items || []).length} producto(s) · {new Date(o.created_at).toLocaleDateString()}</div>
                           </div>
                           <div style={{ fontWeight: 800, color: RED }}>{money(o.total)}</div>
-                          <StatusBadge index={o.estado} />
+                          <StatusBadge index={o.estado} retiro={o.retiro_local} />
                         </div>
                       );
                     })}
@@ -6042,15 +6109,17 @@ function AdminView() {
                         <td style={S.td}>{o.nombre_cliente}</td>
                         <td style={S.td}>{o.telefono}</td>
                         <td style={S.td}>
-                          {o.empresa_envio_nombre
+                          {o.retiro_local
+                            ? <span style={{ fontSize: 12, fontWeight: 700, color: "#856404", display: "inline-flex", alignItems: "center", gap: 4 }}><Home size={13} /> Retiro local</span>
+                            : o.empresa_envio_nombre
                             ? <span style={{ fontSize: 12 }}>{o.empresa_envio_nombre}{o.sucursal_nombre ? <><br /><span style={{ color: GRAY3 }}>{o.sucursal_nombre}</span></> : ""}</span>
                             : <span style={{ color: GRAY3 }}>—</span>}
                         </td>
                         <td style={{ ...S.td, fontWeight: 700 }}>{money(o.total)}</td>
-                        <td style={S.td}><StatusBadge index={o.estado} /></td>
+                        <td style={S.td}><StatusBadge index={o.estado} retiro={o.retiro_local} /></td>
                         <td style={S.td}>
                           <select value={o.estado} onChange={e => handleStatusChange(o.id, Number(e.target.value))} style={{ border: `1.5px solid ${GRAY2}`, borderRadius: 6, padding: "6px 10px", fontSize: 13, fontFamily: "inherit" }}>
-                            {ORDER_STATUS.map((s,i) => <option key={i} value={i}>{s}</option>)}
+                            {estadosDe(o).map((s,i) => <option key={i} value={i}>{s}</option>)}
                           </select>
                         </td>
                         <td style={S.td}>
@@ -6092,12 +6161,16 @@ function AdminView() {
                       </div>
                       <div style={{ textAlign: "right" }}>
                         <div style={{ fontWeight: 900, fontSize: 18 }}>{money(o.total)}</div>
-                        <div style={{ marginTop: 4 }}><StatusBadge index={o.estado} /></div>
+                        <div style={{ marginTop: 4 }}><StatusBadge index={o.estado} retiro={o.retiro_local} /></div>
                       </div>
                     </div>
 
-                    {/* Envío */}
-                    {o.empresa_envio_nombre && (
+                    {/* Envío o Retiro en el local */}
+                    {o.retiro_local ? (
+                      <div style={{ fontSize: 12, color: "#856404", background: "#FFF3CD", borderRadius: 8, padding: "8px 10px", marginBottom: 12, display: "flex", alignItems: "center", gap: 6, fontWeight: 700 }}>
+                        <Home size={14} /> Retiro en el local
+                      </div>
+                    ) : o.empresa_envio_nombre && (
                       <div style={{ fontSize: 12, color: GRAY3, background: GRAY, borderRadius: 8, padding: "8px 10px", marginBottom: 12, display: "flex", alignItems: "center", gap: 6 }}>
                         <Truck size={14} color={RED} /> {o.empresa_envio_nombre}{o.sucursal_nombre ? ` · ${o.sucursal_nombre}` : ""}
                       </div>
@@ -6106,7 +6179,7 @@ function AdminView() {
                     {/* Cambiar estado */}
                     <label style={{ fontSize: 12, fontWeight: 700, color: GRAY3, display: "block", marginBottom: 4 }}>Cambiar estado:</label>
                     <select value={o.estado} onChange={e => handleStatusChange(o.id, Number(e.target.value))} style={{ width: "100%", border: `1.5px solid ${GRAY2}`, borderRadius: 8, padding: "10px 12px", fontSize: 14, fontFamily: "inherit", marginBottom: 10 }}>
-                      {ORDER_STATUS.map((s,i) => <option key={i} value={i}>{s}</option>)}
+                      {estadosDe(o).map((s,i) => <option key={i} value={i}>{s}</option>)}
                     </select>
 
                     {/* Avisar + Guía + Factura + Eliminar */}
