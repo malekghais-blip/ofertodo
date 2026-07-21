@@ -5502,6 +5502,7 @@ function AdminView() {
     // Solo aplica los campos que tienen valor (los vacíos no se tocan)
     const patch = {};
     if (bulkEdit.nombre !== "") patch.nombre = bulkEdit.nombre;
+    if (bulkEdit.categoria_id !== "") patch.categoria_id = Number(bulkEdit.categoria_id);
     if (bulkEdit.precio_pieza !== "") patch.precio_pieza = Number(bulkEdit.precio_pieza);
     if (bulkEdit.precio_media_docena !== "") patch.precio_media_docena = Number(bulkEdit.precio_media_docena);
     if (bulkEdit.precio_docena !== "") patch.precio_docena = Number(bulkEdit.precio_docena);
@@ -6979,6 +6980,11 @@ function AdminView() {
                   <p style={{ fontSize: 13, color: GRAY3, marginBottom: 16 }}>Solo se cambian los campos que llenes. Los vacíos se quedan igual.</p>
                   <label style={S.label}>Nombre del producto</label>
                   <input style={S.input} placeholder="(dejar vacío para no cambiar)" value={bulkEdit.nombre} onChange={e => setBulkEdit({...bulkEdit, nombre: e.target.value})} />
+                  <label style={S.label}>Categoría</label>
+                  <select style={S.input} value={bulkEdit.categoria_id} onChange={e => setBulkEdit({...bulkEdit, categoria_id: e.target.value})}>
+                    <option value="">No cambiar</option>
+                    {categories.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                  </select>
                   <div className="oft-form-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
                     <div><label style={S.label}>Precio pieza</label><input style={S.input} placeholder="—" value={bulkEdit.precio_pieza} onChange={e => setBulkEdit({...bulkEdit, precio_pieza: e.target.value})} /></div>
                     <div><label style={S.label}>Media docena</label><input style={S.input} placeholder="—" value={bulkEdit.precio_media_docena} onChange={e => setBulkEdit({...bulkEdit, precio_media_docena: e.target.value})} /></div>
