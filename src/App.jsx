@@ -4803,6 +4803,8 @@ function AdminView() {
   const [cotizacionImagen, setCotizacionImagen] = useState(null); // cotización a la que se le está generando la imagen
   const [facturaImagen, setFacturaImagen] = useState(null); // pedido al que se le está generando la imagen de factura
   const [rankingModal, setRankingModal] = useState(null); // null | "reponer" | "rotacion" | "ingreso" | "zona" — para ver el top 50 en Análisis de Stock
+  const [rankingModalProveedorId, setRankingModalProveedorId] = useState(null); // si se abrió desde el análisis de UN proveedor, filtra solo sus productos
+  const [proveedorExpandidoId, setProveedorExpandidoId] = useState(null); // qué proveedor tiene su análisis de stock abierto
   const [clienteForm, setClienteForm] = useState(null); // null | {} (crear) | {id,...} (editar)
   const [equipoForm, setEquipoForm] = useState(false); // true = mostrar modal de agregar miembro
   const [miembroAQuitar, setMiembroAQuitar] = useState(null); // usuario del equipo a quitar (confirmación)
@@ -5488,8 +5490,12 @@ function AdminView() {
     setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   };
   const selectAll = () => {
-    if (selectedIds.length === products.length) setSelectedIds([]);
-    else setSelectedIds(products.map(p => p.id));
+    // Respeta el filtro de categoría/búsqueda activo — "Seleccionar todos" selecciona
+    // los productos que se están viendo ahora mismo, no el catálogo completo.
+    const idsVisibles = productosFiltrados.map(p => p.id);
+    const todosVisiblesSeleccionados = idsVisibles.length > 0 && idsVisibles.every(id => selectedIds.includes(id));
+    if (todosVisiblesSeleccionados) setSelectedIds(prev => prev.filter(id => !idsVisibles.includes(id)));
+    else setSelectedIds(prev => [...new Set([...prev, ...idsVisibles])]);
   };
   const handleBulkEdit = async () => {
     if (selectedIds.length === 0) { alert("Selecciona al menos un producto."); return; }
@@ -6365,13 +6371,17 @@ function AdminView() {
         {rankingModal && (
           <StockRankingModal
             tipo={rankingModal}
-            items={(
-              rankingModal === "reponer" ? urgentesReponer :
-              rankingModal === "rotacion" ? rotacionOrdenado :
-              rankingModal === "ingreso" ? ingresoOrdenado :
-              ventasPorArea
-            ).slice(0, 50)}
-            onClose={() => setRankingModal(null)}
+            items={(() => {
+              const base = rankingModal === "reponer" ? urgentesReponer :
+                rankingModal === "rotacion" ? rotacionOrdenado :
+                rankingModal === "ingreso" ? ingresoOrdenado :
+                ventasPorArea;
+              const filtrado = rankingModalProveedorId
+                ? base.filter(f => f.prod?.proveedor_id === rankingModalProveedorId)
+                : base;
+              return filtrado.slice(0, 50);
+            })()}
+            onClose={() => { setRankingModal(null); setRankingModalProveedorId(null); }}
           />
         )}
 
@@ -6568,7 +6578,7 @@ function AdminView() {
               <div style={{ background: "#FFF5F5", border: `2px solid ${RED}`, borderRadius: 12, padding: "12px 16px", marginBottom: 16, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
                 <span style={{ fontWeight: 700, fontSize: 14 }}>{selectedIds.length} seleccionado(s)</span>
                 <button style={{ ...S.btnOutline, padding: "6px 12px", fontSize: 13 }} onClick={selectAll}>
-                  {selectedIds.length === products.length ? "Quitar todos" : "Seleccionar todos"}
+                  {productosFiltrados.length > 0 && productosFiltrados.every(p => selectedIds.includes(p.id)) ? "Quitar todos" : "Seleccionar todos"}
                 </button>
                 <button style={{ ...S.btnRed, padding: "6px 12px", fontSize: 13, display: "inline-flex", alignItems: "center", gap: 6, opacity: selectedIds.length === 0 ? 0.5 : 1 }} disabled={selectedIds.length === 0} onClick={() => setShowBulkEdit(true)}>
                   <PencilIcon size={14} /> Editar seleccionados
@@ -7626,6 +7636,9 @@ function AdminView() {
                 {ventasPorProveedor.map(v => {
                   const pv = v.proveedor;
                   const numProductos = products.filter(p => p.proveedor_id === pv.id).length;
+                  const rotacionProveedor = rotacionOrdenado.filter(f => f.prod?.proveedor_id === pv.id);
+                  const ingresoProveedor = ingresoOrdenado.filter(f => f.prod?.proveedor_id === pv.id);
+                  const expandido = proveedorExpandidoId === pv.id;
                   return (
                     <div key={pv.id} style={{ background: WHITE, borderRadius: 14, border: `1px solid ${GRAY2}`, padding: 20 }}>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12 }}>
@@ -7665,6 +7678,68 @@ function AdminView() {
                           <div style={{ fontSize: 11, color: GRAY3 }}>Productos en catálogo</div>
                         </div>
                       </div>
+
+                      {numProductos > 0 && (
+                        <>
+                          <button
+                            onClick={() => setProveedorExpandidoId(expandido ? null : pv.id)}
+                            className="oft-btn-press"
+                            style={{ marginTop: 14, background: "none", border: "none", color: RED, fontWeight: 800, fontSize: 13, cursor: "pointer", padding: 0, display: "flex", alignItems: "center", gap: 6 }}
+                          >
+                            <TrendingUp size={15} />
+                            {expandido ? "Ocultar análisis de stock" : "Ver análisis de stock"}
+                            {expandido ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+                          </button>
+
+                          {expandido && (
+                            <div style={{ marginTop: 16, paddingTop: 16, borderTop: `1px solid ${GRAY2}`, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 20 }}>
+                              {/* MEJOR ROTACIÓN */}
+                              <div>
+                                <div style={{ fontWeight: 800, fontSize: 13, marginBottom: 10, display: "flex", alignItems: "center", gap: 6 }}><Zap size={14} color={RED} /> Mejor rotación</div>
+                                {rotacionProveedor.length === 0 || rotacionProveedor[0].velocidadDiaria === 0 ? (
+                                  <p style={{ fontSize: 12, color: GRAY3 }}>Aún no hay ventas registradas de sus productos.</p>
+                                ) : (
+                                  <>
+                                    {rotacionProveedor.slice(0, 5).map(f => (
+                                      <div key={f.producto_id} style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 12, padding: "6px 0", borderBottom: `1px solid ${GRAY}` }}>
+                                        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.prod?.nombre}</span>
+                                        <strong style={{ flexShrink: 0 }}>{f.velocidadDiaria.toFixed(2)}/día</strong>
+                                      </div>
+                                    ))}
+                                    {rotacionProveedor.length > 5 && (
+                                      <button onClick={() => { setRankingModal("rotacion"); setRankingModalProveedorId(pv.id); }} className="oft-btn-press" style={{ marginTop: 8, background: "none", border: "none", color: RED, fontWeight: 800, fontSize: 12, cursor: "pointer", padding: 0, textDecoration: "underline" }}>
+                                        Ver los {Math.min(rotacionProveedor.length, 50)} productos →
+                                      </button>
+                                    )}
+                                  </>
+                                )}
+                              </div>
+
+                              {/* MÁS INGRESO GENERADO */}
+                              <div>
+                                <div style={{ fontWeight: 800, fontSize: 13, marginBottom: 10, display: "flex", alignItems: "center", gap: 6 }}><DollarSign size={14} color={RED} /> Más ingreso generado</div>
+                                {ingresoProveedor.length === 0 || ingresoProveedor[0].ingreso === 0 ? (
+                                  <p style={{ fontSize: 12, color: GRAY3 }}>Aún no hay ventas registradas de sus productos.</p>
+                                ) : (
+                                  <>
+                                    {ingresoProveedor.slice(0, 5).map(f => (
+                                      <div key={f.producto_id} style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 12, padding: "6px 0", borderBottom: `1px solid ${GRAY}` }}>
+                                        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.prod?.nombre}</span>
+                                        <strong style={{ flexShrink: 0 }}>{money(f.ingreso)}</strong>
+                                      </div>
+                                    ))}
+                                    {ingresoProveedor.length > 5 && (
+                                      <button onClick={() => { setRankingModal("ingreso"); setRankingModalProveedorId(pv.id); }} className="oft-btn-press" style={{ marginTop: 8, background: "none", border: "none", color: RED, fontWeight: 800, fontSize: 12, cursor: "pointer", padding: 0, textDecoration: "underline" }}>
+                                        Ver los {Math.min(ingresoProveedor.length, 50)} productos →
+                                      </button>
+                                    )}
+                                  </>
+                                )}
+                              </div>
+                            </div>
+                          )}
+                        </>
+                      )}
                     </div>
                   );
                 })}
