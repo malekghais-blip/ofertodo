@@ -4780,6 +4780,7 @@ function AdminView() {
   // Carga masiva CON imágenes (crea borradores)
   const [showBulkImg, setShowBulkImg] = useState(false);
   const [bulkImgCat, setBulkImgCat] = useState(categories[0]?.id || 1);
+  const [bulkImgProveedorId, setBulkImgProveedorId] = useState(null); // proveedor para estos borradores (null = propio)
   const [bulkImgLoading, setBulkImgLoading] = useState(false);
   const [bulkImgProgress, setBulkImgProgress] = useState({ done: 0, total: 0 });
   const bulkImgRef = useRef(null);
@@ -4794,7 +4795,7 @@ function AdminView() {
   const [bulkEditLoading, setBulkEditLoading] = useState(false);
   const [showBulkDelete, setShowBulkDelete] = useState(false);
   const [bulkDeleteLoading, setBulkDeleteLoading] = useState(false);
-  const emptyBulkEdit = { nombre: "", precio_pieza: "", precio_media_docena: "", precio_docena: "", badge: "", descripcion: "", activo: "", destacado: "", tiene_tallas: "", tallas: "", tiene_colores: "", colores: "", distribucion_docena: "", distribucion_eje: "" };
+  const emptyBulkEdit = { nombre: "", precio_pieza: "", precio_media_docena: "", precio_docena: "", badge: "", descripcion: "", activo: "", destacado: "", tiene_tallas: "", tallas: "", tiene_colores: "", colores: "", distribucion_docena: "", distribucion_eje: "", proveedor_id: "" };
   const [bulkEdit, setBulkEdit] = useState(emptyBulkEdit);
   const [shippingLabel, setShippingLabel] = useState(null); // pedido para la guía de envío
   const [pedidoAEliminar, setPedidoAEliminar] = useState(null); // pedido pendiente de eliminar (confirmación)
@@ -5458,10 +5459,14 @@ function AdminView() {
         await sb.upload("productos", path, file);
         const url = `${sb.publicUrl("productos", path)}?t=${Date.now()}`;
         // Nombre por defecto desde el nombre del archivo (sin extensión)
-        const baseName = file.name.replace(/\.[^.]+$/, "").replace(/[_\-]+/g, " ").trim();
+        const nombreArchivoSinExt = file.name.replace(/\.[^.]+$/, "");
+        const baseName = nombreArchivoSinExt.replace(/[_\-]+/g, " ").trim();
+        // Si subes fotos ya nombradas por Item No./SKU (ej. "25004.jpg"), lo usamos también
+        // como referencia de una vez, para no tener que escribirla a mano después.
         const saved = await sb.post("productos", {
-          referencia: "", nombre: baseName || "Producto sin nombre", descripcion: "",
+          referencia: nombreArchivoSinExt || "", nombre: baseName || "Producto sin nombre", descripcion: "",
           categoria_id: Number(bulkImgCat) || categories[0]?.id || 1,
+          proveedor_id: bulkImgProveedorId,
           precio_pieza: 0, precio_media_docena: 0, precio_docena: 0,
           badge: "", activo: false, imagen_url: url, // borrador (inactivo)
         });
@@ -5510,6 +5515,9 @@ function AdminView() {
       patch.distribucion_docena = bulkEdit.distribucion_docena;
       patch.distribucion_eje = bulkEdit.distribucion_eje || "talla";
     }
+    // Proveedor: "" = no tocar; "__ninguno__" = quitarlo (pasa a ser producto propio); si no, el id elegido
+    if (bulkEdit.proveedor_id === "__ninguno__") { patch.proveedor_id = null; }
+    else if (bulkEdit.proveedor_id !== "") { patch.proveedor_id = Number(bulkEdit.proveedor_id); }
     if (Object.keys(patch).length === 0) { alert("Llena al menos un campo para aplicar."); return; }
     setBulkEditLoading(true);
     let ok = 0, err = 0;
@@ -6582,6 +6590,14 @@ function AdminView() {
                 <select style={{ ...S.input }} value={bulkImgCat} onChange={e => setBulkImgCat(Number(e.target.value))}>
                   {categories.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
                 </select>
+                <label style={S.label}>Proveedor</label>
+                <select style={{ ...S.input }} value={bulkImgProveedorId || ""} onChange={e => setBulkImgProveedorId(e.target.value ? Number(e.target.value) : null)}>
+                  <option value="">Producto propio de Ofertodo</option>
+                  {proveedores.map(pv => <option key={pv.id} value={pv.id}>{pv.nombre}</option>)}
+                </select>
+                <p style={{ fontSize: 11, color: GRAY3, marginTop: -8, marginBottom: 14 }}>
+                  Si tus fotos ya están nombradas por su Item No./SKU (ej. "25004.jpg"), ese número se usa automáticamente como referencia del producto.
+                </p>
 
                 {bulkImgLoading ? (
                   <div style={{ textAlign: "center", padding: 24 }}>
@@ -6973,6 +6989,12 @@ function AdminView() {
                     <option value="">No cambiar</option>
                     <option value="1">Sí — mostrar en inicio</option>
                     <option value="0">No destacado</option>
+                  </select>
+                  <label style={S.label}>Proveedor</label>
+                  <select style={S.input} value={bulkEdit.proveedor_id} onChange={e => setBulkEdit({...bulkEdit, proveedor_id: e.target.value})}>
+                    <option value="">No cambiar</option>
+                    <option value="__ninguno__">Quitar proveedor (pasa a ser propio de Ofertodo)</option>
+                    {proveedores.map(pv => <option key={pv.id} value={pv.id}>{pv.nombre}</option>)}
                   </select>
 
                   {/* TALLAS */}
