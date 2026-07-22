@@ -1027,7 +1027,7 @@ function DistribucionInfo({ product, pres, count }) {
 // ═══════════════════════════════════════════════════════════════
 function ProductCard({ product }) {
   const { addToCart, showToast, setQuickView } = useApp();
-  const [pres, setPres] = useState(product.venta_por_unidad ? "pieza" : "docena");
+  const [pres, setPres] = useState("docena"); // siempre abre en Docena por defecto, incluso si "venta_por_unidad" está activo
   const [count, setCount] = useState(1);
   const [added, setAdded] = useState(false);
   const [talla, setTalla] = useState("");
@@ -1208,7 +1208,7 @@ function CatalogoView() {
 // ═══════════════════════════════════════════════════════════════
 function ProductModal() {
   const { quickView: product, setQuickView, addToCart, showToast } = useApp();
-  const [pres, setPres] = useState(product?.venta_por_unidad ? "pieza" : "docena");
+  const [pres, setPres] = useState("docena"); // siempre abre en Docena por defecto, incluso si "venta_por_unidad" está activo
   const [count, setCount] = useState(1);
   const [added, setAdded] = useState(false);
   const [talla, setTalla] = useState("");
@@ -5502,7 +5502,6 @@ function AdminView() {
     // Solo aplica los campos que tienen valor (los vacíos no se tocan)
     const patch = {};
     if (bulkEdit.nombre !== "") patch.nombre = bulkEdit.nombre;
-    if (bulkEdit.categoria_id !== "") patch.categoria_id = Number(bulkEdit.categoria_id);
     if (bulkEdit.precio_pieza !== "") patch.precio_pieza = Number(bulkEdit.precio_pieza);
     if (bulkEdit.precio_media_docena !== "") patch.precio_media_docena = Number(bulkEdit.precio_media_docena);
     if (bulkEdit.precio_docena !== "") patch.precio_docena = Number(bulkEdit.precio_docena);
@@ -6646,7 +6645,7 @@ function AdminView() {
                   <strong>Proveedor (opcional):</strong> escribe el nombre exacto de un proveedor ya creado en la pestaña "Proveedores" — si coincide, el producto queda vinculado a él (no se bloquea por falta de stock). Si lo dejas vacío, el producto es propio de Ofertodo.
                 </div>
                 <div style={{ fontSize: 12, color: GRAY3, marginBottom: 12 }}>
-                  <strong>Venta por unidad (opcional):</strong> escribe "SI" para que la tarjeta de ese producto abra directo en "Pieza" en vez de "Docena" — ideal para artículos que no son de ropa (perfumes, desechables, etc.). Déjalo vacío para el comportamiento normal.
+                  <strong>Venta por unidad (opcional):</strong> escribe "SI" para que el cliente pueda comprar directo "Por Pieza" sin pasar por WhatsApp — ideal para artículos que no son de ropa (perfumes, desechables, etc.). La tarjeta sigue mostrando el precio por Docena primero, igual que siempre. Déjalo vacío para el comportamiento normal.
                 </div>
                 <div style={{ background: GRAY, borderRadius: 8, padding: 12, fontSize: 12, fontFamily: "monospace", marginBottom: 12, overflowX: "auto" }}>
                   001,Zapatilla HPC,Descripción,1,3.50,19,36,NUEVO,30|32|34|36|38,2|4|3|2|1,,<br />
@@ -6715,7 +6714,7 @@ function AdminView() {
                     <input type="checkbox" id="venta_por_unidad" checked={!!prodForm.venta_por_unidad} onChange={e => setProdForm({...prodForm, venta_por_unidad: e.target.checked})} style={{ width: 18, height: 18 }} />
                     <label htmlFor="venta_por_unidad" style={{ fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
                       Venta por unidad
-                      <div style={{ fontSize: 11, color: GRAY3, fontWeight: 400 }}>La tarjeta abre en "Pieza" por defecto (ideal para no-ropa: perfumes, desechables, etc.)</div>
+                      <div style={{ fontSize: 11, color: GRAY3, fontWeight: 400 }}>La tarjeta sigue mostrando el precio por Docena primero (igual que siempre) — pero si el cliente elige "Pieza", puede comprar directo sin pasar por WhatsApp (ideal para no-ropa: perfumes, desechables, etc.)</div>
                     </label>
                   </div>
                   <div><label style={S.label}>Estado</label>
@@ -6980,11 +6979,6 @@ function AdminView() {
                   <p style={{ fontSize: 13, color: GRAY3, marginBottom: 16 }}>Solo se cambian los campos que llenes. Los vacíos se quedan igual.</p>
                   <label style={S.label}>Nombre del producto</label>
                   <input style={S.input} placeholder="(dejar vacío para no cambiar)" value={bulkEdit.nombre} onChange={e => setBulkEdit({...bulkEdit, nombre: e.target.value})} />
-                  <label style={S.label}>Categoría</label>
-                  <select style={S.input} value={bulkEdit.categoria_id} onChange={e => setBulkEdit({...bulkEdit, categoria_id: e.target.value})}>
-                    <option value="">No cambiar</option>
-                    {categories.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
-                  </select>
                   <div className="oft-form-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
                     <div><label style={S.label}>Precio pieza</label><input style={S.input} placeholder="—" value={bulkEdit.precio_pieza} onChange={e => setBulkEdit({...bulkEdit, precio_pieza: e.target.value})} /></div>
                     <div><label style={S.label}>Media docena</label><input style={S.input} placeholder="—" value={bulkEdit.precio_media_docena} onChange={e => setBulkEdit({...bulkEdit, precio_media_docena: e.target.value})} /></div>
