@@ -8,7 +8,7 @@ import {
   FileSpreadsheet, FolderPlus, Zap, Lock, Users, BarChart3, DollarSign,
   TrendingUp, Wallet, ShoppingBag, Pencil as PencilIcon, Save,
   Building2, MapPin as MapPinIcon, Send, FilePlus, Download, FileText, Receipt,
-  Calendar as CalendarIcon, Eye, EyeOff
+  Calendar as CalendarIcon, Eye, EyeOff, Share2
 } from "lucide-react";
 
 // ════════════════════════════════════════════════════════════════
@@ -421,6 +421,28 @@ function presUnitPrice(product, pres) {
   return Number(product.precio_docena);
 }
 // Total de piezas según presentación y cantidad de paquetes
+// Comparte el link directo de un producto (usa el share nativo del celular si existe,
+// o copia el link al portapapeles como respaldo en computadora).
+async function compartirProducto(product, showToast) {
+  const url = `${window.location.origin}${window.location.pathname}?producto=${product.id}`;
+  const textoCompartir = `Mira este producto en Ofertodo: ${product.nombre}`;
+  if (navigator.share) {
+    try {
+      await navigator.share({ title: product.nombre, text: textoCompartir, url });
+      return;
+    } catch (e) {
+      // El usuario cerró la ventana de compartir sin elegir nada — no es un error real, no hacemos nada más
+      if (e?.name === "AbortError") return;
+    }
+  }
+  try {
+    await navigator.clipboard.writeText(url);
+    showToast("Link copiado — ¡ya lo puedes compartir!");
+  } catch (e) {
+    showToast("No se pudo copiar el link, intenta de nuevo");
+  }
+}
+
 function presToPiezas(pres, count) {
   return (PRES_PIEZAS[pres] || 1) * count;
 }
@@ -1144,6 +1166,7 @@ function ProductCard({ product }) {
             {agotadoBloqueado ? "Agotado" : added ? <><CheckCircle2 size={16} className="oft-check-pop" /> ¡Agregado!</> : <><Plus size={15} strokeWidth={2.5} /> Agregar al pedido</>}
           </button>
           <button className="oft-btn-press" style={S.btnWA} onClick={() => { let m = `Hola Ofertodo, me interesa: ${product.nombre}`; if (product.referencia) m += ` (Ref: ${product.referencia})`; if (product.imagen_url) m += `\n\n📷 Foto:\n${product.imagen_url}`; window.open(`https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(m)}`, "_blank"); }}><MessageCircle size={16} /></button>
+          <button className="oft-btn-press" style={{ ...S.btnWA, background: BLACK }} title="Compartir producto" onClick={() => compartirProducto(product, showToast)}><Share2 size={16} /></button>
         </div>
         )}
       </div>
@@ -1300,6 +1323,7 @@ function ProductModal() {
               {agotadoBloqueado ? "Agotado" : added ? <><CheckCircle2 size={17} className="oft-check-pop" /> ¡Agregado!</> : <><Plus size={16} strokeWidth={2.5} /> Agregar al pedido</>}
             </button>
             <button className="oft-btn-press" style={{ ...S.btnWA, padding: "14px 16px" }} onClick={() => { let m = `Hola Ofertodo, me interesa: ${product.nombre}`; if (product.referencia) m += ` (Ref: ${product.referencia})`; if (product.imagen_url) m += `\n\n📷 Foto:\n${product.imagen_url}`; window.open(`https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(m)}`, "_blank"); }}><MessageCircle size={18} /></button>
+            <button className="oft-btn-press" style={{ ...S.btnWA, padding: "14px 16px", background: BLACK }} title="Compartir producto" onClick={() => compartirProducto(product, showToast)}><Share2 size={18} /></button>
           </div>
           )}
         </div>
@@ -8327,6 +8351,20 @@ export default function App() {
         ]);
         setCategories(cats);
         setProducts(prods);
+
+        // Link directo a un producto (?producto=ID) — si alguien comparte el link de un
+        // producto y se lo mandan a un cliente, al abrirlo se muestra ese producto directo.
+        const idProductoLink = new URLSearchParams(window.location.search).get("producto");
+        if (idProductoLink) {
+          const prodEncontrado = prods.find(p => String(p.id) === idProductoLink);
+          if (prodEncontrado) {
+            setQuickView(prodEncontrado);
+          } else {
+            showToast("Ese producto ya no está disponible");
+          }
+          // Limpia el parámetro de la URL para que no se quede pegado al navegar
+          window.history.replaceState(null, "", window.location.origin + window.location.pathname);
+        }
         // Empresas de envío y sucursales (no críticas, si fallan se ignoran)
         try {
           const [emps, sucs] = await Promise.all([
