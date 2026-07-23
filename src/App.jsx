@@ -882,33 +882,56 @@ function QtySelector({ product, pres, setPres, count, setCount, size = "normal" 
   const btnSize = big ? 42 : 36;
   const numFont = big ? 24 : 20;
 
+  // El stock por docena/media docena solo aplica a productos PROPIOS con stock sincronizado
+  // de Odoo — los de proveedor (bajo pedido) nunca se restringen por este motivo.
+  const stockConocido = (!product.proveedor_id && product.stock_actualizado_at) ? Number(product.stock) : null;
+  const docenaDeshabilitada = stockConocido !== null && stockConocido < 12;
+  const mediaDeshabilitada = stockConocido !== null && stockConocido < 6;
+
   const presentaciones = [
-    { key: "pieza", label: "Pieza", precio: Number(product.precio_pieza), porPieza: Number(product.precio_pieza) },
-    { key: "media", label: "½ Doc", precio: Number(product.precio_media_docena), porPieza: Number(product.precio_media_docena) / 6 },
-    { key: "docena", label: "Docena", precio: Number(product.precio_docena), porPieza: Number(product.precio_docena) / 12 },
+    { key: "pieza", label: "Pieza", precio: Number(product.precio_pieza), porPieza: Number(product.precio_pieza), disabled: false },
+    { key: "media", label: "½ Doc", precio: Number(product.precio_media_docena), porPieza: Number(product.precio_media_docena) / 6, disabled: mediaDeshabilitada },
+    { key: "docena", label: "Docena", precio: Number(product.precio_docena), porPieza: Number(product.precio_docena) / 12, disabled: docenaDeshabilitada },
   ];
+
+  // Si la opción seleccionada deja de estar disponible (por stock bajo), cambia sola a
+  // la siguiente mejor opción disponible — nunca deja al cliente "atascado" en una opción
+  // que ya no se puede comprar.
+  useEffect(() => {
+    const actual = presentaciones.find(p => p.key === pres);
+    if (actual?.disabled) {
+      if (pres === "docena" && !mediaDeshabilitada) setPres("media");
+      else setPres("pieza");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pres, docenaDeshabilitada, mediaDeshabilitada]);
 
   return (
     <div>
       {/* SELECTOR DE PRESENTACIÓN */}
       <div className="oft-pres-grid" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6, marginBottom: 12, alignItems: "stretch" }}>
         {presentaciones.map(p => {
-          const active = pres === p.key;
+          const active = pres === p.key && !p.disabled;
           return (
             <button key={p.key}
-              onClick={() => { setPres(p.key); setCount(1); triggerBump(); }}
+              onClick={() => { if (p.disabled) return; setPres(p.key); setCount(1); triggerBump(); }}
+              disabled={p.disabled}
               className={"oft-pres-chip oft-btn-press" + (big ? " oft-pres-big" : "")}
               style={{
                 padding: big ? "12px 4px" : "10px 2px", borderRadius: 10,
-                border: `2px solid ${active ? RED : GRAY2}`,
-                background: active ? "#FFF5F5" : WHITE,
-                cursor: "pointer", transition: "all 0.18s",
+                border: `2px solid ${p.disabled ? GRAY2 : (active ? RED : GRAY2)}`,
+                background: p.disabled ? GRAY : (active ? "#FFF5F5" : WHITE),
+                cursor: p.disabled ? "not-allowed" : "pointer", transition: "all 0.18s",
                 display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 4,
                 minWidth: 0, width: "100%", boxSizing: "border-box",
+                opacity: p.disabled ? 0.6 : 1,
               }}
             >
-              <div className="oft-pres-label" style={{ fontWeight: 800, color: active ? RED : BLACK, textAlign: "center", width: "100%", lineHeight: 1.2, whiteSpace: "nowrap", overflow: "hidden" }}>{p.label}</div>
-              <div className="oft-pres-price" style={{ fontWeight: 900, color: active ? RED : BLACK, textAlign: "center", width: "100%", lineHeight: 1.2, whiteSpace: "nowrap", overflow: "hidden" }}>${p.precio.toFixed(2)}</div>
+              <div className="oft-pres-label" style={{ fontWeight: 800, color: p.disabled ? GRAY3 : (active ? RED : BLACK), textAlign: "center", width: "100%", lineHeight: 1.2, whiteSpace: "nowrap", overflow: "hidden" }}>{p.label}</div>
+              {p.disabled
+                ? <div style={{ fontSize: 10, fontWeight: 700, color: GRAY3, textAlign: "center", width: "100%", lineHeight: 1.2 }}>No disponible</div>
+                : <div className="oft-pres-price" style={{ fontWeight: 900, color: active ? RED : BLACK, textAlign: "center", width: "100%", lineHeight: 1.2, whiteSpace: "nowrap", overflow: "hidden" }}>${p.precio.toFixed(2)}</div>
+              }
             </button>
           );
         })}
