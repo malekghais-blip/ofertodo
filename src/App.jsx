@@ -884,7 +884,9 @@ function QtySelector({ product, pres, setPres, count, setCount, size = "normal" 
 
   // El stock por docena/media docena solo aplica a productos PROPIOS con stock sincronizado
   // de Odoo — los de proveedor (bajo pedido) nunca se restringen por este motivo.
-  const stockConocido = (!product.proveedor_id && product.stock_actualizado_at) ? Number(product.stock) : null;
+  // Aplica reglas de stock si es producto propio, O si es de proveedor pero ya lo tenemos en stock físico
+  const respetaStockQty = (!product.proveedor_id || product.tiene_stock_fisico) && product.stock_actualizado_at;
+  const stockConocido = respetaStockQty ? Number(product.stock) : null;
   const docenaDeshabilitada = stockConocido !== null && stockConocido < 12;
   const mediaDeshabilitada = stockConocido !== null && stockConocido < 6;
 
@@ -1083,7 +1085,8 @@ function ProductCard({ product }) {
   // Solo bloqueamos la compra cuando se agota un producto PROPIO (sin proveedor).
   // Los productos de proveedor externo siempre se pueden comprar — el stock ahí
   // se maneja yendo a comprarle al proveedor cuando llega el pedido.
-  const agotadoBloqueado = !product.proveedor_id && product.stock_actualizado_at && Number(product.stock) <= 0;
+  const respetaStock = (!product.proveedor_id || product.tiene_stock_fisico);
+  const agotadoBloqueado = respetaStock && product.stock_actualizado_at && Number(product.stock) <= 0;
 
   // ¿Este producto tiene variantes y el cliente eligió "Por pieza"?
   const tieneVariantes = (product.tiene_tallas && (product.tallas || "").trim()) || (product.tiene_colores && (product.colores || "").trim());
@@ -1265,7 +1268,8 @@ function ProductModal() {
   if (!product) return null;
   const total = presTotal(product, pres, count);
   const imgUrl = product.imagen_url || null;
-  const agotadoBloqueado = !product.proveedor_id && product.stock_actualizado_at && Number(product.stock) <= 0;
+  const respetaStock = (!product.proveedor_id || product.tiene_stock_fisico);
+  const agotadoBloqueado = respetaStock && product.stock_actualizado_at && Number(product.stock) <= 0;
 
   const tieneVariantes = (product.tiene_tallas && (product.tallas || "").trim()) || (product.tiene_colores && (product.colores || "").trim());
   const modoConsulta = pres === "pieza" && tieneVariantes && !product.venta_por_unidad;
@@ -4820,7 +4824,7 @@ function AdminView() {
   const [bulkLoading, setBulkLoading] = useState(false);
   const [newCatName, setNewCatName] = useState("");
   const [catUploading, setCatUploading] = useState(null); // id de categoría subiendo icono
-  const emptyProd = { referencia: "", nombre: "", descripcion: "", categoria_id: categories[0]?.id || 1, precio_pieza: "", precio_media_docena: "", precio_docena: "", badge: "", activo: true, destacado: false, imagen_url: "", tiene_tallas: false, tiene_colores: false, tallas: "", colores: "", distribucion_docena: "", distribucion_eje: "", proveedor_id: null, venta_por_unidad: false };
+  const emptyProd = { referencia: "", nombre: "", descripcion: "", categoria_id: categories[0]?.id || 1, precio_pieza: "", precio_media_docena: "", precio_docena: "", badge: "", activo: true, destacado: false, imagen_url: "", tiene_tallas: false, tiene_colores: false, tallas: "", colores: "", distribucion_docena: "", distribucion_eje: "", proveedor_id: null, venta_por_unidad: false, tiene_stock_fisico: false };
   const [prodForm, setProdForm] = useState(emptyProd);
   const fileInputRef = useRef(null);
   const catFileRef = useRef(null);
@@ -4828,6 +4832,7 @@ function AdminView() {
   const [showBulkImg, setShowBulkImg] = useState(false);
   const [bulkImgCat, setBulkImgCat] = useState(categories[0]?.id || 1);
   const [bulkImgProveedorId, setBulkImgProveedorId] = useState(null); // proveedor para estos borradores (null = propio)
+  const [bulkImgTieneStockFisico, setBulkImgTieneStockFisico] = useState(false); // true = ya tengo esta mercancía en stock físico
   const [bulkImgLoading, setBulkImgLoading] = useState(false);
   const [bulkImgProgress, setBulkImgProgress] = useState({ done: 0, total: 0 });
   const bulkImgRef = useRef(null);
@@ -4842,7 +4847,7 @@ function AdminView() {
   const [bulkEditLoading, setBulkEditLoading] = useState(false);
   const [showBulkDelete, setShowBulkDelete] = useState(false);
   const [bulkDeleteLoading, setBulkDeleteLoading] = useState(false);
-  const emptyBulkEdit = { nombre: "", precio_pieza: "", precio_media_docena: "", precio_docena: "", badge: "", descripcion: "", activo: "", destacado: "", tiene_tallas: "", tallas: "", tiene_colores: "", colores: "", distribucion_docena: "", distribucion_eje: "", proveedor_id: "" };
+  const emptyBulkEdit = { nombre: "", categoria_id: "", precio_pieza: "", precio_media_docena: "", precio_docena: "", badge: "", descripcion: "", activo: "", destacado: "", tiene_tallas: "", tallas: "", tiene_colores: "", colores: "", distribucion_docena: "", distribucion_eje: "", proveedor_id: "", tiene_stock_fisico: "" };
   const [bulkEdit, setBulkEdit] = useState(emptyBulkEdit);
   const [shippingLabel, setShippingLabel] = useState(null); // pedido para la guía de envío
   const [pedidoAEliminar, setPedidoAEliminar] = useState(null); // pedido pendiente de eliminar (confirmación)
@@ -5355,7 +5360,7 @@ function AdminView() {
   // ── GUARDAR / EDITAR PRODUCTO ──────────────────────────────────
   const openNewProduct = () => { setProdForm(emptyProd); setEditingId(null); setShowProdForm(true); setShowBulk(false); };
   const openEditProduct = (p) => {
-    setProdForm({ referencia: p.referencia || "", nombre: p.nombre || "", descripcion: p.descripcion || "", categoria_id: p.categoria_id || categories[0]?.id || 1, precio_pieza: p.precio_pieza, precio_media_docena: p.precio_media_docena, precio_docena: p.precio_docena, badge: p.badge || "", activo: p.activo, destacado: p.destacado || false, imagen_url: p.imagen_url || "", tiene_tallas: p.tiene_tallas || false, tiene_colores: p.tiene_colores || false, tallas: p.tallas || "", colores: p.colores || "", distribucion_docena: p.distribucion_docena || "", distribucion_eje: p.distribucion_eje || "", proveedor_id: p.proveedor_id || null, venta_por_unidad: p.venta_por_unidad || false });
+    setProdForm({ referencia: p.referencia || "", nombre: p.nombre || "", descripcion: p.descripcion || "", categoria_id: p.categoria_id || categories[0]?.id || 1, precio_pieza: p.precio_pieza, precio_media_docena: p.precio_media_docena, precio_docena: p.precio_docena, badge: p.badge || "", activo: p.activo, destacado: p.destacado || false, imagen_url: p.imagen_url || "", tiene_tallas: p.tiene_tallas || false, tiene_colores: p.tiene_colores || false, tallas: p.tallas || "", colores: p.colores || "", distribucion_docena: p.distribucion_docena || "", distribucion_eje: p.distribucion_eje || "", proveedor_id: p.proveedor_id || null, venta_por_unidad: p.venta_por_unidad || false, tiene_stock_fisico: p.tiene_stock_fisico || false });
     setEditingId(p.id);
     setShowProdForm(true);
     setShowBulk(false);
@@ -5515,7 +5520,7 @@ function AdminView() {
         const saved = await sb.post("productos", {
           referencia: nombreArchivoSinExt || "", nombre: baseName || "Producto sin nombre", descripcion: "",
           categoria_id: Number(bulkImgCat) || categories[0]?.id || 1,
-          proveedor_id: bulkImgProveedorId,
+          proveedor_id: bulkImgProveedorId, tiene_stock_fisico: bulkImgProveedorId ? bulkImgTieneStockFisico : false,
           precio_pieza: 0, precio_media_docena: 0, precio_docena: 0,
           badge: "", activo: false, imagen_url: url, // borrador (inactivo)
         });
@@ -5549,6 +5554,7 @@ function AdminView() {
     // Solo aplica los campos que tienen valor (los vacíos no se tocan)
     const patch = {};
     if (bulkEdit.nombre !== "") patch.nombre = bulkEdit.nombre;
+    if (bulkEdit.categoria_id !== "") patch.categoria_id = Number(bulkEdit.categoria_id);
     if (bulkEdit.precio_pieza !== "") patch.precio_pieza = Number(bulkEdit.precio_pieza);
     if (bulkEdit.precio_media_docena !== "") patch.precio_media_docena = Number(bulkEdit.precio_media_docena);
     if (bulkEdit.precio_docena !== "") patch.precio_docena = Number(bulkEdit.precio_docena);
@@ -5571,6 +5577,8 @@ function AdminView() {
     // Proveedor: "" = no tocar; "__ninguno__" = quitarlo (pasa a ser producto propio); si no, el id elegido
     if (bulkEdit.proveedor_id === "__ninguno__") { patch.proveedor_id = null; }
     else if (bulkEdit.proveedor_id !== "") { patch.proveedor_id = Number(bulkEdit.proveedor_id); }
+    // Tengo stock físico (solo aplica de verdad a productos con proveedor, pero no hace daño si se aplica a todos)
+    if (bulkEdit.tiene_stock_fisico !== "") patch.tiene_stock_fisico = bulkEdit.tiene_stock_fisico === "1";
     if (Object.keys(patch).length === 0) { alert("Llena al menos un campo para aplicar."); return; }
     setBulkEditLoading(true);
     let ok = 0, err = 0;
@@ -6652,6 +6660,15 @@ function AdminView() {
                   <option value="">Producto propio de Ofertodo</option>
                   {proveedores.map(pv => <option key={pv.id} value={pv.id}>{pv.nombre}</option>)}
                 </select>
+                {bulkImgProveedorId && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, background: WHITE, border: `1.5px solid ${GRAY2}`, borderRadius: 10, padding: "10px 14px", marginBottom: 14 }}>
+                    <input type="checkbox" id="bulkImgStockFisico" checked={bulkImgTieneStockFisico} onChange={e => setBulkImgTieneStockFisico(e.target.checked)} style={{ width: 18, height: 18 }} />
+                    <label htmlFor="bulkImgStockFisico" style={{ fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+                      Ya tengo esta mercancía en stock físico
+                      <div style={{ fontSize: 11, color: GRAY3, fontWeight: 400 }}>Actívalo si acabas de recibir/comprar estos productos — aplican los bloqueos por stock. Si sigues comprándolos bajo pedido, déjalo apagado.</div>
+                    </label>
+                  </div>
+                )}
                 <p style={{ fontSize: 11, color: GRAY3, marginTop: -8, marginBottom: 14 }}>
                   Si tus fotos ya están nombradas por su Item No./SKU (ej. "25004.jpg"), ese número se usa automáticamente como referencia del producto.
                 </p>
@@ -6757,6 +6774,15 @@ function AdminView() {
                       {proveedores.map(pv => <option key={pv.id} value={pv.id}>{pv.nombre}</option>)}
                     </select>
                   </div>
+                  {prodForm.proveedor_id && (
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, background: WHITE, border: `1.5px solid ${GRAY2}`, borderRadius: 10, padding: "10px 14px" }}>
+                      <input type="checkbox" id="tiene_stock_fisico" checked={!!prodForm.tiene_stock_fisico} onChange={e => setProdForm({...prodForm, tiene_stock_fisico: e.target.checked})} style={{ width: 18, height: 18 }} />
+                      <label htmlFor="tiene_stock_fisico" style={{ fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+                        Tengo este producto en stock físico
+                        <div style={{ fontSize: 11, color: GRAY3, fontWeight: 400 }}>Actívalo si ya le compraste esta mercancía al proveedor y la tienes en tu tienda — aplican los mismos bloqueos por stock que tus productos propios (agotado, límites de docena/media docena). Si sigues comprándolo bajo pedido, déjalo apagado.</div>
+                      </label>
+                    </div>
+                  )}
                   <div style={{ display: "flex", alignItems: "center", gap: 10, background: WHITE, border: `1.5px solid ${GRAY2}`, borderRadius: 10, padding: "10px 14px" }}>
                     <input type="checkbox" id="venta_por_unidad" checked={!!prodForm.venta_por_unidad} onChange={e => setProdForm({...prodForm, venta_por_unidad: e.target.checked})} style={{ width: 18, height: 18 }} />
                     <label htmlFor="venta_por_unidad" style={{ fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
@@ -6904,7 +6930,7 @@ function AdminView() {
                       <td style={S.td}>${p.precio_media_docena}</td>
                       <td style={{ ...S.td, fontWeight: 700, color: RED }}>${p.precio_docena}</td>
                       <td style={S.td}>
-                        {p.proveedor_id ? (
+                        {p.proveedor_id && !p.tiene_stock_fisico ? (
                           <span style={{ color: GRAY3, fontSize: 12 }}>Bajo pedido</span>
                         ) : p.stock_actualizado_at ? (
                           <span style={{ fontWeight: 700, color: Number(p.stock) > 5 ? "#155724" : Number(p.stock) > 0 ? "#856404" : RED }}>
@@ -7026,6 +7052,11 @@ function AdminView() {
                   <p style={{ fontSize: 13, color: GRAY3, marginBottom: 16 }}>Solo se cambian los campos que llenes. Los vacíos se quedan igual.</p>
                   <label style={S.label}>Nombre del producto</label>
                   <input style={S.input} placeholder="(dejar vacío para no cambiar)" value={bulkEdit.nombre} onChange={e => setBulkEdit({...bulkEdit, nombre: e.target.value})} />
+                  <label style={S.label}>Categoría</label>
+                  <select style={S.input} value={bulkEdit.categoria_id} onChange={e => setBulkEdit({...bulkEdit, categoria_id: e.target.value})}>
+                    <option value="">No cambiar</option>
+                    {categories.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                  </select>
                   <div className="oft-form-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
                     <div><label style={S.label}>Precio pieza</label><input style={S.input} placeholder="—" value={bulkEdit.precio_pieza} onChange={e => setBulkEdit({...bulkEdit, precio_pieza: e.target.value})} /></div>
                     <div><label style={S.label}>Media docena</label><input style={S.input} placeholder="—" value={bulkEdit.precio_media_docena} onChange={e => setBulkEdit({...bulkEdit, precio_media_docena: e.target.value})} /></div>
@@ -7052,6 +7083,12 @@ function AdminView() {
                     <option value="">No cambiar</option>
                     <option value="__ninguno__">Quitar proveedor (pasa a ser propio de Ofertodo)</option>
                     {proveedores.map(pv => <option key={pv.id} value={pv.id}>{pv.nombre}</option>)}
+                  </select>
+                  <label style={S.label}>Tengo stock físico (para productos de proveedor)</label>
+                  <select style={S.input} value={bulkEdit.tiene_stock_fisico} onChange={e => setBulkEdit({...bulkEdit, tiene_stock_fisico: e.target.value})}>
+                    <option value="">No cambiar</option>
+                    <option value="1">Sí, ya lo tengo en stock — aplicar bloqueos por stock</option>
+                    <option value="0">No, sigue siendo bajo pedido</option>
                   </select>
 
                   {/* TALLAS */}
