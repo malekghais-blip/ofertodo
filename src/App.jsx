@@ -4864,6 +4864,11 @@ function AdminView() {
   const [proveedorForm, setProveedorForm] = useState(null); // null | {} (crear) | {id,...} (editar)
   const [localForm, setLocalForm] = useState(null); // null | {} (crear) | {id,...} (editar) — local de retiro
   const [localAEliminar, setLocalAEliminar] = useState(null); // local de retiro a eliminar (confirmación)
+  // Reporte de ventas por rango de fechas
+  const [reporteDesde, setReporteDesde] = useState(() => { const d = new Date(); d.setDate(d.getDate() - 30); return d.toISOString().slice(0, 10); });
+  const [reporteHasta, setReporteHasta] = useState(() => new Date().toISOString().slice(0, 10));
+  const [reporteFilas, setReporteFilas] = useState(null); // null = todavía no generado
+  const [reporteBusy, setReporteBusy] = useState(false);
   const [guardandoToggleRetiro, setGuardandoToggleRetiro] = useState(false);
   const [proveedorAEliminar, setProveedorAEliminar] = useState(null); // proveedor a eliminar (confirmación)
   // ── DESCUENTOS ──
@@ -5724,6 +5729,84 @@ function AdminView() {
 
   // Ventas e ingresos generados por cada proveedor externo (todo el historial, no solo el rango
   // de fechas del dashboard) — recorre todos los pedidos reales y agrupa por proveedor del producto.
+  // Genera el reporte de ventas del rango de fechas elegido: agrupa por producto,
+  // sumando cantidad vendida e ingreso, ordenado de mayor a menor ingreso.
+  const generarReporteVentas = () => {
+    const desde = new Date(reporteDesde + "T00:00:00");
+    const hasta = new Date(reporteHasta + "T23:59:59");
+    if (desde > hasta) { alert("La fecha 'Desde' no puede ser después de 'Hasta'."); return; }
+
+    const pedidosEnRango = pedidosRealesTodos.filter(o => {
+      const f = new Date(o.created_at);
+      return f >= desde && f <= hasta;
+    });
+
+    const mapa = {};
+    pedidosEnRango.forEach(o => {
+      (o.items || []).forEach(it => {
+        const prod = products.find(p => p.id === it.producto_id);
+        const clave = it.producto_id || `sin-id-${it.nombre_producto}`;
+        if (!mapa[clave]) {
+          mapa[clave] = { referencia: prod?.referencia || "—", nombre: it.nombre_producto || prod?.nombre || "Producto", cantidad: 0, ingreso: 0 };
+        }
+        mapa[clave].cantidad += Number(it.cantidad) || 0;
+        mapa[clave].ingreso += Number(it.subtotal) || 0;
+      });
+    });
+
+    const filas = Object.values(mapa).sort((a, b) => b.ingreso - a.ingreso);
+    setReporteFilas({
+      filas,
+      pedidos: pedidosEnRango.length,
+      totalUnidades: filas.reduce((s, f) => s + f.cantidad, 0),
+      totalIngreso: filas.reduce((s, f) => s + f.ingreso, 0),
+    });
+  };
+
+  const reporteVentasRef = useRef(null);
+  const descargarReporteVentasPDF = async () => {
+    if (!window.html2canvas || !window.jspdf) { alert("Cargando generador de PDF, intenta de nuevo en unos segundos."); return; }
+    setReporteBusy(true);
+    try {
+      const source = reporteVentasRef.current;
+      const clone = source.cloneNode(true);
+      const holder = document.createElement("div");
+      holder.style.position = "fixed";
+      holder.style.left = "-10000px";
+      holder.style.top = "0";
+      holder.style.width = "700px";
+      holder.style.background = "#ffffff";
+      clone.style.width = "700px";
+      clone.style.maxWidth = "700px";
+      holder.appendChild(clone);
+      document.body.appendChild(holder);
+      let canvas;
+      try {
+        canvas = await window.html2canvas(clone, { scale: 2, backgroundColor: "#ffffff", useCORS: true, width: 700, windowWidth: 700 });
+      } finally {
+        document.body.removeChild(holder);
+      }
+      const imgData = canvas.toDataURL("image/png");
+      const { jsPDF } = window.jspdf;
+      const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+      const pageW = 210, pageH = 297, margin = 10;
+      const imgW = pageW - margin * 2;
+      const imgH = (canvas.height * imgW) / canvas.width;
+      let heightLeft = imgH;
+      let position = margin;
+      pdf.addImage(imgData, "PNG", margin, position, imgW, imgH);
+      heightLeft -= (pageH - margin * 2);
+      while (heightLeft > 0) {
+        pdf.addPage();
+        position = margin - (imgH - heightLeft);
+        pdf.addImage(imgData, "PNG", margin, position, imgW, imgH);
+        heightLeft -= (pageH - margin * 2);
+      }
+      pdf.save(`reporte-ventas-${reporteDesde}-a-${reporteHasta}.pdf`);
+    } catch(e) { alert("Error generando PDF: " + e.message); }
+    setReporteBusy(false);
+  };
+
   const ventasPorProveedor = (() => {
     const mapa = {};
     proveedores.forEach(pv => { mapa[pv.id] = { proveedor: pv, ingreso: 0, unidades: 0, pedidos: new Set() }; });
@@ -5759,6 +5842,7 @@ function AdminView() {
     ["analisis", "Análisis Stock", TrendingUp],
     ["proveedores", "Proveedores", Building2],
     ["retirolocal", "Retiro en Local", Home],
+    ["reporteventas", "Reporte de Ventas", FileText],
     ["shipping", "Envíos", Truck],
     ["users", "Clientes", Users],
     ["equipo", "Equipo", Lock],
@@ -7913,6 +7997,107 @@ function AdminView() {
                     </div>
                   </div>
                 ))}
+              </div>
+            )}
+          </>
+        )}
+
+        {/* ═══════════ REPORTE DE VENTAS ═══════════ */}
+        {tab === "reporteventas" && esAdminCompleto && (
+          <>
+            <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 24, display: "flex", alignItems: "center", gap: 10 }}><FileText size={24} color={RED} /> Reporte de Ventas</div>
+
+            <div style={{ background: WHITE, borderRadius: 16, border: `1px solid ${GRAY2}`, padding: 20, marginBottom: 24 }}>
+              <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
+                <div>
+                  <label style={S.label}>Desde</label>
+                  <input type="date" style={S.input} value={reporteDesde} onChange={e => setReporteDesde(e.target.value)} max={reporteHasta} />
+                </div>
+                <div>
+                  <label style={S.label}>Hasta</label>
+                  <input type="date" style={S.input} value={reporteHasta} onChange={e => setReporteHasta(e.target.value)} min={reporteDesde} max={new Date().toISOString().slice(0, 10)} />
+                </div>
+                <button onClick={generarReporteVentas} className="oft-btn-press" style={{ ...S.btnRed, padding: "10px 20px", height: 44 }}>
+                  <FileSpreadsheet size={16} /> Generar reporte
+                </button>
+                {reporteFilas && (
+                  <button onClick={descargarReporteVentasPDF} disabled={reporteBusy} className="oft-btn-press" style={{ ...S.btnOutline, padding: "10px 20px", height: 44, opacity: reporteBusy ? 0.7 : 1 }}>
+                    <Download size={16} /> {reporteBusy ? "Generando..." : "Descargar PDF"}
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {!reporteFilas ? (
+              <div style={{ background: WHITE, borderRadius: 16, padding: "40px 24px", border: `2px dashed ${GRAY2}`, textAlign: "center" }}>
+                <div style={{ width: 64, height: 64, borderRadius: "50%", background: GRAY, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
+                  <FileText size={30} color={GRAY3} strokeWidth={1.5} />
+                </div>
+                <div style={{ fontWeight: 800, fontSize: 17, marginBottom: 6 }}>Elige un rango de fechas y genera el reporte</div>
+                <p style={{ fontSize: 14, color: GRAY3 }}>Vas a ver, por cada referencia vendida, cuántas unidades y cuánto ingreso generó en ese periodo.</p>
+              </div>
+            ) : reporteFilas.filas.length === 0 ? (
+              <div style={{ background: WHITE, borderRadius: 16, padding: "40px 24px", border: `2px dashed ${GRAY2}`, textAlign: "center" }}>
+                <div style={{ fontWeight: 800, fontSize: 17 }}>No hubo ventas en ese rango de fechas</div>
+              </div>
+            ) : (
+              <div style={{ background: WHITE, borderRadius: 16, border: `1px solid ${GRAY2}`, padding: 24, overflowX: "auto" }}>
+                {/* ── Este bloque es exactamente lo que se convierte en el PDF ── */}
+                <div ref={reporteVentasRef} style={{ padding: 24, fontFamily: "Helvetica, Arial, sans-serif" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6, borderBottom: `3px solid ${RED}`, paddingBottom: 16 }}>
+                    <div>
+                      <div style={{ fontSize: 22, fontWeight: 900 }}>OFERTODO</div>
+                      <div style={{ fontSize: 12, color: GRAY3 }}>Reporte de Ventas</div>
+                    </div>
+                    <div style={{ textAlign: "right", fontSize: 12, color: GRAY3 }}>
+                      <div><strong style={{ color: BLACK }}>Periodo:</strong> {reporteDesde} a {reporteHasta}</div>
+                      <div>Generado: {new Date().toLocaleDateString("es-PA")}</div>
+                    </div>
+                  </div>
+
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, margin: "20px 0" }}>
+                    <div style={{ background: GRAY, borderRadius: 10, padding: 14, textAlign: "center" }}>
+                      <div style={{ fontSize: 20, fontWeight: 900 }}>{reporteFilas.pedidos}</div>
+                      <div style={{ fontSize: 11, color: GRAY3 }}>Pedidos</div>
+                    </div>
+                    <div style={{ background: GRAY, borderRadius: 10, padding: 14, textAlign: "center" }}>
+                      <div style={{ fontSize: 20, fontWeight: 900 }}>{reporteFilas.totalUnidades}</div>
+                      <div style={{ fontSize: 11, color: GRAY3 }}>Unidades vendidas</div>
+                    </div>
+                    <div style={{ background: "#FFF5F5", borderRadius: 10, padding: 14, textAlign: "center" }}>
+                      <div style={{ fontSize: 20, fontWeight: 900, color: RED }}>{money(reporteFilas.totalIngreso)}</div>
+                      <div style={{ fontSize: 11, color: GRAY3 }}>Ingreso total</div>
+                    </div>
+                  </div>
+
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                    <thead>
+                      <tr style={{ background: BLACK, color: WHITE }}>
+                        <th style={{ textAlign: "left", padding: "10px 8px" }}>Referencia</th>
+                        <th style={{ textAlign: "left", padding: "10px 8px" }}>Producto</th>
+                        <th style={{ textAlign: "center", padding: "10px 8px" }}>Cant.</th>
+                        <th style={{ textAlign: "right", padding: "10px 8px" }}>Ingreso</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {reporteFilas.filas.map((f, i) => (
+                        <tr key={i} style={{ borderBottom: `1px solid ${GRAY2}`, background: i % 2 === 0 ? WHITE : GRAY }}>
+                          <td style={{ padding: "8px", fontWeight: 700 }}>{f.referencia}</td>
+                          <td style={{ padding: "8px" }}>{f.nombre}</td>
+                          <td style={{ padding: "8px", textAlign: "center", fontWeight: 700 }}>{f.cantidad}</td>
+                          <td style={{ padding: "8px", textAlign: "right", fontWeight: 700 }}>{money(f.ingreso)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr style={{ borderTop: `2px solid ${BLACK}` }}>
+                        <td colSpan={2} style={{ padding: "10px 8px", fontWeight: 900 }}>TOTAL</td>
+                        <td style={{ padding: "10px 8px", textAlign: "center", fontWeight: 900 }}>{reporteFilas.totalUnidades}</td>
+                        <td style={{ padding: "10px 8px", textAlign: "right", fontWeight: 900, color: RED }}>{money(reporteFilas.totalIngreso)}</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
               </div>
             )}
           </>
