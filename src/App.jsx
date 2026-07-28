@@ -2643,9 +2643,16 @@ function CrearPedidoView() {
 
   // Precio por pieza de un producto según el modo del pack (docena ÷12, media ÷6)
   const flexUnitPrice = (product, modo) => modo === "media" ? Number(product.precio_media_docena) / 6 : Number(product.precio_docena) / 12;
+  // Precio real de una línea del FlexPack: usa el precio editado (override) si existe, si no el calculado
+  const flexLineUnitPrice = (linea, modo) => {
+    if (linea.precioOverride !== undefined && linea.precioOverride !== "" && !isNaN(Number(linea.precioOverride))) {
+      return Number(linea.precioOverride);
+    }
+    return flexUnitPrice(linea.product, modo);
+  };
   const FLEX_META = { docena: 12, media: 6 };
   const flexPiezas = (pack) => pack.lineas.reduce((s, l) => s + l.piezas, 0);
-  const flexTotal = (pack) => pack.lineas.reduce((s, l) => s + flexUnitPrice(l.product, pack.modo) * l.piezas, 0);
+  const flexTotal = (pack) => pack.lineas.reduce((s, l) => s + flexLineUnitPrice(l, pack.modo) * l.piezas, 0);
   const flexCompleto = (pack) => flexPiezas(pack) === FLEX_META[pack.modo];
 
   // Precio unitario de un item: usa el precio editado (override) si existe, si no el del producto
@@ -2689,6 +2696,12 @@ function CrearPedidoView() {
       const otras = pack.lineas.filter(l => l.product.id !== prodId).reduce((s, l) => s + l.piezas, 0);
       const max = FLEX_META[pack.modo] - otras;
       return { ...pack, lineas: pack.lineas.map(l => l.product.id === prodId ? { ...l, piezas: Math.min(piezas, max) } : l) };
+    }));
+  };
+  const updateFlexLinePrice = (packId, prodId, precio) => {
+    setFlexPacks(prev => prev.map(pack => {
+      if (pack.id !== packId) return pack;
+      return { ...pack, lineas: pack.lineas.map(l => l.product.id === prodId ? { ...l, precioOverride: precio } : l) };
     }));
   };
 
@@ -2837,8 +2850,8 @@ function CrearPedidoView() {
         for (const l of pack.lineas) {
           await sb.post("pedido_items", {
             pedido_id: pedidoId, producto_id: l.product.id, nombre_producto: `${l.product.nombre} (${etiqueta})`,
-            cantidad: l.piezas, precio_unitario: flexUnitPrice(l.product, pack.modo),
-            subtotal: flexUnitPrice(l.product, pack.modo) * l.piezas,
+            cantidad: l.piezas, precio_unitario: flexLineUnitPrice(l, pack.modo),
+            subtotal: flexLineUnitPrice(l, pack.modo) * l.piezas,
           });
         }
       }
@@ -2879,8 +2892,8 @@ function CrearPedidoView() {
           nombre: l.product.nombre, referencia: l.product.referencia,
           presentacion: pack.modo === "media" ? "FLEXPACK ½ doc" : "FLEXPACK docena",
           piezas: l.piezas,
-          precioUnit: flexUnitPrice(l.product, pack.modo),
-          subtotal: flexUnitPrice(l.product, pack.modo) * l.piezas,
+          precioUnit: flexLineUnitPrice(l, pack.modo),
+          subtotal: flexLineUnitPrice(l, pack.modo) * l.piezas,
         }))),
       ];
 
@@ -3139,21 +3152,42 @@ function CrearPedidoView() {
                     </div>
 
                     {/* Líneas del pack */}
-                    {pack.lineas.map(l => (
-                      <div key={l.product.id} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8, background: WHITE, borderRadius: 8, padding: "8px 10px" }}>
-                        {l.product.imagen_url ? <img src={l.product.imagen_url} style={{ width: 34, height: 34, borderRadius: 6, objectFit: "cover" }} /> : <div style={{ width: 34, height: 34, borderRadius: 6, background: GRAY, display: "flex", alignItems: "center", justifyContent: "center" }}><Package size={15} color={GRAY3} /></div>}
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontWeight: 700, fontSize: 13 }}>{l.product.nombre}</div>
-                          <div style={{ fontSize: 11, color: GRAY3 }}>{money(flexUnitPrice(l.product, pack.modo))}/pza · {l.product.referencia || "—"}</div>
+                    {pack.lineas.map(l => {
+                      const precioLinea = flexLineUnitPrice(l, pack.modo);
+                      const precioEditado = l.precioOverride !== undefined && l.precioOverride !== "" && Number(l.precioOverride) !== flexUnitPrice(l.product, pack.modo);
+                      return (
+                      <div key={l.product.id} style={{ background: WHITE, borderRadius: 8, padding: "8px 10px", marginBottom: 8 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                          {l.product.imagen_url ? <img src={l.product.imagen_url} style={{ width: 34, height: 34, borderRadius: 6, objectFit: "cover" }} /> : <div style={{ width: 34, height: 34, borderRadius: 6, background: GRAY, display: "flex", alignItems: "center", justifyContent: "center" }}><Package size={15} color={GRAY3} /></div>}
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontWeight: 700, fontSize: 13 }}>{l.product.nombre}</div>
+                            <div style={{ fontSize: 11, color: GRAY3 }}>{money(precioLinea)}/pza · {l.product.referencia || "—"}</div>
+                          </div>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6, border: `1.5px solid ${GRAY2}`, borderRadius: 8, padding: "2px 6px" }}>
+                            <button onClick={() => updateFlexLine(pack.id, l.product.id, l.piezas - 1)} style={{ border: "none", background: "none", fontSize: 16, cursor: "pointer", color: BLACK, width: 22 }}>−</button>
+                            <span style={{ fontWeight: 800, minWidth: 18, textAlign: "center", fontSize: 14 }}>{l.piezas}</span>
+                            <button onClick={() => updateFlexLine(pack.id, l.product.id, l.piezas + 1)} disabled={completo} style={{ border: "none", background: "none", fontSize: 16, cursor: completo ? "not-allowed" : "pointer", color: completo ? GRAY3 : RED, width: 22 }}>+</button>
+                          </div>
+                          <div style={{ fontWeight: 800, fontSize: 13, color: RED, minWidth: 52, textAlign: "right" }}>{money(precioLinea * l.piezas)}</div>
                         </div>
-                        <div style={{ display: "flex", alignItems: "center", gap: 6, border: `1.5px solid ${GRAY2}`, borderRadius: 8, padding: "2px 6px" }}>
-                          <button onClick={() => updateFlexLine(pack.id, l.product.id, l.piezas - 1)} style={{ border: "none", background: "none", fontSize: 16, cursor: "pointer", color: BLACK, width: 22 }}>−</button>
-                          <span style={{ fontWeight: 800, minWidth: 18, textAlign: "center", fontSize: 14 }}>{l.piezas}</span>
-                          <button onClick={() => updateFlexLine(pack.id, l.product.id, l.piezas + 1)} disabled={completo} style={{ border: "none", background: "none", fontSize: 16, cursor: completo ? "not-allowed" : "pointer", color: completo ? GRAY3 : RED, width: 22 }}>+</button>
+                        {/* EDITAR PRECIO POR PIEZA DE ESTA LÍNEA */}
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+                          <span style={{ fontSize: 11, color: GRAY3, fontWeight: 700, whiteSpace: "nowrap" }}>Precio/pza $</span>
+                          <input
+                            type="number" min="0" step="0.01"
+                            value={l.precioOverride !== undefined ? l.precioOverride : flexUnitPrice(l.product, pack.modo)}
+                            onChange={e => updateFlexLinePrice(pack.id, l.product.id, e.target.value)}
+                            style={{ flex: 1, border: `1.5px solid ${precioEditado ? RED : GRAY2}`, borderRadius: 8, padding: "5px 8px", fontSize: 12, fontFamily: "inherit", color: precioEditado ? RED : BLACK, fontWeight: precioEditado ? 800 : 400 }}
+                          />
+                          {precioEditado && (
+                            <button onClick={() => updateFlexLinePrice(pack.id, l.product.id, undefined)} title="Volver al precio original" style={{ background: "none", border: `1.5px solid ${GRAY2}`, borderRadius: 8, padding: "4px 8px", fontSize: 10, fontWeight: 700, cursor: "pointer", color: GRAY3, whiteSpace: "nowrap" }}>
+                              ↺ Original
+                            </button>
+                          )}
                         </div>
-                        <div style={{ fontWeight: 800, fontSize: 13, color: RED, minWidth: 52, textAlign: "right" }}>{money(flexUnitPrice(l.product, pack.modo) * l.piezas)}</div>
                       </div>
-                    ))}
+                      );
+                    })}
 
                     {/* Buscador para agregar al pack */}
                     {!completo && (
