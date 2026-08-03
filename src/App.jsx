@@ -4546,6 +4546,7 @@ function ClienteFormModal({ cliente, onClose, onSaved, showToast }) {
     nombre: cliente?.nombre || "",
     telefono: cliente?.telefono || "",
     email: cliente?.email && !cliente.email.includes("@ofertodo.local") ? cliente.email : "",
+    cedula: cliente?.cedula || "",
   });
   const [guardando, setGuardando] = useState(false);
 
@@ -4558,6 +4559,7 @@ function ClienteFormModal({ cliente, onClose, onSaved, showToast }) {
           nombre: form.nombre.trim(),
           telefono: form.telefono.trim(),
           email: form.email.trim() || cliente.email,
+          cedula: form.cedula.trim() || null,
         };
         const fila = await sb.patch("usuarios", cliente.id, payload);
         onSaved({ ...cliente, ...(Array.isArray(fila) && fila[0] ? fila[0] : payload) });
@@ -4567,6 +4569,7 @@ function ClienteFormModal({ cliente, onClose, onSaved, showToast }) {
         const email = form.email.trim() || `cliente_${Date.now()}@ofertodo.local`;
         const fila = await sb.post("usuarios", {
           nombre: form.nombre.trim(), telefono: form.telefono.trim(), email, es_admin: false,
+          cedula: form.cedula.trim() || null,
         });
         onSaved(Array.isArray(fila) && fila[0] ? fila[0] : fila);
         showToast("Cliente creado");
@@ -4591,6 +4594,8 @@ function ClienteFormModal({ cliente, onClose, onSaved, showToast }) {
         <input style={S.input} placeholder="Ej: 6720-0474" value={form.telefono} onChange={e => setForm({ ...form, telefono: e.target.value })} />
         <label style={S.label}>Correo (opcional)</label>
         <input style={S.input} placeholder="correo@ejemplo.com" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} />
+        <label style={S.label}>Cédula (opcional)</label>
+        <input style={S.input} placeholder="Ej: 8-123-4567" value={form.cedula} onChange={e => setForm({ ...form, cedula: e.target.value })} />
         <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
           <button onClick={() => !guardando && onClose()} disabled={guardando} className="oft-btn-press" style={{ ...S.btnOutline, flex: 1, justifyContent: "center" }}>Cancelar</button>
           <button onClick={guardar} disabled={guardando} className="oft-btn-press" style={{ ...S.btnRed, flex: 1, justifyContent: "center", opacity: guardando ? 0.7 : 1 }}>
