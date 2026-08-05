@@ -1824,6 +1824,9 @@ function CheckoutView() {
   const [empresaId, setEmpresaId] = useState(null);
   const [sucursalId, setSucursalId] = useState(null);
   const [modoEntrega, setModoEntrega] = useState("sucursal"); // "sucursal" | "puerta"
+  const [metodoPago, setMetodoPago] = useState("yappy"); // "yappy" | "tarjeta"
+  const [tarjetaPagoData, setTarjetaPagoData] = useState(null); // { RedirectData, codigo } — cuando se muestra el iframe de la tarjeta
+  const [tarjetaProcesando, setTarjetaProcesando] = useState(false);
 
   // Scroll al inicio al abrir el checkout — importante en celular
   useEffect(() => { window.scrollTo({ top: 0, behavior: "instant" }); }, []);
@@ -1894,8 +1897,10 @@ function CheckoutView() {
 
   const handlePlace = async () => {
     if (!nombre.trim()) { alert("Por favor escribe tu nombre."); return; }
-    const aliasLimpio = telefonoYappy.replace(/\D/g, "");
-    if (aliasLimpio.length < 7) { alert("Por favor escribe tu número de Yappy para poder cobrar el pago."); return; }
+    if (metodoPago === "yappy") {
+      const aliasLimpio = telefonoYappy.replace(/\D/g, "");
+      if (aliasLimpio.length < 7) { alert("Por favor escribe tu número de Yappy para poder cobrar el pago."); return; }
+    }
 
     // Definir empresa, sucursal y dirección según el modo de entrega
     let empresaFinalId, empresaFinalNombre, sucursalFinalId, sucursalFinalNombre;
@@ -1925,32 +1930,75 @@ function CheckoutView() {
       sucursalFinalNombre = sucursalSel?.nombre || "";
     }
 
+    const localElegido = modoEntrega === "local" ? (localesRetiro.find(l => l.id === localRetiroId) || localesRetiro[0] || null) : null;
+
     setLoading(true);
     try {
-      // orderId corto para Yappy (máx 15 caracteres alfanuméricos)
-      const yappyOrderId = "OFT" + Date.now().toString().slice(-10);
-      const codigo = `OFT-${Date.now().toString().slice(-6)}`;
-      const localElegido = modoEntrega === "local" ? (localesRetiro.find(l => l.id === localRetiroId) || localesRetiro[0] || null) : null;
-      const pedido = await sb.post("pedidos", {
-        codigo, usuario_id: user.id, nombre_cliente: nombre, telefono: telefono,
-        direccion: address, notas: notes, total, estado: 0,
-        empresa_envio_id: empresaFinalId, empresa_envio_nombre: empresaFinalNombre,
-        sucursal_id: sucursalFinalId, sucursal_nombre: sucursalFinalNombre,
-        retiro_local: modoEntrega === "local",
-        local_retiro_id: localElegido?.id || null, local_retiro_nombre: localElegido?.nombre || null,
-        pagado: false, yappy_order_id: yappyOrderId,
-        descuento_codigo: descuentoAplicado?.codigo || null,
-        descuento_monto: montoDescuento > 0 ? Number(montoDescuento.toFixed(2)) : 0,
-      });
-      const pedidoId = pedido[0].id;
-      for (const item of cart) {
-        await sb.post("pedido_items", { pedido_id: pedidoId, producto_id: item.product.id, nombre_producto: item.product.nombre, cantidad: item.qty, precio_unitario: item.product.precio_pieza, subtotal: cartItemTotal(item) });
+      if (metodoPago === "tarjeta") {
+        // El pedido se crea DENTRO de la función (junto con el inicio del pago en Powertranz)
+        const itemsPayload = cart.map(item => ({
+          producto_id: item.product.id, nombre_producto: item.product.nombre,
+          cantidad: item.qty, precio_unitario: item.product.precio_pieza, subtotal: cartItemTotal(item),
+        }));
+        const resp = await fetch(`${SUPABASE_URL}/functions/v1/crear-pago-tarjeta`, {
+          method: "POST", headers: sb.functionHeaders(),
+          body: JSON.stringify({
+            usuario_id: user.id, nombre_cliente: nombre, telefono, direccion: address, notas: notes, total,
+            items: itemsPayload,
+            empresa_envio_id: empresaFinalId, empresa_envio_nombre: empresaFinalNombre,
+            sucursal_id: sucursalFinalId, sucursal_nombre: sucursalFinalNombre,
+            retiro_local: modoEntrega === "local", local_retiro_id: localElegido?.id || null, local_retiro_nombre: localElegido?.nombre || null,
+            costo_envio: 0,
+            descuento_codigo: descuentoAplicado?.codigo || null,
+            descuento_monto: montoDescuento > 0 ? Number(montoDescuento.toFixed(2)) : 0,
+          }),
+        });
+        const data = await resp.json();
+        if (!resp.ok || data.error) { alert("Error al iniciar el pago: " + (data.error || "intenta de nuevo")); setLoading(false); return; }
+        setTarjetaPagoData({ RedirectData: data.RedirectData, codigo: data.codigo, modoPrueba: data.modo_prueba });
+      } else {
+        // orderId corto para Yappy (máx 15 caracteres alfanuméricos)
+        const yappyOrderId = "OFT" + Date.now().toString().slice(-10);
+        const codigo = `OFT-${Date.now().toString().slice(-6)}`;
+        const pedido = await sb.post("pedidos", {
+          codigo, usuario_id: user.id, nombre_cliente: nombre, telefono: telefono,
+          direccion: address, notas: notes, total, estado: 0,
+          empresa_envio_id: empresaFinalId, empresa_envio_nombre: empresaFinalNombre,
+          sucursal_id: sucursalFinalId, sucursal_nombre: sucursalFinalNombre,
+          retiro_local: modoEntrega === "local",
+          local_retiro_id: localElegido?.id || null, local_retiro_nombre: localElegido?.nombre || null,
+          pagado: false, yappy_order_id: yappyOrderId, metodo_pago: "yappy",
+          descuento_codigo: descuentoAplicado?.codigo || null,
+          descuento_monto: montoDescuento > 0 ? Number(montoDescuento.toFixed(2)) : 0,
+        });
+        const pedidoId = pedido[0].id;
+        for (const item of cart) {
+          await sb.post("pedido_items", { pedido_id: pedidoId, producto_id: item.product.id, nombre_producto: item.product.nombre, cantidad: item.qty, precio_unitario: item.product.precio_pieza, subtotal: cartItemTotal(item) });
+        }
+        // Guarda el pedido pendiente y muestra el botón de Yappy (el pago va primero)
+        setPedidoPendiente({ id: pedidoId, codigo, yappyOrderId, total, telefono: telefonoYappy });
       }
-      // Guarda el pedido pendiente y muestra el botón de Yappy (el pago va primero)
-      setPedidoPendiente({ id: pedidoId, codigo, yappyOrderId, total, telefono: telefonoYappy });
     } catch(e) { alert("Error al guardar el pedido: " + e.message); }
     setLoading(false);
   };
+
+  // Escucha el mensaje de "pago simulado" mientras Powertranz no esté conectado (modo de prueba)
+  useEffect(() => {
+    const onMessage = (ev) => {
+      if (ev.data?.tipo === "pago_prueba_ok" && tarjetaPagoData) {
+        setTarjetaProcesando(true);
+        showToast("✅ Pago de prueba simulado (modo de prueba, sin cargo real)");
+        setTimeout(() => {
+          setTarjetaProcesando(false);
+          setPlaced(tarjetaPagoData.codigo);
+          setCart([]);
+          setTarjetaPagoData(null);
+        }, 1200);
+      }
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [tarjetaPagoData]);
 
   // Cuando el pago de Yappy se confirma con éxito
   const onPagoExitoso = async () => {
@@ -2186,35 +2234,70 @@ function CheckoutView() {
       <div style={{ background: WHITE, borderRadius: 12, padding: 24, marginBottom: 20, border: `1px solid ${GRAY2}` }}>
         <div style={{ fontWeight: 800, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}><CreditCard size={18} /> Pago</div>
 
-        {!pedidoPendiente ? (
+        {!pedidoPendiente && !tarjetaPagoData ? (
           <>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: GRAY, borderRadius: 10, padding: "12px 16px", marginBottom: 14 }}>
               <span style={{ fontWeight: 700 }}>Total a pagar</span>
               <span style={{ fontWeight: 900, fontSize: 22, color: RED }}>{money(total)}</span>
             </div>
-            <p style={{ fontSize: 13, color: GRAY3, marginBottom: 12 }}>
-              Paga de forma segura con Yappy. Tu pedido se confirma apenas se reciba el pago.
-            </p>
-            {/* Número de Yappy del cliente */}
-            <label style={{ ...S.label, display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
-              <span style={{ background: "#00C2DE", borderRadius: 6, padding: "2px 7px", color: WHITE, fontWeight: 900, fontSize: 11 }}>YAPPY</span>
-              Número de Yappy para el cobro *
-            </label>
-            <input
-              style={{ ...S.input, marginBottom: 12, fontWeight: 700, fontSize: 15 }}
-              type="tel"
-              inputMode="numeric"
-              placeholder="Ej: 6700-0000"
-              value={telefonoYappy}
-              onChange={e => setTelefonoYappy(e.target.value)}
-            />
-            <p style={{ fontSize: 11, color: GRAY3, marginBottom: 14 }}>
-              Escribe el número de teléfono registrado en tu app de Yappy. La solicitud de pago llegará a ese número.
-            </p>
+
+            {/* MÉTODO DE PAGO */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 16 }}>
+              <div onClick={() => setMetodoPago("yappy")}
+                style={{ border: `2px solid ${metodoPago === "yappy" ? RED : GRAY2}`, background: metodoPago === "yappy" ? "#FFF5F5" : WHITE, borderRadius: 10, padding: 14, cursor: "pointer", textAlign: "center" }}>
+                <span style={{ background: "#00C2DE", borderRadius: 6, padding: "2px 8px", color: WHITE, fontWeight: 900, fontSize: 12 }}>YAPPY</span>
+                <div style={{ fontSize: 12, color: GRAY3, marginTop: 6 }}>Pago instantáneo</div>
+              </div>
+              <div onClick={() => setMetodoPago("tarjeta")}
+                style={{ border: `2px solid ${metodoPago === "tarjeta" ? RED : GRAY2}`, background: metodoPago === "tarjeta" ? "#FFF5F5" : WHITE, borderRadius: 10, padding: 14, cursor: "pointer", textAlign: "center" }}>
+                <CreditCard size={18} color={metodoPago === "tarjeta" ? RED : BLACK} style={{ marginBottom: 2 }} />
+                <div style={{ fontWeight: 800, fontSize: 13 }}>Tarjeta</div>
+                <div style={{ fontSize: 11, color: GRAY3 }}>Crédito o débito</div>
+              </div>
+            </div>
+
+            {metodoPago === "yappy" ? (
+              <>
+                <p style={{ fontSize: 13, color: GRAY3, marginBottom: 12 }}>
+                  Paga de forma segura con Yappy. Tu pedido se confirma apenas se reciba el pago.
+                </p>
+                <label style={{ ...S.label, display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+                  <span style={{ background: "#00C2DE", borderRadius: 6, padding: "2px 7px", color: WHITE, fontWeight: 900, fontSize: 11 }}>YAPPY</span>
+                  Número de Yappy para el cobro *
+                </label>
+                <input
+                  style={{ ...S.input, marginBottom: 12, fontWeight: 700, fontSize: 15 }}
+                  type="tel"
+                  inputMode="numeric"
+                  placeholder="Ej: 6700-0000"
+                  value={telefonoYappy}
+                  onChange={e => setTelefonoYappy(e.target.value)}
+                />
+                <p style={{ fontSize: 11, color: GRAY3, marginBottom: 14 }}>
+                  Escribe el número de teléfono registrado en tu app de Yappy. La solicitud de pago llegará a ese número.
+                </p>
+              </>
+            ) : (
+              <p style={{ fontSize: 13, color: GRAY3, marginBottom: 14, display: "flex", alignItems: "center", gap: 6 }}>
+                <Lock size={13} /> El formulario de tu tarjeta lo maneja directamente el banco — nunca vemos ni guardamos tu número de tarjeta.
+              </p>
+            )}
+
             <button style={{ ...S.btnRed, width: "100%", justifyContent: "center", padding: 16, fontSize: 16, opacity: loading ? 0.7 : 1 }} onClick={handlePlace} disabled={loading}>
               {loading ? "Procesando..." : <>Continuar al pago →</>}
             </button>
           </>
+        ) : tarjetaPagoData ? (
+          <div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <div style={{ fontWeight: 800, fontSize: 14, display: "flex", alignItems: "center", gap: 6 }}><Lock size={14} color={RED} /> Pago seguro con tarjeta</div>
+              <button onClick={() => { setTarjetaPagoData(null); showToast("Pago cancelado. Puedes intentar de nuevo."); }} style={{ background: "none", border: "none", color: GRAY3, fontSize: 12, cursor: "pointer", textDecoration: "underline" }}>Cancelar</button>
+            </div>
+            <div style={{ border: `1px solid ${GRAY2}`, borderRadius: 10, overflow: "hidden" }}>
+              <iframe srcDoc={tarjetaPagoData.RedirectData} frameBorder="0" width="100%" height="500" title="Pago con tarjeta" />
+            </div>
+            {tarjetaProcesando && <p style={{ fontSize: 12, color: GRAY3, textAlign: "center", marginTop: 10 }}>Confirmando tu pago...</p>}
+          </div>
         ) : (
           <div style={{ background: `linear-gradient(135deg, ${RED} 0%, ${RED_D} 100%)`, borderRadius: 16, padding: 22, color: WHITE, textAlign: "center", boxShadow: "0 8px 24px rgba(227,30,36,0.25)" }}>
             <div style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "rgba(255,255,255,0.18)", borderRadius: 20, padding: "4px 14px", fontSize: 12, fontWeight: 800, marginBottom: 12 }}>
@@ -8647,6 +8730,21 @@ export default function App() {
             showToast("Ese producto ya no está disponible");
           }
           // Limpia el parámetro de la URL para que no se quede pegado al navegar
+          window.history.replaceState(null, "", window.location.origin + window.location.pathname);
+        }
+
+        // Resultado de un pago con tarjeta (Powertranz redirige aquí tras el 3D-Secure)
+        const paramsPago = new URLSearchParams(window.location.search);
+        const resultadoPago = paramsPago.get("pago");
+        if (resultadoPago) {
+          const codigoPago = paramsPago.get("codigo");
+          if (resultadoPago === "exito") {
+            showToast(`✅ ¡Pago aprobado! Tu pedido ${codigoPago || ""} fue confirmado.`);
+          } else if (resultadoPago === "rechazado") {
+            showToast(`❌ El banco rechazó el pago de tu tarjeta. Puedes intentar de nuevo.`);
+          } else {
+            showToast(`⚠️ Hubo un problema confirmando tu pago. Escríbenos si el cargo sí aparece en tu banco.`);
+          }
           window.history.replaceState(null, "", window.location.origin + window.location.pathname);
         }
         // Empresas de envío y sucursales (no críticas, si fallan se ignoran)
