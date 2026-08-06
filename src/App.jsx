@@ -768,6 +768,89 @@ function LegalPageView() {
   );
 }
 
+// ═══════════════════════════════════════════════════════════════
+//  RESULTADO DEL PAGO CON TARJETA (al volver de Powertranz)
+// ═══════════════════════════════════════════════════════════════
+function PagoResultadoView() {
+  const { pagoResultado, setView } = useApp();
+  const money = (n) => "$" + Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  if (!pagoResultado) {
+    return (
+      <div style={{ ...S.section, maxWidth: 500, textAlign: "center" }}>
+        <p style={{ color: GRAY3 }}>No encontramos información de ese pago.</p>
+        <button style={{ ...S.btnRed, justifyContent: "center", margin: "20px auto 0" }} onClick={() => setView("home")}>Ir al inicio</button>
+      </div>
+    );
+  }
+
+  const { tipo, codigo, pedido } = pagoResultado;
+
+  if (tipo === "exito") {
+    return (
+      <div className="oft-section" style={{ ...S.section, textAlign: "center", maxWidth: 500 }}>
+        <div style={{ display: "flex", justifyContent: "center", marginBottom: 12 }}><CheckCircle2 size={64} color="#22c55e" strokeWidth={1.5} /></div>
+        <h2 style={{ fontSize: 24, fontWeight: 900 }}>¡Pago exitoso!</h2>
+        <p style={{ color: GRAY3 }}>Tu pedido está confirmado. Sigue su estado desde "Mi Cuenta".</p>
+        <div style={{ background: GRAY, borderRadius: 12, padding: 20, margin: "20px 0", textAlign: "left" }}>
+          <div style={{ fontWeight: 800, marginBottom: 8 }}>Número: <span style={{ color: RED }}>{codigo}</span></div>
+          <div style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "#D4EDDA", color: "#155724", padding: "4px 12px", borderRadius: 20, fontWeight: 700, fontSize: 13, marginBottom: 4 }}>
+            <CreditCard size={14} /> Pagado con tarjeta
+          </div>
+          {pedido && (
+            <>
+              <div style={{ marginTop: 10, fontWeight: 700, fontSize: 15 }}>Total: {money(pedido.total)}</div>
+              {pedido.retiro_local
+                ? <div style={{ marginTop: 6, fontSize: 13, color: "#856404", display: "flex", alignItems: "center", gap: 6, fontWeight: 700 }}><Home size={14} /> Retiro en el local{pedido.local_retiro_nombre ? `: ${pedido.local_retiro_nombre}` : ""}</div>
+                : pedido.empresa_envio_nombre && <div style={{ marginTop: 6, fontSize: 13, color: GRAY3, display: "flex", alignItems: "center", gap: 6 }}><Truck size={14} /> {pedido.empresa_envio_nombre}{pedido.sucursal_nombre ? ` · ${pedido.sucursal_nombre}` : ""}</div>}
+              {pedido.items?.length > 0 && (
+                <div style={{ marginTop: 14, paddingTop: 14, borderTop: `1px solid ${GRAY2}` }}>
+                  {pedido.items.map((it, i) => (
+                    <div key={i} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, padding: "4px 0" }}>
+                      <span>{it.nombre_producto} <span style={{ color: GRAY3 }}>x{it.cantidad}</span></span>
+                      <span style={{ fontWeight: 700 }}>{money(it.subtotal)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+        <button style={{ ...S.btnRed, justifyContent: "center", margin: "0 auto" }} onClick={() => setView("dashboard")}>Ver estado de mi pedido</button>
+      </div>
+    );
+  }
+
+  if (tipo === "rechazado") {
+    return (
+      <div className="oft-section" style={{ ...S.section, textAlign: "center", maxWidth: 500 }}>
+        <div style={{ display: "flex", justifyContent: "center", marginBottom: 12 }}><X size={64} color={RED} strokeWidth={1.5} /></div>
+        <h2 style={{ fontSize: 24, fontWeight: 900 }}>El banco rechazó el pago</h2>
+        <p style={{ color: GRAY3, marginBottom: 20 }}>
+          No se realizó ningún cargo a tu tarjeta{codigo ? <> — el pedido <strong>{codigo}</strong> quedó sin pagar</> : ""}. Puedes intentar de nuevo con la misma tarjeta u otra distinta.
+        </p>
+        <button style={{ ...S.btnRed, justifyContent: "center", margin: "0 auto" }} onClick={() => setView("catalogo")}>Volver a intentar</button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="oft-section" style={{ ...S.section, textAlign: "center", maxWidth: 500 }}>
+      <div style={{ display: "flex", justifyContent: "center", marginBottom: 12 }}><Headphones size={64} color="#856404" strokeWidth={1.5} /></div>
+      <h2 style={{ fontSize: 24, fontWeight: 900 }}>Hubo un problema confirmando tu pago</h2>
+      <p style={{ color: GRAY3, marginBottom: 20 }}>
+        Si el cargo sí aparece en tu banco, escríbenos por WhatsApp{codigo ? <> con tu número de pedido <strong>{codigo}</strong></> : ""} y lo confirmamos manualmente.
+      </p>
+      <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
+        <button style={{ ...S.btnWA, justifyContent: "center" }} onClick={() => window.open(`https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(`Hola, tuve un problema confirmando el pago de mi pedido ${codigo || ""}`)}`, "_blank")}>
+          <MessageCircle size={16} /> Escribir por WhatsApp
+        </button>
+        <button style={{ ...S.btnOutline, justifyContent: "center" }} onClick={() => setView("home")}>Ir al inicio</button>
+      </div>
+    </div>
+  );
+}
+
 function HomeView() {
   const { setView, setCatalogCat, categories, products, addToCart } = useApp();
   const featured = products.filter(p => p.activo && p.visible_web !== false && p.destacado);
@@ -8591,6 +8674,7 @@ export default function App() {
   const [showRegister, setShowRegister] = useState(false);
   const [showCart, setShowCart] = useState(false);
   const [quickView, setQuickView] = useState(null); // producto a mostrar en detalle
+  const [pagoResultado, setPagoResultado] = useState(null); // resultado de un pago con tarjeta al volver de Powertranz
   const [catalogCat, setCatalogCat] = useState(0); // categoría a abrir en el catálogo (0 = todas)
   const [completeProfile, setCompleteProfile] = useState(null); // usuario de Google que debe completar sus datos
   const [googleMfaPaso, setGoogleMfaPaso] = useState(null); // pide el código 2FA cuando el login fue con Google
@@ -8738,12 +8822,27 @@ export default function App() {
         const resultadoPago = paramsPago.get("pago");
         if (resultadoPago) {
           const codigoPago = paramsPago.get("codigo");
-          if (resultadoPago === "exito") {
-            showToast(`✅ ¡Pago aprobado! Tu pedido ${codigoPago || ""} fue confirmado.`);
+          if (resultadoPago === "exito" && codigoPago) {
+            // Trae los datos reales del pedido para mostrar una pantalla de confirmación completa
+            try {
+              const pedidosEncontrados = await sb.get("pedidos", `?codigo=eq.${encodeURIComponent(codigoPago)}&limit=1`);
+              const pedido = pedidosEncontrados?.[0] || null;
+              if (pedido) {
+                const items = await sb.get("pedido_items", `?pedido_id=eq.${pedido.id}`).catch(() => []);
+                setPagoResultado({ tipo: "exito", codigo: codigoPago, pedido: { ...pedido, items: items || [] } });
+              } else {
+                setPagoResultado({ tipo: "exito", codigo: codigoPago, pedido: null });
+              }
+            } catch (e) {
+              setPagoResultado({ tipo: "exito", codigo: codigoPago, pedido: null });
+            }
+            setView("pago-resultado");
           } else if (resultadoPago === "rechazado") {
-            showToast(`❌ El banco rechazó el pago de tu tarjeta. Puedes intentar de nuevo.`);
+            setPagoResultado({ tipo: "rechazado", codigo: codigoPago });
+            setView("pago-resultado");
           } else {
-            showToast(`⚠️ Hubo un problema confirmando tu pago. Escríbenos si el cargo sí aparece en tu banco.`);
+            setPagoResultado({ tipo: "error", codigo: codigoPago });
+            setView("pago-resultado");
           }
           window.history.replaceState(null, "", window.location.origin + window.location.pathname);
         }
@@ -8791,7 +8890,7 @@ export default function App() {
   }, []);
 
   const isAdmin = view === "admin";
-  const ctx = { view, setView, cart, setCart, addToCart, cartPulse, user, setUser, showLogin, setShowLogin, showRegister, setShowRegister, showCart, setShowCart, quickView, setQuickView, catalogCat, setCatalogCat, completeProfile, setCompleteProfile, googleMfaPaso, setGoogleMfaPaso, pendingCheckout, setPendingCheckout, products, setProducts, categories, setCategories, empresas, setEmpresas, sucursales, setSucursales, localesRetiro, setLocalesRetiro, retiroLocalHabilitado, setRetiroLocalHabilitado, loading, showToast };
+  const ctx = { view, setView, cart, setCart, addToCart, cartPulse, user, setUser, showLogin, setShowLogin, showRegister, setShowRegister, showCart, setShowCart, quickView, setQuickView, pagoResultado, setPagoResultado, catalogCat, setCatalogCat, completeProfile, setCompleteProfile, googleMfaPaso, setGoogleMfaPaso, pendingCheckout, setPendingCheckout, products, setProducts, categories, setCategories, empresas, setEmpresas, sucursales, setSucursales, localesRetiro, setLocalesRetiro, retiroLocalHabilitado, setRetiroLocalHabilitado, loading, showToast };
 
   return (
     <AppCtx.Provider value={ctx}>
@@ -8959,6 +9058,7 @@ export default function App() {
         {view === "catalogo" && <CatalogoView />}
         {(view === "terminos" || view === "devoluciones" || view === "privacidad") && <LegalPageView />}
         {view === "checkout" && <CheckoutView />}
+        {view === "pago-resultado" && <PagoResultadoView />}
         {view === "dashboard" && user && <DashboardView />}
         {view === "admin" && user?.es_admin && <AdminView />}
         {view === "admin" && !user?.es_admin && (
