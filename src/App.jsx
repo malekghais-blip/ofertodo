@@ -1909,6 +1909,7 @@ function CheckoutView() {
   const [modoEntrega, setModoEntrega] = useState("sucursal"); // "sucursal" | "puerta"
   const [metodoPago, setMetodoPago] = useState("yappy"); // "yappy" | "tarjeta"
   const [tarjetaPagoData, setTarjetaPagoData] = useState(null); // { RedirectData, codigo } — cuando se muestra el iframe de la tarjeta
+  const tarjetaContainerRef = useRef(null);
   const [tarjetaProcesando, setTarjetaProcesando] = useState(false);
 
   // Scroll al inicio al abrir el checkout — importante en celular
@@ -2064,6 +2065,14 @@ function CheckoutView() {
     } catch(e) { alert("Error al guardar el pedido: " + e.message); }
     setLoading(false);
   };
+
+  // Cuando aparece el formulario de tarjeta, desplaza la página hasta ahí automáticamente
+  // (para que el cliente no tenga que buscarlo manualmente hacia abajo)
+  useEffect(() => {
+    if (tarjetaPagoData && tarjetaContainerRef.current) {
+      setTimeout(() => tarjetaContainerRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 100);
+    }
+  }, [tarjetaPagoData]);
 
   // Escucha el mensaje de "pago simulado" mientras Powertranz no esté conectado (modo de prueba)
   useEffect(() => {
@@ -2371,13 +2380,13 @@ function CheckoutView() {
             </button>
           </>
         ) : tarjetaPagoData ? (
-          <div>
+          <div ref={tarjetaContainerRef}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
               <div style={{ fontWeight: 800, fontSize: 14, display: "flex", alignItems: "center", gap: 6 }}><Lock size={14} color={RED} /> Pago seguro con tarjeta</div>
               <button onClick={() => { setTarjetaPagoData(null); showToast("Pago cancelado. Puedes intentar de nuevo."); }} style={{ background: "none", border: "none", color: GRAY3, fontSize: 12, cursor: "pointer", textDecoration: "underline" }}>Cancelar</button>
             </div>
             <div style={{ border: `1px solid ${GRAY2}`, borderRadius: 10, overflow: "hidden" }}>
-              <iframe srcDoc={tarjetaPagoData.RedirectData} frameBorder="0" width="100%" height="500" title="Pago con tarjeta" />
+              <iframe srcDoc={tarjetaPagoData.RedirectData} frameBorder="0" title="Pago con tarjeta" style={{ width: "100%", height: "min(900px, 88vh)", display: "block" }} />
             </div>
             {tarjetaProcesando && <p style={{ fontSize: 12, color: GRAY3, textAlign: "center", marginTop: 10 }}>Confirmando tu pago...</p>}
           </div>
