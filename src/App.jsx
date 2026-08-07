@@ -1294,11 +1294,30 @@ function CatalogoView() {
   // Si el usuario eligió una categoría desde el inicio, ábrela
   useEffect(() => { setCatFilter(catalogCat || 0); }, [catalogCat]);
 
-  const filtered = products.filter(p =>
-    p.activo && p.visible_web !== false &&
-    (catFilter === 0 || p.categoria_id === catFilter) &&
-    (search === "" || p.nombre.toLowerCase().includes(search.toLowerCase()) || (p.referencia || "").toLowerCase().includes(search.toLowerCase()))
-  );
+  // Quita tildes y pasa a minúsculas, para que la búsqueda encuentre resultados
+  // sin importar si el cliente escribe con o sin acentos (ej. "nino" encuentra "Niño")
+  const normalizar = (t) => (t || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const searchNorm = normalizar(search);
+
+  const filtered = products.filter(p => {
+    if (!p.activo || p.visible_web === false) return false;
+    if (searchNorm === "") return catFilter === 0 || p.categoria_id === catFilter;
+    // Con texto de búsqueda: coincide por nombre, referencia, O por el nombre de la
+    // categoría del producto (así "calzado de dama" encuentra todo lo de esa categoría,
+    // sin necesidad de darle clic al chip de la categoría primero).
+    const categoriaProducto = categories.find(c => c.id === p.categoria_id);
+    const coincide =
+      normalizar(p.nombre).includes(searchNorm) ||
+      normalizar(p.referencia).includes(searchNorm) ||
+      (categoriaProducto && normalizar(categoriaProducto.nombre).includes(searchNorm));
+    if (!coincide) return false;
+    // Si además hay una categoría específica seleccionada con los chips, respétala también
+    return catFilter === 0 || p.categoria_id === catFilter;
+  });
+
+  // Si lo que escribió coincide con el nombre de una categoría, la resalta visualmente
+  // (aunque no la haya seleccionado con clic) para que quede claro qué está viendo.
+  const categoriaSugerida = searchNorm !== "" ? categories.find(c => normalizar(c.nombre).includes(searchNorm)) : null;
 
   if (loading) return <Spinner />;
 
@@ -1307,19 +1326,22 @@ function CatalogoView() {
       <div style={S.sectionTitle}><span style={{ color: RED }}>▮</span> Catálogo <span style={{ color: RED }}>de Productos</span></div>
       <div style={{ position: "relative", maxWidth: 400, marginBottom: 24 }}>
         <Search size={16} color={GRAY3} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)" }} />
-        <input style={{ ...S.input, paddingLeft: 36, marginBottom: 0 }} placeholder="Buscar producto o referencia..." value={search} onChange={e => setSearch(e.target.value)} />
+        <input style={{ ...S.input, paddingLeft: 36, marginBottom: 0 }} placeholder="Buscar producto, referencia o categoría..." value={search} onChange={e => setSearch(e.target.value)} />
       </div>
       <div className="oft-cat-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))", gap: 10, marginTop: 16, marginBottom: 28 }}>
         <div className="oft-cat-chip" onClick={() => setCatFilter(0)} style={{ border: `2px solid ${catFilter === 0 ? RED : GRAY2}`, borderRadius: 10, padding: "14px 8px", textAlign: "center", cursor: "pointer", background: catFilter === 0 ? "#FFF5F5" : WHITE }}>
           <div style={{ display: "flex", justifyContent: "center", marginBottom: 4 }}><LayoutGrid size={22} color={catFilter === 0 ? RED : BLACK} strokeWidth={1.8} /></div>
           <div style={{ fontSize: 12, fontWeight: 700 }}>Todo</div>
         </div>
-        {categories.map(c => (
-          <div key={c.id} className="oft-cat-chip" onClick={() => setCatFilter(c.id)} style={{ border: `2px solid ${catFilter === c.id ? RED : GRAY2}`, borderRadius: 10, padding: "14px 8px", textAlign: "center", cursor: "pointer", background: catFilter === c.id ? "#FFF5F5" : WHITE }}>
-            <div style={{ display: "flex", justifyContent: "center", marginBottom: 4 }}><CategoryIcon cat={c} size={22} color={catFilter === c.id ? RED : BLACK} /></div>
+        {categories.map(c => {
+          const resaltada = catFilter === c.id || categoriaSugerida?.id === c.id;
+          return (
+          <div key={c.id} className="oft-cat-chip" onClick={() => setCatFilter(c.id)} style={{ border: `2px solid ${resaltada ? RED : GRAY2}`, borderRadius: 10, padding: "14px 8px", textAlign: "center", cursor: "pointer", background: resaltada ? "#FFF5F5" : WHITE }}>
+            <div style={{ display: "flex", justifyContent: "center", marginBottom: 4 }}><CategoryIcon cat={c} size={22} color={resaltada ? RED : BLACK} /></div>
             <div style={{ fontSize: 12, fontWeight: 700 }}>{c.nombre}</div>
           </div>
-        ))}
+          );
+        })}
       </div>
       {filtered.length === 0
         ? <div style={{ textAlign: "center", padding: "60px 0", color: GRAY3 }}><Search size={48} strokeWidth={1.3} style={{ margin: "0 auto 12px" }} /><p>No se encontraron productos</p></div>
