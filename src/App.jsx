@@ -8,7 +8,7 @@ import {
   FileSpreadsheet, FolderPlus, Zap, Lock, Users, BarChart3, DollarSign,
   TrendingUp, Wallet, ShoppingBag, Pencil as PencilIcon, Save,
   Building2, MapPin as MapPinIcon, Send, FilePlus, Download, FileText, Receipt,
-  Calendar as CalendarIcon, Eye, EyeOff, Share2
+  Calendar as CalendarIcon, Eye, EyeOff, Share2, AlertTriangle
 } from "lucide-react";
 
 // ════════════════════════════════════════════════════════════════
@@ -1901,6 +1901,7 @@ function CheckoutView() {
   const { cart, setCart, user, setView, showToast, empresas, sucursales, localesRetiro, retiroLocalHabilitado } = useApp();
   const [localRetiroId, setLocalRetiroId] = useState(null);
   const [address, setAddress] = useState(""), [notes, setNotes] = useState(""), [loading, setLoading] = useState(false), [placed, setPlaced] = useState(null);
+  const [avisoValidacion, setAvisoValidacion] = useState(null); // mensaje del pop-up de validación (reemplaza alert() nativo)
   const [nombre, setNombre] = useState(user?.nombre || "");
   const [telefono, setTelefono] = useState(user?.telefono || "");
   const [telefonoYappy, setTelefonoYappy] = useState(user?.telefono || ""); // número específico para pagar con Yappy
@@ -1980,10 +1981,10 @@ function CheckoutView() {
   const [pedidoPendiente, setPedidoPendiente] = useState(null); // pedido guardado, esperando pago Yappy
 
   const handlePlace = async () => {
-    if (!nombre.trim()) { alert("Por favor escribe tu nombre."); return; }
+    if (!nombre.trim()) { setAvisoValidacion("Por favor escribe tu nombre."); return; }
     if (metodoPago === "yappy") {
       const aliasLimpio = telefonoYappy.replace(/\D/g, "");
-      if (aliasLimpio.length < 7) { alert("Por favor escribe tu número de Yappy para poder cobrar el pago."); return; }
+      if (aliasLimpio.length < 7) { setAvisoValidacion("Por favor escribe tu número de Yappy para poder cobrar el pago."); return; }
     }
 
     // Definir empresa, sucursal y dirección según el modo de entrega
@@ -1991,23 +1992,23 @@ function CheckoutView() {
 
     if (modoEntrega === "local") {
       // Retiro en el local: no hay empresa de envío ni sucursal, ni costo de envío
-      if (localesRetiro.length > 1 && !localRetiroId) { alert("Por favor elige en cuál local vas a retirar tu pedido."); return; }
+      if (localesRetiro.length > 1 && !localRetiroId) { setAvisoValidacion("Por favor elige en cuál local vas a retirar tu pedido."); return; }
       empresaFinalId = null;
       empresaFinalNombre = "";
       sucursalFinalId = null;
       sucursalFinalNombre = "";
     } else if (modoEntrega === "puerta") {
       // Puerta a puerta: Servientrega automático + dirección obligatoria + sin sucursal
-      if (!servientrega) { alert("El envío puerta a puerta no está disponible por ahora. Por favor elige una sucursal."); return; }
-      if (!address.trim()) { alert("Para envío puerta a puerta, la dirección es obligatoria."); return; }
+      if (!servientrega) { setAvisoValidacion("El envío puerta a puerta no está disponible por ahora. Por favor elige una sucursal."); return; }
+      if (!address.trim()) { setAvisoValidacion("Para envío puerta a puerta, la dirección es obligatoria."); return; }
       empresaFinalId = servientrega.id;
       empresaFinalNombre = servientrega.nombre;
       sucursalFinalId = null;
       sucursalFinalNombre = "Puerta a puerta";
     } else {
       // Recoger en sucursal
-      if (!empresaId) { alert("Por favor elige una empresa de envío."); return; }
-      if (sucursalesEmpresa.length > 0 && !sucursalId) { alert("Por favor elige una sucursal."); return; }
+      if (!empresaId) { setAvisoValidacion("Por favor elige una empresa de envío."); return; }
+      if (sucursalesEmpresa.length > 0 && !sucursalId) { setAvisoValidacion("Por favor elige una sucursal."); return; }
       empresaFinalId = empresaId;
       empresaFinalNombre = empresaSel?.nombre || "";
       sucursalFinalId = sucursalId;
@@ -2038,7 +2039,7 @@ function CheckoutView() {
           }),
         });
         const data = await resp.json();
-        if (!resp.ok || data.error) { alert("Error al iniciar el pago: " + (data.error || "intenta de nuevo")); setLoading(false); return; }
+        if (!resp.ok || data.error) { setAvisoValidacion("Error al iniciar el pago: " + (data.error || "intenta de nuevo")); setLoading(false); return; }
         setTarjetaPagoData({ RedirectData: data.RedirectData, codigo: data.codigo, modoPrueba: data.modo_prueba });
       } else {
         // orderId corto para Yappy (máx 15 caracteres alfanuméricos)
@@ -2062,7 +2063,7 @@ function CheckoutView() {
         // Guarda el pedido pendiente y muestra el botón de Yappy (el pago va primero)
         setPedidoPendiente({ id: pedidoId, codigo, yappyOrderId, total, telefono: telefonoYappy });
       }
-    } catch(e) { alert("Error al guardar el pedido: " + e.message); }
+    } catch(e) { setAvisoValidacion("Error al guardar el pedido: " + e.message); }
     setLoading(false);
   };
 
@@ -2123,6 +2124,22 @@ function CheckoutView() {
 
   return (
     <div className="oft-section" style={{ ...S.section, maxWidth: 620 }}>
+      {/* AVISO DE VALIDACIÓN (reemplaza el alert() nativo del navegador) */}
+      {avisoValidacion && createPortal(
+        <div className="oft-overlay" style={S.overlay} onClick={() => setAvisoValidacion(null)}>
+          <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 18, maxWidth: 360, width: "90%", padding: "28px 24px", textAlign: "center" }} onClick={e => e.stopPropagation()}>
+            <div style={{ width: 56, height: 56, borderRadius: "50%", background: "#FFF0EF", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
+              <AlertTriangle size={28} color={RED} strokeWidth={2} />
+            </div>
+            <div style={{ fontWeight: 900, fontSize: 17, marginBottom: 8 }}>Falta un dato</div>
+            <p style={{ fontSize: 14, color: GRAY3, marginBottom: 22, lineHeight: 1.5 }}>{avisoValidacion}</p>
+            <button onClick={() => setAvisoValidacion(null)} className="oft-btn-press" style={{ ...S.btnRed, width: "100%", justifyContent: "center", padding: 13 }}>
+              Entendido
+            </button>
+          </div>
+        </div>
+      , document.body)}
+
       <div style={S.sectionTitle}>Finalizar Pedido</div>
       <div style={{ background: WHITE, borderRadius: 12, padding: 24, marginBottom: 16, border: `1px solid ${GRAY2}` }}>
         <div style={{ fontWeight: 800, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}><Package size={18} /> Resumen</div>
