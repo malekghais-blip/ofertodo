@@ -2386,7 +2386,7 @@ function CheckoutView() {
               <button onClick={() => { setTarjetaPagoData(null); showToast("Pago cancelado. Puedes intentar de nuevo."); }} style={{ background: "none", border: "none", color: GRAY3, fontSize: 12, cursor: "pointer", textDecoration: "underline" }}>Cancelar</button>
             </div>
             <div style={{ border: `1px solid ${GRAY2}`, borderRadius: 10, overflow: "hidden" }}>
-              <iframe srcDoc={tarjetaPagoData.RedirectData} frameBorder="0" title="Pago con tarjeta" style={{ width: "100%", height: "min(600px, 80vh)", display: "block" }} />
+              <iframe srcDoc={tarjetaPagoData.RedirectData} frameBorder="0" title="Pago con tarjeta" style={{ width: "100%", height: "750px", display: "block" }} />
             </div>
             {tarjetaProcesando && <p style={{ fontSize: 12, color: GRAY3, textAlign: "center", marginTop: 10 }}>Confirmando tu pago...</p>}
           </div>
