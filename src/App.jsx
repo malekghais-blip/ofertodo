@@ -1299,17 +1299,34 @@ function CatalogoView() {
   const normalizar = (t) => (t || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
   const searchNorm = normalizar(search);
 
+  // Palabras de enlace que se ignoran al comparar (para que "jeans DE hombre" y
+  // "jeans hombre" se traten como lo mismo)
+  const PALABRAS_VACIAS = new Set(["de", "del", "la", "el", "los", "las", "para", "y", "en", "con", "un", "una"]);
+  // Forma singular aproximada de una palabra (quita la "s" final), para que "jeans"
+  // encuentre "jean" y viceversa, sin importar si el cliente escribe en plural o no.
+  const singularizar = (palabra) => (palabra.length > 3 && palabra.endsWith("s")) ? palabra.slice(0, -1) : palabra;
+  const palabrasClave = (texto) => normalizar(texto).split(/\s+/).filter(w => w && !PALABRAS_VACIAS.has(w)).map(singularizar);
+
+  // Compara dos textos por palabras clave en vez de frase exacta: no importa el orden
+  // ("hombre jeans" = "jeans hombre"), ni el plural/singular, ni palabras de enlace.
+  const coincideCategoria = (nombreCategoria, textoBusqueda) => {
+    const palabrasBusqueda = palabrasClave(textoBusqueda);
+    if (palabrasBusqueda.length === 0) return false;
+    const palabrasCategoria = palabrasClave(nombreCategoria);
+    return palabrasBusqueda.every(pb => palabrasCategoria.some(pc => pc.includes(pb) || pb.includes(pc)));
+  };
+
   const filtered = products.filter(p => {
     if (!p.activo || p.visible_web === false) return false;
     if (searchNorm === "") return catFilter === 0 || p.categoria_id === catFilter;
     // Con texto de búsqueda: coincide por nombre, referencia, O por el nombre de la
-    // categoría del producto (así "calzado de dama" encuentra todo lo de esa categoría,
-    // sin necesidad de darle clic al chip de la categoría primero).
+    // categoría del producto (así "jeans de hombre" encuentra "Jeans Hombre", sin
+    // importar el orden, el plural, o si le sobra/falta una palabra de enlace).
     const categoriaProducto = categories.find(c => c.id === p.categoria_id);
     const coincide =
       normalizar(p.nombre).includes(searchNorm) ||
       normalizar(p.referencia).includes(searchNorm) ||
-      (categoriaProducto && normalizar(categoriaProducto.nombre).includes(searchNorm));
+      (categoriaProducto && coincideCategoria(categoriaProducto.nombre, search));
     if (!coincide) return false;
     // Si además hay una categoría específica seleccionada con los chips, respétala también
     return catFilter === 0 || p.categoria_id === catFilter;
@@ -1317,7 +1334,7 @@ function CatalogoView() {
 
   // Si lo que escribió coincide con el nombre de una categoría, la resalta visualmente
   // (aunque no la haya seleccionado con clic) para que quede claro qué está viendo.
-  const categoriaSugerida = searchNorm !== "" ? categories.find(c => normalizar(c.nombre).includes(searchNorm)) : null;
+  const categoriaSugerida = searchNorm !== "" ? categories.find(c => coincideCategoria(c.nombre, search)) : null;
 
   if (loading) return <Spinner />;
 
