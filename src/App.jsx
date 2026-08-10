@@ -281,8 +281,9 @@ function CategoryIcon({ cat, name, size = 28, color = RED }) {
 //  SELECTOR DE CATEGORÍA — un solo botón que abre un panel limpio
 //  con todas las categorías, en vez de mostrarlas todas de golpe.
 // ═══════════════════════════════════════════════════════════════
-function CategoriaTrigger({ categorias, seleccionadaId, onClick }) {
+function CategoriaTrigger({ categorias, gruposCategorias, seleccionadaId, onClick }) {
   const cat = categorias.find(c => c.id === seleccionadaId);
+  const grupo = cat?.grupo_id ? gruposCategorias.find(g => g.id === cat.grupo_id) : null;
   return (
     <button onClick={onClick} className="oft-btn-press oft-cat-trigger" style={{
       display: "inline-flex", alignItems: "center", gap: 10, background: WHITE, border: `1.5px solid ${GRAY2}`,
@@ -294,7 +295,7 @@ function CategoriaTrigger({ categorias, seleccionadaId, onClick }) {
       <div style={{ textAlign: "left", flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 10, color: GRAY3, fontWeight: 700, letterSpacing: 0.3 }}>CATEGORÍA</div>
         <div style={{ fontSize: 14, fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {cat ? (cat.grupo ? `${cat.grupo} › ${cat.nombre}` : cat.nombre) : "Todas las categorías"}
+          {cat ? (grupo ? `${grupo.nombre} › ${cat.nombre}` : cat.nombre) : "Todas las categorías"}
         </div>
       </div>
       <ChevronDown size={18} color={GRAY3} strokeWidth={2.2} />
@@ -302,16 +303,16 @@ function CategoriaTrigger({ categorias, seleccionadaId, onClick }) {
   );
 }
 
-function CategoriaSheet({ onClose, categorias, seleccionadaId, resaltadaId, onSeleccionar, grupoInicial }) {
+function CategoriaSheet({ onClose, categorias, gruposCategorias, seleccionadaId, resaltadaId, onSeleccionar, grupoInicial }) {
   useLockBodyScroll();
-  // Nivel de navegación dentro del panel: null = vista inicial (grupos), o el nombre
-  // del grupo activo (viendo sus categorías específicas, ej. dentro de "Ropa de Dama").
+  // Nivel de navegación dentro del panel: null = vista inicial (grupos), o el grupo
+  // activo (viendo sus categorías específicas, ej. dentro de "Ropa de Dama").
   // Si se abre desde una tarjeta de grupo en el inicio, entra directo a ese nivel.
   const [grupoActivo, setGrupoActivo] = useState(grupoInicial || null);
 
-  const gruposUnicos = [...new Set(categorias.map(c => c.grupo).filter(Boolean))];
-  const sinGrupo = categorias.filter(c => !c.grupo);
-  const categoriasDelGrupo = grupoActivo ? categorias.filter(c => c.grupo === grupoActivo) : [];
+  const gruposConCategorias = gruposCategorias.filter(g => categorias.some(c => c.grupo_id === g.id));
+  const sinGrupo = categorias.filter(c => !c.grupo_id);
+  const categoriasDelGrupo = grupoActivo ? categorias.filter(c => c.grupo_id === grupoActivo.id) : [];
 
   const elegirCategoria = (id) => { onSeleccionar(id); setGrupoActivo(null); };
 
@@ -324,7 +325,7 @@ function CategoriaSheet({ onClose, categorias, seleccionadaId, resaltadaId, onSe
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 20px 14px", flexShrink: 0 }}>
           {grupoActivo ? (
             <button onClick={() => setGrupoActivo(null)} className="oft-btn-press" style={{ background: "none", border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 6, padding: 0, fontWeight: 900, fontSize: 18 }}>
-              <ChevronDown size={20} style={{ transform: "rotate(90deg)" }} /> {grupoActivo}
+              <ChevronDown size={20} style={{ transform: "rotate(90deg)" }} /> {grupoActivo.nombre}
             </button>
           ) : (
             <div style={{ fontWeight: 900, fontSize: 18 }}>Elige una categoría</div>
@@ -340,13 +341,14 @@ function CategoriaSheet({ onClose, categorias, seleccionadaId, resaltadaId, onSe
                 <div style={{ fontSize: 12, fontWeight: 700 }}>Todo</div>
               </div>
 
-              {gruposUnicos.map((grupo, i) => {
-                const primeraCatDelGrupo = categorias.find(c => c.grupo === grupo);
-                const tieneActivaAdentro = categorias.some(c => c.grupo === grupo && (c.id === seleccionadaId || c.id === resaltadaId));
+              {gruposConCategorias.map((g, i) => {
+                const primeraCatDelGrupo = categorias.find(c => c.grupo_id === g.id);
+                const iconoParaMostrar = g.icono_url ? { icono_url: g.icono_url, nombre: g.nombre } : primeraCatDelGrupo;
+                const tieneActivaAdentro = categorias.some(c => c.grupo_id === g.id && (c.id === seleccionadaId || c.id === resaltadaId));
                 return (
-                  <div key={"grupo-" + grupo} onClick={() => setGrupoActivo(grupo)} className="oft-btn-press oft-cat-sheet-chip" style={{ animationDelay: `${Math.min((i + 1) * 0.025, 0.3)}s`, border: `2px solid ${tieneActivaAdentro ? RED : GRAY2}`, borderRadius: 12, padding: "14px 6px", textAlign: "center", cursor: "pointer", background: tieneActivaAdentro ? "#FFF5F5" : WHITE, position: "relative" }}>
-                    <div style={{ display: "flex", justifyContent: "center", marginBottom: 5 }}><CategoryIcon cat={primeraCatDelGrupo} size={22} color={tieneActivaAdentro ? RED : BLACK} /></div>
-                    <div style={{ fontSize: 12, fontWeight: 700 }}>{grupo}</div>
+                  <div key={"grupo-" + g.id} onClick={() => setGrupoActivo(g)} className="oft-btn-press oft-cat-sheet-chip" style={{ animationDelay: `${Math.min((i + 1) * 0.025, 0.3)}s`, border: `2px solid ${tieneActivaAdentro ? RED : GRAY2}`, borderRadius: 12, padding: "14px 6px", textAlign: "center", cursor: "pointer", background: tieneActivaAdentro ? "#FFF5F5" : WHITE, position: "relative" }}>
+                    <div style={{ display: "flex", justifyContent: "center", marginBottom: 5 }}><CategoryIcon cat={iconoParaMostrar} size={22} color={tieneActivaAdentro ? RED : BLACK} /></div>
+                    <div style={{ fontSize: 12, fontWeight: 700 }}>{g.nombre}</div>
                     <ChevronRight size={13} color={GRAY3} style={{ position: "absolute", top: 6, right: 6 }} />
                   </div>
                 );
@@ -355,7 +357,7 @@ function CategoriaSheet({ onClose, categorias, seleccionadaId, resaltadaId, onSe
               {sinGrupo.map((c, i) => {
                 const activa = seleccionadaId === c.id || resaltadaId === c.id;
                 return (
-                  <div key={c.id} onClick={() => elegirCategoria(c.id)} className="oft-btn-press oft-cat-sheet-chip" style={{ animationDelay: `${Math.min((i + 1 + gruposUnicos.length) * 0.025, 0.3)}s`, border: `2px solid ${activa ? RED : GRAY2}`, borderRadius: 12, padding: "14px 6px", textAlign: "center", cursor: "pointer", background: activa ? "#FFF5F5" : WHITE }}>
+                  <div key={c.id} onClick={() => elegirCategoria(c.id)} className="oft-btn-press oft-cat-sheet-chip" style={{ animationDelay: `${Math.min((i + 1 + gruposConCategorias.length) * 0.025, 0.3)}s`, border: `2px solid ${activa ? RED : GRAY2}`, borderRadius: 12, padding: "14px 6px", textAlign: "center", cursor: "pointer", background: activa ? "#FFF5F5" : WHITE }}>
                     <div style={{ display: "flex", justifyContent: "center", marginBottom: 5 }}><CategoryIcon cat={c} size={22} color={activa ? RED : BLACK} /></div>
                     <div style={{ fontSize: 12, fontWeight: 700 }}>{c.nombre}</div>
                   </div>
@@ -364,7 +366,7 @@ function CategoriaSheet({ onClose, categorias, seleccionadaId, resaltadaId, onSe
             </div>
           ) : (
             // ── NIVEL 2: categorías específicas dentro del grupo elegido ──
-            <div key={"nivel-" + grupoActivo} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(90px, 1fr))", gap: 10 }}>
+            <div key={"nivel-" + grupoActivo.id} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(90px, 1fr))", gap: 10 }}>
               {categoriasDelGrupo.map((c, i) => {
                 const activa = seleccionadaId === c.id || resaltadaId === c.id;
                 return (
@@ -957,13 +959,14 @@ function PagoResultadoView() {
 }
 
 function HomeView() {
-  const { setView, setCatalogCat, categories, products, addToCart } = useApp();
+  const { setView, setCatalogCat, categories, gruposCategorias, products, addToCart } = useApp();
   const featured = products.filter(p => p.activo && p.visible_web !== false && p.destacado);
   const [catSheetAbierto, setCatSheetAbierto] = useState(false);
   const [grupoInicialSheet, setGrupoInicialSheet] = useState(null);
 
-  const gruposUnicos = [...new Set(categories.map(c => c.grupo).filter(Boolean))];
-  const sinGrupo = categories.filter(c => !c.grupo);
+  // Solo muestra grupos que de verdad tengan categorías adentro
+  const gruposConCategorias = gruposCategorias.filter(g => categories.some(c => c.grupo_id === g.id));
+  const sinGrupo = categories.filter(c => !c.grupo_id);
 
   const abrirGrupo = (grupo) => { setGrupoInicialSheet(grupo); setCatSheetAbierto(true); };
   const abrirCategoriaSuelta = (id) => { setCatalogCat(id); setView("catalogo"); };
@@ -998,20 +1001,22 @@ function HomeView() {
       <div className="oft-section" style={{ ...S.section, paddingBottom: 0 }}>
         <div style={S.sectionTitle}><span style={{ color: RED }}>▮</span> Categorías</div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 14 }}>
-          {gruposUnicos.map((grupo, i) => {
-            const primeraCatDelGrupo = categories.find(c => c.grupo === grupo);
-            const cantidad = categories.filter(c => c.grupo === grupo).length;
+          {gruposConCategorias.map((g, i) => {
+            const primeraCatDelGrupo = categories.find(c => c.grupo_id === g.id);
+            const cantidad = categories.filter(c => c.grupo_id === g.id).length;
+            // Usa el ícono propio del grupo si lo subiste; si no, toma prestado el de su primera categoría
+            const iconoParaMostrar = g.icono_url ? { icono_url: g.icono_url, nombre: g.nombre } : primeraCatDelGrupo;
             return (
-              <div key={"grupo-" + grupo} onClick={() => abrirGrupo(grupo)} className="oft-btn-press oft-group-card" style={{ animationDelay: `${Math.min(i * 0.06, 0.4)}s` }}>
-                <div className="oft-group-card-icon"><CategoryIcon cat={primeraCatDelGrupo} size={24} color={RED} /></div>
-                <div style={{ fontWeight: 800, fontSize: 14, marginTop: 10 }}>{grupo}</div>
+              <div key={"grupo-" + g.id} onClick={() => abrirGrupo(g)} className="oft-btn-press oft-group-card" style={{ animationDelay: `${Math.min(i * 0.06, 0.4)}s` }}>
+                <div className="oft-group-card-icon"><CategoryIcon cat={iconoParaMostrar} size={24} color={RED} /></div>
+                <div style={{ fontWeight: 800, fontSize: 14, marginTop: 10 }}>{g.nombre}</div>
                 <div style={{ fontSize: 11, color: GRAY3, marginTop: 2 }}>{cantidad} categorías</div>
                 <ChevronRight size={14} color={GRAY3} className="oft-group-card-chevron" />
               </div>
             );
           })}
           {sinGrupo.map((c, i) => (
-            <div key={c.id} onClick={() => abrirCategoriaSuelta(c.id)} className="oft-btn-press oft-group-card" style={{ animationDelay: `${Math.min((i + gruposUnicos.length) * 0.06, 0.4)}s` }}>
+            <div key={c.id} onClick={() => abrirCategoriaSuelta(c.id)} className="oft-btn-press oft-group-card" style={{ animationDelay: `${Math.min((i + gruposConCategorias.length) * 0.06, 0.4)}s` }}>
               <div className="oft-group-card-icon"><CategoryIcon cat={c} size={24} color={RED} /></div>
               <div style={{ fontWeight: 800, fontSize: 14, marginTop: 10 }}>{c.nombre}</div>
             </div>
@@ -1021,6 +1026,7 @@ function HomeView() {
       {catSheetAbierto && (
         <CategoriaSheet
           categorias={categories}
+          gruposCategorias={gruposCategorias}
           seleccionadaId={0}
           grupoInicial={grupoInicialSheet}
           onSeleccionar={(id) => { setCatalogCat(id); setView("catalogo"); setCatSheetAbierto(false); }}
@@ -1421,7 +1427,7 @@ function ProductCard({ product }) {
 //  CATÁLOGO
 // ═══════════════════════════════════════════════════════════════
 function CatalogoView() {
-  const { products, categories, loading, catalogCat } = useApp();
+  const { products, categories, gruposCategorias, loading, catalogCat } = useApp();
   const [catFilter, setCatFilter] = useState(catalogCat || 0);
   const [search, setSearch] = useState("");
   const [catSheetAbierto, setCatSheetAbierto] = useState(false);
@@ -1488,11 +1494,12 @@ function CatalogoView() {
         <input style={{ ...S.input, paddingLeft: 36, marginBottom: 0 }} placeholder="Buscar producto, referencia o categoría..." value={search} onChange={e => setSearch(e.target.value)} />
       </div>
       <div style={{ marginBottom: 28 }}>
-        <CategoriaTrigger categorias={categories} seleccionadaId={catFilter} onClick={() => setCatSheetAbierto(true)} />
+        <CategoriaTrigger categorias={categories} gruposCategorias={gruposCategorias} seleccionadaId={catFilter} onClick={() => setCatSheetAbierto(true)} />
       </div>
       {catSheetAbierto && (
         <CategoriaSheet
           categorias={categories}
+          gruposCategorias={gruposCategorias}
           seleccionadaId={catFilter}
           resaltadaId={categoriaSugerida?.id}
           onSeleccionar={(id) => { setCatFilter(id); setCatSheetAbierto(false); }}
@@ -5223,7 +5230,7 @@ function EditCotizacionModal({ cotizacion, empresas, sucursales, onClose, onSave
 //  ADMIN PANEL
 // ═══════════════════════════════════════════════════════════════
 function AdminView() {
-  const { products, setProducts, categories, setCategories, empresas, setEmpresas, sucursales, setSucursales, localesRetiro, setLocalesRetiro, retiroLocalHabilitado, setRetiroLocalHabilitado, showToast, setView, setUser, user } = useApp();
+  const { products, setProducts, categories, setCategories, gruposCategorias, setGruposCategorias, empresas, setEmpresas, sucursales, setSucursales, localesRetiro, setLocalesRetiro, retiroLocalHabilitado, setRetiroLocalHabilitado, showToast, setView, setUser, user } = useApp();
   // Rol del usuario actual: 'admin' = módulo completo, 'operador' = acceso limitado.
   // Los admins creados antes de este cambio pueden no tener "rol" guardado todavía — por
   // compatibilidad, si es_admin es true y no tiene rol, se trata como admin completo.
@@ -6075,14 +6082,48 @@ function AdminView() {
   // Asigna (o quita) el grupo general de una categoría — ej. pone "Ropa de Dama" como
   // grupo de las categorías Jeans Dama / Polo Dama / Enterizo Dama, para que en la web
   // se muestren agrupadas y el cliente las vea en dos pasos (grupo → categoría exacta).
-  const handleUpdateCategoriaGrupo = async (cat, grupoNuevo) => {
-    const valor = grupoNuevo.trim() || null;
-    setCategories(prev => prev.map(c => c.id === cat.id ? { ...c, grupo: valor } : c));
+  // Si el nombre de grupo no existe todavía, lo crea de una vez.
+  const handleUpdateCategoriaGrupo = async (cat, nombreGrupoNuevo) => {
+    const nombre = nombreGrupoNuevo.trim();
     try {
-      await sb.patch("categorias", cat.id, { grupo: valor });
+      let grupoId = null;
+      if (nombre) {
+        const existente = gruposCategorias.find(g => g.nombre.toLowerCase() === nombre.toLowerCase());
+        if (existente) {
+          grupoId = existente.id;
+        } else {
+          const creado = await sb.post("grupos_categorias", { nombre });
+          const nuevoGrupo = creado[0];
+          setGruposCategorias(prev => [...prev, nuevoGrupo]);
+          grupoId = nuevoGrupo.id;
+        }
+      }
+      setCategories(prev => prev.map(c => c.id === cat.id ? { ...c, grupo_id: grupoId } : c));
+      await sb.patch("categorias", cat.id, { grupo_id: grupoId });
     } catch(e) {
       showToast("No se pudo guardar el grupo: " + e.message);
     }
+  };
+
+  // Cambia el ícono propio de un grupo (independiente del ícono de sus categorías)
+  const [grupoUploading, setGrupoUploading] = useState(null);
+  const grupoFileRef = useRef(null);
+  const handleGrupoIconUpload = async (e, grupo) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setGrupoUploading(grupo.id);
+    try {
+      const cleanName = file.name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9.\-_]/g, "_");
+      const path = `grupo_${Date.now()}_${cleanName}`;
+      await sb.upload("categorias", path, file);
+      const url = `${sb.publicUrl("categorias", path)}?t=${Date.now()}`;
+      await sb.patch("grupos_categorias", grupo.id, { icono_url: url });
+      setGruposCategorias(prev => prev.map(g => g.id === grupo.id ? { ...g, icono_url: url } : g));
+      showToast("Ícono del grupo actualizado");
+    } catch(err) {
+      alert("Error subiendo ícono: " + err.message);
+    }
+    setGrupoUploading(null);
   };
 
   // ── EMPRESAS DE ENVÍO ──────────────────────────────────────────
@@ -7667,10 +7708,12 @@ function AdminView() {
             </div>
             <p style={{ fontSize: 13, color: GRAY3, marginBottom: 16 }}>Haz click en el icono de cada categoría para subir tu propia imagen. Asígnale un "Grupo" a varias categorías relacionadas (ej. "Ropa de Dama") para que en la web el cliente las vea agrupadas, en vez de una lista larga suelta.</p>
             <datalist id="grupos-existentes">
-              {[...new Set(categories.map(c => c.grupo).filter(Boolean))].map(g => <option key={g} value={g} />)}
+              {gruposCategorias.map(g => <option key={g.id} value={g.nombre} />)}
             </datalist>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(180px,1fr))", gap: 16 }}>
-              {categories.map(c => (
+              {categories.map(c => {
+                const grupoDeEsta = gruposCategorias.find(g => g.id === c.grupo_id);
+                return (
                 <div key={c.id} style={{ background: WHITE, borderRadius: 12, padding: 20, border: `1px solid ${GRAY2}`, position: "relative" }}>
                   <button onClick={() => handleDeleteCategory(c)} style={{ position: "absolute", top: 10, right: 10, background: "none", border: "none", color: GRAY3, cursor: "pointer", display: "flex" }} title="Eliminar"><Trash2 size={15} /></button>
                   <div
@@ -7685,14 +7728,46 @@ function AdminView() {
                   <label style={{ fontSize: 11, color: GRAY3, fontWeight: 700, display: "block", marginBottom: 3 }}>Grupo (opcional)</label>
                   <input
                     list="grupos-existentes"
-                    defaultValue={c.grupo || ""}
+                    defaultValue={grupoDeEsta?.nombre || ""}
                     placeholder="Ej: Ropa de Dama"
-                    onBlur={e => { if (e.target.value.trim() !== (c.grupo || "")) handleUpdateCategoriaGrupo(c, e.target.value); }}
+                    onBlur={e => { if (e.target.value.trim() !== (grupoDeEsta?.nombre || "")) handleUpdateCategoriaGrupo(c, e.target.value); }}
                     style={{ ...S.input, marginBottom: 0, fontSize: 12, padding: "6px 10px" }}
                   />
                 </div>
-              ))}
+                );
+              })}
             </div>
+
+            {/* ÍCONOS DE LOS GRUPOS */}
+            {gruposCategorias.length > 0 && (
+              <>
+                <div style={{ fontSize: 18, fontWeight: 900, margin: "36px 0 6px", display: "flex", alignItems: "center", gap: 8 }}><LayoutGrid size={20} color={RED} /> Íconos de los grupos</div>
+                <p style={{ fontSize: 13, color: GRAY3, marginBottom: 16 }}>Por defecto, cada grupo usa el ícono de su primera categoría. Súbele una imagen propia aquí si quieres que se vea distinto.</p>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(180px,1fr))", gap: 16 }}>
+                  {gruposCategorias.map(g => (
+                    <div key={g.id} style={{ background: WHITE, borderRadius: 12, padding: 20, border: `1px solid ${GRAY2}` }}>
+                      <div
+                        onClick={() => { setGrupoUploading(null); grupoFileRef.current.dataset.grupoId = g.id; grupoFileRef.current?.click(); }}
+                        style={{ marginBottom: 8, cursor: "pointer", width: 56, height: 56, borderRadius: 10, border: `2px dashed ${GRAY2}`, display: "flex", alignItems: "center", justifyContent: "center", background: GRAY }}
+                        title="Cambiar icono del grupo"
+                      >
+                        {grupoUploading === g.id ? <RefreshCw size={20} className="spin" color={GRAY3} /> : (
+                          g.icono_url ? <img src={g.icono_url} style={{ width: 32, height: 32, objectFit: "contain", borderRadius: 6 }} /> : <LayoutGrid size={28} color={GRAY3} strokeWidth={1.5} />
+                        )}
+                      </div>
+                      <div style={{ fontWeight: 800 }}>{g.nombre}</div>
+                      <div style={{ fontSize: 12, color: GRAY3 }}>{categories.filter(c => c.grupo_id === g.id).length} categorías</div>
+                    </div>
+                  ))}
+                </div>
+                <input ref={grupoFileRef} type="file" accept="image/*" style={{ display: "none" }} onChange={(e) => {
+                  const grupoId = Number(e.target.dataset.grupoId);
+                  const grupo = gruposCategorias.find(g => g.id === grupoId);
+                  if (grupo) handleGrupoIconUpload(e, grupo);
+                  e.target.value = "";
+                }} />
+              </>
+            )}
             {/* input oculto compartido para subir icono */}
             <input ref={catFileRef} type="file" accept="image/*" style={{ display: "none" }} onChange={(e) => {
               const catId = Number(e.target.dataset.catId);
@@ -8848,6 +8923,9 @@ export default function App() {
   const setView = (v) => {
     setViewRaw(v);
     try { localStorage.setItem("oft_view", v); } catch(e) {}
+    // Siempre empieza arriba de la página nueva, sin importar qué tan abajo
+    // estaba desplazado en la página anterior (ej. al elegir una categoría desde el inicio)
+    window.scrollTo({ top: 0, behavior: "instant" });
   };
 
   // El carrito se guarda en el navegador para que NO se pierda al iniciar sesión o recargar
@@ -8917,6 +8995,7 @@ export default function App() {
   const [pendingCheckout, setPendingCheckout] = useState(false); // el cliente quería pagar y tuvo que loguearse
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]);
+  const [gruposCategorias, setGruposCategorias] = useState([]); // grupos generales (ej. "Ropa de Dama"), cada uno con su propio ícono
   const [empresas, setEmpresas] = useState([]);
   const [sucursales, setSucursales] = useState([]);
   const [localesRetiro, setLocalesRetiro] = useState([]); // locales propios donde se puede retirar
@@ -9103,6 +9182,11 @@ export default function App() {
           setLocalesRetiro(locales || []);
           if (config && config[0]) setRetiroLocalHabilitado(config[0].valor === true || config[0].valor === "true");
         } catch(e3) { console.warn("Config de retiro en local no cargada:", e3.message); }
+        // Grupos de categorías (no crítico, si falla se ignora — los grupos simplemente no muestran ícono propio)
+        try {
+          const grupos = await sb.get("grupos_categorias", "?order=nombre");
+          setGruposCategorias(grupos || []);
+        } catch(e4) { console.warn("Grupos de categorías no cargados:", e4.message); }
       } catch(e) {
         console.warn("⚠️ Supabase no configurado. Usando datos demo.", e.message);
         // DATOS DEMO cuando Supabase no está configurado
@@ -9129,7 +9213,7 @@ export default function App() {
   }, []);
 
   const isAdmin = view === "admin";
-  const ctx = { view, setView, cart, setCart, addToCart, cartPulse, user, setUser, showLogin, setShowLogin, showRegister, setShowRegister, showCart, setShowCart, quickView, setQuickView, pagoResultado, setPagoResultado, catalogCat, setCatalogCat, completeProfile, setCompleteProfile, googleMfaPaso, setGoogleMfaPaso, pendingCheckout, setPendingCheckout, products, setProducts, categories, setCategories, empresas, setEmpresas, sucursales, setSucursales, localesRetiro, setLocalesRetiro, retiroLocalHabilitado, setRetiroLocalHabilitado, loading, showToast };
+  const ctx = { view, setView, cart, setCart, addToCart, cartPulse, user, setUser, showLogin, setShowLogin, showRegister, setShowRegister, showCart, setShowCart, quickView, setQuickView, pagoResultado, setPagoResultado, catalogCat, setCatalogCat, completeProfile, setCompleteProfile, googleMfaPaso, setGoogleMfaPaso, pendingCheckout, setPendingCheckout, products, setProducts, categories, setCategories, gruposCategorias, setGruposCategorias, empresas, setEmpresas, sucursales, setSucursales, localesRetiro, setLocalesRetiro, retiroLocalHabilitado, setRetiroLocalHabilitado, loading, showToast };
 
   return (
     <AppCtx.Provider value={ctx}>
