@@ -424,7 +424,7 @@ function presUnitPrice(product, pres) {
 // Comparte el link directo de un producto (usa el share nativo del celular si existe,
 // o copia el link al portapapeles como respaldo en computadora).
 async function compartirProducto(product, showToast) {
-  const url = `${window.location.origin}${window.location.pathname}?producto=${product.id}`;
+  const url = `${window.location.origin}/producto/${product.id}`;
   const textoCompartir = `Mira este producto en Ofertodo: ${product.nombre}`;
   if (navigator.share) {
     try {
@@ -8883,9 +8883,12 @@ export default function App() {
         setCategories(cats);
         setProducts(prods);
 
-        // Link directo a un producto (?producto=ID) — si alguien comparte el link de un
-        // producto y se lo mandan a un cliente, al abrirlo se muestra ese producto directo.
-        const idProductoLink = new URLSearchParams(window.location.search).get("producto");
+        // Link directo a un producto — reconoce tanto el formato nuevo y limpio
+        // (/producto/ID, el que ahora genera el botón de Compartir) como el formato
+        // viejo (?producto=ID, por si alguien todavía tiene guardado un link de esos).
+        // Al abrirlo, se muestra ese producto directo.
+        const coincideRutaLimpia = window.location.pathname.match(/^\/producto\/(\d+)/);
+        const idProductoLink = coincideRutaLimpia ? coincideRutaLimpia[1] : new URLSearchParams(window.location.search).get("producto");
         if (idProductoLink) {
           const prodEncontrado = prods.find(p => String(p.id) === idProductoLink);
           if (prodEncontrado) {
@@ -8893,8 +8896,8 @@ export default function App() {
           } else {
             showToast("Ese producto ya no está disponible");
           }
-          // Limpia el parámetro de la URL para que no se quede pegado al navegar
-          window.history.replaceState(null, "", window.location.origin + window.location.pathname);
+          // Limpia la URL para que no se quede pegada al navegar (vuelve a la portada)
+          window.history.replaceState(null, "", window.location.origin + "/");
         }
 
         // Resultado de un pago con tarjeta (Powertranz redirige aquí tras el 3D-Secure)
