@@ -8,7 +8,7 @@ import {
   FileSpreadsheet, FolderPlus, Zap, Lock, Users, BarChart3, DollarSign,
   TrendingUp, Wallet, ShoppingBag, Pencil as PencilIcon, Save,
   Building2, MapPin as MapPinIcon, Send, FilePlus, Download, FileText, Receipt,
-  Calendar as CalendarIcon, Eye, EyeOff, Share2, AlertTriangle
+  Calendar as CalendarIcon, Eye, EyeOff, Share2, AlertTriangle, ChevronRight
 } from "lucide-react";
 
 // ════════════════════════════════════════════════════════════════
@@ -275,6 +275,63 @@ function CategoryIcon({ cat, name, size = 28, color = RED }) {
   else if (n.includes("calzado") || n.includes("sandalia") || n.includes("chancla") || n.includes("zapato")) Icon = Footprints;
   else if (n.includes("accesorio")) Icon = Watch;
   return <Icon size={size} color={color} strokeWidth={1.8} />;
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  SELECTOR DE CATEGORÍA — un solo botón que abre un panel limpio
+//  con todas las categorías, en vez de mostrarlas todas de golpe.
+// ═══════════════════════════════════════════════════════════════
+function CategoriaTrigger({ categorias, seleccionadaId, onClick }) {
+  const cat = categorias.find(c => c.id === seleccionadaId);
+  return (
+    <button onClick={onClick} className="oft-btn-press oft-cat-trigger" style={{
+      display: "inline-flex", alignItems: "center", gap: 10, background: WHITE, border: `1.5px solid ${GRAY2}`,
+      borderRadius: 14, padding: "10px 16px", cursor: "pointer", fontFamily: "inherit", width: "100%", maxWidth: 320,
+    }}>
+      <div style={{ width: 30, height: 30, borderRadius: 9, background: cat ? "#FFF5F5" : GRAY, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+        {cat ? <CategoryIcon cat={cat} size={17} color={RED} /> : <LayoutGrid size={17} color={GRAY3} strokeWidth={1.8} />}
+      </div>
+      <div style={{ textAlign: "left", flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 10, color: GRAY3, fontWeight: 700, letterSpacing: 0.3 }}>CATEGORÍA</div>
+        <div style={{ fontSize: 14, fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{cat ? cat.nombre : "Todas las categorías"}</div>
+      </div>
+      <ChevronDown size={18} color={GRAY3} strokeWidth={2.2} />
+    </button>
+  );
+}
+
+function CategoriaSheet({ onClose, categorias, seleccionadaId, resaltadaId, onSeleccionar }) {
+  useLockBodyScroll();
+  return createPortal(
+    <div className="oft-overlay" style={{ ...S.overlay, alignItems: "flex-end", justifyContent: "center", padding: 0 }} onClick={onClose}>
+      <div className="oft-sheet-slide" style={{ background: WHITE, borderRadius: "22px 22px 0 0", width: "100%", maxWidth: 480, maxHeight: "80vh", display: "flex", flexDirection: "column", overflow: "hidden" }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "center", padding: "10px 0 2px", flexShrink: 0 }}>
+          <div style={{ width: 40, height: 4, borderRadius: 4, background: GRAY2 }} />
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 20px 14px", flexShrink: 0 }}>
+          <div style={{ fontWeight: 900, fontSize: 18 }}>Elige una categoría</div>
+          <button onClick={onClose} className="oft-btn-press" style={{ background: GRAY, border: "none", borderRadius: "50%", width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}><X size={15} /></button>
+        </div>
+        <div style={{ overflowY: "auto", padding: "0 20px 28px" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(90px, 1fr))", gap: 10 }}>
+            <div onClick={() => onSeleccionar(0)} className="oft-btn-press oft-cat-sheet-chip" style={{ animationDelay: "0s", border: `2px solid ${(seleccionadaId === 0) ? RED : GRAY2}`, borderRadius: 12, padding: "14px 6px", textAlign: "center", cursor: "pointer", background: (seleccionadaId === 0) ? "#FFF5F5" : WHITE }}>
+              <div style={{ display: "flex", justifyContent: "center", marginBottom: 5 }}><LayoutGrid size={22} color={(seleccionadaId === 0) ? RED : BLACK} strokeWidth={1.8} /></div>
+              <div style={{ fontSize: 12, fontWeight: 700 }}>Todo</div>
+            </div>
+            {categorias.map((c, i) => {
+              const activa = seleccionadaId === c.id || resaltadaId === c.id;
+              return (
+                <div key={c.id} onClick={() => onSeleccionar(c.id)} className="oft-btn-press oft-cat-sheet-chip" style={{ animationDelay: `${Math.min(i * 0.025, 0.3)}s`, border: `2px solid ${activa ? RED : GRAY2}`, borderRadius: 12, padding: "14px 6px", textAlign: "center", cursor: "pointer", background: activa ? "#FFF5F5" : WHITE }}>
+                  <div style={{ display: "flex", justifyContent: "center", marginBottom: 5 }}><CategoryIcon cat={c} size={22} color={activa ? RED : BLACK} /></div>
+                  <div style={{ fontSize: 12, fontWeight: 700 }}>{c.nombre}</div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    </div>
+  , document.body);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -854,6 +911,7 @@ function PagoResultadoView() {
 function HomeView() {
   const { setView, setCatalogCat, categories, products, addToCart } = useApp();
   const featured = products.filter(p => p.activo && p.visible_web !== false && p.destacado);
+  const [catSheetAbierto, setCatSheetAbierto] = useState(false);
 
   return (
     <>
@@ -884,15 +942,32 @@ function HomeView() {
       {/* CATEGORÍAS */}
       <div className="oft-section" style={{ ...S.section, paddingBottom: 0 }}>
         <div style={S.sectionTitle}><span style={{ color: RED }}>▮</span> Categorías</div>
-        <div className="oft-cat-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(130px, 1fr))", gap: 12 }}>
-          {categories.map(c => (
-            <div key={c.id} onClick={() => { setCatalogCat(c.id); setView("catalogo"); }} style={{ background: WHITE, border: `2px solid ${GRAY2}`, borderRadius: 12, padding: "18px 10px", textAlign: "center", cursor: "pointer" }}>
-              <div style={{ marginBottom: 6, display: "flex", justifyContent: "center" }}><CategoryIcon cat={c} size={30} /></div>
-              <div style={{ fontSize: 13, fontWeight: 700 }}>{c.nombre}</div>
-            </div>
-          ))}
+        <div
+          onClick={() => setCatSheetAbierto(true)}
+          className="oft-btn-press"
+          style={{
+            display: "flex", alignItems: "center", gap: 16, background: `linear-gradient(135deg, ${RED} 0%, ${RED_D} 100%)`,
+            borderRadius: 16, padding: "20px 22px", cursor: "pointer", boxShadow: "0 6px 18px rgba(227,30,36,0.25)",
+          }}
+        >
+          <div style={{ width: 48, height: 48, borderRadius: 12, background: "rgba(255,255,255,0.18)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+            <LayoutGrid size={24} color={WHITE} strokeWidth={1.8} />
+          </div>
+          <div style={{ flex: 1 }}>
+            <div style={{ color: WHITE, fontWeight: 900, fontSize: 16 }}>Explorar categorías</div>
+            <div style={{ color: "rgba(255,255,255,0.85)", fontSize: 13 }}>{categories.length} categorías disponibles — toca para ver todas</div>
+          </div>
+          <ChevronRight size={22} color={WHITE} strokeWidth={2.2} />
         </div>
       </div>
+      {catSheetAbierto && (
+        <CategoriaSheet
+          categorias={categories}
+          seleccionadaId={0}
+          onSeleccionar={(id) => { setCatalogCat(id); setView("catalogo"); setCatSheetAbierto(false); }}
+          onClose={() => setCatSheetAbierto(false)}
+        />
+      )}
 
       {/* DESTACADOS */}
       {featured.length > 0 && (
@@ -1290,6 +1365,7 @@ function CatalogoView() {
   const { products, categories, loading, catalogCat } = useApp();
   const [catFilter, setCatFilter] = useState(catalogCat || 0);
   const [search, setSearch] = useState("");
+  const [catSheetAbierto, setCatSheetAbierto] = useState(false);
 
   // Si el usuario eligió una categoría desde el inicio, ábrela
   useEffect(() => { setCatFilter(catalogCat || 0); }, [catalogCat]);
@@ -1348,25 +1424,22 @@ function CatalogoView() {
   return (
     <div className="oft-section" style={S.section}>
       <div style={S.sectionTitle}><span style={{ color: RED }}>▮</span> Catálogo <span style={{ color: RED }}>de Productos</span></div>
-      <div style={{ position: "relative", maxWidth: 400, marginBottom: 24 }}>
+      <div style={{ position: "relative", maxWidth: 400, marginBottom: 14 }}>
         <Search size={16} color={GRAY3} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)" }} />
         <input style={{ ...S.input, paddingLeft: 36, marginBottom: 0 }} placeholder="Buscar producto, referencia o categoría..." value={search} onChange={e => setSearch(e.target.value)} />
       </div>
-      <div className="oft-cat-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))", gap: 10, marginTop: 16, marginBottom: 28 }}>
-        <div className="oft-cat-chip" onClick={() => setCatFilter(0)} style={{ border: `2px solid ${catFilter === 0 ? RED : GRAY2}`, borderRadius: 10, padding: "14px 8px", textAlign: "center", cursor: "pointer", background: catFilter === 0 ? "#FFF5F5" : WHITE }}>
-          <div style={{ display: "flex", justifyContent: "center", marginBottom: 4 }}><LayoutGrid size={22} color={catFilter === 0 ? RED : BLACK} strokeWidth={1.8} /></div>
-          <div style={{ fontSize: 12, fontWeight: 700 }}>Todo</div>
-        </div>
-        {categories.map(c => {
-          const resaltada = catFilter === c.id || categoriaSugerida?.id === c.id;
-          return (
-          <div key={c.id} className="oft-cat-chip" onClick={() => setCatFilter(c.id)} style={{ border: `2px solid ${resaltada ? RED : GRAY2}`, borderRadius: 10, padding: "14px 8px", textAlign: "center", cursor: "pointer", background: resaltada ? "#FFF5F5" : WHITE }}>
-            <div style={{ display: "flex", justifyContent: "center", marginBottom: 4 }}><CategoryIcon cat={c} size={22} color={resaltada ? RED : BLACK} /></div>
-            <div style={{ fontSize: 12, fontWeight: 700 }}>{c.nombre}</div>
-          </div>
-          );
-        })}
+      <div style={{ marginBottom: 28 }}>
+        <CategoriaTrigger categorias={categories} seleccionadaId={catFilter} onClick={() => setCatSheetAbierto(true)} />
       </div>
+      {catSheetAbierto && (
+        <CategoriaSheet
+          categorias={categories}
+          seleccionadaId={catFilter}
+          resaltadaId={categoriaSugerida?.id}
+          onSeleccionar={(id) => { setCatFilter(id); setCatSheetAbierto(false); }}
+          onClose={() => setCatSheetAbierto(false)}
+        />
+      )}
       {filtered.length === 0
         ? <div style={{ textAlign: "center", padding: "60px 0", color: GRAY3 }}><Search size={48} strokeWidth={1.3} style={{ margin: "0 auto 12px" }} /><p>No se encontraron productos</p></div>
         : <div key={catFilter + "-" + search} className="oft-prod-grid" style={S.prodGrid}>
@@ -9015,6 +9088,12 @@ export default function App() {
         .oft-toast-in { animation: toastIn 0.3s ease both; }
         @keyframes qvPop { 0% { opacity: 0; transform: scale(0.88); } 100% { opacity: 1; transform: scale(1); } }
         .oft-qv-pop { animation: qvPop 0.28s cubic-bezier(0.34,1.4,0.5,1) both; }
+        @keyframes sheetSlideUp { 0% { opacity: 0; transform: translateY(40px); } 100% { opacity: 1; transform: translateY(0); } }
+        .oft-sheet-slide { animation: sheetSlideUp 0.32s cubic-bezier(0.16,1,0.3,1) both; }
+        @keyframes catChipPop { 0% { opacity: 0; transform: scale(0.85) translateY(6px); } 100% { opacity: 1; transform: scale(1) translateY(0); } }
+        .oft-cat-sheet-chip { animation: catChipPop 0.26s cubic-bezier(0.34,1.4,0.5,1) both; transition: border-color 0.15s, background 0.15s; }
+        .oft-cat-trigger { transition: border-color 0.15s, box-shadow 0.15s; }
+        .oft-cat-trigger:hover { border-color: ${RED}; box-shadow: 0 2px 10px rgba(227,30,36,0.12); }
         @keyframes overlayFade { from { opacity: 0; } to { opacity: 1; } }
         .oft-overlay { animation: overlayFade 0.22s ease both; }
         @keyframes authPop { 0% { opacity: 0; transform: translateY(18px) scale(0.94); } 60% { opacity: 1; transform: translateY(0) scale(1.015); } 100% { transform: translateY(0) scale(1); } }
