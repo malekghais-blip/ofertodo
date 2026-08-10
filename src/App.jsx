@@ -302,11 +302,12 @@ function CategoriaTrigger({ categorias, seleccionadaId, onClick }) {
   );
 }
 
-function CategoriaSheet({ onClose, categorias, seleccionadaId, resaltadaId, onSeleccionar }) {
+function CategoriaSheet({ onClose, categorias, seleccionadaId, resaltadaId, onSeleccionar, grupoInicial }) {
   useLockBodyScroll();
   // Nivel de navegación dentro del panel: null = vista inicial (grupos), o el nombre
-  // del grupo activo (viendo sus categorías específicas, ej. dentro de "Ropa de Dama")
-  const [grupoActivo, setGrupoActivo] = useState(null);
+  // del grupo activo (viendo sus categorías específicas, ej. dentro de "Ropa de Dama").
+  // Si se abre desde una tarjeta de grupo en el inicio, entra directo a ese nivel.
+  const [grupoActivo, setGrupoActivo] = useState(grupoInicial || null);
 
   const gruposUnicos = [...new Set(categorias.map(c => c.grupo).filter(Boolean))];
   const sinGrupo = categorias.filter(c => !c.grupo);
@@ -959,6 +960,13 @@ function HomeView() {
   const { setView, setCatalogCat, categories, products, addToCart } = useApp();
   const featured = products.filter(p => p.activo && p.visible_web !== false && p.destacado);
   const [catSheetAbierto, setCatSheetAbierto] = useState(false);
+  const [grupoInicialSheet, setGrupoInicialSheet] = useState(null);
+
+  const gruposUnicos = [...new Set(categories.map(c => c.grupo).filter(Boolean))];
+  const sinGrupo = categories.filter(c => !c.grupo);
+
+  const abrirGrupo = (grupo) => { setGrupoInicialSheet(grupo); setCatSheetAbierto(true); };
+  const abrirCategoriaSuelta = (id) => { setCatalogCat(id); setView("catalogo"); };
 
   return (
     <>
@@ -989,28 +997,32 @@ function HomeView() {
       {/* CATEGORÍAS */}
       <div className="oft-section" style={{ ...S.section, paddingBottom: 0 }}>
         <div style={S.sectionTitle}><span style={{ color: RED }}>▮</span> Categorías</div>
-        <div
-          onClick={() => setCatSheetAbierto(true)}
-          className="oft-btn-press"
-          style={{
-            display: "flex", alignItems: "center", gap: 16, background: `linear-gradient(135deg, ${RED} 0%, ${RED_D} 100%)`,
-            borderRadius: 16, padding: "20px 22px", cursor: "pointer", boxShadow: "0 6px 18px rgba(227,30,36,0.25)",
-          }}
-        >
-          <div style={{ width: 48, height: 48, borderRadius: 12, background: "rgba(255,255,255,0.18)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-            <LayoutGrid size={24} color={WHITE} strokeWidth={1.8} />
-          </div>
-          <div style={{ flex: 1 }}>
-            <div style={{ color: WHITE, fontWeight: 900, fontSize: 16 }}>Explorar categorías</div>
-            <div style={{ color: "rgba(255,255,255,0.85)", fontSize: 13 }}>{categories.length} categorías disponibles — toca para ver todas</div>
-          </div>
-          <ChevronRight size={22} color={WHITE} strokeWidth={2.2} />
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 14 }}>
+          {gruposUnicos.map((grupo, i) => {
+            const primeraCatDelGrupo = categories.find(c => c.grupo === grupo);
+            const cantidad = categories.filter(c => c.grupo === grupo).length;
+            return (
+              <div key={"grupo-" + grupo} onClick={() => abrirGrupo(grupo)} className="oft-btn-press oft-group-card" style={{ animationDelay: `${Math.min(i * 0.06, 0.4)}s` }}>
+                <div className="oft-group-card-icon"><CategoryIcon cat={primeraCatDelGrupo} size={24} color={RED} /></div>
+                <div style={{ fontWeight: 800, fontSize: 14, marginTop: 10 }}>{grupo}</div>
+                <div style={{ fontSize: 11, color: GRAY3, marginTop: 2 }}>{cantidad} categorías</div>
+                <ChevronRight size={14} color={GRAY3} className="oft-group-card-chevron" />
+              </div>
+            );
+          })}
+          {sinGrupo.map((c, i) => (
+            <div key={c.id} onClick={() => abrirCategoriaSuelta(c.id)} className="oft-btn-press oft-group-card" style={{ animationDelay: `${Math.min((i + gruposUnicos.length) * 0.06, 0.4)}s` }}>
+              <div className="oft-group-card-icon"><CategoryIcon cat={c} size={24} color={RED} /></div>
+              <div style={{ fontWeight: 800, fontSize: 14, marginTop: 10 }}>{c.nombre}</div>
+            </div>
+          ))}
         </div>
       </div>
       {catSheetAbierto && (
         <CategoriaSheet
           categorias={categories}
           seleccionadaId={0}
+          grupoInicial={grupoInicialSheet}
           onSeleccionar={(id) => { setCatalogCat(id); setView("catalogo"); setCatSheetAbierto(false); }}
           onClose={() => setCatSheetAbierto(false)}
         />
@@ -9165,6 +9177,19 @@ export default function App() {
         .oft-cat-sheet-chip { animation: catChipPop 0.26s cubic-bezier(0.34,1.4,0.5,1) both; transition: border-color 0.15s, background 0.15s; }
         .oft-cat-trigger { transition: border-color 0.15s, box-shadow 0.15s; }
         .oft-cat-trigger:hover { border-color: ${RED}; box-shadow: 0 2px 10px rgba(227,30,36,0.12); }
+        @keyframes groupCardIn { 0% { opacity: 0; transform: translateY(16px); } 100% { opacity: 1; transform: translateY(0); } }
+        .oft-group-card {
+          position: relative; background: ${WHITE}; border: 1.5px solid ${GRAY2}; border-radius: 16px; padding: 18px 16px;
+          cursor: pointer; animation: groupCardIn 0.45s cubic-bezier(0.16,1,0.3,1) both;
+          transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+        }
+        .oft-group-card:hover { border-color: ${RED}; box-shadow: 0 8px 20px rgba(227,30,36,0.12); transform: translateY(-2px); }
+        .oft-group-card-icon {
+          width: 44px; height: 44px; border-radius: 12px; background: ${GRAY};
+          display: flex; align-items: center; justify-content: center; transition: background 0.2s ease;
+        }
+        .oft-group-card:hover .oft-group-card-icon { background: #FFF0EF; }
+        .oft-group-card-chevron { position: absolute; top: 16px; right: 14px; }
         @keyframes overlayFade { from { opacity: 0; } to { opacity: 1; } }
         .oft-overlay { animation: overlayFade 0.22s ease both; }
         @keyframes authPop { 0% { opacity: 0; transform: translateY(18px) scale(0.94); } 60% { opacity: 1; transform: translateY(0) scale(1.015); } 100% { transform: translateY(0) scale(1); } }
