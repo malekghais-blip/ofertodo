@@ -305,6 +305,7 @@ function CategoriaTrigger({ categorias, gruposCategorias, seleccionadaId, onClic
 
 function CategoriaSheet({ onClose, categorias, gruposCategorias, seleccionadaId, resaltadaId, onSeleccionar, grupoInicial }) {
   useLockBodyScroll();
+  const isMobile = useIsMobile();
   // Nivel de navegación dentro del panel: null = vista inicial (grupos), o el grupo
   // activo (viendo sus categorías específicas, ej. dentro de "Ropa de Dama").
   // Si se abre desde una tarjeta de grupo en el inicio, entra directo a ese nivel.
@@ -317,28 +318,38 @@ function CategoriaSheet({ onClose, categorias, gruposCategorias, seleccionadaId,
   const elegirCategoria = (id) => { onSeleccionar(id); setGrupoActivo(null); };
 
   return createPortal(
-    <div className="oft-overlay" style={{ ...S.overlay, alignItems: "flex-end", justifyContent: "center", padding: 0 }} onClick={onClose}>
-      <div className="oft-sheet-slide" style={{ background: WHITE, borderRadius: "22px 22px 0 0", width: "100%", maxWidth: 480, maxHeight: "80vh", display: "flex", flexDirection: "column", overflow: "hidden" }} onClick={e => e.stopPropagation()}>
-        <div style={{ display: "flex", justifyContent: "center", padding: "10px 0 2px", flexShrink: 0 }}>
-          <div style={{ width: 40, height: 4, borderRadius: 4, background: GRAY2 }} />
-        </div>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 20px 14px", flexShrink: 0 }}>
+    <div className="oft-overlay" style={{ ...S.overlay, alignItems: isMobile ? "flex-end" : "center", justifyContent: "center", padding: isMobile ? 0 : 20 }} onClick={onClose}>
+      <div
+        className={isMobile ? "oft-sheet-slide" : "oft-qv-pop"}
+        style={{
+          background: WHITE, borderRadius: isMobile ? "22px 22px 0 0" : 22, width: "100%",
+          maxWidth: isMobile ? 480 : (grupoActivo ? 720 : 620), maxHeight: isMobile ? "80vh" : "min(680px, 85vh)",
+          display: "flex", flexDirection: "column", overflow: "hidden",
+        }}
+        onClick={e => e.stopPropagation()}
+      >
+        {isMobile && (
+          <div style={{ display: "flex", justifyContent: "center", padding: "10px 0 2px", flexShrink: 0 }}>
+            <div style={{ width: 40, height: 4, borderRadius: 4, background: GRAY2 }} />
+          </div>
+        )}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: isMobile ? "10px 20px 14px" : "22px 26px 16px", flexShrink: 0 }}>
           {grupoActivo ? (
-            <button onClick={() => setGrupoActivo(null)} className="oft-btn-press" style={{ background: "none", border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 6, padding: 0, fontWeight: 900, fontSize: 18 }}>
-              <ChevronDown size={20} style={{ transform: "rotate(90deg)" }} /> {grupoActivo.nombre}
+            <button onClick={() => setGrupoActivo(null)} className="oft-btn-press" style={{ background: "none", border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 6, padding: 0, fontWeight: 900, fontSize: isMobile ? 18 : 21 }}>
+              <ChevronDown size={isMobile ? 20 : 22} style={{ transform: "rotate(90deg)" }} /> {grupoActivo.nombre}
             </button>
           ) : (
-            <div style={{ fontWeight: 900, fontSize: 18 }}>Elige una categoría</div>
+            <div style={{ fontWeight: 900, fontSize: isMobile ? 18 : 21 }}>Elige una categoría</div>
           )}
-          <button onClick={onClose} className="oft-btn-press" style={{ background: GRAY, border: "none", borderRadius: "50%", width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}><X size={15} /></button>
+          <button onClick={onClose} className="oft-btn-press" style={{ background: GRAY, border: "none", borderRadius: "50%", width: isMobile ? 30 : 34, height: isMobile ? 30 : 34, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}><X size={isMobile ? 15 : 17} /></button>
         </div>
-        <div style={{ overflowY: "auto", padding: "0 20px 28px" }}>
+        <div style={{ overflowY: "auto", padding: isMobile ? "0 20px 28px" : "0 26px 30px" }}>
           {!grupoActivo ? (
             // ── NIVEL 1: grupos generales + categorías sueltas (sin grupo) ──
-            <div key="nivel-grupos" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(90px, 1fr))", gap: 10 }}>
-              <div onClick={() => elegirCategoria(0)} className="oft-btn-press oft-cat-sheet-chip" style={{ animationDelay: "0s", border: `2px solid ${(seleccionadaId === 0) ? RED : GRAY2}`, borderRadius: 12, padding: "14px 6px", textAlign: "center", cursor: "pointer", background: (seleccionadaId === 0) ? "#FFF5F5" : WHITE }}>
-                <div style={{ display: "flex", justifyContent: "center", marginBottom: 5 }}><LayoutGrid size={22} color={(seleccionadaId === 0) ? RED : BLACK} strokeWidth={1.8} /></div>
-                <div style={{ fontSize: 12, fontWeight: 700 }}>Todo</div>
+            <div key="nivel-grupos" style={{ display: "grid", gridTemplateColumns: `repeat(auto-fill, minmax(${isMobile ? 90 : 130}px, 1fr))`, gap: isMobile ? 10 : 14 }}>
+              <div onClick={() => elegirCategoria(0)} className="oft-btn-press oft-cat-sheet-chip" style={{ animationDelay: "0s", border: `2px solid ${(seleccionadaId === 0) ? RED : GRAY2}`, borderRadius: 12, padding: isMobile ? "14px 6px" : "18px 8px", textAlign: "center", cursor: "pointer", background: (seleccionadaId === 0) ? "#FFF5F5" : WHITE }}>
+                <div style={{ display: "flex", justifyContent: "center", marginBottom: 5 }}><LayoutGrid size={isMobile ? 22 : 26} color={(seleccionadaId === 0) ? RED : BLACK} strokeWidth={1.8} /></div>
+                <div style={{ fontSize: isMobile ? 12 : 13, fontWeight: 700 }}>Todo</div>
               </div>
 
               {gruposConCategorias.map((g, i) => {
@@ -346,9 +357,9 @@ function CategoriaSheet({ onClose, categorias, gruposCategorias, seleccionadaId,
                 const iconoParaMostrar = g.icono_url ? { icono_url: g.icono_url, nombre: g.nombre } : primeraCatDelGrupo;
                 const tieneActivaAdentro = categorias.some(c => c.grupo_id === g.id && (c.id === seleccionadaId || c.id === resaltadaId));
                 return (
-                  <div key={"grupo-" + g.id} onClick={() => setGrupoActivo(g)} className="oft-btn-press oft-cat-sheet-chip" style={{ animationDelay: `${Math.min((i + 1) * 0.025, 0.3)}s`, border: `2px solid ${tieneActivaAdentro ? RED : GRAY2}`, borderRadius: 12, padding: "14px 6px", textAlign: "center", cursor: "pointer", background: tieneActivaAdentro ? "#FFF5F5" : WHITE, position: "relative" }}>
-                    <div style={{ display: "flex", justifyContent: "center", marginBottom: 5 }}><CategoryIcon cat={iconoParaMostrar} size={22} color={tieneActivaAdentro ? RED : BLACK} /></div>
-                    <div style={{ fontSize: 12, fontWeight: 700 }}>{g.nombre}</div>
+                  <div key={"grupo-" + g.id} onClick={() => setGrupoActivo(g)} className="oft-btn-press oft-cat-sheet-chip" style={{ animationDelay: `${Math.min((i + 1) * 0.025, 0.3)}s`, border: `2px solid ${tieneActivaAdentro ? RED : GRAY2}`, borderRadius: 12, padding: isMobile ? "14px 6px" : "18px 8px", textAlign: "center", cursor: "pointer", background: tieneActivaAdentro ? "#FFF5F5" : WHITE, position: "relative" }}>
+                    <div style={{ display: "flex", justifyContent: "center", marginBottom: 5 }}><CategoryIcon cat={iconoParaMostrar} size={isMobile ? 22 : 26} color={tieneActivaAdentro ? RED : BLACK} /></div>
+                    <div style={{ fontSize: isMobile ? 12 : 13, fontWeight: 700 }}>{g.nombre}</div>
                     <ChevronRight size={13} color={GRAY3} style={{ position: "absolute", top: 6, right: 6 }} />
                   </div>
                 );
@@ -357,22 +368,22 @@ function CategoriaSheet({ onClose, categorias, gruposCategorias, seleccionadaId,
               {sinGrupo.map((c, i) => {
                 const activa = seleccionadaId === c.id || resaltadaId === c.id;
                 return (
-                  <div key={c.id} onClick={() => elegirCategoria(c.id)} className="oft-btn-press oft-cat-sheet-chip" style={{ animationDelay: `${Math.min((i + 1 + gruposConCategorias.length) * 0.025, 0.3)}s`, border: `2px solid ${activa ? RED : GRAY2}`, borderRadius: 12, padding: "14px 6px", textAlign: "center", cursor: "pointer", background: activa ? "#FFF5F5" : WHITE }}>
-                    <div style={{ display: "flex", justifyContent: "center", marginBottom: 5 }}><CategoryIcon cat={c} size={22} color={activa ? RED : BLACK} /></div>
-                    <div style={{ fontSize: 12, fontWeight: 700 }}>{c.nombre}</div>
+                  <div key={c.id} onClick={() => elegirCategoria(c.id)} className="oft-btn-press oft-cat-sheet-chip" style={{ animationDelay: `${Math.min((i + 1 + gruposConCategorias.length) * 0.025, 0.3)}s`, border: `2px solid ${activa ? RED : GRAY2}`, borderRadius: 12, padding: isMobile ? "14px 6px" : "18px 8px", textAlign: "center", cursor: "pointer", background: activa ? "#FFF5F5" : WHITE }}>
+                    <div style={{ display: "flex", justifyContent: "center", marginBottom: 5 }}><CategoryIcon cat={c} size={isMobile ? 22 : 26} color={activa ? RED : BLACK} /></div>
+                    <div style={{ fontSize: isMobile ? 12 : 13, fontWeight: 700 }}>{c.nombre}</div>
                   </div>
                 );
               })}
             </div>
           ) : (
             // ── NIVEL 2: categorías específicas dentro del grupo elegido (más grandes) ──
-            <div key={"nivel-" + grupoActivo.id} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(130px, 1fr))", gap: 14 }}>
+            <div key={"nivel-" + grupoActivo.id} style={{ display: "grid", gridTemplateColumns: `repeat(auto-fill, minmax(${isMobile ? 130 : 160}px, 1fr))`, gap: isMobile ? 14 : 16 }}>
               {categoriasDelGrupo.map((c, i) => {
                 const activa = seleccionadaId === c.id || resaltadaId === c.id;
                 return (
-                  <div key={c.id} onClick={() => elegirCategoria(c.id)} className="oft-btn-press oft-cat-sheet-chip" style={{ animationDelay: `${Math.min(i * 0.03, 0.3)}s`, border: `2px solid ${activa ? RED : GRAY2}`, borderRadius: 14, padding: "22px 10px", textAlign: "center", cursor: "pointer", background: activa ? "#FFF5F5" : WHITE }}>
-                    <div style={{ display: "flex", justifyContent: "center", marginBottom: 8 }}><CategoryIcon cat={c} size={34} color={activa ? RED : BLACK} /></div>
-                    <div style={{ fontSize: 14, fontWeight: 800 }}>{c.nombre}</div>
+                  <div key={c.id} onClick={() => elegirCategoria(c.id)} className="oft-btn-press oft-cat-sheet-chip" style={{ animationDelay: `${Math.min(i * 0.03, 0.3)}s`, border: `2px solid ${activa ? RED : GRAY2}`, borderRadius: 14, padding: isMobile ? "22px 10px" : "26px 12px", textAlign: "center", cursor: "pointer", background: activa ? "#FFF5F5" : WHITE }}>
+                    <div style={{ display: "flex", justifyContent: "center", marginBottom: 8 }}><CategoryIcon cat={c} size={isMobile ? 34 : 38} color={activa ? RED : BLACK} /></div>
+                    <div style={{ fontSize: isMobile ? 14 : 15, fontWeight: 800 }}>{c.nombre}</div>
                   </div>
                 );
               })}
