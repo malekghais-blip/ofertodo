@@ -6103,7 +6103,8 @@ function AdminView() {
         if (existente) {
           grupoId = existente.id;
         } else {
-          const creado = await sb.post("grupos_categorias", { nombre });
+          const maxOrden = gruposCategorias.reduce((max, g) => Math.max(max, g.orden || 0), -1);
+          const creado = await sb.post("grupos_categorias", { nombre, orden: maxOrden + 1 });
           const nuevoGrupo = creado[0];
           setGruposCategorias(prev => [...prev, nuevoGrupo]);
           grupoId = nuevoGrupo.id;
@@ -6135,6 +6136,31 @@ function AdminView() {
       alert("Error subiendo ícono: " + err.message);
     }
     setGrupoUploading(null);
+  };
+
+  // Mueve un grupo un puesto arriba o abajo en el orden que ve el cliente — intercambia
+  // su "orden" con el del grupo vecino (así el número que reciba nunca se repite con nadie).
+  const handleMoveGrupo = async (grupo, direccion) => {
+    const ordenados = [...gruposCategorias].sort((a, b) => (a.orden - b.orden) || a.nombre.localeCompare(b.nombre));
+    const idx = ordenados.findIndex(g => g.id === grupo.id);
+    const idxVecino = direccion === "arriba" ? idx - 1 : idx + 1;
+    if (idxVecino < 0 || idxVecino >= ordenados.length) return; // ya está en la punta, no hace nada
+    const vecino = ordenados[idxVecino];
+
+    // Intercambia los valores de orden entre los dos, y refleja el cambio de inmediato en pantalla
+    setGruposCategorias(prev => prev.map(g => {
+      if (g.id === grupo.id) return { ...g, orden: vecino.orden };
+      if (g.id === vecino.id) return { ...g, orden: grupo.orden };
+      return g;
+    }));
+    try {
+      await Promise.all([
+        sb.patch("grupos_categorias", grupo.id, { orden: vecino.orden }),
+        sb.patch("grupos_categorias", vecino.id, { orden: grupo.orden }),
+      ]);
+    } catch(e) {
+      showToast("No se pudo guardar el nuevo orden: " + e.message);
+    }
   };
 
   // ── EMPRESAS DE ENVÍO ──────────────────────────────────────────
@@ -7752,22 +7778,28 @@ function AdminView() {
             {/* ÍCONOS DE LOS GRUPOS */}
             {gruposCategorias.length > 0 && (
               <>
-                <div style={{ fontSize: 18, fontWeight: 900, margin: "36px 0 6px", display: "flex", alignItems: "center", gap: 8 }}><LayoutGrid size={20} color={RED} /> Íconos de los grupos</div>
-                <p style={{ fontSize: 13, color: GRAY3, marginBottom: 16 }}>Por defecto, cada grupo usa el ícono de su primera categoría. Súbele una imagen propia aquí si quieres que se vea distinto.</p>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(180px,1fr))", gap: 16 }}>
-                  {gruposCategorias.map(g => (
-                    <div key={g.id} style={{ background: WHITE, borderRadius: 12, padding: 20, border: `1px solid ${GRAY2}` }}>
+                <div style={{ fontSize: 18, fontWeight: 900, margin: "36px 0 6px", display: "flex", alignItems: "center", gap: 8 }}><LayoutGrid size={20} color={RED} /> Grupos: orden e íconos</div>
+                <p style={{ fontSize: 13, color: GRAY3, marginBottom: 16 }}>Usa las flechas para elegir en qué orden aparecen los grupos en la web. Por defecto, cada grupo usa el ícono de su primera categoría — súbele una imagen propia si quieres que se vea distinto.</p>
+                <div style={{ display: "flex", flexDirection: "column", gap: 10, maxWidth: 480 }}>
+                  {[...gruposCategorias].sort((a, b) => (a.orden - b.orden) || a.nombre.localeCompare(b.nombre)).map((g, idx, arr) => (
+                    <div key={g.id} style={{ display: "flex", alignItems: "center", gap: 14, background: WHITE, borderRadius: 12, padding: 12, border: `1px solid ${GRAY2}` }}>
                       <div
                         onClick={() => { setGrupoUploading(null); grupoFileRef.current.dataset.grupoId = g.id; grupoFileRef.current?.click(); }}
-                        style={{ marginBottom: 8, cursor: "pointer", width: 56, height: 56, borderRadius: 10, border: `2px dashed ${GRAY2}`, display: "flex", alignItems: "center", justifyContent: "center", background: GRAY }}
+                        style={{ cursor: "pointer", width: 46, height: 46, borderRadius: 9, border: `2px dashed ${GRAY2}`, display: "flex", alignItems: "center", justifyContent: "center", background: GRAY, flexShrink: 0 }}
                         title="Cambiar icono del grupo"
                       >
-                        {grupoUploading === g.id ? <RefreshCw size={20} className="spin" color={GRAY3} /> : (
-                          g.icono_url ? <img src={g.icono_url} style={{ width: 32, height: 32, objectFit: "contain", borderRadius: 6 }} /> : <LayoutGrid size={28} color={GRAY3} strokeWidth={1.5} />
+                        {grupoUploading === g.id ? <RefreshCw size={18} className="spin" color={GRAY3} /> : (
+                          g.icono_url ? <img src={g.icono_url} style={{ width: 26, height: 26, objectFit: "contain", borderRadius: 5 }} /> : <LayoutGrid size={22} color={GRAY3} strokeWidth={1.5} />
                         )}
                       </div>
-                      <div style={{ fontWeight: 800 }}>{g.nombre}</div>
-                      <div style={{ fontSize: 12, color: GRAY3 }}>{categories.filter(c => c.grupo_id === g.id).length} categorías</div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g.nombre}</div>
+                        <div style={{ fontSize: 12, color: GRAY3 }}>{categories.filter(c => c.grupo_id === g.id).length} categorías</div>
+                      </div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 3, flexShrink: 0 }}>
+                        <button onClick={() => handleMoveGrupo(g, "arriba")} disabled={idx === 0} title="Subir" style={{ background: GRAY, border: "none", borderRadius: 6, width: 26, height: 20, display: "flex", alignItems: "center", justifyContent: "center", cursor: idx === 0 ? "default" : "pointer", opacity: idx === 0 ? 0.35 : 1 }}><ChevronUp size={14} /></button>
+                        <button onClick={() => handleMoveGrupo(g, "abajo")} disabled={idx === arr.length - 1} title="Bajar" style={{ background: GRAY, border: "none", borderRadius: 6, width: 26, height: 20, display: "flex", alignItems: "center", justifyContent: "center", cursor: idx === arr.length - 1 ? "default" : "pointer", opacity: idx === arr.length - 1 ? 0.35 : 1 }}><ChevronDown size={14} /></button>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -9195,7 +9227,7 @@ export default function App() {
         } catch(e3) { console.warn("Config de retiro en local no cargada:", e3.message); }
         // Grupos de categorías (no crítico, si falla se ignora — los grupos simplemente no muestran ícono propio)
         try {
-          const grupos = await sb.get("grupos_categorias", "?order=nombre");
+          const grupos = await sb.get("grupos_categorias", "?order=orden.asc,nombre.asc");
           setGruposCategorias(grupos || []);
         } catch(e4) { console.warn("Grupos de categorías no cargados:", e4.message); }
       } catch(e) {
