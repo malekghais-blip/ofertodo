@@ -1,6 +1,7 @@
 {
   "rewrites": [
     { "source": "/producto/:producto", "destination": "/api/og-producto" },
+    { "source": "/sitemap.xml", "destination": "/api/sitemap" },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
 }
