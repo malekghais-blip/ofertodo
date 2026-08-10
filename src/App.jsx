@@ -365,14 +365,14 @@ function CategoriaSheet({ onClose, categorias, gruposCategorias, seleccionadaId,
               })}
             </div>
           ) : (
-            // ── NIVEL 2: categorías específicas dentro del grupo elegido ──
-            <div key={"nivel-" + grupoActivo.id} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(90px, 1fr))", gap: 10 }}>
+            // ── NIVEL 2: categorías específicas dentro del grupo elegido (más grandes) ──
+            <div key={"nivel-" + grupoActivo.id} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(130px, 1fr))", gap: 14 }}>
               {categoriasDelGrupo.map((c, i) => {
                 const activa = seleccionadaId === c.id || resaltadaId === c.id;
                 return (
-                  <div key={c.id} onClick={() => elegirCategoria(c.id)} className="oft-btn-press oft-cat-sheet-chip" style={{ animationDelay: `${Math.min(i * 0.025, 0.3)}s`, border: `2px solid ${activa ? RED : GRAY2}`, borderRadius: 12, padding: "14px 6px", textAlign: "center", cursor: "pointer", background: activa ? "#FFF5F5" : WHITE }}>
-                    <div style={{ display: "flex", justifyContent: "center", marginBottom: 5 }}><CategoryIcon cat={c} size={22} color={activa ? RED : BLACK} /></div>
-                    <div style={{ fontSize: 12, fontWeight: 700 }}>{c.nombre}</div>
+                  <div key={c.id} onClick={() => elegirCategoria(c.id)} className="oft-btn-press oft-cat-sheet-chip" style={{ animationDelay: `${Math.min(i * 0.03, 0.3)}s`, border: `2px solid ${activa ? RED : GRAY2}`, borderRadius: 14, padding: "22px 10px", textAlign: "center", cursor: "pointer", background: activa ? "#FFF5F5" : WHITE }}>
+                    <div style={{ display: "flex", justifyContent: "center", marginBottom: 8 }}><CategoryIcon cat={c} size={34} color={activa ? RED : BLACK} /></div>
+                    <div style={{ fontSize: 14, fontWeight: 800 }}>{c.nombre}</div>
                   </div>
                 );
               })}
