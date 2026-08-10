@@ -293,7 +293,9 @@ function CategoriaTrigger({ categorias, seleccionadaId, onClick }) {
       </div>
       <div style={{ textAlign: "left", flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 10, color: GRAY3, fontWeight: 700, letterSpacing: 0.3 }}>CATEGORÍA</div>
-        <div style={{ fontSize: 14, fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{cat ? cat.nombre : "Todas las categorías"}</div>
+        <div style={{ fontSize: 14, fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {cat ? (cat.grupo ? `${cat.grupo} › ${cat.nombre}` : cat.nombre) : "Todas las categorías"}
+        </div>
       </div>
       <ChevronDown size={18} color={GRAY3} strokeWidth={2.2} />
     </button>
@@ -302,6 +304,16 @@ function CategoriaTrigger({ categorias, seleccionadaId, onClick }) {
 
 function CategoriaSheet({ onClose, categorias, seleccionadaId, resaltadaId, onSeleccionar }) {
   useLockBodyScroll();
+  // Nivel de navegación dentro del panel: null = vista inicial (grupos), o el nombre
+  // del grupo activo (viendo sus categorías específicas, ej. dentro de "Ropa de Dama")
+  const [grupoActivo, setGrupoActivo] = useState(null);
+
+  const gruposUnicos = [...new Set(categorias.map(c => c.grupo).filter(Boolean))];
+  const sinGrupo = categorias.filter(c => !c.grupo);
+  const categoriasDelGrupo = grupoActivo ? categorias.filter(c => c.grupo === grupoActivo) : [];
+
+  const elegirCategoria = (id) => { onSeleccionar(id); setGrupoActivo(null); };
+
   return createPortal(
     <div className="oft-overlay" style={{ ...S.overlay, alignItems: "flex-end", justifyContent: "center", padding: 0 }} onClick={onClose}>
       <div className="oft-sheet-slide" style={{ background: WHITE, borderRadius: "22px 22px 0 0", width: "100%", maxWidth: 480, maxHeight: "80vh", display: "flex", flexDirection: "column", overflow: "hidden" }} onClick={e => e.stopPropagation()}>
@@ -309,25 +321,60 @@ function CategoriaSheet({ onClose, categorias, seleccionadaId, resaltadaId, onSe
           <div style={{ width: 40, height: 4, borderRadius: 4, background: GRAY2 }} />
         </div>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 20px 14px", flexShrink: 0 }}>
-          <div style={{ fontWeight: 900, fontSize: 18 }}>Elige una categoría</div>
-          <button onClick={onClose} className="oft-btn-press" style={{ background: GRAY, border: "none", borderRadius: "50%", width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}><X size={15} /></button>
+          {grupoActivo ? (
+            <button onClick={() => setGrupoActivo(null)} className="oft-btn-press" style={{ background: "none", border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 6, padding: 0, fontWeight: 900, fontSize: 18 }}>
+              <ChevronDown size={20} style={{ transform: "rotate(90deg)" }} /> {grupoActivo}
+            </button>
+          ) : (
+            <div style={{ fontWeight: 900, fontSize: 18 }}>Elige una categoría</div>
+          )}
+          <button onClick={onClose} className="oft-btn-press" style={{ background: GRAY, border: "none", borderRadius: "50%", width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}><X size={15} /></button>
         </div>
         <div style={{ overflowY: "auto", padding: "0 20px 28px" }}>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(90px, 1fr))", gap: 10 }}>
-            <div onClick={() => onSeleccionar(0)} className="oft-btn-press oft-cat-sheet-chip" style={{ animationDelay: "0s", border: `2px solid ${(seleccionadaId === 0) ? RED : GRAY2}`, borderRadius: 12, padding: "14px 6px", textAlign: "center", cursor: "pointer", background: (seleccionadaId === 0) ? "#FFF5F5" : WHITE }}>
-              <div style={{ display: "flex", justifyContent: "center", marginBottom: 5 }}><LayoutGrid size={22} color={(seleccionadaId === 0) ? RED : BLACK} strokeWidth={1.8} /></div>
-              <div style={{ fontSize: 12, fontWeight: 700 }}>Todo</div>
+          {!grupoActivo ? (
+            // ── NIVEL 1: grupos generales + categorías sueltas (sin grupo) ──
+            <div key="nivel-grupos" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(90px, 1fr))", gap: 10 }}>
+              <div onClick={() => elegirCategoria(0)} className="oft-btn-press oft-cat-sheet-chip" style={{ animationDelay: "0s", border: `2px solid ${(seleccionadaId === 0) ? RED : GRAY2}`, borderRadius: 12, padding: "14px 6px", textAlign: "center", cursor: "pointer", background: (seleccionadaId === 0) ? "#FFF5F5" : WHITE }}>
+                <div style={{ display: "flex", justifyContent: "center", marginBottom: 5 }}><LayoutGrid size={22} color={(seleccionadaId === 0) ? RED : BLACK} strokeWidth={1.8} /></div>
+                <div style={{ fontSize: 12, fontWeight: 700 }}>Todo</div>
+              </div>
+
+              {gruposUnicos.map((grupo, i) => {
+                const primeraCatDelGrupo = categorias.find(c => c.grupo === grupo);
+                const tieneActivaAdentro = categorias.some(c => c.grupo === grupo && (c.id === seleccionadaId || c.id === resaltadaId));
+                return (
+                  <div key={"grupo-" + grupo} onClick={() => setGrupoActivo(grupo)} className="oft-btn-press oft-cat-sheet-chip" style={{ animationDelay: `${Math.min((i + 1) * 0.025, 0.3)}s`, border: `2px solid ${tieneActivaAdentro ? RED : GRAY2}`, borderRadius: 12, padding: "14px 6px", textAlign: "center", cursor: "pointer", background: tieneActivaAdentro ? "#FFF5F5" : WHITE, position: "relative" }}>
+                    <div style={{ display: "flex", justifyContent: "center", marginBottom: 5 }}><CategoryIcon cat={primeraCatDelGrupo} size={22} color={tieneActivaAdentro ? RED : BLACK} /></div>
+                    <div style={{ fontSize: 12, fontWeight: 700 }}>{grupo}</div>
+                    <ChevronRight size={13} color={GRAY3} style={{ position: "absolute", top: 6, right: 6 }} />
+                  </div>
+                );
+              })}
+
+              {sinGrupo.map((c, i) => {
+                const activa = seleccionadaId === c.id || resaltadaId === c.id;
+                return (
+                  <div key={c.id} onClick={() => elegirCategoria(c.id)} className="oft-btn-press oft-cat-sheet-chip" style={{ animationDelay: `${Math.min((i + 1 + gruposUnicos.length) * 0.025, 0.3)}s`, border: `2px solid ${activa ? RED : GRAY2}`, borderRadius: 12, padding: "14px 6px", textAlign: "center", cursor: "pointer", background: activa ? "#FFF5F5" : WHITE }}>
+                    <div style={{ display: "flex", justifyContent: "center", marginBottom: 5 }}><CategoryIcon cat={c} size={22} color={activa ? RED : BLACK} /></div>
+                    <div style={{ fontSize: 12, fontWeight: 700 }}>{c.nombre}</div>
+                  </div>
+                );
+              })}
             </div>
-            {categorias.map((c, i) => {
-              const activa = seleccionadaId === c.id || resaltadaId === c.id;
-              return (
-                <div key={c.id} onClick={() => onSeleccionar(c.id)} className="oft-btn-press oft-cat-sheet-chip" style={{ animationDelay: `${Math.min(i * 0.025, 0.3)}s`, border: `2px solid ${activa ? RED : GRAY2}`, borderRadius: 12, padding: "14px 6px", textAlign: "center", cursor: "pointer", background: activa ? "#FFF5F5" : WHITE }}>
-                  <div style={{ display: "flex", justifyContent: "center", marginBottom: 5 }}><CategoryIcon cat={c} size={22} color={activa ? RED : BLACK} /></div>
-                  <div style={{ fontSize: 12, fontWeight: 700 }}>{c.nombre}</div>
-                </div>
-              );
-            })}
-          </div>
+          ) : (
+            // ── NIVEL 2: categorías específicas dentro del grupo elegido ──
+            <div key={"nivel-" + grupoActivo} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(90px, 1fr))", gap: 10 }}>
+              {categoriasDelGrupo.map((c, i) => {
+                const activa = seleccionadaId === c.id || resaltadaId === c.id;
+                return (
+                  <div key={c.id} onClick={() => elegirCategoria(c.id)} className="oft-btn-press oft-cat-sheet-chip" style={{ animationDelay: `${Math.min(i * 0.025, 0.3)}s`, border: `2px solid ${activa ? RED : GRAY2}`, borderRadius: 12, padding: "14px 6px", textAlign: "center", cursor: "pointer", background: activa ? "#FFF5F5" : WHITE }}>
+                    <div style={{ display: "flex", justifyContent: "center", marginBottom: 5 }}><CategoryIcon cat={c} size={22} color={activa ? RED : BLACK} /></div>
+                    <div style={{ fontSize: 12, fontWeight: 700 }}>{c.nombre}</div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -6013,6 +6060,19 @@ function AdminView() {
     } catch(e) { alert("Error: " + e.message); }
   };
 
+  // Asigna (o quita) el grupo general de una categoría — ej. pone "Ropa de Dama" como
+  // grupo de las categorías Jeans Dama / Polo Dama / Enterizo Dama, para que en la web
+  // se muestren agrupadas y el cliente las vea en dos pasos (grupo → categoría exacta).
+  const handleUpdateCategoriaGrupo = async (cat, grupoNuevo) => {
+    const valor = grupoNuevo.trim() || null;
+    setCategories(prev => prev.map(c => c.id === cat.id ? { ...c, grupo: valor } : c));
+    try {
+      await sb.patch("categorias", cat.id, { grupo: valor });
+    } catch(e) {
+      showToast("No se pudo guardar el grupo: " + e.message);
+    }
+  };
+
   // ── EMPRESAS DE ENVÍO ──────────────────────────────────────────
   const [newEmpresa, setNewEmpresa] = useState("");
   const [empUploading, setEmpUploading] = useState(null);
@@ -7593,7 +7653,10 @@ function AdminView() {
               </div>
               <button style={{ ...S.btnRed, display: "inline-flex", alignItems: "center", gap: 6, height: 42 }} onClick={handleAddCategory}><FolderPlus size={16} /> Agregar categoría</button>
             </div>
-            <p style={{ fontSize: 13, color: GRAY3, marginBottom: 16 }}>Haz click en el icono de cada categoría para subir tu propia imagen.</p>
+            <p style={{ fontSize: 13, color: GRAY3, marginBottom: 16 }}>Haz click en el icono de cada categoría para subir tu propia imagen. Asígnale un "Grupo" a varias categorías relacionadas (ej. "Ropa de Dama") para que en la web el cliente las vea agrupadas, en vez de una lista larga suelta.</p>
+            <datalist id="grupos-existentes">
+              {[...new Set(categories.map(c => c.grupo).filter(Boolean))].map(g => <option key={g} value={g} />)}
+            </datalist>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(180px,1fr))", gap: 16 }}>
               {categories.map(c => (
                 <div key={c.id} style={{ background: WHITE, borderRadius: 12, padding: 20, border: `1px solid ${GRAY2}`, position: "relative" }}>
@@ -7606,7 +7669,15 @@ function AdminView() {
                     {catUploading === c.id ? <RefreshCw size={20} className="spin" color={GRAY3} /> : <CategoryIcon cat={c} size={32} />}
                   </div>
                   <div style={{ fontWeight: 800 }}>{c.nombre}</div>
-                  <div style={{ fontSize: 12, color: GRAY3, marginTop: 4 }}>{products.filter(p=>p.categoria_id===c.id).length} productos</div>
+                  <div style={{ fontSize: 12, color: GRAY3, marginBottom: 10 }}>{products.filter(p=>p.categoria_id===c.id).length} productos</div>
+                  <label style={{ fontSize: 11, color: GRAY3, fontWeight: 700, display: "block", marginBottom: 3 }}>Grupo (opcional)</label>
+                  <input
+                    list="grupos-existentes"
+                    defaultValue={c.grupo || ""}
+                    placeholder="Ej: Ropa de Dama"
+                    onBlur={e => { if (e.target.value.trim() !== (c.grupo || "")) handleUpdateCategoriaGrupo(c, e.target.value); }}
+                    style={{ ...S.input, marginBottom: 0, fontSize: 12, padding: "6px 10px" }}
+                  />
                 </div>
               ))}
             </div>
