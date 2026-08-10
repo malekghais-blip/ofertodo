@@ -1,6 +1,6 @@
 {
   "rewrites": [
-    { "source": "/", "has": [{ "type": "query", "key": "producto" }], "destination": "/api/og-producto" },
+    { "source": "/producto/:producto", "destination": "/api/og-producto" },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
 }
