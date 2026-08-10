@@ -1294,6 +1294,13 @@ function CatalogoView() {
   // Si el usuario eligió una categoría desde el inicio, ábrela
   useEffect(() => { setCatFilter(catalogCat || 0); }, [catalogCat]);
 
+  // Cambia el título de la pestaña del navegador según la categoría que se esté viendo
+  useEffect(() => {
+    const cat = categories.find(c => c.id === catFilter);
+    document.title = cat ? `${cat.nombre} | Ofertodo - Distribuidora en Panamá` : "Catálogo | Ofertodo - Distribuidora en Panamá";
+    return () => { document.title = "Ofertodo - Distribuidora al por Mayor en Panamá | Ropa, Calzado y Accesorios"; };
+  }, [catFilter, categories]);
+
   // Quita tildes y pasa a minúsculas, para que la búsqueda encuentre resultados
   // sin importar si el cliente escribe con o sin acentos (ej. "nino" encuentra "Niño")
   const normalizar = (t) => (t || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
@@ -1386,6 +1393,14 @@ function ProductModal() {
   const [color, setColor] = useState("");
 
   useEffect(() => { setPres("docena"); setCount(1); setAdded(false); setTalla(""); setColor(""); }, [product]);
+
+  // Cambia el título de la pestaña al nombre del producto mientras está abierto
+  useEffect(() => {
+    if (!product) return;
+    const anterior = document.title;
+    document.title = `${product.nombre} | Ofertodo`;
+    return () => { document.title = anterior; };
+  }, [product]);
 
   if (!product) return null;
   const total = presTotal(product, pres, count);
