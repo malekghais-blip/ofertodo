@@ -738,7 +738,7 @@ function HomeView() {
         <h1 className="oft-cta-title">Compra más <span>·</span> Crece más</h1>
         <div className="oft-cta-actions">
           <button className="oft-cta-btn-primary" onClick={() => { setCatalogCat(0); setView("catalogo"); }}>Ver catálogo</button>
-          <button className="oft-cta-btn-ghost" onClick={() => window.open(`https://wa.me/${WA_NUMBER}?text=Hola%20Ofertodo%2C%20quiero%20hacer%20un%20pedido`, "_blank")}>
+          <button className="oft-cta-btn-whatsapp" onClick={() => window.open(`https://wa.me/${WA_NUMBER}?text=Hola%20Ofertodo%2C%20quiero%20hacer%20un%20pedido`, "_blank")}>
             <MessageCircle size={16} strokeWidth={2.2} /> Consultar por WhatsApp
           </button>
         </div>
@@ -3152,8 +3152,7 @@ export default function App() {
         .oft-infobar > div { animation: heroFadeUp 0.5s ease both; }
 
         /* ── CARRUSEL DE PROMOCIONES ── */
-        .oft-carousel { position: relative; width: 100%; aspect-ratio: 21 / 9; overflow: hidden; background: ${BLACK}; }
-        @media (max-width: 640px) { .oft-carousel { aspect-ratio: 4 / 3; } }
+        .oft-carousel { position: relative; width: 100%; aspect-ratio: 16 / 9; overflow: hidden; background: ${BLACK}; }
         .oft-carousel-track { display: flex; height: 100%; transition: transform 0.55s cubic-bezier(0.65,0,0.35,1); touch-action: pan-y; }
         .oft-carousel-slide { flex: 0 0 100%; height: 100%; position: relative; cursor: pointer; }
         .oft-carousel-slide img { width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -3165,16 +3164,16 @@ export default function App() {
         .oft-carousel-dot.active { width: 20px; border-radius: 3px; background: ${WHITE}; }
 
         /* ── BARRA DE MARCA + BOTONES (debajo del carrusel) ── */
-        .oft-cta-bar { background: ${BLACK}; color: ${WHITE}; padding: 30px 24px 34px; text-align: center; position: relative; overflow: hidden; }
-        .oft-cta-bar::before { content: ""; position: absolute; top: 0; left: 50%; transform: translateX(-50%); width: 220px; height: 1px; background: linear-gradient(90deg, transparent, ${RED}, transparent); }
+        .oft-cta-bar { background: linear-gradient(180deg, #FFFFFF 0%, #F5F4F0 100%); color: ${BLACK}; padding: 30px 24px 34px; text-align: center; position: relative; overflow: hidden; border-bottom: 1px solid ${GRAY2}; }
+        .oft-cta-bar::before { content: ""; position: absolute; top: 0; left: 50%; transform: translateX(-50%); width: 220px; height: 2px; background: linear-gradient(90deg, transparent, ${RED}, transparent); }
         .oft-cta-tag { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: ${RED}; margin-bottom: 10px; }
-        .oft-cta-title { font-size: 22px; font-weight: 800; letter-spacing: -0.3px; margin-bottom: 22px; }
+        .oft-cta-title { font-size: 22px; font-weight: 800; letter-spacing: -0.3px; margin-bottom: 22px; color: ${BLACK}; }
         .oft-cta-title span { color: ${RED}; }
         .oft-cta-actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
         .oft-cta-btn-primary { background: ${RED}; color: ${WHITE}; border: none; padding: 13px 30px; border-radius: 100px; font-weight: 700; font-size: 14px; cursor: pointer; transition: transform 0.15s ease, box-shadow 0.15s ease; font-family: inherit; }
         .oft-cta-btn-primary:hover { transform: translateY(-1px); box-shadow: 0 6px 18px rgba(227,30,36,0.35); }
-        .oft-cta-btn-ghost { background: transparent; color: ${WHITE}; border: 1.5px solid rgba(255,255,255,0.25); padding: 12px 26px; border-radius: 100px; font-weight: 700; font-size: 14px; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; transition: border-color 0.15s ease, background 0.15s ease; font-family: inherit; }
-        .oft-cta-btn-ghost:hover { border-color: rgba(255,255,255,0.5); background: rgba(255,255,255,0.06); }
+        .oft-cta-btn-whatsapp { background: #25D366; color: ${WHITE}; border: none; padding: 12px 26px; border-radius: 100px; font-weight: 700; font-size: 14px; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; transition: transform 0.15s ease, box-shadow 0.15s ease; font-family: inherit; }
+        .oft-cta-btn-whatsapp:hover { transform: translateY(-1px); box-shadow: 0 6px 18px rgba(37,211,102,0.35); }
 
         @keyframes barGrow { from { transform: scaleY(0); } to { transform: scaleY(1); } }
         .oft-bar-grow { transform-origin: bottom; animation: barGrow 0.7s cubic-bezier(0.22,1,0.36,1) both; }
