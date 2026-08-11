@@ -3154,10 +3154,10 @@ export default function App() {
         .oft-infobar > div { animation: heroFadeUp 0.5s ease both; }
 
         /* ── CARRUSEL DE PROMOCIONES ── */
-        .oft-carousel-wrap { max-width: 1200px; margin: 0 auto; padding: 20px 24px 0; }
-        @media (max-width: 640px) { .oft-carousel-wrap { padding: 12px 12px 0; } }
-        .oft-carousel { position: relative; width: 100%; aspect-ratio: 16 / 9; overflow: hidden; background: ${BLACK}; border-radius: 16px; }
-        @media (max-width: 640px) { .oft-carousel { border-radius: 12px; } }
+        .oft-carousel-wrap { background: #F5F4F0; max-width: 1200px; margin: 0 auto; padding: 24px 24px 0; }
+        @media (max-width: 640px) { .oft-carousel-wrap { padding: 14px 12px 0; } }
+        .oft-carousel { position: relative; width: 100%; aspect-ratio: 16 / 9; overflow: hidden; background: ${GRAY}; border-radius: 16px; box-shadow: 0 12px 32px -12px rgba(0,0,0,0.18); }
+        @media (max-width: 640px) { .oft-carousel { border-radius: 12px; box-shadow: 0 8px 20px -10px rgba(0,0,0,0.16); } }
         .oft-carousel-track { display: flex; height: 100%; transition: transform 0.55s cubic-bezier(0.65,0,0.35,1); touch-action: pan-y; }
         .oft-carousel-slide { flex: 0 0 100%; height: 100%; position: relative; cursor: pointer; }
         .oft-carousel-slide img { width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -3169,7 +3169,7 @@ export default function App() {
         .oft-carousel-dot.active { width: 20px; border-radius: 3px; background: ${WHITE}; }
 
         /* ── BARRA DE MARCA + BOTONES (debajo del carrusel) ── */
-        .oft-cta-bar { background: linear-gradient(180deg, #FFFFFF 0%, #F5F4F0 100%); color: ${BLACK}; padding: 30px 24px 34px; text-align: center; position: relative; overflow: hidden; border-bottom: 1px solid ${GRAY2}; }
+        .oft-cta-bar { background: #F5F4F0; color: ${BLACK}; padding: 30px 24px 34px; text-align: center; position: relative; overflow: hidden; border-bottom: 1px solid ${GRAY2}; }
         .oft-cta-bar::before { content: ""; position: absolute; top: 0; left: 50%; transform: translateX(-50%); width: 220px; height: 2px; background: linear-gradient(90deg, transparent, ${RED}, transparent); }
         .oft-cta-tag { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: ${RED}; margin-bottom: 10px; }
         .oft-cta-title { font-size: 22px; font-weight: 800; letter-spacing: -0.3px; margin-bottom: 22px; color: ${BLACK}; }
