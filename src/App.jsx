@@ -3157,11 +3157,11 @@ export default function App() {
 
         /* ── CARRUSEL DE PROMOCIONES ── */
         .oft-carousel-section { background: #F5F4F0; }
-        .oft-carousel-wrap { max-width: 1200px; margin: 0 auto; padding: 24px 24px 0; }
+        .oft-carousel-wrap { max-width: 1320px; margin: 0 auto; padding: 24px 24px 0; }
         @media (max-width: 640px) { .oft-carousel-wrap { padding: 14px 12px 0; } }
         .oft-carousel { position: relative; width: 100%; aspect-ratio: 16 / 9; overflow: hidden; background: ${GRAY}; border-radius: 16px; box-shadow: 0 12px 32px -12px rgba(0,0,0,0.18); }
         @media (max-width: 640px) { .oft-carousel { border-radius: 12px; box-shadow: 0 8px 20px -10px rgba(0,0,0,0.16); } }
-        @media (min-width: 641px) { .oft-carousel { max-height: 340px; } }
+        @media (min-width: 641px) { .oft-carousel { max-height: 430px; } }
         .oft-carousel-track { display: flex; height: 100%; transition: transform 0.55s cubic-bezier(0.65,0,0.35,1); touch-action: pan-y; }
         .oft-carousel-slide { flex: 0 0 100%; height: 100%; position: relative; cursor: pointer; }
         .oft-carousel-slide img { width: 100%; height: 100%; object-fit: cover; display: block; }
