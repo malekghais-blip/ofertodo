@@ -837,7 +837,7 @@ function EditCotizacionModal({ cotizacion, empresas, sucursales, onClose, onSave
 //  ADMIN PANEL
 // ═══════════════════════════════════════════════════════════════
 function AdminView() {
-  const { products, setProducts, categories, setCategories, gruposCategorias, setGruposCategorias, empresas, setEmpresas, sucursales, setSucursales, localesRetiro, setLocalesRetiro, retiroLocalHabilitado, setRetiroLocalHabilitado, showToast, setView, setUser, user } = useApp();
+  const { products, setProducts, categories, setCategories, gruposCategorias, setGruposCategorias, banners, setBanners, empresas, setEmpresas, sucursales, setSucursales, localesRetiro, setLocalesRetiro, retiroLocalHabilitado, setRetiroLocalHabilitado, showToast, setView, setUser, user } = useApp();
   // Rol del usuario actual: 'admin' = módulo completo, 'operador' = acceso limitado.
   // Los admins creados antes de este cambio pueden no tener "rol" guardado todavía — por
   // compatibilidad, si es_admin es true y no tiene rol, se trata como admin completo.
@@ -1764,6 +1764,91 @@ function AdminView() {
     }
   };
 
+  // ── BANNERS PROMOCIONALES (carrusel del inicio) ─────────────────
+  const [bannerUploading, setBannerUploading] = useState(false);
+  const bannerNuevoFileRef = useRef(null);
+  const bannerReemplazoFileRef = useRef(null);
+
+  const handleBannerNuevo = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setBannerUploading(true);
+    try {
+      const fileComprimido = await comprimirImagen(file, 1600, 0.82); // banners son grandes, necesitan más resolución que un ícono
+      const cleanName = fileComprimido.name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9.\-_]/g, "_");
+      const path = `${Date.now()}_${cleanName}`;
+      await sb.upload("banners", path, fileComprimido);
+      const url = `${sb.publicUrl("banners", path)}?t=${Date.now()}`;
+      const maxOrden = banners.reduce((max, b) => Math.max(max, b.orden || 0), -1);
+      const creado = await sb.post("banners_promocionales", {
+        imagen_url: url, destino_tipo: "catalogo", activo: true, orden: maxOrden + 1,
+      });
+      setBanners(prev => [...prev, creado[0]]);
+      showToast("Banner agregado");
+    } catch(err) {
+      alert("Error subiendo el banner: " + err.message);
+    }
+    setBannerUploading(false);
+  };
+
+  const handleBannerReemplazarImagen = async (e, banner) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setBannerUploading(true);
+    try {
+      const fileComprimido = await comprimirImagen(file, 1600, 0.82);
+      const cleanName = fileComprimido.name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9.\-_]/g, "_");
+      const path = `${Date.now()}_${cleanName}`;
+      await sb.upload("banners", path, fileComprimido);
+      const url = `${sb.publicUrl("banners", path)}?t=${Date.now()}`;
+      await sb.patch("banners_promocionales", banner.id, { imagen_url: url });
+      setBanners(prev => prev.map(b => b.id === banner.id ? { ...b, imagen_url: url } : b));
+      showToast("Imagen actualizada");
+    } catch(err) {
+      alert("Error subiendo la imagen: " + err.message);
+    }
+    setBannerUploading(false);
+  };
+
+  const handleUpdateBanner = async (banner, cambios) => {
+    setBanners(prev => prev.map(b => b.id === banner.id ? { ...b, ...cambios } : b));
+    try {
+      await sb.patch("banners_promocionales", banner.id, cambios);
+    } catch(e) {
+      showToast("No se pudo guardar: " + e.message);
+    }
+  };
+
+  const handleDeleteBanner = async (banner) => {
+    if (!confirm("¿Eliminar este banner del carrusel?")) return;
+    try {
+      await sb.delete("banners_promocionales", banner.id);
+      setBanners(prev => prev.filter(b => b.id !== banner.id));
+      showToast("Banner eliminado");
+    } catch(e) { alert("Error: " + e.message); }
+  };
+
+  const handleMoveBanner = async (banner, direccion) => {
+    const ordenados = [...banners].sort((a, b) => (a.orden || 0) - (b.orden || 0));
+    const idx = ordenados.findIndex(b => b.id === banner.id);
+    const idxVecino = direccion === "arriba" ? idx - 1 : idx + 1;
+    if (idxVecino < 0 || idxVecino >= ordenados.length) return;
+    const vecino = ordenados[idxVecino];
+    setBanners(prev => prev.map(b => {
+      if (b.id === banner.id) return { ...b, orden: vecino.orden };
+      if (b.id === vecino.id) return { ...b, orden: banner.orden };
+      return b;
+    }));
+    try {
+      await Promise.all([
+        sb.patch("banners_promocionales", banner.id, { orden: vecino.orden }),
+        sb.patch("banners_promocionales", vecino.id, { orden: banner.orden }),
+      ]);
+    } catch(e) {
+      showToast("No se pudo guardar el nuevo orden: " + e.message);
+    }
+  };
+
   // ── EMPRESAS DE ENVÍO ──────────────────────────────────────────
   const [newEmpresa, setNewEmpresa] = useState("");
   const [empUploading, setEmpUploading] = useState(null);
@@ -1947,6 +2032,7 @@ function AdminView() {
     ["crear", "Crear", FilePlus],
     ["products", "Productos", Tag],
     ["categories", "Categorías", FolderOpen],
+    ["banners", "Banners Inicio", ImageIcon],
     ["descuentos", "Descuentos", Zap],
     ["retornos", "Retornos", RefreshCw],
     ["analisis", "Análisis Stock", TrendingUp],
@@ -3420,6 +3506,95 @@ function AdminView() {
               if (cat) handleCatIconUpload(e, cat);
               e.target.value = "";
             }} />
+          </>
+        )}
+
+        {/* ═══════════ BANNERS PROMOCIONALES (CARRUSEL DEL INICIO) ═══════════ */}
+        {tab === "banners" && esAdminCompleto && (
+          <>
+            <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 4 }}>Banners del inicio</div>
+            <p style={{ fontSize: 13, color: GRAY3, marginBottom: 20 }}>
+              El carrusel que ven los clientes al entrar a tu web. Cada banner puede llevar a un producto específico, una categoría, el catálogo completo, o un link externo. Usa las flechas para elegir el orden.
+            </p>
+
+            <button
+              onClick={() => bannerNuevoFileRef.current?.click()}
+              disabled={bannerUploading}
+              style={{ ...S.btnRed, marginBottom: 24, opacity: bannerUploading ? 0.6 : 1 }}
+            >
+              {bannerUploading ? <RefreshCw size={16} className="spin" /> : <Plus size={16} />} Agregar banner
+            </button>
+            <input ref={bannerNuevoFileRef} type="file" accept="image/*" style={{ display: "none" }} onChange={(e) => { handleBannerNuevo(e); e.target.value = ""; }} />
+            <input ref={bannerReemplazoFileRef} type="file" accept="image/*" style={{ display: "none" }} onChange={(e) => {
+              const bannerId = Number(e.target.dataset.bannerId);
+              const banner = banners.find(b => b.id === bannerId);
+              if (banner) handleBannerReemplazarImagen(e, banner);
+              e.target.value = "";
+            }} />
+
+            {banners.length === 0 ? (
+              <p style={{ color: GRAY3, fontSize: 14 }}>Todavía no has agregado ningún banner.</p>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 14, maxWidth: 780 }}>
+                {[...banners].sort((a, b) => (a.orden || 0) - (b.orden || 0)).map((b, idx, arr) => (
+                  <div key={b.id} style={{ background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 12, padding: 16, display: "flex", gap: 16, opacity: b.activo ? 1 : 0.55 }}>
+                    <div
+                      onClick={() => { bannerReemplazoFileRef.current.dataset.bannerId = b.id; bannerReemplazoFileRef.current?.click(); }}
+                      title="Cambiar imagen"
+                      className="oft-banner-thumb"
+                      style={{ width: 140, height: 80, borderRadius: 8, overflow: "hidden", cursor: "pointer", flexShrink: 0, background: GRAY, position: "relative" }}
+                    >
+                      <img src={imagenOptimizada(b.imagen_url, 300)} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                      <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.35)", opacity: 0, transition: "opacity 0.15s" }} className="oft-banner-hover-overlay">
+                        <PencilIcon size={16} color={WHITE} />
+                      </div>
+                    </div>
+
+                    <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 8 }}>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <input defaultValue={b.titulo || ""} placeholder="Título (opcional)" onBlur={e => { if (e.target.value !== (b.titulo || "")) handleUpdateBanner(b, { titulo: e.target.value.trim() || null }); }} style={{ ...S.input, marginBottom: 0, fontSize: 13, flex: 1 }} />
+                        <input defaultValue={b.subtitulo || ""} placeholder="Subtítulo (opcional)" onBlur={e => { if (e.target.value !== (b.subtitulo || "")) handleUpdateBanner(b, { subtitulo: e.target.value.trim() || null }); }} style={{ ...S.input, marginBottom: 0, fontSize: 13, flex: 1 }} />
+                      </div>
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        <select value={b.destino_tipo} onChange={e => handleUpdateBanner(b, { destino_tipo: e.target.value, destino_valor: null })} style={{ ...S.input, marginBottom: 0, fontSize: 13, width: 160 }}>
+                          <option value="catalogo">→ Catálogo completo</option>
+                          <option value="categoria">→ Una categoría</option>
+                          <option value="producto">→ Un producto</option>
+                          <option value="url">→ Link externo</option>
+                        </select>
+                        {b.destino_tipo === "categoria" && (
+                          <select value={b.destino_valor || ""} onChange={e => handleUpdateBanner(b, { destino_valor: e.target.value })} style={{ ...S.input, marginBottom: 0, fontSize: 13, flex: 1, minWidth: 160 }}>
+                            <option value="">Elige una categoría...</option>
+                            {categories.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                          </select>
+                        )}
+                        {b.destino_tipo === "producto" && (
+                          <select value={b.destino_valor || ""} onChange={e => handleUpdateBanner(b, { destino_valor: e.target.value })} style={{ ...S.input, marginBottom: 0, fontSize: 13, flex: 1, minWidth: 160 }}>
+                            <option value="">Elige un producto...</option>
+                            {products.filter(p => p.activo).map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+                          </select>
+                        )}
+                        {b.destino_tipo === "url" && (
+                          <input defaultValue={b.destino_valor || ""} placeholder="https://..." onBlur={e => { if (e.target.value !== (b.destino_valor || "")) handleUpdateBanner(b, { destino_valor: e.target.value.trim() }); }} style={{ ...S.input, marginBottom: 0, fontSize: 13, flex: 1, minWidth: 160 }} />
+                        )}
+                      </div>
+                    </div>
+
+                    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, flexShrink: 0 }}>
+                      <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 700, color: b.activo ? "#0F6E56" : GRAY3, cursor: "pointer" }}>
+                        <input type="checkbox" checked={b.activo} onChange={e => handleUpdateBanner(b, { activo: e.target.checked })} />
+                        {b.activo ? "Activo" : "Apagado"}
+                      </label>
+                      <div style={{ display: "flex", gap: 3 }}>
+                        <button onClick={() => handleMoveBanner(b, "arriba")} disabled={idx === 0} title="Subir" style={{ background: GRAY, border: "none", borderRadius: 6, width: 26, height: 22, display: "flex", alignItems: "center", justifyContent: "center", cursor: idx === 0 ? "default" : "pointer", opacity: idx === 0 ? 0.35 : 1 }}><ChevronUp size={14} /></button>
+                        <button onClick={() => handleMoveBanner(b, "abajo")} disabled={idx === arr.length - 1} title="Bajar" style={{ background: GRAY, border: "none", borderRadius: 6, width: 26, height: 22, display: "flex", alignItems: "center", justifyContent: "center", cursor: idx === arr.length - 1 ? "default" : "pointer", opacity: idx === arr.length - 1 ? 0.35 : 1 }}><ChevronDown size={14} /></button>
+                      </div>
+                      <button onClick={() => handleDeleteBanner(b)} title="Eliminar" style={{ background: "none", border: "none", color: GRAY3, cursor: "pointer", display: "flex" }}><Trash2 size={15} /></button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </>
         )}
 
