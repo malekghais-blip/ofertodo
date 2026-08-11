@@ -550,10 +550,12 @@ function presUnitPrice(product, pres) {
 // modificar el archivo original para nada). Esto beneficia también a las fotos que se
 // subieron antes de que empezáramos a comprimir al subir. Si la URL no es de Supabase
 // Storage (o viene vacía), la deja tal cual.
-function imagenOptimizada(url, ancho = 400) {
+// IMPORTANTE: hay que pedir ancho Y alto juntos con resize=contain -- si se pide solo
+// uno de los dos, Supabase recorta la foto en vez de solo achicarla completa.
+function imagenOptimizada(url, tamano = 400) {
   if (!url || !url.includes("/storage/v1/object/public/")) return url;
   const base = url.replace("/storage/v1/object/public/", "/storage/v1/render/image/public/");
-  return base + (base.includes("?") ? "&" : "?") + `width=${ancho}&quality=75`;
+  return base + (base.includes("?") ? "&" : "?") + `width=${tamano}&height=${tamano}&resize=contain&quality=75`;
 }
 
 function comprimirImagen(file, maxDimension = 1400, calidad = 0.82) {
