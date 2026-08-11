@@ -637,8 +637,85 @@ function PagoResultadoView() {
   );
 }
 
+// ═══════════════════════════════════════════════════════════════
+//  CARRUSEL DE BANNERS PROMOCIONALES — avanza solo, se puede deslizar
+//  con el dedo, y cada uno lleva a donde el admin configuró (producto,
+//  categoría, catálogo completo, o un link externo).
+// ═══════════════════════════════════════════════════════════════
+function PromoCarousel({ banners }) {
+  const { setView, setCatalogCat, setQuickView, products } = useApp();
+  const [indice, setIndice] = useState(0);
+  const [pausado, setPausado] = useState(false);
+  const touchStartX = useRef(null);
+
+  const activos = [...banners].filter(b => b.activo).sort((a, b) => (a.orden || 0) - (b.orden || 0));
+  const total = activos.length;
+
+  useEffect(() => {
+    if (indice >= total) setIndice(0);
+  }, [total]);
+
+  useEffect(() => {
+    if (total <= 1 || pausado) return;
+    const t = setInterval(() => setIndice(i => (i + 1) % total), 5000);
+    return () => clearInterval(t);
+  }, [total, pausado]);
+
+  if (total === 0) return null;
+
+  const irAlDestino = (b) => {
+    if (b.destino_tipo === "producto") {
+      const p = products.find(pr => String(pr.id) === String(b.destino_valor));
+      if (p) setQuickView(p); else { setCatalogCat(0); setView("catalogo"); }
+    } else if (b.destino_tipo === "categoria") {
+      setCatalogCat(Number(b.destino_valor) || 0);
+      setView("catalogo");
+    } else if (b.destino_tipo === "url" && b.destino_valor) {
+      window.open(b.destino_valor, "_blank");
+    } else {
+      setCatalogCat(0);
+      setView("catalogo");
+    }
+  };
+
+  const onTouchStart = (e) => { touchStartX.current = e.touches[0].clientX; };
+  const onTouchEnd = (e) => {
+    if (touchStartX.current == null) return;
+    const diff = e.changedTouches[0].clientX - touchStartX.current;
+    if (Math.abs(diff) > 40) {
+      setIndice(i => diff > 0 ? (i - 1 + total) % total : (i + 1) % total);
+    }
+    touchStartX.current = null;
+  };
+
+  return (
+    <div className="oft-carousel" onMouseEnter={() => setPausado(true)} onMouseLeave={() => setPausado(false)}>
+      <div className="oft-carousel-track" style={{ transform: `translateX(-${indice * 100}%)` }} onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
+        {activos.map(b => (
+          <div key={b.id} className="oft-carousel-slide" onClick={() => irAlDestino(b)} role="button" tabIndex={0}>
+            <img src={imagenOptimizada(b.imagen_url, 1400)} alt={b.titulo || "Promoción"} loading="eager" decoding="async" />
+            {(b.titulo || b.subtitulo) && (
+              <div className="oft-carousel-caption">
+                {b.titulo && <div className="oft-carousel-title">{b.titulo}</div>}
+                {b.subtitulo && <div className="oft-carousel-subtitle">{b.subtitulo}</div>}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+      {total > 1 && (
+        <div className="oft-carousel-dots">
+          {activos.map((b, i) => (
+            <button key={b.id} className={"oft-carousel-dot" + (i === indice ? " active" : "")} onClick={() => setIndice(i)} aria-label={`Ver promoción ${i + 1}`} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function HomeView() {
-  const { setView, setCatalogCat, categories, gruposCategorias, products, addToCart } = useApp();
+  const { setView, setCatalogCat, categories, gruposCategorias, products, addToCart, banners } = useApp();
   const featured = products.filter(p => p.activo && p.visible_web !== false && p.destacado);
   const [catSheetAbierto, setCatSheetAbierto] = useState(false);
   const [grupoInicialSheet, setGrupoInicialSheet] = useState(null);
@@ -652,20 +729,16 @@ function HomeView() {
 
   return (
     <>
-      {/* HERO */}
-      <div className="oft-hero" style={{ background: `linear-gradient(135deg, ${BLACK} 0%, #2a0000 60%, #1a0000 100%)`, color: WHITE, padding: "64px 24px 52px", textAlign: "center" }}>
-        <div style={{ background: RED, color: WHITE, fontSize: 11, fontWeight: 800, letterSpacing: 2, padding: "4px 14px", borderRadius: 4, display: "inline-flex", alignItems: "center", gap: 6, marginBottom: 18, textTransform: "uppercase" }}>
-          <Zap size={12} strokeWidth={2.5} /> Distribuidora · Panamá
-        </div>
-        <h1 className="oft-hero-title" style={{ fontSize: 44, fontWeight: 900, lineHeight: 1.1, marginBottom: 16, letterSpacing: -1 }}>
-          Compra más<br /><span style={{ color: RED }}>Crece más</span>
-        </h1>
-        <p style={{ color: "#ccc", fontSize: 16, marginBottom: 36, maxWidth: 480, margin: "0 auto 36px" }}>
-          Compra por pieza, media docena o docena. Ropa, calzado y accesorios de calidad. Enviamos a todo Panamá.
-        </p>
-        <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
-          <button style={{ ...S.btnRed, padding: "14px 30px", fontSize: 15 }} onClick={() => { setCatalogCat(0); setView("catalogo"); }}>Ver Catálogo →</button>
-          <button style={{ ...S.btnWA, padding: "14px 24px", fontSize: 15 }} onClick={() => window.open(`https://wa.me/${WA_NUMBER}?text=Hola%20Ofertodo%2C%20quiero%20hacer%20un%20pedido`, "_blank")}>
+      {/* CARRUSEL DE PROMOCIONES */}
+      <PromoCarousel banners={banners} />
+
+      {/* BARRA DE MARCA + ACCIONES — complementa el carrusel, minimalista y oscura */}
+      <div className="oft-cta-bar">
+        <div className="oft-cta-tag"><Zap size={11} strokeWidth={2.5} /> Distribuidora · Panamá</div>
+        <h1 className="oft-cta-title">Compra más <span>·</span> Crece más</h1>
+        <div className="oft-cta-actions">
+          <button className="oft-cta-btn-primary" onClick={() => { setCatalogCat(0); setView("catalogo"); }}>Ver catálogo</button>
+          <button className="oft-cta-btn-ghost" onClick={() => window.open(`https://wa.me/${WA_NUMBER}?text=Hola%20Ofertodo%2C%20quiero%20hacer%20un%20pedido`, "_blank")}>
             <MessageCircle size={16} strokeWidth={2.2} /> Consultar por WhatsApp
           </button>
         </div>
@@ -2773,6 +2846,7 @@ export default function App() {
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]);
   const [gruposCategorias, setGruposCategorias] = useState([]); // grupos generales (ej. "Ropa de Dama"), cada uno con su propio ícono
+  const [banners, setBanners] = useState([]); // banners promocionales del carrusel del inicio
   const [empresas, setEmpresas] = useState([]);
   const [sucursales, setSucursales] = useState([]);
   const [localesRetiro, setLocalesRetiro] = useState([]); // locales propios donde se puede retirar
@@ -2964,6 +3038,13 @@ export default function App() {
           const grupos = await sb.get("grupos_categorias", "?order=orden.asc,nombre.asc");
           setGruposCategorias(grupos || []);
         } catch(e4) { console.warn("Grupos de categorías no cargados:", e4.message); }
+        // Banners promocionales del carrusel del inicio (no crítico, si falla el inicio se ve sin carrusel)
+        // Trae TODOS (activos e inactivos) -- el carrusel del cliente ya filtra solo los activos,
+        // y así el admin puede ver/reactivar los que estén apagados.
+        try {
+          const bannersData = await sb.get("banners_promocionales", "?order=orden.asc");
+          setBanners(bannersData || []);
+        } catch(e5) { console.warn("Banners promocionales no cargados:", e5.message); }
       } catch(e) {
         console.warn("⚠️ Supabase no configurado. Usando datos demo.", e.message);
         // DATOS DEMO cuando Supabase no está configurado
@@ -2990,7 +3071,7 @@ export default function App() {
   }, []);
 
   const isAdmin = view === "admin";
-  const ctx = { view, setView, cart, setCart, addToCart, cartPulse, user, setUser, showLogin, setShowLogin, showRegister, setShowRegister, showCart, setShowCart, quickView, setQuickView, pagoResultado, setPagoResultado, catalogCat, setCatalogCat, completeProfile, setCompleteProfile, googleMfaPaso, setGoogleMfaPaso, pendingCheckout, setPendingCheckout, products, setProducts, categories, setCategories, gruposCategorias, setGruposCategorias, empresas, setEmpresas, sucursales, setSucursales, localesRetiro, setLocalesRetiro, retiroLocalHabilitado, setRetiroLocalHabilitado, loading, showToast };
+  const ctx = { view, setView, cart, setCart, addToCart, cartPulse, user, setUser, showLogin, setShowLogin, showRegister, setShowRegister, showCart, setShowCart, quickView, setQuickView, pagoResultado, setPagoResultado, catalogCat, setCatalogCat, completeProfile, setCompleteProfile, googleMfaPaso, setGoogleMfaPaso, pendingCheckout, setPendingCheckout, products, setProducts, categories, setCategories, gruposCategorias, setGruposCategorias, banners, setBanners, empresas, setEmpresas, sucursales, setSucursales, localesRetiro, setLocalesRetiro, retiroLocalHabilitado, setRetiroLocalHabilitado, loading, showToast };
 
   return (
     <AppCtx.Provider value={ctx}>
@@ -3051,6 +3132,7 @@ export default function App() {
         }
         .oft-group-card:hover .oft-group-card-icon { background: #FFF0EF; }
         .oft-group-card-chevron { position: absolute; top: 16px; right: 14px; }
+        .oft-banner-thumb:hover .oft-banner-hover-overlay { opacity: 1 !important; }
         @keyframes overlayFade { from { opacity: 0; } to { opacity: 1; } }
         .oft-overlay { animation: overlayFade 0.22s ease both; }
         @keyframes authPop { 0% { opacity: 0; transform: translateY(18px) scale(0.94); } 60% { opacity: 1; transform: translateY(0) scale(1.015); } 100% { transform: translateY(0) scale(1); } }
@@ -3067,10 +3149,33 @@ export default function App() {
         .oft-widget { animation: widgetIn 0.5s cubic-bezier(0.22,1,0.36,1) both; }
         .oft-widget:hover { transform: translateY(-3px); box-shadow: 0 12px 28px rgba(0,0,0,0.10); }
         @keyframes heroFadeUp { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: translateY(0); } }
-        .oft-hero-badge { animation: heroFadeUp 0.6s ease both; }
-        .oft-hero-title { animation: heroFadeUp 0.7s 0.1s ease both; }
-        .oft-hero p { animation: heroFadeUp 0.7s 0.2s ease both; }
         .oft-infobar > div { animation: heroFadeUp 0.5s ease both; }
+
+        /* ── CARRUSEL DE PROMOCIONES ── */
+        .oft-carousel { position: relative; width: 100%; aspect-ratio: 21 / 9; overflow: hidden; background: ${BLACK}; }
+        @media (max-width: 640px) { .oft-carousel { aspect-ratio: 4 / 3; } }
+        .oft-carousel-track { display: flex; height: 100%; transition: transform 0.55s cubic-bezier(0.65,0,0.35,1); touch-action: pan-y; }
+        .oft-carousel-slide { flex: 0 0 100%; height: 100%; position: relative; cursor: pointer; }
+        .oft-carousel-slide img { width: 100%; height: 100%; object-fit: cover; display: block; }
+        .oft-carousel-caption { position: absolute; left: 0; right: 0; bottom: 0; padding: 28px 28px 22px; background: linear-gradient(0deg, rgba(0,0,0,0.72) 0%, rgba(0,0,0,0) 100%); color: ${WHITE}; pointer-events: none; }
+        .oft-carousel-title { font-size: 22px; font-weight: 800; margin-bottom: 4px; letter-spacing: -0.2px; }
+        .oft-carousel-subtitle { font-size: 13px; color: rgba(255,255,255,0.82); }
+        .oft-carousel-dots { position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%); display: flex; gap: 6px; }
+        .oft-carousel-dot { width: 6px; height: 6px; border-radius: 50%; background: rgba(255,255,255,0.4); border: none; cursor: pointer; padding: 0; transition: all 0.25s ease; }
+        .oft-carousel-dot.active { width: 20px; border-radius: 3px; background: ${WHITE}; }
+
+        /* ── BARRA DE MARCA + BOTONES (debajo del carrusel) ── */
+        .oft-cta-bar { background: ${BLACK}; color: ${WHITE}; padding: 30px 24px 34px; text-align: center; position: relative; overflow: hidden; }
+        .oft-cta-bar::before { content: ""; position: absolute; top: 0; left: 50%; transform: translateX(-50%); width: 220px; height: 1px; background: linear-gradient(90deg, transparent, ${RED}, transparent); }
+        .oft-cta-tag { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: ${RED}; margin-bottom: 10px; }
+        .oft-cta-title { font-size: 22px; font-weight: 800; letter-spacing: -0.3px; margin-bottom: 22px; }
+        .oft-cta-title span { color: ${RED}; }
+        .oft-cta-actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+        .oft-cta-btn-primary { background: ${RED}; color: ${WHITE}; border: none; padding: 13px 30px; border-radius: 100px; font-weight: 700; font-size: 14px; cursor: pointer; transition: transform 0.15s ease, box-shadow 0.15s ease; font-family: inherit; }
+        .oft-cta-btn-primary:hover { transform: translateY(-1px); box-shadow: 0 6px 18px rgba(227,30,36,0.35); }
+        .oft-cta-btn-ghost { background: transparent; color: ${WHITE}; border: 1.5px solid rgba(255,255,255,0.25); padding: 12px 26px; border-radius: 100px; font-weight: 700; font-size: 14px; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; transition: border-color 0.15s ease, background 0.15s ease; font-family: inherit; }
+        .oft-cta-btn-ghost:hover { border-color: rgba(255,255,255,0.5); background: rgba(255,255,255,0.06); }
+
         @keyframes barGrow { from { transform: scaleY(0); } to { transform: scaleY(1); } }
         .oft-bar-grow { transform-origin: bottom; animation: barGrow 0.7s cubic-bezier(0.22,1,0.36,1) both; }
         @keyframes lineDraw { from { stroke-dashoffset: 1000; } to { stroke-dashoffset: 0; } }
