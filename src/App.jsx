@@ -541,6 +541,53 @@ function presUnitPrice(product, pres) {
 // Total de piezas según presentación y cantidad de paquetes
 // Comparte el link directo de un producto (usa el share nativo del celular si existe,
 // o copia el link al portapapeles como respaldo en computadora).
+// Comprime/redimensiona una foto ANTES de subirla — así las fotos de celular (que suelen
+// pesar 2-3 MB) quedan livianas para la web (normalmente 80-200 KB), sin que se note
+// diferencia de calidad a simple vista. Si algo falla, sube la foto original tal cual,
+// para nunca bloquear al usuario por esto.
+// Pide una versión más chica y liviana de una foto YA guardada en Supabase Storage,
+// usando la transformación de imágenes que Supabase hace al vuelo (sin tocar ni
+// modificar el archivo original para nada). Esto beneficia también a las fotos que se
+// subieron antes de que empezáramos a comprimir al subir. Si la URL no es de Supabase
+// Storage (o viene vacía), la deja tal cual.
+function imagenOptimizada(url, ancho = 400) {
+  if (!url || !url.includes("/storage/v1/object/public/")) return url;
+  const base = url.replace("/storage/v1/object/public/", "/storage/v1/render/image/public/");
+  return base + (base.includes("?") ? "&" : "?") + `width=${ancho}&quality=75`;
+}
+
+function comprimirImagen(file, maxDimension = 1400, calidad = 0.82) {
+  return new Promise((resolve) => {
+    if (!file.type || !file.type.startsWith("image/") || file.type === "image/svg+xml" || file.type === "image/gif") {
+      resolve(file); return;
+    }
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        let { width, height } = img;
+        if (width > maxDimension || height > maxDimension) {
+          if (width > height) { height = Math.round(height * (maxDimension / width)); width = maxDimension; }
+          else { width = Math.round(width * (maxDimension / height)); height = maxDimension; }
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width = width; canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, width, height);
+        canvas.toBlob((blob) => {
+          if (!blob || blob.size >= file.size) { resolve(file); return; } // si no mejora, sube la original
+          const nombreFinal = file.name.replace(/\.\w+$/, "") + ".jpg";
+          resolve(new File([blob], nombreFinal, { type: "image/jpeg" }));
+        }, "image/jpeg", calidad);
+      };
+      img.onerror = () => resolve(file);
+      img.src = e.target.result;
+    };
+    reader.onerror = () => resolve(file);
+    reader.readAsDataURL(file);
+  });
+}
+
 async function compartirProducto(product, showToast) {
   const url = `${window.location.origin}/producto/${product.id}`;
   const textoCompartir = `Mira este producto en Ofertodo: ${product.nombre}`;
@@ -1314,7 +1361,7 @@ function ProductCard({ product }) {
   const [talla, setTalla] = useState("");
   const [color, setColor] = useState("");
   const total = presTotal(product, pres, count);
-  const imgUrl = product.imagen_url || null;
+  const imgUrl = product.imagen_url ? imagenOptimizada(product.imagen_url, 400) : null;
   const btnRef = useRef(null);
   // Solo bloqueamos la compra cuando se agota un producto PROPIO (sin proveedor).
   // Los productos de proveedor externo siempre se pueden comprar — el stock ahí
@@ -1377,7 +1424,7 @@ function ProductCard({ product }) {
     <div data-prod-card className="oft-card-hover" style={S.prodCard}>
       <div data-prod-img onClick={() => setQuickView(product)} title="Ver detalle" style={{ background: GRAY, aspectRatio: "1 / 1", width: "100%", display: "flex", alignItems: "center", justifyContent: "center", position: "relative", overflow: "hidden", cursor: "pointer" }}>
         {imgUrl
-          ? <img src={imgUrl} alt={product.nombre} style={{ width: "100%", height: "100%", objectFit: "contain" }} />
+          ? <img src={imgUrl} alt={product.nombre} loading="lazy" decoding="async" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
           : <Package size={56} color={GRAY3} strokeWidth={1.3} />
         }
         {product.badge && <span style={{ position: "absolute", top: 10, left: 10, background: RED, color: WHITE, fontSize: 10, fontWeight: 800, padding: "3px 8px", borderRadius: 4, display: "inline-flex", alignItems: "center", gap: 4 }}><Sparkles size={11} /> {product.badge}</span>}
@@ -1554,7 +1601,7 @@ function ProductModal() {
 
   if (!product) return null;
   const total = presTotal(product, pres, count);
-  const imgUrl = product.imagen_url || null;
+  const imgUrl = product.imagen_url ? imagenOptimizada(product.imagen_url, 700) : null;
   const respetaStock = (!product.proveedor_id || product.tiene_stock_fisico);
   const agotadoBloqueado = respetaStock && product.stock_actualizado_at && Number(product.stock) <= 0;
 
@@ -1595,7 +1642,7 @@ function ProductModal() {
         {/* IMAGEN GRANDE */}
         <div style={{ background: GRAY, aspectRatio: "1 / 1", width: "100%", maxHeight: 320, display: "flex", alignItems: "center", justifyContent: "center", position: "relative", overflow: "hidden" }}>
           {imgUrl
-            ? <img src={imgUrl} alt={product.nombre} style={{ width: "100%", height: "100%", objectFit: "contain" }} />
+            ? <img src={imgUrl} alt={product.nombre} decoding="async" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
             : <Package size={80} color={GRAY3} strokeWidth={1.2} />
           }
           {product.badge && <span style={{ position: "absolute", top: 14, left: 14, background: RED, color: WHITE, fontSize: 11, fontWeight: 800, padding: "4px 10px", borderRadius: 4, display: "inline-flex", alignItems: "center", gap: 4 }}><Sparkles size={12} /> {product.badge}</span>}
@@ -3376,7 +3423,7 @@ function CrearPedidoView() {
               <div style={{ position: "absolute", top: "100%", left: 0, right: 0, background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 10, marginTop: 4, zIndex: 20, boxShadow: "0 8px 24px rgba(0,0,0,0.12)", overflow: "hidden" }}>
                 {filtered.map(p => (
                   <div key={p.id} onClick={() => addItem(p)} className="oft-cat-chip" style={{ padding: 10, display: "flex", alignItems: "center", gap: 10, cursor: "pointer", borderBottom: `1px solid ${GRAY}` }}>
-                    {p.imagen_url ? <img src={p.imagen_url} style={{ width: 36, height: 36, borderRadius: 6, objectFit: "cover" }} /> : <div style={{ width: 36, height: 36, borderRadius: 6, background: GRAY, display: "flex", alignItems: "center", justifyContent: "center" }}><Package size={16} color={GRAY3} /></div>}
+                    {p.imagen_url ? <img src={imagenOptimizada(p.imagen_url, 150)} style={{ width: 36, height: 36, borderRadius: 6, objectFit: "cover" }} /> : <div style={{ width: 36, height: 36, borderRadius: 6, background: GRAY, display: "flex", alignItems: "center", justifyContent: "center" }}><Package size={16} color={GRAY3} /></div>}
                     <div style={{ flex: 1 }}>
                       <div style={{ fontWeight: 700, fontSize: 13 }}>{p.nombre}</div>
                       <div style={{ fontSize: 11, color: GRAY3 }}>{p.referencia || "—"} · Docena ${p.precio_docena}</div>
@@ -3599,7 +3646,7 @@ function CrearPedidoView() {
                           <div style={{ position: "absolute", top: "100%", left: 0, right: 0, background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 10, marginTop: 4, zIndex: 20, boxShadow: "0 8px 24px rgba(0,0,0,0.12)", overflow: "hidden" }}>
                             {flexFiltered.map(p => (
                               <div key={p.id} onClick={() => addFlexLine(pack.id, p)} className="oft-cat-chip" style={{ padding: 9, display: "flex", alignItems: "center", gap: 10, cursor: "pointer", borderBottom: `1px solid ${GRAY}` }}>
-                                {p.imagen_url ? <img src={p.imagen_url} style={{ width: 30, height: 30, borderRadius: 5, objectFit: "cover" }} /> : <div style={{ width: 30, height: 30, borderRadius: 5, background: GRAY, display: "flex", alignItems: "center", justifyContent: "center" }}><Package size={14} color={GRAY3} /></div>}
+                                {p.imagen_url ? <img src={imagenOptimizada(p.imagen_url, 150)} style={{ width: 30, height: 30, borderRadius: 5, objectFit: "cover" }} /> : <div style={{ width: 30, height: 30, borderRadius: 5, background: GRAY, display: "flex", alignItems: "center", justifyContent: "center" }}><Package size={14} color={GRAY3} /></div>}
                                 <div style={{ flex: 1 }}>
                                   <div style={{ fontWeight: 700, fontSize: 12 }}>{p.nombre}</div>
                                   <div style={{ fontSize: 10, color: GRAY3 }}>{p.referencia || "—"} · {money(flexUnitPrice(p, pack.modo))}/pza</div>
@@ -5766,9 +5813,10 @@ function AdminView() {
     if (!file) return;
     setUploading(true);
     try {
-      const cleanName = file.name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9.\-_]/g, "_");
+      const fileComprimido = await comprimirImagen(file);
+      const cleanName = fileComprimido.name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9.\-_]/g, "_");
       const path = `${Date.now()}_${cleanName}`;
-      await sb.upload("productos", path, file);
+      await sb.upload("productos", path, fileComprimido);
       const url = `${sb.publicUrl("productos", path)}?t=${Date.now()}`;
       setProdForm(p => ({ ...p, imagen_url: url }));
       showToast("Imagen subida");
@@ -5784,9 +5832,10 @@ function AdminView() {
     if (!file) return;
     setCatUploading(cat.id);
     try {
-      const cleanName = file.name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9.\-_]/g, "_");
+      const fileComprimido = await comprimirImagen(file, 400, 0.85); // los íconos son chicos, no hace falta tanto tamaño
+      const cleanName = fileComprimido.name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9.\-_]/g, "_");
       const path = `${Date.now()}_${cleanName}`;
-      await sb.upload("categorias", path, file);
+      await sb.upload("categorias", path, fileComprimido);
       const url = `${sb.publicUrl("categorias", path)}?t=${Date.now()}`;
       await sb.patch("categorias", cat.id, { icono_url: url });
       setCategories(prev => prev.map(c => c.id === cat.id ? { ...c, icono_url: url } : c));
@@ -5948,11 +5997,13 @@ function AdminView() {
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       try {
-        const cleanName = file.name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9.\-_]/g, "_");
+        const fileComprimido = await comprimirImagen(file);
+        const cleanName = fileComprimido.name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9.\-_]/g, "_");
         const path = `${Date.now()}_${i}_${cleanName}`;
-        await sb.upload("productos", path, file);
+        await sb.upload("productos", path, fileComprimido);
         const url = `${sb.publicUrl("productos", path)}?t=${Date.now()}`;
-        // Nombre por defecto desde el nombre del archivo (sin extensión)
+        // Nombre por defecto desde el nombre del archivo ORIGINAL (sin extensión) — se usa
+        // el nombre de antes de comprimir, para que la referencia (ej. "25004") no cambie
         const nombreArchivoSinExt = file.name.replace(/\.[^.]+$/, "");
         const baseName = nombreArchivoSinExt.replace(/[_\-]+/g, " ").trim();
         // Si subes fotos ya nombradas por Item No./SKU (ej. "25004.jpg"), lo usamos también
@@ -6125,9 +6176,10 @@ function AdminView() {
     if (!file) return;
     setGrupoUploading(grupo.id);
     try {
-      const cleanName = file.name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9.\-_]/g, "_");
+      const fileComprimido = await comprimirImagen(file, 400, 0.85);
+      const cleanName = fileComprimido.name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9.\-_]/g, "_");
       const path = `grupo_${Date.now()}_${cleanName}`;
-      await sb.upload("categorias", path, file);
+      await sb.upload("categorias", path, fileComprimido);
       const url = `${sb.publicUrl("categorias", path)}?t=${Date.now()}`;
       await sb.patch("grupos_categorias", grupo.id, { icono_url: url });
       setGruposCategorias(prev => prev.map(g => g.id === grupo.id ? { ...g, icono_url: url } : g));
@@ -6194,9 +6246,10 @@ function AdminView() {
     if (!file) return;
     setEmpUploading(emp.id);
     try {
-      const cleanName = file.name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9.\-_]/g, "_");
+      const fileComprimido = await comprimirImagen(file, 400, 0.85);
+      const cleanName = fileComprimido.name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9.\-_]/g, "_");
       const path = `${Date.now()}_${cleanName}`;
-      await sb.upload("empresas", path, file);
+      await sb.upload("empresas", path, fileComprimido);
       const url = `${sb.publicUrl("empresas", path)}?t=${Date.now()}`;
       await sb.patch("empresas_envio", emp.id, { logo_url: url });
       setEmpresas(prev => prev.map(x => x.id === emp.id ? { ...x, logo_url: url } : x));
@@ -7506,7 +7559,7 @@ function AdminView() {
                         </td>
                       )}
                       <td style={S.td}>
-                        {p.imagen_url ? <img src={p.imagen_url} style={{ width: 36, height: 36, borderRadius: 6, objectFit: "cover" }} /> : <div style={{ width: 36, height: 36, borderRadius: 6, background: GRAY, display: "flex", alignItems: "center", justifyContent: "center" }}><Package size={16} color={GRAY3} /></div>}
+                        {p.imagen_url ? <img src={imagenOptimizada(p.imagen_url, 150)} style={{ width: 36, height: 36, borderRadius: 6, objectFit: "cover" }} /> : <div style={{ width: 36, height: 36, borderRadius: 6, background: GRAY, display: "flex", alignItems: "center", justifyContent: "center" }}><Package size={16} color={GRAY3} /></div>}
                       </td>
                       <td style={{ ...S.td, fontWeight: 700 }}>{p.referencia || "—"}</td>
                       <td style={S.td}>
@@ -7563,7 +7616,7 @@ function AdminView() {
                         <input type="checkbox" checked={isSel} onChange={() => toggleSelect(p.id)} style={{ width: 22, height: 22, accentColor: RED, cursor: "pointer", flexShrink: 0, marginTop: 2 }} />
                       )}
                       {p.imagen_url
-                        ? <img src={p.imagen_url} style={{ width: 60, height: 60, borderRadius: 10, objectFit: "cover", flexShrink: 0 }} />
+                        ? <img src={imagenOptimizada(p.imagen_url, 150)} style={{ width: 60, height: 60, borderRadius: 10, objectFit: "cover", flexShrink: 0 }} />
                         : <div style={{ width: 60, height: 60, borderRadius: 10, background: GRAY, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Package size={24} color={GRAY3} /></div>
                       }
                       <div style={{ flex: 1, minWidth: 0 }}>
@@ -7924,7 +7977,7 @@ function AdminView() {
                               <div style={{ width: 20, height: 20, borderRadius: 5, border: `2px solid ${sel ? RED : GRAY2}`, background: sel ? RED : WHITE, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                                 {sel && <CheckCircle2 size={13} color={WHITE} />}
                               </div>
-                              {p.imagen_url ? <img src={p.imagen_url} style={{ width: 30, height: 30, borderRadius: 5, objectFit: "cover" }} /> : <div style={{ width: 30, height: 30, borderRadius: 5, background: GRAY }} />}
+                              {p.imagen_url ? <img src={imagenOptimizada(p.imagen_url, 150)} style={{ width: 30, height: 30, borderRadius: 5, objectFit: "cover" }} /> : <div style={{ width: 30, height: 30, borderRadius: 5, background: GRAY }} />}
                               <div style={{ flex: 1, minWidth: 0 }}>
                                 <div style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.nombre}</div>
                                 <div style={{ fontSize: 11, color: GRAY3 }}>{p.referencia}</div>
@@ -8137,7 +8190,7 @@ function AdminView() {
                           onMouseEnter={e => e.currentTarget.style.background = GRAY}
                           onMouseLeave={e => e.currentTarget.style.background = WHITE}>
                             {p.imagen_url
-                              ? <img src={p.imagen_url} style={{ width: 28, height: 28, borderRadius: 4, objectFit: "cover" }} />
+                              ? <img src={imagenOptimizada(p.imagen_url, 150)} style={{ width: 28, height: 28, borderRadius: 4, objectFit: "cover" }} />
                               : <div style={{ width: 28, height: 28, borderRadius: 4, background: GRAY2 }} />
                             }
                             <div style={{ flex: 1, minWidth: 0 }}>
