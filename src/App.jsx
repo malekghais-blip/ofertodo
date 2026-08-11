@@ -729,8 +729,10 @@ function HomeView() {
 
   return (
     <>
-      {/* CARRUSEL DE PROMOCIONES */}
-      <PromoCarousel banners={banners} />
+      {/* CARRUSEL DE PROMOCIONES — como una tarjeta contenida, no de extremo a extremo */}
+      <div className="oft-carousel-wrap">
+        <PromoCarousel banners={banners} />
+      </div>
 
       {/* BARRA DE MARCA + ACCIONES — complementa el carrusel, minimalista y oscura */}
       <div className="oft-cta-bar">
@@ -3152,7 +3154,10 @@ export default function App() {
         .oft-infobar > div { animation: heroFadeUp 0.5s ease both; }
 
         /* ── CARRUSEL DE PROMOCIONES ── */
-        .oft-carousel { position: relative; width: 100%; aspect-ratio: 16 / 9; overflow: hidden; background: ${BLACK}; }
+        .oft-carousel-wrap { max-width: 1200px; margin: 0 auto; padding: 20px 24px 0; }
+        @media (max-width: 640px) { .oft-carousel-wrap { padding: 12px 12px 0; } }
+        .oft-carousel { position: relative; width: 100%; aspect-ratio: 16 / 9; overflow: hidden; background: ${BLACK}; border-radius: 16px; }
+        @media (max-width: 640px) { .oft-carousel { border-radius: 12px; } }
         .oft-carousel-track { display: flex; height: 100%; transition: transform 0.55s cubic-bezier(0.65,0,0.35,1); touch-action: pan-y; }
         .oft-carousel-slide { flex: 0 0 100%; height: 100%; position: relative; cursor: pointer; }
         .oft-carousel-slide img { width: 100%; height: 100%; object-fit: cover; display: block; }
