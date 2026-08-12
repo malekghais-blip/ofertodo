@@ -333,13 +333,28 @@ function presUnitPrice(product, pres) {
 
 export function imagenOptimizada(url, tamano = 400) {
   if (!url || !url.includes("/storage/v1/object/public/")) return url;
+  // Confirmado: Supabase no comprime archivos .svg con esta transformación (los sirve
+  // tal cual, ignorando el tamaño pedido) -- pedirla solo suma una vuelta de más sin
+  // ningún beneficio, así que para SVG se usa la imagen original directo.
+  if (url.toLowerCase().includes(".svg")) return url;
   const base = url.replace("/storage/v1/object/public/", "/storage/v1/render/image/public/");
   return base + (base.includes("?") ? "&" : "?") + `width=${tamano}&height=${tamano}&resize=contain&quality=75`;
 }
 
-export function comprimirImagen(file, maxDimension = 1400, calidad = 0.82) {
+// Comprime/redimensiona una foto ANTES de subirla — así las fotos de celular (que suelen
+// pesar 2-3 MB) quedan livianas para la web (normalmente 80-200 KB), sin que se note
+// diferencia de calidad a simple vista. Si algo falla, sube la foto original tal cual,
+// para nunca bloquear al usuario por esto.
+//
+// Los archivos SVG normalmente se saltan (son íconos vectoriales chiquitos que no hace
+// falta comprimir) -- PERO si forzarRaster=true, también se convierten a JPEG. Esto es
+// para casos como los banners del carrusel, donde un "SVG" puede en realidad ser una
+// composición de diseño pesada (con una foto incrustada adentro) de varios MB, y
+// Supabase no sabe comprimir SVGs para servirlos más livianos como sí hace con fotos.
+export function comprimirImagen(file, maxDimension = 1400, calidad = 0.82, forzarRaster = false) {
   return new Promise((resolve) => {
-    if (!file.type || !file.type.startsWith("image/") || file.type === "image/svg+xml" || file.type === "image/gif") {
+    const esSvg = file.type === "image/svg+xml";
+    if (!file.type || !file.type.startsWith("image/") || (esSvg && !forzarRaster) || file.type === "image/gif") {
       resolve(file); return;
     }
     const reader = new FileReader();
