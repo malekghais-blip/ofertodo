@@ -331,14 +331,14 @@ function presUnitPrice(product, pres) {
   return Number(product.precio_docena);
 }
 
-export function imagenOptimizada(url, tamano = 400) {
+export function imagenOptimizada(url, tamano = 400, calidad = 75) {
   if (!url || !url.includes("/storage/v1/object/public/")) return url;
   // Confirmado: Supabase no comprime archivos .svg con esta transformación (los sirve
   // tal cual, ignorando el tamaño pedido) -- pedirla solo suma una vuelta de más sin
   // ningún beneficio, así que para SVG se usa la imagen original directo.
   if (url.toLowerCase().includes(".svg")) return url;
   const base = url.replace("/storage/v1/object/public/", "/storage/v1/render/image/public/");
-  return base + (base.includes("?") ? "&" : "?") + `width=${tamano}&height=${tamano}&resize=contain&quality=75`;
+  return base + (base.includes("?") ? "&" : "?") + `width=${tamano}&height=${tamano}&resize=contain&quality=${calidad}`;
 }
 
 // Comprime/redimensiona una foto ANTES de subirla — así las fotos de celular (que suelen
