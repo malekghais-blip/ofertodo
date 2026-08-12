@@ -1774,7 +1774,7 @@ function AdminView() {
     if (!file) return;
     setBannerUploading(true);
     try {
-      const fileComprimido = await comprimirImagen(file, 1920, 0.95, true); // calidad alta (0.95) porque los banners suelen llevar texto/gráficos, donde la compresión normal sí se nota
+      const fileComprimido = file; // se sube tal cual, sin comprimir -- así se mantiene la calidad original que subiste
       const cleanName = fileComprimido.name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9.\-_]/g, "_");
       const path = `${Date.now()}_${cleanName}`;
       await sb.upload("banners", path, fileComprimido);
@@ -1796,7 +1796,7 @@ function AdminView() {
     if (!file) return;
     setBannerUploading(true);
     try {
-      const fileComprimido = await comprimirImagen(file, 1920, 0.95, true); // misma calidad alta que al crear un banner nuevo
+      const fileComprimido = file; // se sube tal cual, sin comprimir -- así se mantiene la calidad original que subiste
       const cleanName = fileComprimido.name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9.\-_]/g, "_");
       const path = `${Date.now()}_${cleanName}`;
       await sb.upload("banners", path, fileComprimido);
@@ -4728,4 +4728,3 @@ function AdminView() {
 }
 
 export default AdminView;
-
