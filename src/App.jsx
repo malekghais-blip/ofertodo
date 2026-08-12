@@ -2965,6 +2965,13 @@ export default function App() {
     procesarRetornoGoogle();
 
     const init = async () => {
+      // Los banners se piden desde este mismo instante, en paralelo con todo lo
+      // demás -- así el carrusel del inicio no tiene que esperar a que termine de
+      // cargar categorías, productos, ni nada más. Apenas responda, se muestra.
+      sb.get("banners_promocionales", "?order=orden.asc")
+        .then(data => setBanners(data || []))
+        .catch(e => console.warn("Banners promocionales no cargados:", e.message));
+
       try {
         const [cats, prods] = await Promise.all([
           sb.get("categorias", "?activa=eq.true&order=id"),
@@ -3042,13 +3049,6 @@ export default function App() {
           const grupos = await sb.get("grupos_categorias", "?order=orden.asc,nombre.asc");
           setGruposCategorias(grupos || []);
         } catch(e4) { console.warn("Grupos de categorías no cargados:", e4.message); }
-        // Banners promocionales del carrusel del inicio (no crítico, si falla el inicio se ve sin carrusel)
-        // Trae TODOS (activos e inactivos) -- el carrusel del cliente ya filtra solo los activos,
-        // y así el admin puede ver/reactivar los que estén apagados.
-        try {
-          const bannersData = await sb.get("banners_promocionales", "?order=orden.asc");
-          setBanners(bannersData || []);
-        } catch(e5) { console.warn("Banners promocionales no cargados:", e5.message); }
       } catch(e) {
         console.warn("⚠️ Supabase no configurado. Usando datos demo.", e.message);
         // DATOS DEMO cuando Supabase no está configurado
