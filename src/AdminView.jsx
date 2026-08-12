@@ -3568,12 +3568,30 @@ function AdminView() {
                             {categories.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
                           </select>
                         )}
-                        {b.destino_tipo === "producto" && (
-                          <select value={b.destino_valor || ""} onChange={e => handleUpdateBanner(b, { destino_valor: e.target.value })} style={{ ...S.input, marginBottom: 0, fontSize: 13, flex: 1, minWidth: 160 }}>
-                            <option value="">Elige un producto...</option>
-                            {products.filter(p => p.activo).map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
-                          </select>
-                        )}
+                        {b.destino_tipo === "producto" && (() => {
+                          const etiquetaDe = (p) => `${p.referencia ? p.referencia + " — " : ""}${p.nombre}`;
+                          const productoActual = products.find(p => String(p.id) === String(b.destino_valor));
+                          return (
+                            <>
+                              <datalist id={`productos-banner-${b.id}`}>
+                                {products.filter(p => p.activo).map(p => <option key={p.id} value={etiquetaDe(p)} />)}
+                              </datalist>
+                              <input
+                                list={`productos-banner-${b.id}`}
+                                defaultValue={productoActual ? etiquetaDe(productoActual) : ""}
+                                placeholder="Escribe el nombre o la referencia..."
+                                onBlur={e => {
+                                  const texto = e.target.value.trim();
+                                  if (texto === "") { handleUpdateBanner(b, { destino_valor: null }); return; }
+                                  const encontrado = products.find(p => etiquetaDe(p) === texto);
+                                  if (encontrado) handleUpdateBanner(b, { destino_valor: encontrado.id });
+                                  else e.target.value = productoActual ? etiquetaDe(productoActual) : ""; // no coincide con nada -- regresa al último válido
+                                }}
+                                style={{ ...S.input, marginBottom: 0, fontSize: 13, flex: 1, minWidth: 160 }}
+                              />
+                            </>
+                          );
+                        })()}
                         {b.destino_tipo === "url" && (
                           <input defaultValue={b.destino_valor || ""} placeholder="https://..." onBlur={e => { if (e.target.value !== (b.destino_valor || "")) handleUpdateBanner(b, { destino_valor: e.target.value.trim() }); }} style={{ ...S.input, marginBottom: 0, fontSize: 13, flex: 1, minWidth: 160 }} />
                         )}
