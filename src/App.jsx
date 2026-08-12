@@ -693,7 +693,7 @@ function PromoCarousel({ banners }) {
       <div className="oft-carousel-track" style={{ transform: `translateX(-${indice * 100}%)` }} onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
         {activos.map(b => (
           <div key={b.id} className="oft-carousel-slide" onClick={() => irAlDestino(b)} role="button" tabIndex={0}>
-            <img src={imagenOptimizada(b.imagen_url, 1400, 90)} alt={b.titulo || "Promoción"} loading="eager" decoding="async" />
+            <img src={imagenOptimizada(b.imagen_url, 1400)} alt={b.titulo || "Promoción"} loading="eager" decoding="async" />
             {(b.titulo || b.subtitulo) && (
               <div className="oft-carousel-caption">
                 {b.titulo && <div className="oft-carousel-title">{b.titulo}</div>}
