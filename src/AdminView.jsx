@@ -1774,7 +1774,7 @@ function AdminView() {
     if (!file) return;
     setBannerUploading(true);
     try {
-      const fileComprimido = await comprimirImagen(file, 1600, 0.82); // banners son grandes, necesitan más resolución que un ícono
+      const fileComprimido = await comprimirImagen(file, 1600, 0.82, true); // forzarRaster=true: convierte a JPEG incluso si venía como SVG (puede ser un diseño pesado con foto incrustada, no un ícono chico)
       const cleanName = fileComprimido.name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9.\-_]/g, "_");
       const path = `${Date.now()}_${cleanName}`;
       await sb.upload("banners", path, fileComprimido);
@@ -1796,7 +1796,7 @@ function AdminView() {
     if (!file) return;
     setBannerUploading(true);
     try {
-      const fileComprimido = await comprimirImagen(file, 1600, 0.82);
+      const fileComprimido = await comprimirImagen(file, 1600, 0.82, true); // forzarRaster=true, mismo motivo que al crear un banner nuevo
       const cleanName = fileComprimido.name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9.\-_]/g, "_");
       const path = `${Date.now()}_${cleanName}`;
       await sb.upload("banners", path, fileComprimido);
