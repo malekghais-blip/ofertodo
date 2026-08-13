@@ -2129,9 +2129,9 @@ function AdminView() {
 
   return (
     <div style={{ minHeight: "100vh" }}>
-      <div className="oft-admin-sidebar" style={{ background: WHITE, color: BLACK, width: 230, minHeight: "100vh", padding: "24px 0", position: "fixed", top: 0, left: 0, zIndex: 90, borderRight: `1px solid ${GRAY2}` }}>
-        <div className="oft-admin-brand" style={{ padding: "0 22px 22px", borderBottom: `1px solid ${GRAY2}` }}><Logo height={28} /><div style={{ fontSize: 11, color: GRAY3, marginTop: 6, display: "flex", alignItems: "center", gap: 5, fontWeight: 600 }}><Zap size={11} /> Panel Administrador</div></div>
-        <div className="oft-admin-tabs" style={{ padding: "16px 12px" }}>
+      <div className="oft-admin-sidebar" style={{ background: WHITE, color: BLACK, width: 230, height: "100vh", padding: "24px 0 0", position: "fixed", top: 0, left: 0, zIndex: 90, borderRight: `1px solid ${GRAY2}`, display: "flex", flexDirection: "column" }}>
+        <div className="oft-admin-brand" style={{ padding: "0 22px 22px", borderBottom: `1px solid ${GRAY2}`, flexShrink: 0 }}><Logo height={28} /><div style={{ fontSize: 11, color: GRAY3, marginTop: 6, display: "flex", alignItems: "center", gap: 5, fontWeight: 600 }}><Zap size={11} /> Panel Administrador</div></div>
+        <div className="oft-admin-tabs" style={{ padding: "16px 12px 24px", overflowY: "auto", flex: 1, minHeight: 0 }}>
           {tabs.map(([k,l,Icon]) => (
             <div key={k} className={"oft-admin-tab" + (tab === k ? " active" : "")} onClick={() => setTab(k)} style={{ padding: "11px 16px", marginBottom: 4, cursor: "pointer", fontWeight: tab === k ? 800 : 600, fontSize: 14, color: tab === k ? WHITE : GRAY3, background: tab === k ? RED : "transparent", borderRadius: 10, display: "flex", alignItems: "center", gap: 11, transition: "all 0.18s ease" }}>
               <Icon size={18} strokeWidth={tab === k ? 2.4 : 2} /> {l}
