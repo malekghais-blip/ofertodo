@@ -860,11 +860,28 @@ function NumeroAnimado({ valor }) {
   return <>{mostrado.toLocaleString("en-US")}</>;
 }
 
-// Tarjeta chica de una métrica (KPI), con ícono y número animado
-function TarjetaKPI({ icono: Icono, valor, etiqueta, color, delay = 0 }) {
+// Etiqueta con flecha (↗/↘) mostrando el cambio % contra el periodo anterior de
+// igual duración -- ej. si el rango es "última semana", compara contra la semana previa.
+function FlechaDelta({ actual, anterior, tamano = 12 }) {
+  if (!anterior && !actual) return null;
+  if (!anterior) return <span className="oft-delta oft-delta-up" style={{ fontSize: tamano }}>↗ Nuevo</span>;
+  const cambio = ((actual - anterior) / anterior) * 100;
+  const esPositivo = cambio >= 0;
+  return (
+    <span className={`oft-delta ${esPositivo ? "oft-delta-up" : "oft-delta-down"}`} style={{ fontSize: tamano }}>
+      {esPositivo ? "↗" : "↘"} {Math.abs(Math.round(cambio))}%
+    </span>
+  );
+}
+
+// Tarjeta chica de una métrica (KPI), con ícono, número animado, y su cambio % vs el periodo anterior
+function TarjetaKPI({ icono: Icono, valor, valorAnterior, etiqueta, color, delay = 0 }) {
   return (
     <div className="oft-kpi-card" style={{ background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 14, padding: 18, animationDelay: `${delay}s` }}>
-      <div style={{ background: color + "15", borderRadius: 10, padding: 8, display: "inline-flex", marginBottom: 10 }}><Icono size={20} color={color} strokeWidth={2} /></div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
+        <div style={{ background: color + "15", borderRadius: 10, padding: 8, display: "inline-flex" }}><Icono size={20} color={color} strokeWidth={2} /></div>
+        <FlechaDelta actual={valor} anterior={valorAnterior} />
+      </div>
       <div style={{ fontSize: 26, fontWeight: 900, color: BLACK }}><NumeroAnimado valor={valor} /></div>
       <div style={{ fontSize: 12, color: GRAY3, fontWeight: 600 }}>{etiqueta}</div>
     </div>
@@ -887,55 +904,188 @@ function BarraTop({ etiqueta, valor, maximo, color, delay = 0 }) {
   );
 }
 
-// Gráfico de barras verticales simple, para "visitas por día"
-function GraficoVisitasDiarias({ datos, color }) {
+// Gráfico de línea con área rellena y tooltip interactivo al pasar el mouse/dedo
+function GraficoLineal({ datos, color }) {
+  const [hoverIdx, setHoverIdx] = useState(null);
+  const anchoSvg = 600, altoSvg = 200, pad = 12;
+
+  if (datos.length === 0) return <p style={{ color: GRAY3, fontSize: 13, height: 220, display: "flex", alignItems: "center", justifyContent: "center" }}>Sin datos en este rango.</p>;
+
   const max = Math.max(1, ...datos.map(d => d.valor));
-  if (datos.length === 0) return <p style={{ color: GRAY3, fontSize: 13 }}>Sin visitas registradas en este rango.</p>;
+  const n = datos.length;
+  const stepX = n > 1 ? (anchoSvg - pad * 2) / (n - 1) : 0;
+  const puntos = datos.map((d, i) => ({
+    x: pad + i * stepX,
+    y: altoSvg - pad - (d.valor / max) * (altoSvg - pad * 2),
+    ...d,
+  }));
+  const lineaPath = puntos.map((p, i) => (i === 0 ? `M${p.x},${p.y}` : `L${p.x},${p.y}`)).join(" ");
+  const areaPath = `${lineaPath} L${puntos[n - 1].x},${altoSvg - pad} L${puntos[0].x},${altoSvg - pad} Z`;
+  const idGrad = "gradLinea" + color.replace("#", "");
+
+  const alMoverMouse = (e) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const xRel = ((e.clientX - rect.left) / rect.width) * anchoSvg;
+    let idx = 0, distMin = Infinity;
+    puntos.forEach((p, i) => { const d = Math.abs(p.x - xRel); if (d < distMin) { distMin = d; idx = i; } });
+    setHoverIdx(idx);
+  };
+  const alTocar = (e) => {
+    const t = e.touches?.[0]; if (!t) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const xRel = ((t.clientX - rect.left) / rect.width) * anchoSvg;
+    let idx = 0, distMin = Infinity;
+    puntos.forEach((p, i) => { const d = Math.abs(p.x - xRel); if (d < distMin) { distMin = d; idx = i; } });
+    setHoverIdx(idx);
+  };
+
+  const activo = hoverIdx !== null ? puntos[hoverIdx] : null;
+  const tooltipIzquierda = activo && activo.x > anchoSvg * 0.65;
+
   return (
-    <div style={{ display: "flex", alignItems: "flex-end", gap: Math.max(3, 6 - Math.floor(datos.length / 10)), height: 150, padding: "0 2px" }}>
-      {datos.map((d, i) => (
-        <div key={d.dia} title={`${d.dia}: ${d.valor} visita(s)`} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 6, minWidth: 4 }}>
-          <div className="oft-analytics-col" style={{ width: "100%", maxWidth: 26, height: `${Math.max((d.valor / max) * 120, 3)}px`, background: color, borderRadius: "4px 4px 0 0", animationDelay: `${Math.min(i * 0.02, 0.6)}s` }} />
-          {datos.length <= 14 && <div style={{ fontSize: 9, color: GRAY3, fontWeight: 600 }}>{d.dia.slice(8, 10)}</div>}
+    <div style={{ position: "relative" }}>
+      <svg viewBox={`0 0 ${anchoSvg} ${altoSvg}`} style={{ width: "100%", height: 220, display: "block", touchAction: "none" }}
+        onMouseMove={alMoverMouse} onMouseLeave={() => setHoverIdx(null)} onTouchMove={alTocar} onTouchEnd={() => setHoverIdx(null)}>
+        <defs>
+          <linearGradient id={idGrad} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={color} stopOpacity="0.28" />
+            <stop offset="100%" stopColor={color} stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        <path d={areaPath} fill={`url(#${idGrad})`} className="oft-linechart-area" />
+        <path d={lineaPath} fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" pathLength="1" className="oft-linechart-line" />
+        {activo && (
+          <>
+            <line x1={activo.x} y1={0} x2={activo.x} y2={altoSvg - pad} stroke={GRAY2} strokeWidth="1" strokeDasharray="3,3" />
+            <circle cx={activo.x} cy={activo.y} r="5" fill={color} stroke={WHITE} strokeWidth="2" />
+          </>
+        )}
+      </svg>
+      {activo && (
+        <div style={{
+          position: "absolute", top: 4, pointerEvents: "none", zIndex: 5,
+          left: tooltipIzquierda ? "auto" : `${(activo.x / anchoSvg) * 100}%`,
+          right: tooltipIzquierda ? `${100 - (activo.x / anchoSvg) * 100}%` : "auto",
+          transform: tooltipIzquierda ? "translateX(-8px)" : "translateX(8px)",
+          background: BLACK, color: WHITE, padding: "8px 12px", borderRadius: 8, fontSize: 12, whiteSpace: "nowrap",
+        }}>
+          <div style={{ fontWeight: 800, fontSize: 15 }}>{activo.valor.toLocaleString("en-US")}</div>
+          <div style={{ color: "rgba(255,255,255,0.7)" }}>{new Date(activo.dia + "T00:00:00").toLocaleDateString("es-PA", { day: "2-digit", month: "short" })}</div>
         </div>
-      ))}
+      )}
+    </div>
+  );
+}
+
+// Widget grande: número animado + delta + su propio gráfico de línea
+function WidgetGrande({ titulo, valor, valorAnterior, color, datos, icono: Icono }) {
+  return (
+    <div style={{ background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 16, padding: 22 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: GRAY3, display: "flex", alignItems: "center", gap: 6 }}><Icono size={15} color={color} /> {titulo}</div>
+      </div>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 14 }}>
+        <div style={{ fontSize: 34, fontWeight: 900 }}><NumeroAnimado valor={valor} /></div>
+        <FlechaDelta actual={valor} anterior={valorAnterior} tamano={13} />
+        <span style={{ fontSize: 12, color: GRAY3 }}>vs. periodo anterior</span>
+      </div>
+      <GraficoLineal datos={datos} color={color} />
+    </div>
+  );
+}
+
+// Selector de rango de fechas, mismo estilo visual del Dashboard (Día/Semana/Mes/Año/Todo + personalizado)
+function SelectorRangoAnalytics({ rangoTipo, setRangoTipo, rangoInicioP, setRangoInicioP, rangoFinP, setRangoFinP }) {
+  const [mostrarPersonalizado, setMostrarPersonalizado] = useState(false);
+  const hoyISO = new Date().toISOString().slice(0, 10);
+  return (
+    <div style={{ marginBottom: 20 }}>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        {[["dia", "Hoy"], ["semana", "Semana"], ["mes", "Mes"], ["anio", "Año"], ["todo", "Todo"]].map(([k, l]) => (
+          <button key={k} onClick={() => { setRangoTipo(k); setMostrarPersonalizado(false); }} className="oft-btn-press"
+            style={{ padding: "8px 16px", borderRadius: 20, border: `2px solid ${rangoTipo === k ? RED : GRAY2}`, background: rangoTipo === k ? RED : WHITE, color: rangoTipo === k ? WHITE : BLACK, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+            {l}
+          </button>
+        ))}
+        <button onClick={() => setMostrarPersonalizado(v => !v)} className="oft-btn-press"
+          style={{ padding: "8px 14px", borderRadius: 20, border: `2px solid ${rangoTipo === "personalizado" ? RED : GRAY2}`, background: rangoTipo === "personalizado" ? RED : WHITE, color: rangoTipo === "personalizado" ? WHITE : BLACK, fontWeight: 700, fontSize: 13, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}>
+          <CalendarIcon size={15} /> Personalizado
+        </button>
+      </div>
+      {mostrarPersonalizado && (
+        <div className="oft-cal-pop" style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 12 }}>
+          <input type="date" value={rangoInicioP} max={rangoFinP || hoyISO} onChange={e => { setRangoInicioP(e.target.value); setRangoTipo("personalizado"); }} style={{ ...S.input, marginBottom: 0, width: 150, fontSize: 13 }} />
+          <span style={{ color: GRAY3, fontSize: 13 }}>a</span>
+          <input type="date" value={rangoFinP} min={rangoInicioP} max={hoyISO} onChange={e => { setRangoFinP(e.target.value); setRangoTipo("personalizado"); }} style={{ ...S.input, marginBottom: 0, width: 150, fontSize: 13 }} />
+        </div>
+      )}
     </div>
   );
 }
 
 function AnalyticsPanel() {
-  const hoyISO = () => new Date().toISOString().slice(0, 10);
-  const hace30diasISO = () => new Date(Date.now() - 29 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-
-  const [desde, setDesde] = useState(hace30diasISO());
-  const [hasta, setHasta] = useState(hoyISO());
+  const [rangoTipo, setRangoTipo] = useState("semana"); // dia | semana | mes | anio | todo | personalizado
+  const [rangoInicioP, setRangoInicioP] = useState("");
+  const [rangoFinP, setRangoFinP] = useState("");
   const [eventos, setEventos] = useState([]);
   const [usuariosNuevos, setUsuariosNuevos] = useState([]);
   const [clientesManuales, setClientesManuales] = useState([]);
+  const [eventosAnterior, setEventosAnterior] = useState([]);
+  const [usuariosAnterior, setUsuariosAnterior] = useState([]);
+  const [manualesAnterior, setManualesAnterior] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [enVivo, setEnVivo] = useState(0);
+
+  // Convierte el tipo de rango elegido (o las fechas personalizadas) en fechas concretas
+  const calcularRango = (tipo) => {
+    const hoyD = new Date();
+    const hastaS = hoyD.toISOString().slice(0, 10);
+    if (tipo === "dia") return [hastaS, hastaS];
+    if (tipo === "semana") { const d = new Date(hoyD); d.setDate(d.getDate() - 6); return [d.toISOString().slice(0, 10), hastaS]; }
+    if (tipo === "mes") { const d = new Date(hoyD.getFullYear(), hoyD.getMonth(), 1); return [d.toISOString().slice(0, 10), hastaS]; }
+    if (tipo === "anio") { const d = new Date(hoyD.getFullYear(), 0, 1); return [d.toISOString().slice(0, 10), hastaS]; }
+    if (tipo === "todo") return ["2020-01-01", hastaS];
+    if (tipo === "personalizado") return [rangoInicioP || hastaS, rangoFinP || hastaS];
+    return [hastaS, hastaS];
+  };
+  const [desde, hasta] = calcularRango(rangoTipo);
+
+  // Calcula el periodo anterior, de la MISMA duración, justo antes de que empiece el actual
+  // (ej. si el rango es "última semana", esto da la semana previa a esa)
+  const calcularRangoAnterior = () => {
+    const diaMs = 24 * 60 * 60 * 1000;
+    const desdeD = new Date(desde + "T00:00:00");
+    const hastaD = new Date(hasta + "T23:59:59");
+    const duracionMs = hastaD - desdeD;
+    const hastaAntD = new Date(desdeD.getTime() - diaMs);
+    const desdeAntD = new Date(hastaAntD.getTime() - duracionMs);
+    return [desdeAntD.toISOString().slice(0, 10), hastaAntD.toISOString().slice(0, 10)];
+  };
+  const [desdeAnt, hastaAnt] = calcularRangoAnterior();
 
   const cargarDatos = async () => {
     setCargando(true);
     try {
-      const desdeISO = `${desde}T00:00:00`;
-      const hastaISO = `${hasta}T23:59:59`;
-      const [evts, usrs, manuales] = await Promise.all([
+      const desdeISO = `${desde}T00:00:00`, hastaISO = `${hasta}T23:59:59`;
+      const desdeAntISO = `${desdeAnt}T00:00:00`, hastaAntISO = `${hastaAnt}T23:59:59`;
+      const [evts, usrs, manuales, evtsAnt, usrsAnt, manualesAnt] = await Promise.all([
         sb.get("eventos_analytics", `?created_at=gte.${desdeISO}&created_at=lte.${hastaISO}&order=created_at.desc&limit=8000`),
-        // Solo cuentas con origen_cuenta='web' -- es decir, el cliente se registró
-        // solo en la página (o con Google). Esto excluye tanto las cuentas que TÚ
-        // creas al hacer un pedido manual/offline, como las que se crean solas al
-        // pagar como invitado -- ninguna de esas es un registro real del cliente.
+        // Solo cuentas con origen_cuenta='web' -- el cliente se registró solo en la
+        // página (o con Google). Excluye las que TÚ creas al hacer un pedido manual,
+        // y las que se generan solas al pagar como invitado.
         sb.get("usuarios", `?created_at=gte.${desdeISO}&created_at=lte.${hastaISO}&origen_cuenta=eq.web`),
-        // Aparte, cuántos clientes agregaste TÚ manualmente (pedidos offline) en el mismo rango
         sb.get("usuarios", `?created_at=gte.${desdeISO}&created_at=lte.${hastaISO}&origen_cuenta=eq.admin_manual`),
+        // Mismo trío, pero del periodo anterior -- para calcular el % de cambio
+        sb.get("eventos_analytics", `?created_at=gte.${desdeAntISO}&created_at=lte.${hastaAntISO}&limit=8000`),
+        sb.get("usuarios", `?created_at=gte.${desdeAntISO}&created_at=lte.${hastaAntISO}&origen_cuenta=eq.web`),
+        sb.get("usuarios", `?created_at=gte.${desdeAntISO}&created_at=lte.${hastaAntISO}&origen_cuenta=eq.admin_manual`),
       ]);
-      setEventos(evts || []);
-      setUsuariosNuevos(usrs || []);
-      setClientesManuales(manuales || []);
+      setEventos(evts || []); setUsuariosNuevos(usrs || []); setClientesManuales(manuales || []);
+      setEventosAnterior(evtsAnt || []); setUsuariosAnterior(usrsAnt || []); setManualesAnterior(manualesAnt || []);
     } catch(e) {
       console.warn("Error cargando analítica:", e.message);
       setEventos([]); setUsuariosNuevos([]); setClientesManuales([]);
+      setEventosAnterior([]); setUsuariosAnterior([]); setManualesAnterior([]);
     }
     setCargando(false);
   };
@@ -956,12 +1106,19 @@ function AnalyticsPanel() {
     return () => clearInterval(t);
   }, []);
 
-  // ── Cálculos derivados (todo del lado del cliente, con lo que ya se cargó) ──
+  // ── Cálculos derivados del periodo ACTUAL ──
   const visitas = eventos.filter(e => e.tipo === "visita");
   const visitantesUnicos = new Set(eventos.map(e => e.visitante_id)).size;
   const visitantesConUsuario = new Set(eventos.filter(e => e.usuario_id).map(e => e.visitante_id));
   const visitantesSinCuenta = [...new Set(eventos.map(e => e.visitante_id))].filter(v => !visitantesConUsuario.has(v)).length;
   const clientesQueAgregaron = new Set(eventos.filter(e => e.tipo === "agregar_carrito").map(e => e.visitante_id)).size;
+
+  // ── Mismos cálculos, pero del periodo ANTERIOR (solo para comparar el %) ──
+  const visitasAnt = eventosAnterior.filter(e => e.tipo === "visita").length;
+  const visitantesUnicosAnt = new Set(eventosAnterior.map(e => e.visitante_id)).size;
+  const visitantesConUsuarioAnt = new Set(eventosAnterior.filter(e => e.usuario_id).map(e => e.visitante_id));
+  const visitantesSinCuentaAnt = [...new Set(eventosAnterior.map(e => e.visitante_id))].filter(v => !visitantesConUsuarioAnt.has(v)).length;
+  const clientesQueAgregaronAnt = new Set(eventosAnterior.filter(e => e.tipo === "agregar_carrito").map(e => e.visitante_id)).size;
 
   const topPor = (tipo, n = 8) => {
     const mapa = {};
@@ -980,42 +1137,47 @@ function AnalyticsPanel() {
   const maxBusq = Math.max(1, ...topBusquedas.map(([, v]) => v));
   const maxCarr = Math.max(1, ...topCarrito.map(([, v]) => v));
 
-  const serieDiaria = (() => {
+  // Series diarias para los 2 widgets grandes (visitas, y visitantes únicos)
+  const serieDiaria = (tipoDatos) => {
     const mapa = {};
-    visitas.forEach(v => { const dia = v.created_at.slice(0, 10); mapa[dia] = (mapa[dia] || 0) + 1; });
+    if (tipoDatos === "visitas") {
+      visitas.forEach(v => { const dia = v.created_at.slice(0, 10); mapa[dia] = (mapa[dia] || 0) + 1; });
+    } else {
+      eventos.forEach(e => {
+        const dia = e.created_at.slice(0, 10);
+        if (!mapa[dia]) mapa[dia] = new Set();
+        mapa[dia].add(e.visitante_id);
+      });
+      Object.keys(mapa).forEach(dia => { mapa[dia] = mapa[dia].size; });
+    }
     return Object.entries(mapa).sort((a, b) => a[0].localeCompare(b[0])).map(([dia, valor]) => ({ dia, valor }));
-  })();
+  };
 
   return (
     <>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, flexWrap: "wrap", gap: 14 }}>
         <div style={{ fontSize: 22, fontWeight: 900, display: "flex", alignItems: "center", gap: 10 }}><Eye size={24} color={RED} /> Analítica Web</div>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 6, background: "#FFF0EF", padding: "7px 14px", borderRadius: 100, fontSize: 13, fontWeight: 700, color: "#B01519" }}>
-            <span className="oft-live-dot" /> <NumeroAnimado valor={enVivo} /> en vivo ahora
-          </div>
-          <input type="date" value={desde} max={hasta} onChange={e => setDesde(e.target.value)} style={{ ...S.input, marginBottom: 0, fontSize: 13, padding: "8px 10px", width: 145 }} />
-          <span style={{ color: GRAY3, fontSize: 13 }}>a</span>
-          <input type="date" value={hasta} min={desde} max={hoyISO()} onChange={e => setHasta(e.target.value)} style={{ ...S.input, marginBottom: 0, fontSize: 13, padding: "8px 10px", width: 145 }} />
+        <div style={{ display: "flex", alignItems: "center", gap: 6, background: "#FFF0EF", padding: "7px 14px", borderRadius: 100, fontSize: 13, fontWeight: 700, color: "#B01519" }}>
+          <span className="oft-live-dot" /> <NumeroAnimado valor={enVivo} /> en vivo ahora
         </div>
       </div>
 
+      <SelectorRangoAnalytics rangoTipo={rangoTipo} setRangoTipo={setRangoTipo} rangoInicioP={rangoInicioP} setRangoInicioP={setRangoInicioP} rangoFinP={rangoFinP} setRangoFinP={setRangoFinP} />
+
       {cargando ? <Spinner /> : (
         <>
-          {/* KPIs */}
-          <div className="oft-prod-anim" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 14, marginBottom: 28 }}>
-            <TarjetaKPI icono={Eye} valor={visitas.length} etiqueta="Visitas totales" color={RED} delay={0} />
-            <TarjetaKPI icono={Users} valor={visitantesUnicos} etiqueta="Visitantes únicos" color="#856404" delay={0.04} />
-            <TarjetaKPI icono={User} valor={usuariosNuevos.length} etiqueta="Usuarios nuevos (web)" color="#155724" delay={0.08} />
-            <TarjetaKPI icono={FilePlus} valor={clientesManuales.length} etiqueta="Clientes agregados por ti" color="#5B21B6" delay={0.10} />
-            <TarjetaKPI icono={EyeOff} valor={visitantesSinCuenta} etiqueta="Visitaron sin cuenta" color={GRAY3} delay={0.12} />
-            <TarjetaKPI icono={ShoppingCart} valor={clientesQueAgregaron} etiqueta="Agregaron al carrito" color="#0F6E56" delay={0.16} />
+          {/* 2 WIDGETS GRANDES CON GRÁFICO DE LÍNEA */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 18, marginBottom: 24 }}>
+            <WidgetGrande titulo="Visitas por día" valor={visitas.length} valorAnterior={visitasAnt} color={RED} icono={Eye} datos={serieDiaria("visitas")} />
+            <WidgetGrande titulo="Visitantes únicos por día" valor={visitantesUnicos} valorAnterior={visitantesUnicosAnt} color="#1D4ED8" icono={Users} datos={serieDiaria("visitantes")} />
           </div>
 
-          {/* GRÁFICO DE VISITAS POR DÍA */}
-          <div style={{ background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 14, padding: 20, marginBottom: 24 }}>
-            <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 16 }}>Visitas por día</div>
-            <GraficoVisitasDiarias datos={serieDiaria} color={RED} />
+          {/* KPIs chicos, cada uno con su % vs el periodo anterior */}
+          <div className="oft-prod-anim" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 14, marginBottom: 28 }}>
+            <TarjetaKPI icono={User} valor={usuariosNuevos.length} valorAnterior={usuariosAnterior.length} etiqueta="Usuarios nuevos (web)" color="#155724" delay={0} />
+            <TarjetaKPI icono={FilePlus} valor={clientesManuales.length} valorAnterior={manualesAnterior.length} etiqueta="Clientes agregados por ti" color="#5B21B6" delay={0.04} />
+            <TarjetaKPI icono={EyeOff} valor={visitantesSinCuenta} valorAnterior={visitantesSinCuentaAnt} etiqueta="Visitaron sin cuenta" color={GRAY3} delay={0.08} />
+            <TarjetaKPI icono={ShoppingCart} valor={clientesQueAgregaron} valorAnterior={clientesQueAgregaronAnt} etiqueta="Agregaron al carrito" color="#0F6E56" delay={0.12} />
           </div>
 
           {/* TOP 4 LISTAS */}
