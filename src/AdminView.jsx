@@ -911,6 +911,7 @@ function AnalyticsPanel() {
   const [hasta, setHasta] = useState(hoyISO());
   const [eventos, setEventos] = useState([]);
   const [usuariosNuevos, setUsuariosNuevos] = useState([]);
+  const [clientesManuales, setClientesManuales] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [enVivo, setEnVivo] = useState(0);
 
@@ -919,19 +920,22 @@ function AnalyticsPanel() {
     try {
       const desdeISO = `${desde}T00:00:00`;
       const hastaISO = `${hasta}T23:59:59`;
-      const [evts, usrs] = await Promise.all([
+      const [evts, usrs, manuales] = await Promise.all([
         sb.get("eventos_analytics", `?created_at=gte.${desdeISO}&created_at=lte.${hastaISO}&order=created_at.desc&limit=8000`),
-        // Excluye las cuentas "fantasma" que el sistema crea solas cuando alguien
-        // hace un pedido sin registrarse (ej. pagando por Yappy como invitado) --
-        // esas tienen un correo falso terminado en @ofertodo.local, y no son
-        // clientes reales que se hayan registrado de verdad.
-        sb.get("usuarios", `?created_at=gte.${desdeISO}&created_at=lte.${hastaISO}&email=not.ilike.*@ofertodo.local`),
+        // Solo cuentas con origen_cuenta='web' -- es decir, el cliente se registró
+        // solo en la página (o con Google). Esto excluye tanto las cuentas que TÚ
+        // creas al hacer un pedido manual/offline, como las que se crean solas al
+        // pagar como invitado -- ninguna de esas es un registro real del cliente.
+        sb.get("usuarios", `?created_at=gte.${desdeISO}&created_at=lte.${hastaISO}&origen_cuenta=eq.web`),
+        // Aparte, cuántos clientes agregaste TÚ manualmente (pedidos offline) en el mismo rango
+        sb.get("usuarios", `?created_at=gte.${desdeISO}&created_at=lte.${hastaISO}&origen_cuenta=eq.admin_manual`),
       ]);
       setEventos(evts || []);
       setUsuariosNuevos(usrs || []);
+      setClientesManuales(manuales || []);
     } catch(e) {
       console.warn("Error cargando analítica:", e.message);
-      setEventos([]); setUsuariosNuevos([]);
+      setEventos([]); setUsuariosNuevos([]); setClientesManuales([]);
     }
     setCargando(false);
   };
@@ -1002,7 +1006,8 @@ function AnalyticsPanel() {
           <div className="oft-prod-anim" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 14, marginBottom: 28 }}>
             <TarjetaKPI icono={Eye} valor={visitas.length} etiqueta="Visitas totales" color={RED} delay={0} />
             <TarjetaKPI icono={Users} valor={visitantesUnicos} etiqueta="Visitantes únicos" color="#856404" delay={0.04} />
-            <TarjetaKPI icono={User} valor={usuariosNuevos.length} etiqueta="Usuarios nuevos" color="#155724" delay={0.08} />
+            <TarjetaKPI icono={User} valor={usuariosNuevos.length} etiqueta="Usuarios nuevos (web)" color="#155724" delay={0.08} />
+            <TarjetaKPI icono={FilePlus} valor={clientesManuales.length} etiqueta="Clientes agregados por ti" color="#5B21B6" delay={0.10} />
             <TarjetaKPI icono={EyeOff} valor={visitantesSinCuenta} etiqueta="Visitaron sin cuenta" color={GRAY3} delay={0.12} />
             <TarjetaKPI icono={ShoppingCart} valor={clientesQueAgregaron} etiqueta="Agregaron al carrito" color="#0F6E56" delay={0.16} />
           </div>
