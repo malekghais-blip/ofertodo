@@ -331,6 +331,39 @@ function presUnitPrice(product, pres) {
   return Number(product.precio_docena);
 }
 
+// ═══════════════════════════════════════════════════════════════
+//  ANALÍTICA — registra eventos de uso del sitio (visitas, clics en
+//  categorías/productos, búsquedas, agregar al carrito) para el panel
+//  de Analítica del admin. Nunca bloquea ni rompe la app si falla.
+// ═══════════════════════════════════════════════════════════════
+
+// Identificador anónimo y constante por navegador/dispositivo, para poder
+// contar "visitantes únicos" sin necesidad de que se hayan registrado.
+export function idVisitante() {
+  try {
+    let id = localStorage.getItem("oft_visitante_id");
+    if (!id) {
+      id = "v_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 10);
+      localStorage.setItem("oft_visitante_id", id);
+    }
+    return id;
+  } catch (e) {
+    return "v_anonimo"; // si el navegador bloquea localStorage, no rompe nada, solo agrupa distinto ese caso raro
+  }
+}
+
+export function registrarEvento(tipo, valor = null, valorNombre = null, usuarioId = null) {
+  try {
+    sb.post("eventos_analytics", {
+      tipo,
+      valor: valor != null ? String(valor) : null,
+      valor_nombre: valorNombre || null,
+      visitante_id: idVisitante(),
+      usuario_id: usuarioId || null,
+    }).catch(() => {}); // best-effort: si falla, no importa, nunca debe afectar la experiencia del cliente
+  } catch (e) { /* nunca truena la app por esto */ }
+}
+
 export function imagenOptimizada(url, tamano = 400, calidad = 75) {
   if (!url || !url.includes("/storage/v1/object/public/")) return url;
   // Confirmado: Supabase no comprime archivos .svg con esta transformación (los sirve
