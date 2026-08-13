@@ -16,6 +16,7 @@ import {
   GRAY3, Logo, ORDER_STATUS_ENVIO, ORDER_STATUS_RETIRO, RED,
   RED_D, S, STATUS_ICONS_ENVIO, STATUS_ICONS_RETIRO, SUPABASE_KEY,
   SUPABASE_URL, Spinner, StatusBadge, WHITE, colorToHex,
+  idVisitante, registrarEvento,
   imagenOptimizada, mediaDocenaDesdeDistribucion, parseDistribucion, presLabelPlural, presToPiezas,
   presUnitPrice, sb, useApp, useLockBodyScroll,
 } from "./shared.jsx";
@@ -861,7 +862,10 @@ function HomeView() {
           gruposCategorias={gruposCategorias}
           seleccionadaId={0}
           grupoInicial={grupoInicialSheet}
-          onSeleccionar={(id) => { setCatalogCat(id); setView("catalogo"); setCatSheetAbierto(false); }}
+          onSeleccionar={(id) => {
+            setCatalogCat(id); setView("catalogo"); setCatSheetAbierto(false);
+            if (id) registrarEvento("click_categoria", id, categories.find(c => c.id === id)?.nombre);
+          }}
           onClose={() => setCatSheetAbierto(false)}
         />
       )}
@@ -1259,6 +1263,14 @@ function CatalogoView() {
   // Si el usuario eligió una categoría desde el inicio, ábrela
   useEffect(() => { setCatFilter(catalogCat || 0); }, [catalogCat]);
 
+  // Registra la búsqueda solo cuando el cliente deja de escribir un momento
+  // (para "búsquedas más frecuentes" en Analítica, sin registrar cada letra)
+  useEffect(() => {
+    if (search.trim().length < 2) return;
+    const t = setTimeout(() => registrarEvento("busqueda", null, search.trim()), 900);
+    return () => clearTimeout(t);
+  }, [search]);
+
   // Cambia el título de la pestaña del navegador según la categoría que se esté viendo
   useEffect(() => {
     const cat = categories.find(c => c.id === catFilter);
@@ -1326,7 +1338,10 @@ function CatalogoView() {
           gruposCategorias={gruposCategorias}
           seleccionadaId={catFilter}
           resaltadaId={categoriaSugerida?.id}
-          onSeleccionar={(id) => { setCatFilter(id); setCatSheetAbierto(false); }}
+          onSeleccionar={(id) => {
+            setCatFilter(id); setCatSheetAbierto(false);
+            if (id) registrarEvento("click_categoria", id, categories.find(c => c.id === id)?.nombre);
+          }}
           onClose={() => setCatSheetAbierto(false)}
         />
       )}
@@ -1364,6 +1379,11 @@ function ProductModal() {
     document.title = `${product.nombre} | Ofertodo`;
     return () => { document.title = anterior; };
   }, [product]);
+
+  // Registra que se vio este producto (para "productos más vistos" en Analítica)
+  useEffect(() => {
+    if (product?.id) registrarEvento("click_producto", product.id, product.nombre);
+  }, [product?.id]);
 
   if (!product) return null;
   const total = presTotal(product, pres, count);
@@ -3024,6 +3044,7 @@ export default function App() {
       return [...prev, { product, qty, pres, count }];
     });
     setCartPulse(p => p + 1); // dispara animación del carrito
+    registrarEvento("agregar_carrito", product.id, product.nombre, user?.id);
   };
 
   // Cargar datos de Supabase al iniciar
@@ -3108,6 +3129,9 @@ export default function App() {
     procesarRetornoGoogle();
 
     const init = async () => {
+      // Registra la visita apenas entra a la página (no bloquea nada, es "fire and forget")
+      registrarEvento("visita");
+
       // Los banners se piden desde este mismo instante, en paralelo con todo lo
       // demás -- así el carrusel del inicio no tiene que esperar a que termine de
       // cargar categorías, productos, ni nada más. Apenas responda, se muestra.
@@ -3223,6 +3247,13 @@ export default function App() {
     init();
   }, []);
 
+  // "Latido" para saber quién sigue activo en el sitio ahora mismo (visitas en vivo,
+  // panel de Analítica) -- uno cada 60 segundos mientras la pestaña siga abierta.
+  useEffect(() => {
+    const latido = setInterval(() => registrarEvento("heartbeat"), 60000);
+    return () => clearInterval(latido);
+  }, []);
+
   const isAdmin = view === "admin";
   const ctx = { view, setView, cart, setCart, addToCart, cartPulse, user, setUser, showLogin, setShowLogin, showRegister, setShowRegister, showCart, setShowCart, quickView, setQuickView, pagoResultado, setPagoResultado, catalogCat, setCatalogCat, completeProfile, setCompleteProfile, googleMfaPaso, setGoogleMfaPaso, pendingCheckout, setPendingCheckout, products, setProducts, categories, setCategories, gruposCategorias, setGruposCategorias, banners, setBanners, popups, setPopups, empresas, setEmpresas, sucursales, setSucursales, localesRetiro, setLocalesRetiro, retiroLocalHabilitado, setRetiroLocalHabilitado, loading, showToast };
 
@@ -3296,6 +3327,16 @@ export default function App() {
         .oft-mini-card-img { width: 116px; height: 116px; border-radius: 12px; background: ${GRAY}; display: flex; align-items: center; justify-content: center; overflow: hidden; margin-bottom: 8px; border: 1px solid ${GRAY2}; }
         .oft-mini-card-img img { width: 100%; height: 100%; object-fit: contain; }
         .oft-mini-card-name { font-size: 12px; font-weight: 600; color: ${BLACK}; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+
+        /* ── ANALÍTICA WEB (panel de admin) ── */
+        @keyframes analyticsBarGrow { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+        .oft-analytics-bar { transform-origin: left; animation: analyticsBarGrow 0.7s cubic-bezier(0.16,1,0.3,1) both; }
+        @keyframes analyticsColGrow { from { transform: scaleY(0); } to { transform: scaleY(1); } }
+        .oft-analytics-col { transform-origin: bottom; animation: analyticsColGrow 0.55s cubic-bezier(0.16,1,0.3,1) both; }
+        @keyframes kpiFadeUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .oft-kpi-card { animation: kpiFadeUp 0.45s ease both; }
+        @keyframes livePulse { 0% { box-shadow: 0 0 0 0 rgba(176,21,25,0.5); } 70% { box-shadow: 0 0 0 6px rgba(176,21,25,0); } 100% { box-shadow: 0 0 0 0 rgba(176,21,25,0); } }
+        .oft-live-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #B01519; animation: livePulse 1.8s infinite; }
         @keyframes overlayFade { from { opacity: 0; } to { opacity: 1; } }
         .oft-overlay { animation: overlayFade 0.22s ease both; }
         @keyframes authPop { 0% { opacity: 0; transform: translateY(18px) scale(0.94); } 60% { opacity: 1; transform: translateY(0) scale(1.015); } 100% { transform: translateY(0) scale(1); } }
