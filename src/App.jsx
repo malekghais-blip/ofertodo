@@ -2451,6 +2451,21 @@ function CheckoutView() {
 // ═══════════════════════════════════════════════════════════════
 //  DASHBOARD CLIENTE
 // ═══════════════════════════════════════════════════════════════
+// Tarjeta chica y minimalista para las filas de "Comprar otra vez" / "Tus intereses"
+// en Mi Cuenta — al tocarla abre el detalle del producto para elegir cantidad y comprar.
+function MiniProductCard({ product }) {
+  const { setQuickView } = useApp();
+  const imgUrl = product.imagen_url ? imagenOptimizada(product.imagen_url, 240) : null;
+  return (
+    <div className="oft-mini-card" onClick={() => setQuickView(product)}>
+      <div className="oft-mini-card-img">
+        {imgUrl ? <img src={imgUrl} alt={product.nombre} loading="lazy" decoding="async" /> : <Package size={26} color={GRAY3} strokeWidth={1.4} />}
+      </div>
+      <div className="oft-mini-card-name">{product.nombre}</div>
+    </div>
+  );
+}
+
 function DashboardView() {
   const { user, setUser, products, showToast } = useApp();
   const [orders, setOrders] = useState([]);
@@ -2550,6 +2565,33 @@ function DashboardView() {
   // Busca imagen de producto por id
   const prodImg = (pid) => products.find(p => p.id === pid)?.imagen_url || null;
 
+  // "Comprar otra vez": productos que ya compró antes, del más reciente al más viejo
+  // "Tus intereses": otros productos de esas mismas categorías que todavía no ha comprado
+  const idsComprados = new Set();
+  const fechaMasReciente = new Map();
+  orders.forEach(o => {
+    (o.items || []).forEach(it => {
+      if (!it.producto_id) return;
+      idsComprados.add(it.producto_id);
+      if (!fechaMasReciente.has(it.producto_id) || o.created_at > fechaMasReciente.get(it.producto_id)) {
+        fechaMasReciente.set(it.producto_id, o.created_at);
+      }
+    });
+  });
+
+  const comprarOtraVez = [...fechaMasReciente.entries()]
+    .sort((a, b) => new Date(b[1]) - new Date(a[1]))
+    .map(([pid]) => products.find(p => p.id === pid))
+    .filter(p => p && p.activo && p.visible_web !== false)
+    .slice(0, 10);
+
+  const categoriasDeInteres = [...new Set(
+    [...idsComprados].map(pid => products.find(p => p.id === pid)?.categoria_id).filter(Boolean)
+  )];
+  const tusIntereses = products
+    .filter(p => p.activo && p.visible_web !== false && categoriasDeInteres.includes(p.categoria_id) && !idsComprados.has(p.id))
+    .slice(0, 10);
+
   return (
     <div className="oft-section" style={S.section}>
       {/* CABECERA */}
@@ -2616,6 +2658,30 @@ function DashboardView() {
           </div>
         )}
       </div>
+
+      {/* COMPRAR OTRA VEZ */}
+      {comprarOtraVez.length > 0 && (
+        <div style={{ marginBottom: 32 }}>
+          <div style={{ fontWeight: 800, fontSize: 16, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}>
+            <RefreshCw size={17} color={RED} strokeWidth={2.2} /> Comprar otra vez
+          </div>
+          <div className="oft-mini-row">
+            {comprarOtraVez.map(p => <MiniProductCard key={p.id} product={p} />)}
+          </div>
+        </div>
+      )}
+
+      {/* TUS INTERESES */}
+      {tusIntereses.length > 0 && (
+        <div style={{ marginBottom: 32 }}>
+          <div style={{ fontWeight: 800, fontSize: 16, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}>
+            <Sparkles size={17} color={RED} strokeWidth={2.2} /> Basado en tus intereses
+          </div>
+          <div className="oft-mini-row">
+            {tusIntereses.map(p => <MiniProductCard key={p.id} product={p} />)}
+          </div>
+        </div>
+      )}
 
       {orders.length === 0 ? (
         <div style={{ textAlign: "center", padding: "50px 0", color: GRAY3 }}>
@@ -3220,6 +3286,16 @@ export default function App() {
         .oft-group-card:hover .oft-group-card-icon { background: #FFF0EF; }
         .oft-group-card-chevron { position: absolute; top: 16px; right: 14px; }
         .oft-banner-thumb:hover .oft-banner-hover-overlay { opacity: 1 !important; }
+
+        /* ── "COMPRAR OTRA VEZ" / "TUS INTERESES" (Mi Cuenta) ── */
+        .oft-mini-row { display: flex; gap: 12px; overflow-x: auto; padding: 2px 2px 8px; scroll-snap-type: x proximity; -webkit-overflow-scrolling: touch; }
+        .oft-mini-row::-webkit-scrollbar { height: 5px; }
+        .oft-mini-row::-webkit-scrollbar-thumb { background: ${GRAY2}; border-radius: 10px; }
+        .oft-mini-card { flex: 0 0 116px; scroll-snap-align: start; cursor: pointer; transition: transform 0.18s ease; }
+        .oft-mini-card:hover { transform: translateY(-3px); }
+        .oft-mini-card-img { width: 116px; height: 116px; border-radius: 12px; background: ${GRAY}; display: flex; align-items: center; justify-content: center; overflow: hidden; margin-bottom: 8px; border: 1px solid ${GRAY2}; }
+        .oft-mini-card-img img { width: 100%; height: 100%; object-fit: contain; }
+        .oft-mini-card-name { font-size: 12px; font-weight: 600; color: ${BLACK}; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
         @keyframes overlayFade { from { opacity: 0; } to { opacity: 1; } }
         .oft-overlay { animation: overlayFade 0.22s ease both; }
         @keyframes authPop { 0% { opacity: 0; transform: translateY(18px) scale(0.94); } 60% { opacity: 1; transform: translateY(0) scale(1.015); } 100% { transform: translateY(0) scale(1); } }
