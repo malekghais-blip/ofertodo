@@ -3331,8 +3331,14 @@ export default function App() {
         /* ── ANALÍTICA WEB (panel de admin) ── */
         @keyframes analyticsBarGrow { from { transform: scaleX(0); } to { transform: scaleX(1); } }
         .oft-analytics-bar { transform-origin: left; animation: analyticsBarGrow 0.7s cubic-bezier(0.16,1,0.3,1) both; }
-        @keyframes analyticsColGrow { from { transform: scaleY(0); } to { transform: scaleY(1); } }
-        .oft-analytics-col { transform-origin: bottom; animation: analyticsColGrow 0.55s cubic-bezier(0.16,1,0.3,1) both; }
+        @keyframes lineChartDraw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+        .oft-linechart-line { stroke-dasharray: 1; animation: lineChartDraw 1.1s cubic-bezier(0.16,1,0.3,1) both; }
+        @keyframes areaFadeIn { from { opacity: 0; } to { opacity: 1; } }
+        .oft-linechart-area { animation: areaFadeIn 0.8s 0.35s ease both; }
+        @keyframes deltaPop { from { opacity: 0; transform: scale(0.7); } to { opacity: 1; transform: scale(1); } }
+        .oft-delta { display: inline-flex; align-items: center; gap: 2px; font-weight: 800; padding: 2px 7px; border-radius: 20px; animation: deltaPop 0.4s 0.3s cubic-bezier(0.34,1.4,0.5,1) both; }
+        .oft-delta-up { color: #0F6E56; background: #E6F7F1; }
+        .oft-delta-down { color: #B01519; background: #FDECEC; }
         @keyframes kpiFadeUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
         .oft-kpi-card { animation: kpiFadeUp 0.45s ease both; }
         @keyframes livePulse { 0% { box-shadow: 0 0 0 0 rgba(176,21,25,0.5); } 70% { box-shadow: 0 0 0 6px rgba(176,21,25,0); } 100% { box-shadow: 0 0 0 0 rgba(176,21,25,0); } }
