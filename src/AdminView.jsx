@@ -837,7 +837,7 @@ function EditCotizacionModal({ cotizacion, empresas, sucursales, onClose, onSave
 //  ADMIN PANEL
 // ═══════════════════════════════════════════════════════════════
 function AdminView() {
-  const { products, setProducts, categories, setCategories, gruposCategorias, setGruposCategorias, banners, setBanners, empresas, setEmpresas, sucursales, setSucursales, localesRetiro, setLocalesRetiro, retiroLocalHabilitado, setRetiroLocalHabilitado, showToast, setView, setUser, user } = useApp();
+  const { products, setProducts, categories, setCategories, gruposCategorias, setGruposCategorias, banners, setBanners, popups, setPopups, empresas, setEmpresas, sucursales, setSucursales, localesRetiro, setLocalesRetiro, retiroLocalHabilitado, setRetiroLocalHabilitado, showToast, setView, setUser, user } = useApp();
   // Rol del usuario actual: 'admin' = módulo completo, 'operador' = acceso limitado.
   // Los admins creados antes de este cambio pueden no tener "rol" guardado todavía — por
   // compatibilidad, si es_admin es true y no tiene rol, se trata como admin completo.
@@ -1849,6 +1849,86 @@ function AdminView() {
     }
   };
 
+  // ── POP-UPS PROMOCIONALES (descuentos, eventos, anuncios) ───────
+  const [popupUploading, setPopupUploading] = useState(false);
+  const popupNuevoFileRef = useRef(null);
+  const popupReemplazoFileRef = useRef(null);
+
+  const handlePopupNuevo = async () => {
+    try {
+      const maxOrden = popups.reduce((max, p) => Math.max(max, p.orden || 0), -1);
+      const creado = await sb.post("popups_promocionales", {
+        titulo: "Nuevo anuncio", destino_tipo: null, activo: false, orden: maxOrden + 1, texto_boton: "Ver más",
+      });
+      setPopups(prev => [...prev, creado[0]]);
+      showToast("Pop-up creado — complétalo y actívalo cuando esté listo");
+    } catch(err) {
+      alert("Error creando el pop-up: " + err.message);
+    }
+  };
+
+  const handlePopupImagen = async (e, popup) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setPopupUploading(true);
+    try {
+      const cleanName = file.name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9.\-_]/g, "_");
+      const path = `popup_${Date.now()}_${cleanName}`;
+      await sb.upload("banners", path, file); // reutiliza el mismo bucket que los banners
+      const url = `${sb.publicUrl("banners", path)}?t=${Date.now()}`;
+      await sb.patch("popups_promocionales", popup.id, { imagen_url: url });
+      setPopups(prev => prev.map(p => p.id === popup.id ? { ...p, imagen_url: url } : p));
+      showToast("Imagen actualizada");
+    } catch(err) {
+      alert("Error subiendo la imagen: " + err.message);
+    }
+    setPopupUploading(false);
+  };
+
+  const handleQuitarImagenPopup = async (popup) => {
+    setPopups(prev => prev.map(p => p.id === popup.id ? { ...p, imagen_url: null } : p));
+    try { await sb.patch("popups_promocionales", popup.id, { imagen_url: null }); } catch(e) { showToast("No se pudo quitar: " + e.message); }
+  };
+
+  const handleUpdatePopup = async (popup, cambios) => {
+    setPopups(prev => prev.map(p => p.id === popup.id ? { ...p, ...cambios } : p));
+    try {
+      await sb.patch("popups_promocionales", popup.id, cambios);
+    } catch(e) {
+      showToast("No se pudo guardar: " + e.message);
+    }
+  };
+
+  const handleDeletePopup = async (popup) => {
+    if (!confirm(`¿Eliminar el pop-up "${popup.titulo}"?`)) return;
+    try {
+      await sb.delete("popups_promocionales", popup.id);
+      setPopups(prev => prev.filter(p => p.id !== popup.id));
+      showToast("Pop-up eliminado");
+    } catch(e) { alert("Error: " + e.message); }
+  };
+
+  const handleMovePopup = async (popup, direccion) => {
+    const ordenados = [...popups].sort((a, b) => (a.orden || 0) - (b.orden || 0));
+    const idx = ordenados.findIndex(p => p.id === popup.id);
+    const idxVecino = direccion === "arriba" ? idx - 1 : idx + 1;
+    if (idxVecino < 0 || idxVecino >= ordenados.length) return;
+    const vecino = ordenados[idxVecino];
+    setPopups(prev => prev.map(p => {
+      if (p.id === popup.id) return { ...p, orden: vecino.orden };
+      if (p.id === vecino.id) return { ...p, orden: popup.orden };
+      return p;
+    }));
+    try {
+      await Promise.all([
+        sb.patch("popups_promocionales", popup.id, { orden: vecino.orden }),
+        sb.patch("popups_promocionales", vecino.id, { orden: popup.orden }),
+      ]);
+    } catch(e) {
+      showToast("No se pudo guardar el nuevo orden: " + e.message);
+    }
+  };
+
   // ── EMPRESAS DE ENVÍO ──────────────────────────────────────────
   const [newEmpresa, setNewEmpresa] = useState("");
   const [empUploading, setEmpUploading] = useState(null);
@@ -2033,6 +2113,7 @@ function AdminView() {
     ["products", "Productos", Tag],
     ["categories", "Categorías", FolderOpen],
     ["banners", "Banners Inicio", ImageIcon],
+    ["popups", "Pop-ups", Sparkles],
     ["descuentos", "Descuentos", Zap],
     ["retornos", "Retornos", RefreshCw],
     ["analisis", "Análisis Stock", TrendingUp],
@@ -3611,6 +3692,120 @@ function AdminView() {
                     </div>
                   </div>
                 ))}
+              </div>
+            )}
+          </>
+        )}
+
+        {/* ═══════════ POP-UPS PROMOCIONALES ═══════════ */}
+        {tab === "popups" && esAdminCompleto && (
+          <>
+            <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 4 }}>Pop-ups</div>
+            <p style={{ fontSize: 13, color: GRAY3, marginBottom: 20 }}>
+              Ventanas que aparecen solas al entrar a tu web — para descuentos, eventos o anuncios. Se muestran solo una vez por visita (no se repiten a cada rato). Si tienes varios activos, solo aparece el primero según el orden.
+            </p>
+
+            <button onClick={handlePopupNuevo} className="oft-btn-press" style={{ ...S.btnRed, marginBottom: 24 }}>
+              <Plus size={16} /> Crear pop-up
+            </button>
+            <input ref={popupReemplazoFileRef} type="file" accept="image/*" style={{ display: "none" }} onChange={(e) => {
+              const popupId = Number(e.target.dataset.popupId);
+              const popup = popups.find(p => p.id === popupId);
+              if (popup) handlePopupImagen(e, popup);
+              e.target.value = "";
+            }} />
+
+            {popups.length === 0 ? (
+              <p style={{ color: GRAY3, fontSize: 14 }}>Todavía no has creado ningún pop-up.</p>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 14, maxWidth: 780 }}>
+                {[...popups].sort((a, b) => (a.orden || 0) - (b.orden || 0)).map((p, idx, arr) => {
+                  const etiquetaDe = (prod) => `${prod.referencia ? prod.referencia + " — " : ""}${prod.nombre}`;
+                  const productoActual = products.find(pr => String(pr.id) === String(p.destino_valor));
+                  return (
+                  <div key={p.id} style={{ background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 12, padding: 16, opacity: p.activo ? 1 : 0.55 }}>
+                    <div style={{ display: "flex", gap: 16, marginBottom: 12 }}>
+                      <div
+                        onClick={() => { popupReemplazoFileRef.current.dataset.popupId = p.id; popupReemplazoFileRef.current?.click(); }}
+                        title="Agregar/cambiar imagen"
+                        className="oft-banner-thumb"
+                        style={{ width: 100, height: 100, borderRadius: 8, overflow: "hidden", cursor: "pointer", flexShrink: 0, background: GRAY, position: "relative", border: `1px dashed ${GRAY2}`, display: "flex", alignItems: "center", justifyContent: "center" }}
+                      >
+                        {popupUploading ? <RefreshCw size={18} className="spin" color={GRAY3} /> : (
+                          p.imagen_url
+                            ? <img src={imagenOptimizada(p.imagen_url, 200)} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                            : <ImageIcon size={22} color={GRAY3} strokeWidth={1.5} />
+                        )}
+                        <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.35)", opacity: 0, transition: "opacity 0.15s" }} className="oft-banner-hover-overlay">
+                          <PencilIcon size={16} color={WHITE} />
+                        </div>
+                      </div>
+
+                      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 8 }}>
+                        <input defaultValue={p.titulo || ""} placeholder="Título" onBlur={e => { if (e.target.value.trim() !== (p.titulo || "")) handleUpdatePopup(p, { titulo: e.target.value.trim() }); }} style={{ ...S.input, marginBottom: 0, fontSize: 14, fontWeight: 700 }} />
+                        <textarea defaultValue={p.mensaje || ""} placeholder="Mensaje (opcional)" rows={2} onBlur={e => { if (e.target.value.trim() !== (p.mensaje || "")) handleUpdatePopup(p, { mensaje: e.target.value.trim() || null }); }} style={{ ...S.input, marginBottom: 0, fontSize: 13, resize: "vertical", fontFamily: "inherit" }} />
+                        {p.imagen_url && (
+                          <button onClick={() => handleQuitarImagenPopup(p)} style={{ alignSelf: "flex-start", background: "none", border: "none", color: GRAY3, fontSize: 11, cursor: "pointer", textDecoration: "underline", padding: 0 }}>Quitar imagen</button>
+                        )}
+                      </div>
+
+                      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, flexShrink: 0 }}>
+                        <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 700, color: p.activo ? "#0F6E56" : GRAY3, cursor: "pointer" }}>
+                          <input type="checkbox" checked={p.activo} onChange={e => handleUpdatePopup(p, { activo: e.target.checked })} />
+                          {p.activo ? "Activo" : "Apagado"}
+                        </label>
+                        <div style={{ display: "flex", gap: 3 }}>
+                          <button onClick={() => handleMovePopup(p, "arriba")} disabled={idx === 0} title="Subir" style={{ background: GRAY, border: "none", borderRadius: 6, width: 26, height: 22, display: "flex", alignItems: "center", justifyContent: "center", cursor: idx === 0 ? "default" : "pointer", opacity: idx === 0 ? 0.35 : 1 }}><ChevronUp size={14} /></button>
+                          <button onClick={() => handleMovePopup(p, "abajo")} disabled={idx === arr.length - 1} title="Bajar" style={{ background: GRAY, border: "none", borderRadius: 6, width: 26, height: 22, display: "flex", alignItems: "center", justifyContent: "center", cursor: idx === arr.length - 1 ? "default" : "pointer", opacity: idx === arr.length - 1 ? 0.35 : 1 }}><ChevronDown size={14} /></button>
+                        </div>
+                        <button onClick={() => handleDeletePopup(p)} title="Eliminar" style={{ background: "none", border: "none", color: GRAY3, cursor: "pointer", display: "flex" }}><Trash2 size={15} /></button>
+                      </div>
+                    </div>
+
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", borderTop: `1px solid ${GRAY}`, paddingTop: 12 }}>
+                      <select value={p.destino_tipo || ""} onChange={e => handleUpdatePopup(p, { destino_tipo: e.target.value || null, destino_valor: null })} style={{ ...S.input, marginBottom: 0, fontSize: 13, width: 180 }}>
+                        <option value="">Sin botón (solo aviso)</option>
+                        <option value="catalogo">Botón → Catálogo completo</option>
+                        <option value="categoria">Botón → Una categoría</option>
+                        <option value="producto">Botón → Un producto</option>
+                        <option value="url">Botón → Link externo</option>
+                      </select>
+                      {p.destino_tipo === "categoria" && (
+                        <select value={p.destino_valor || ""} onChange={e => handleUpdatePopup(p, { destino_valor: e.target.value })} style={{ ...S.input, marginBottom: 0, fontSize: 13, flex: 1, minWidth: 160 }}>
+                          <option value="">Elige una categoría...</option>
+                          {categories.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                        </select>
+                      )}
+                      {p.destino_tipo === "producto" && (
+                        <>
+                          <datalist id={`productos-popup-${p.id}`}>
+                            {products.filter(pr => pr.activo).map(pr => <option key={pr.id} value={etiquetaDe(pr)} />)}
+                          </datalist>
+                          <input
+                            list={`productos-popup-${p.id}`}
+                            defaultValue={productoActual ? etiquetaDe(productoActual) : ""}
+                            placeholder="Escribe el nombre o la referencia..."
+                            onBlur={e => {
+                              const texto = e.target.value.trim();
+                              if (texto === "") { handleUpdatePopup(p, { destino_valor: null }); return; }
+                              const encontrado = products.find(pr => etiquetaDe(pr) === texto);
+                              if (encontrado) handleUpdatePopup(p, { destino_valor: encontrado.id });
+                              else e.target.value = productoActual ? etiquetaDe(productoActual) : "";
+                            }}
+                            style={{ ...S.input, marginBottom: 0, fontSize: 13, flex: 1, minWidth: 160 }}
+                          />
+                        </>
+                      )}
+                      {p.destino_tipo === "url" && (
+                        <input defaultValue={p.destino_valor || ""} placeholder="https://..." onBlur={e => { if (e.target.value.trim() !== (p.destino_valor || "")) handleUpdatePopup(p, { destino_valor: e.target.value.trim() }); }} style={{ ...S.input, marginBottom: 0, fontSize: 13, flex: 1, minWidth: 160 }} />
+                      )}
+                      {p.destino_tipo && (
+                        <input defaultValue={p.texto_boton || ""} placeholder="Texto del botón" onBlur={e => { if (e.target.value.trim() !== (p.texto_boton || "")) handleUpdatePopup(p, { texto_boton: e.target.value.trim() || "Ver más" }); }} style={{ ...S.input, marginBottom: 0, fontSize: 13, width: 160 }} />
+                      )}
+                    </div>
+                  </div>
+                  );
+                })}
               </div>
             )}
           </>
