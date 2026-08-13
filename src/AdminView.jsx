@@ -1424,20 +1424,13 @@ function AdminView() {
     } catch(e) { alert("Error guardando producto: " + e.message); }
   };
 
-  const handleToggle = async (product) => {
-    try {
-      await sb.patch("productos", product.id, { activo: !product.activo });
-      setProducts(prev => prev.map(p => p.id === product.id ? { ...p, activo: !p.activo } : p));
-      showToast(`Producto ${!product.activo ? "activado" : "desactivado"}`);
-    } catch(e) { alert("Error"); }
-  };
-
   const handleToggleWeb = async (product) => {
-    const nuevoValor = !(product.visible_web !== false); // si estaba visible (true/undefined), lo oculta
+    const visibleActualmente = product.visible_web !== false; // true si estaba visible (o nunca se había tocado este campo)
+    const nuevoVisibleWeb = !visibleActualmente;
     try {
-      await sb.patch("productos", product.id, { visible_web: !nuevoValor });
-      setProducts(prev => prev.map(p => p.id === product.id ? { ...p, visible_web: !nuevoValor } : p));
-      showToast(!nuevoValor ? "Producto visible en la web" : "Producto oculto de la web");
+      await sb.patch("productos", product.id, { visible_web: nuevoVisibleWeb });
+      setProducts(prev => prev.map(p => p.id === product.id ? { ...p, visible_web: nuevoVisibleWeb } : p));
+      showToast(nuevoVisibleWeb ? "Producto visible en la web" : "Producto oculto de la web");
     } catch(e) { alert("Error al cambiar visibilidad"); }
   };
 
@@ -3309,7 +3302,7 @@ function AdminView() {
                       <td style={S.td}>
                         <div style={{ display: "flex", gap: 6 }}>
                           <button onClick={() => openEditProduct(p)} style={{ background: "none", border: `1px solid ${BLACK}`, color: BLACK, borderRadius: 6, padding: "4px 8px", fontSize: 12, cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}><PencilIcon size={13} /> Editar</button>
-                          <button style={{ ...S.btnOutline, padding: "4px 10px", fontSize: 12 }} onClick={() => handleToggle(p)}>{p.activo ? "Ocultar" : "Mostrar"}</button>
+                          <button style={{ ...S.btnOutline, padding: "4px 10px", fontSize: 12 }} onClick={() => handleToggleWeb(p)}>{p.visible_web !== false ? "Ocultar" : "Mostrar"}</button>
                           <button onClick={() => handleDelete(p)} style={{ background: "none", border: `1px solid ${RED}`, color: RED, borderRadius: 6, padding: "4px 8px", fontSize: 12, cursor: "pointer", display: "flex", alignItems: "center" }}><Trash2 size={14} /></button>
                         </div>
                       </td>
@@ -3373,7 +3366,7 @@ function AdminView() {
                     {/* Acciones */}
                     <div style={{ display: "flex", gap: 8 }}>
                       <button onClick={() => openEditProduct(p)} style={{ flex: 1, background: BLACK, color: WHITE, border: "none", borderRadius: 8, padding: "10px", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}><PencilIcon size={15} /> Editar</button>
-                      <button onClick={() => handleToggle(p)} style={{ ...S.btnOutline, padding: "10px 14px", fontSize: 13 }}>{p.activo ? "Ocultar" : "Mostrar"}</button>
+                      <button onClick={() => handleToggleWeb(p)} style={{ ...S.btnOutline, padding: "10px 14px", fontSize: 13 }}>{p.visible_web !== false ? "Ocultar" : "Mostrar"}</button>
                       <button onClick={() => handleDelete(p)} style={{ background: "none", border: `1.5px solid ${RED}`, color: RED, borderRadius: 8, padding: "10px 12px", cursor: "pointer", display: "flex", alignItems: "center" }}><Trash2 size={16} /></button>
                     </div>
                   </div>
