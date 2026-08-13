@@ -1700,7 +1700,7 @@ function RegisterModal() {
       if (auth.error || auth.error_description || auth.msg) {
         setErr(auth.error?.message || auth.error_description || auth.msg || "No se pudo crear la cuenta.");
       } else {
-        await sb.post("usuarios", { nombre: form.nombre, email: form.email, telefono: form.telefono, es_admin: false });
+        await sb.post("usuarios", { nombre: form.nombre, email: form.email, telefono: form.telefono, es_admin: false, origen_cuenta: "web" });
         // Enviar email de bienvenida (sin bloquear el flujo si falla)
         try {
           fetch(SUPABASE_URL + "/functions/v1/bienvenida-cliente", {
@@ -1802,7 +1802,7 @@ function CompleteProfileModal() {
     if (!telefono.trim()) { setErr("Escribe tu WhatsApp / celular."); return; }
     setLoading(true); setErr("");
     try {
-      await sb.post("usuarios", { nombre: nombre.trim(), email: completeProfile.email, telefono: telefono.trim(), es_admin: false });
+      await sb.post("usuarios", { nombre: nombre.trim(), email: completeProfile.email, telefono: telefono.trim(), es_admin: false, origen_cuenta: "web" });
       const perfil = await sb.get("usuarios", `?email=eq.${encodeURIComponent(completeProfile.email)}&limit=1`);
       setUser({ ...completeProfile.gUser, ...(perfil[0] || {}), token: completeProfile.token, refresh_token: completeProfile.refresh_token, expires_at: completeProfile.expires_at });
       // Enviar email de bienvenida (sin bloquear si falla)
@@ -2525,7 +2525,7 @@ function DashboardView() {
         setUser({ ...user, ...upd[0] });
       } else {
         // No existe la fila (puede pasar con cuentas viejas): crearla
-        const creado = await sb.post("usuarios", { ...cambios, email: user.email, es_admin: false });
+        const creado = await sb.post("usuarios", { ...cambios, email: user.email, es_admin: false, origen_cuenta: "web" });
         const nuevo = Array.isArray(creado) && creado[0] ? creado[0] : { ...user, ...cambios };
         setUser({ ...user, ...nuevo });
       }
