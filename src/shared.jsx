@@ -1874,7 +1874,7 @@ export function ClienteFormModal({ cliente, onClose, onSaved, showToast }) {
         const email = form.email.trim() || `cliente_${Date.now()}@ofertodo.local`;
         const fila = await sb.post("usuarios", {
           nombre: form.nombre.trim(), telefono: form.telefono.trim(), email, es_admin: false,
-          cedula: form.cedula.trim() || null,
+          cedula: form.cedula.trim() || null, origen_cuenta: "admin_manual",
         });
         onSaved(Array.isArray(fila) && fila[0] ? fila[0] : fila);
         showToast("Cliente creado");
