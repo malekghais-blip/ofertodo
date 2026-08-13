@@ -836,6 +836,204 @@ function EditCotizacionModal({ cotizacion, empresas, sucursales, onClose, onSave
 // ═══════════════════════════════════════════════════════════════
 //  ADMIN PANEL
 // ═══════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════
+//  ANALÍTICA WEB — visitas, clics en categorías/productos, búsquedas,
+//  qué se agrega al carrito, usuarios nuevos, y visitas en vivo.
+// ═══════════════════════════════════════════════════════════════
+
+// Número que cuenta hacia arriba con una animación suave al aparecer/cambiar
+function NumeroAnimado({ valor }) {
+  const [mostrado, setMostrado] = useState(0);
+  useEffect(() => {
+    let inicio = null;
+    let frameId;
+    const destino = Number(valor) || 0;
+    const paso = (ts) => {
+      if (!inicio) inicio = ts;
+      const progreso = Math.min((ts - inicio) / 800, 1);
+      setMostrado(Math.round(progreso * destino));
+      if (progreso < 1) frameId = requestAnimationFrame(paso);
+    };
+    frameId = requestAnimationFrame(paso);
+    return () => cancelAnimationFrame(frameId);
+  }, [valor]);
+  return <>{mostrado.toLocaleString("en-US")}</>;
+}
+
+// Tarjeta chica de una métrica (KPI), con ícono y número animado
+function TarjetaKPI({ icono: Icono, valor, etiqueta, color, delay = 0 }) {
+  return (
+    <div className="oft-kpi-card" style={{ background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 14, padding: 18, animationDelay: `${delay}s` }}>
+      <div style={{ background: color + "15", borderRadius: 10, padding: 8, display: "inline-flex", marginBottom: 10 }}><Icono size={20} color={color} strokeWidth={2} /></div>
+      <div style={{ fontSize: 26, fontWeight: 900, color: BLACK }}><NumeroAnimado valor={valor} /></div>
+      <div style={{ fontSize: 12, color: GRAY3, fontWeight: 600 }}>{etiqueta}</div>
+    </div>
+  );
+}
+
+// Barra horizontal animada, para los "Top 8" (categorías, productos, búsquedas...)
+function BarraTop({ etiqueta, valor, maximo, color, delay = 0 }) {
+  const pct = maximo > 0 ? Math.max((valor / maximo) * 100, 4) : 0;
+  return (
+    <div style={{ marginBottom: 13 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 13, marginBottom: 4 }}>
+        <span style={{ fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{etiqueta}</span>
+        <span style={{ fontWeight: 800, color, flexShrink: 0 }}>{valor}</span>
+      </div>
+      <div style={{ height: 7, background: GRAY, borderRadius: 6, overflow: "hidden" }}>
+        <div className="oft-analytics-bar" style={{ height: "100%", width: `${pct}%`, background: color, borderRadius: 6, animationDelay: `${delay}s` }} />
+      </div>
+    </div>
+  );
+}
+
+// Gráfico de barras verticales simple, para "visitas por día"
+function GraficoVisitasDiarias({ datos, color }) {
+  const max = Math.max(1, ...datos.map(d => d.valor));
+  if (datos.length === 0) return <p style={{ color: GRAY3, fontSize: 13 }}>Sin visitas registradas en este rango.</p>;
+  return (
+    <div style={{ display: "flex", alignItems: "flex-end", gap: Math.max(3, 6 - Math.floor(datos.length / 10)), height: 150, padding: "0 2px" }}>
+      {datos.map((d, i) => (
+        <div key={d.dia} title={`${d.dia}: ${d.valor} visita(s)`} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 6, minWidth: 4 }}>
+          <div className="oft-analytics-col" style={{ width: "100%", maxWidth: 26, height: `${Math.max((d.valor / max) * 120, 3)}px`, background: color, borderRadius: "4px 4px 0 0", animationDelay: `${Math.min(i * 0.02, 0.6)}s` }} />
+          {datos.length <= 14 && <div style={{ fontSize: 9, color: GRAY3, fontWeight: 600 }}>{d.dia.slice(8, 10)}</div>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function AnalyticsPanel() {
+  const hoyISO = () => new Date().toISOString().slice(0, 10);
+  const hace30diasISO = () => new Date(Date.now() - 29 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
+  const [desde, setDesde] = useState(hace30diasISO());
+  const [hasta, setHasta] = useState(hoyISO());
+  const [eventos, setEventos] = useState([]);
+  const [usuariosNuevos, setUsuariosNuevos] = useState([]);
+  const [cargando, setCargando] = useState(true);
+  const [enVivo, setEnVivo] = useState(0);
+
+  const cargarDatos = async () => {
+    setCargando(true);
+    try {
+      const desdeISO = `${desde}T00:00:00`;
+      const hastaISO = `${hasta}T23:59:59`;
+      const [evts, usrs] = await Promise.all([
+        sb.get("eventos_analytics", `?created_at=gte.${desdeISO}&created_at=lte.${hastaISO}&order=created_at.desc&limit=8000`),
+        sb.get("usuarios", `?created_at=gte.${desdeISO}&created_at=lte.${hastaISO}`),
+      ]);
+      setEventos(evts || []);
+      setUsuariosNuevos(usrs || []);
+    } catch(e) {
+      console.warn("Error cargando analítica:", e.message);
+      setEventos([]); setUsuariosNuevos([]);
+    }
+    setCargando(false);
+  };
+
+  useEffect(() => { cargarDatos(); }, [desde, hasta]);
+
+  // Visitas en vivo: independiente del filtro de fecha, se refresca cada 30s por su cuenta
+  useEffect(() => {
+    const cargarEnVivo = async () => {
+      try {
+        const haceTresMin = new Date(Date.now() - 3 * 60 * 1000).toISOString();
+        const recientes = await sb.get("eventos_analytics", `?created_at=gte.${haceTresMin}&tipo=in.(visita,heartbeat)&select=visitante_id`);
+        setEnVivo(new Set((recientes || []).map(r => r.visitante_id)).size);
+      } catch(e) { /* no es crítico, se reintenta solo en 30s */ }
+    };
+    cargarEnVivo();
+    const t = setInterval(cargarEnVivo, 30000);
+    return () => clearInterval(t);
+  }, []);
+
+  // ── Cálculos derivados (todo del lado del cliente, con lo que ya se cargó) ──
+  const visitas = eventos.filter(e => e.tipo === "visita");
+  const visitantesUnicos = new Set(eventos.map(e => e.visitante_id)).size;
+  const visitantesConUsuario = new Set(eventos.filter(e => e.usuario_id).map(e => e.visitante_id));
+  const visitantesSinCuenta = [...new Set(eventos.map(e => e.visitante_id))].filter(v => !visitantesConUsuario.has(v)).length;
+  const clientesQueAgregaron = new Set(eventos.filter(e => e.tipo === "agregar_carrito").map(e => e.visitante_id)).size;
+
+  const topPor = (tipo, n = 8) => {
+    const mapa = {};
+    eventos.filter(e => e.tipo === tipo).forEach(e => {
+      const clave = e.valor_nombre || "(sin nombre)";
+      mapa[clave] = (mapa[clave] || 0) + 1;
+    });
+    return Object.entries(mapa).sort((a, b) => b[1] - a[1]).slice(0, n);
+  };
+  const topCategorias = topPor("click_categoria");
+  const topProductos = topPor("click_producto");
+  const topBusquedas = topPor("busqueda");
+  const topCarrito = topPor("agregar_carrito");
+  const maxCat = Math.max(1, ...topCategorias.map(([, v]) => v));
+  const maxProd = Math.max(1, ...topProductos.map(([, v]) => v));
+  const maxBusq = Math.max(1, ...topBusquedas.map(([, v]) => v));
+  const maxCarr = Math.max(1, ...topCarrito.map(([, v]) => v));
+
+  const serieDiaria = (() => {
+    const mapa = {};
+    visitas.forEach(v => { const dia = v.created_at.slice(0, 10); mapa[dia] = (mapa[dia] || 0) + 1; });
+    return Object.entries(mapa).sort((a, b) => a[0].localeCompare(b[0])).map(([dia, valor]) => ({ dia, valor }));
+  })();
+
+  return (
+    <>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, flexWrap: "wrap", gap: 14 }}>
+        <div style={{ fontSize: 22, fontWeight: 900, display: "flex", alignItems: "center", gap: 10 }}><Eye size={24} color={RED} /> Analítica Web</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, background: "#FFF0EF", padding: "7px 14px", borderRadius: 100, fontSize: 13, fontWeight: 700, color: "#B01519" }}>
+            <span className="oft-live-dot" /> <NumeroAnimado valor={enVivo} /> en vivo ahora
+          </div>
+          <input type="date" value={desde} max={hasta} onChange={e => setDesde(e.target.value)} style={{ ...S.input, marginBottom: 0, fontSize: 13, padding: "8px 10px", width: 145 }} />
+          <span style={{ color: GRAY3, fontSize: 13 }}>a</span>
+          <input type="date" value={hasta} min={desde} max={hoyISO()} onChange={e => setHasta(e.target.value)} style={{ ...S.input, marginBottom: 0, fontSize: 13, padding: "8px 10px", width: 145 }} />
+        </div>
+      </div>
+
+      {cargando ? <Spinner /> : (
+        <>
+          {/* KPIs */}
+          <div className="oft-prod-anim" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 14, marginBottom: 28 }}>
+            <TarjetaKPI icono={Eye} valor={visitas.length} etiqueta="Visitas totales" color={RED} delay={0} />
+            <TarjetaKPI icono={Users} valor={visitantesUnicos} etiqueta="Visitantes únicos" color="#856404" delay={0.04} />
+            <TarjetaKPI icono={User} valor={usuariosNuevos.length} etiqueta="Usuarios nuevos" color="#155724" delay={0.08} />
+            <TarjetaKPI icono={EyeOff} valor={visitantesSinCuenta} etiqueta="Visitaron sin cuenta" color={GRAY3} delay={0.12} />
+            <TarjetaKPI icono={ShoppingCart} valor={clientesQueAgregaron} etiqueta="Agregaron al carrito" color="#0F6E56" delay={0.16} />
+          </div>
+
+          {/* GRÁFICO DE VISITAS POR DÍA */}
+          <div style={{ background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 14, padding: 20, marginBottom: 24 }}>
+            <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 16 }}>Visitas por día</div>
+            <GraficoVisitasDiarias datos={serieDiaria} color={RED} />
+          </div>
+
+          {/* TOP 4 LISTAS */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 18 }}>
+            <div style={{ background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 14, padding: 20 }}>
+              <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}><LayoutGrid size={17} color={RED} /> Categorías más vistas</div>
+              {topCategorias.length === 0 ? <p style={{ color: GRAY3, fontSize: 13 }}>Sin datos en este rango.</p> : topCategorias.map(([nombre, valor], i) => <BarraTop key={nombre} etiqueta={nombre} valor={valor} maximo={maxCat} color={RED} delay={i * 0.04} />)}
+            </div>
+            <div style={{ background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 14, padding: 20 }}>
+              <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}><Tag size={17} color="#856404" /> Productos más vistos</div>
+              {topProductos.length === 0 ? <p style={{ color: GRAY3, fontSize: 13 }}>Sin datos en este rango.</p> : topProductos.map(([nombre, valor], i) => <BarraTop key={nombre} etiqueta={nombre} valor={valor} maximo={maxProd} color="#856404" delay={i * 0.04} />)}
+            </div>
+            <div style={{ background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 14, padding: 20 }}>
+              <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}><Search size={17} color="#0F6E56" /> Búsquedas más frecuentes</div>
+              {topBusquedas.length === 0 ? <p style={{ color: GRAY3, fontSize: 13 }}>Sin datos en este rango.</p> : topBusquedas.map(([nombre, valor], i) => <BarraTop key={nombre} etiqueta={nombre} valor={valor} maximo={maxBusq} color="#0F6E56" delay={i * 0.04} />)}
+            </div>
+            <div style={{ background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 14, padding: 20 }}>
+              <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}><ShoppingCart size={17} color="#1D4ED8" /> Más agregados al carrito</div>
+              {topCarrito.length === 0 ? <p style={{ color: GRAY3, fontSize: 13 }}>Sin datos en este rango.</p> : topCarrito.map(([nombre, valor], i) => <BarraTop key={nombre} etiqueta={nombre} valor={valor} maximo={maxCarr} color="#1D4ED8" delay={i * 0.04} />)}
+            </div>
+          </div>
+        </>
+      )}
+    </>
+  );
+}
+
 function AdminView() {
   const { products, setProducts, categories, setCategories, gruposCategorias, setGruposCategorias, banners, setBanners, popups, setPopups, empresas, setEmpresas, sucursales, setSucursales, localesRetiro, setLocalesRetiro, retiroLocalHabilitado, setRetiroLocalHabilitado, showToast, setView, setUser, user } = useApp();
   // Rol del usuario actual: 'admin' = módulo completo, 'operador' = acceso limitado.
@@ -2101,6 +2299,7 @@ function AdminView() {
     ["users", "Clientes", Users],
   ] : [
     ["dashboard", "Dashboard", BarChart3],
+    ["analytics", "Analítica Web", Eye],
     ["orders", "Pedidos", Package],
     ["crear", "Crear", FilePlus],
     ["products", "Productos", Tag],
@@ -3584,6 +3783,9 @@ function AdminView() {
         )}
 
         {/* ═══════════ BANNERS PROMOCIONALES (CARRUSEL DEL INICIO) ═══════════ */}
+        {/* ═══════════ ANALÍTICA WEB ═══════════ */}
+        {tab === "analytics" && esAdminCompleto && <AnalyticsPanel />}
+
         {tab === "banners" && esAdminCompleto && (
           <>
             <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 4 }}>Banners del inicio</div>
