@@ -650,7 +650,7 @@ function PagoResultadoView() {
 //  configuró (igual que los banners: producto, categoría, catálogo o link).
 // ═══════════════════════════════════════════════════════════════
 function PopupPromocional() {
-  const { popups, products, setCatalogCat, setView, setQuickView } = useApp();
+  const { popups, products, categories, setCatalogCat, setView, setQuickView } = useApp();
   const [popupActivo, setPopupActivo] = useState(null);
   const [mostrar, setMostrar] = useState(false);
 
@@ -686,8 +686,10 @@ function PopupPromocional() {
       const prod = products.find(pr => String(pr.id) === String(p.destino_valor));
       if (prod) setQuickView(prod);
     } else if (p.destino_tipo === "categoria") {
-      setCatalogCat(Number(p.destino_valor) || 0);
+      const catId = Number(p.destino_valor) || 0;
+      setCatalogCat(catId);
       setView("catalogo");
+      if (catId) registrarEvento("click_categoria", catId, categories.find(c => c.id === catId)?.nombre);
     } else if (p.destino_tipo === "catalogo") {
       setCatalogCat(0);
       setView("catalogo");
@@ -720,7 +722,7 @@ function PopupPromocional() {
 }
 
 function PromoCarousel({ banners }) {
-  const { setView, setCatalogCat, setQuickView, products } = useApp();
+  const { setView, setCatalogCat, setQuickView, products, categories } = useApp();
   const [indice, setIndice] = useState(0);
   const [pausado, setPausado] = useState(false);
   const touchStartX = useRef(null);
@@ -745,8 +747,10 @@ function PromoCarousel({ banners }) {
       const p = products.find(pr => String(pr.id) === String(b.destino_valor));
       if (p) setQuickView(p); else { setCatalogCat(0); setView("catalogo"); }
     } else if (b.destino_tipo === "categoria") {
-      setCatalogCat(Number(b.destino_valor) || 0);
+      const catId = Number(b.destino_valor) || 0;
+      setCatalogCat(catId);
       setView("catalogo");
+      if (catId) registrarEvento("click_categoria", catId, categories.find(c => c.id === catId)?.nombre);
     } else if (b.destino_tipo === "url" && b.destino_valor) {
       window.open(b.destino_valor, "_blank");
     } else {
@@ -802,7 +806,10 @@ function HomeView() {
   const sinGrupo = categories.filter(c => !c.grupo_id);
 
   const abrirGrupo = (grupo) => { setGrupoInicialSheet(grupo); setCatSheetAbierto(true); };
-  const abrirCategoriaSuelta = (id) => { setCatalogCat(id); setView("catalogo"); };
+  const abrirCategoriaSuelta = (id) => {
+    setCatalogCat(id); setView("catalogo");
+    registrarEvento("click_categoria", id, categories.find(c => c.id === id)?.nombre);
+  };
 
   return (
     <>
