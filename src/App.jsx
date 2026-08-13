@@ -642,6 +642,82 @@ function PagoResultadoView() {
 //  con el dedo, y cada uno lleva a donde el admin configuró (producto,
 //  categoría, catálogo completo, o un link externo).
 // ═══════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════
+//  POP-UP PROMOCIONAL — descuentos, eventos o anuncios que aparecen
+//  solos al entrar (una vez por visita, para no ser molesto), con
+//  imagen opcional y un botón que puede llevar a donde el admin
+//  configuró (igual que los banners: producto, categoría, catálogo o link).
+// ═══════════════════════════════════════════════════════════════
+function PopupPromocional() {
+  const { popups, products, setCatalogCat, setView, setQuickView } = useApp();
+  const [popupActivo, setPopupActivo] = useState(null);
+  const [mostrar, setMostrar] = useState(false);
+
+  useEffect(() => {
+    const activos = [...popups].filter(p => p.activo).sort((a, b) => (a.orden || 0) - (b.orden || 0));
+    if (activos.length === 0) return;
+    const elegido = activos[0];
+    let yaVisto = false;
+    try { yaVisto = sessionStorage.getItem(`oft_popup_${elegido.id}`) === "1"; } catch (e) { /* si el navegador bloquea sessionStorage, simplemente lo muestra */ }
+    if (yaVisto) return;
+    const t = setTimeout(() => { setPopupActivo(elegido); setMostrar(true); }, 1200);
+    return () => clearTimeout(t);
+  }, [popups]);
+
+  const cerrar = () => {
+    setMostrar(false);
+    if (popupActivo) { try { sessionStorage.setItem(`oft_popup_${popupActivo.id}`, "1"); } catch (e) {} }
+  };
+
+  useEffect(() => {
+    if (!mostrar) return;
+    const onKey = (e) => { if (e.key === "Escape") cerrar(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [mostrar]);
+
+  if (!mostrar || !popupActivo) return null;
+
+  const irAlDestino = () => {
+    const p = popupActivo;
+    cerrar();
+    if (p.destino_tipo === "producto") {
+      const prod = products.find(pr => String(pr.id) === String(p.destino_valor));
+      if (prod) setQuickView(prod);
+    } else if (p.destino_tipo === "categoria") {
+      setCatalogCat(Number(p.destino_valor) || 0);
+      setView("catalogo");
+    } else if (p.destino_tipo === "catalogo") {
+      setCatalogCat(0);
+      setView("catalogo");
+    } else if (p.destino_tipo === "url" && p.destino_valor) {
+      window.open(p.destino_valor, "_blank");
+    }
+  };
+
+  return createPortal(
+    <div className="oft-overlay" style={S.overlay} onClick={cerrar}>
+      <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 18, maxWidth: 400, width: "90%", overflow: "hidden", position: "relative" }} onClick={e => e.stopPropagation()}>
+        <button onClick={cerrar} className="oft-btn-press" aria-label="Cerrar" style={{ position: "absolute", top: 12, right: 12, zIndex: 2, background: "rgba(0,0,0,0.45)", border: "none", borderRadius: "50%", width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+          <X size={16} color={WHITE} />
+        </button>
+        {popupActivo.imagen_url && (
+          <img src={imagenOptimizada(popupActivo.imagen_url, 800)} alt={popupActivo.titulo} style={{ width: "100%", display: "block", maxHeight: 260, objectFit: "cover" }} />
+        )}
+        <div style={{ padding: "24px 24px 28px", textAlign: "center" }}>
+          <div style={{ fontWeight: 900, fontSize: 20, marginBottom: popupActivo.mensaje ? 8 : 20 }}>{popupActivo.titulo}</div>
+          {popupActivo.mensaje && <p style={{ color: GRAY3, fontSize: 14, marginBottom: 20, lineHeight: 1.5 }}>{popupActivo.mensaje}</p>}
+          {popupActivo.destino_tipo && (
+            <button onClick={irAlDestino} className="oft-btn-press" style={{ ...S.btnRed, width: "100%", justifyContent: "center", padding: 13 }}>
+              {popupActivo.texto_boton || "Ver más"}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  , document.body);
+}
+
 function PromoCarousel({ banners }) {
   const { setView, setCatalogCat, setQuickView, products } = useApp();
   const [indice, setIndice] = useState(0);
@@ -2851,6 +2927,7 @@ export default function App() {
   const [categories, setCategories] = useState([]);
   const [gruposCategorias, setGruposCategorias] = useState([]); // grupos generales (ej. "Ropa de Dama"), cada uno con su propio ícono
   const [banners, setBanners] = useState([]); // banners promocionales del carrusel del inicio
+  const [popups, setPopups] = useState([]); // pop-ups promocionales (descuentos, eventos, anuncios)
   const [empresas, setEmpresas] = useState([]);
   const [sucursales, setSucursales] = useState([]);
   const [localesRetiro, setLocalesRetiro] = useState([]); // locales propios donde se puede retirar
@@ -2972,6 +3049,12 @@ export default function App() {
         .then(data => setBanners(data || []))
         .catch(e => console.warn("Banners promocionales no cargados:", e.message));
 
+      // Los pop-ups también se piden desde ya, en paralelo -- así el que corresponda
+      // puede aparecer apenas cargue la página, sin esperar a nada más.
+      sb.get("popups_promocionales", "?order=orden.asc")
+        .then(data => setPopups(data || []))
+        .catch(e => console.warn("Pop-ups promocionales no cargados:", e.message));
+
       try {
         const [cats, prods] = await Promise.all([
           sb.get("categorias", "?activa=eq.true&order=id"),
@@ -3075,7 +3158,7 @@ export default function App() {
   }, []);
 
   const isAdmin = view === "admin";
-  const ctx = { view, setView, cart, setCart, addToCart, cartPulse, user, setUser, showLogin, setShowLogin, showRegister, setShowRegister, showCart, setShowCart, quickView, setQuickView, pagoResultado, setPagoResultado, catalogCat, setCatalogCat, completeProfile, setCompleteProfile, googleMfaPaso, setGoogleMfaPaso, pendingCheckout, setPendingCheckout, products, setProducts, categories, setCategories, gruposCategorias, setGruposCategorias, banners, setBanners, empresas, setEmpresas, sucursales, setSucursales, localesRetiro, setLocalesRetiro, retiroLocalHabilitado, setRetiroLocalHabilitado, loading, showToast };
+  const ctx = { view, setView, cart, setCart, addToCart, cartPulse, user, setUser, showLogin, setShowLogin, showRegister, setShowRegister, showCart, setShowCart, quickView, setQuickView, pagoResultado, setPagoResultado, catalogCat, setCatalogCat, completeProfile, setCompleteProfile, googleMfaPaso, setGoogleMfaPaso, pendingCheckout, setPendingCheckout, products, setProducts, categories, setCategories, gruposCategorias, setGruposCategorias, banners, setBanners, popups, setPopups, empresas, setEmpresas, sucursales, setSucursales, localesRetiro, setLocalesRetiro, retiroLocalHabilitado, setRetiroLocalHabilitado, loading, showToast };
 
   return (
     <AppCtx.Provider value={ctx}>
@@ -3314,6 +3397,7 @@ export default function App() {
         {completeProfile && <CompleteProfileModal />}
         {googleMfaPaso && <GoogleMfaModal />}
         {quickView && <ProductModal />}
+        {!isAdmin && <PopupPromocional />}
         {!isAdmin && <FloatingCart />}
         <Toast msg={toastMsg} />
       </div>
