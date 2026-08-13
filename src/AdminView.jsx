@@ -921,7 +921,11 @@ function AnalyticsPanel() {
       const hastaISO = `${hasta}T23:59:59`;
       const [evts, usrs] = await Promise.all([
         sb.get("eventos_analytics", `?created_at=gte.${desdeISO}&created_at=lte.${hastaISO}&order=created_at.desc&limit=8000`),
-        sb.get("usuarios", `?created_at=gte.${desdeISO}&created_at=lte.${hastaISO}`),
+        // Excluye las cuentas "fantasma" que el sistema crea solas cuando alguien
+        // hace un pedido sin registrarse (ej. pagando por Yappy como invitado) --
+        // esas tienen un correo falso terminado en @ofertodo.local, y no son
+        // clientes reales que se hayan registrado de verdad.
+        sb.get("usuarios", `?created_at=gte.${desdeISO}&created_at=lte.${hastaISO}&email=not.ilike.*@ofertodo.local`),
       ]);
       setEventos(evts || []);
       setUsuariosNuevos(usrs || []);
@@ -1115,6 +1119,7 @@ function AdminView() {
   const [eliminando, setEliminando] = useState(false);
   // Filtro de ventas por periodo en el dashboard
   const [rangoVentas, setRangoVentas] = useState("todo"); // dia | semana | mes | anio | todo | personalizado | rango
+  const [busquedaPedidos, setBusquedaPedidos] = useState(""); // busca por # de pedido o nombre de cliente, en la pestaña Pedidos
   const [fechaPersonalizada, setFechaPersonalizada] = useState(null); // Date seleccionada en el calendario
   const [mostrarCalendario, setMostrarCalendario] = useState(false);
   const [mesCalendario, setMesCalendario] = useState(new Date()); // mes que muestra el calendario
@@ -1177,6 +1182,13 @@ function AdminView() {
     return true;
   };
   const pedidosReales = pedidosRealesTodos.filter(o => enRango(o.created_at));
+  // Filtra por # de pedido o nombre de cliente -- solo afecta la lista de la pestaña
+  // "Pedidos", no los números del Dashboard ni del Reporte de Ventas
+  const pedidosFiltrados = pedidosReales.filter(o => {
+    const texto = busquedaPedidos.trim().toLowerCase();
+    if (!texto) return true;
+    return (o.codigo || "").toLowerCase().includes(texto) || (o.nombre_cliente || "").toLowerCase().includes(texto);
+  });
   const fmtCorta = (d) => new Date(d).toLocaleDateString("es-PA", { day: "2-digit", month: "short" });
   const etiquetaRango = { dia: "Hoy", semana: "Última semana", mes: "Este mes", anio: "Este año", todo: "Todo el tiempo", personalizado: fechaPersonalizada ? new Date(fechaPersonalizada).toLocaleDateString("es-PA", { day: "2-digit", month: "long", year: "numeric" }) : "Fecha específica", rango: (rangoInicio && rangoFin) ? `${fmtCorta(rangoInicio)} → ${fmtCorta(rangoFin)}` : "Rango de fechas" }[rangoVentas];
 
@@ -2817,6 +2829,15 @@ function AdminView() {
                 <div key={l} style={S.statCard}><Icon size={20} color={c} strokeWidth={1.8} /><div style={{ fontSize: 28, fontWeight: 900, color: c }}>{n}</div><div style={{ fontSize: 13, color: GRAY3 }}>{l}</div></div>
               ))}
             </div>
+            <div style={{ position: "relative", maxWidth: 360, marginBottom: 20 }}>
+              <Search size={16} color={GRAY3} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)" }} />
+              <input
+                value={busquedaPedidos}
+                onChange={e => setBusquedaPedidos(e.target.value)}
+                placeholder="Buscar por # de pedido o cliente..."
+                style={{ ...S.input, marginBottom: 0, paddingLeft: 36 }}
+              />
+            </div>
             {loadingData ? <Spinner /> : (
               <>
               {/* TABLA (solo escritorio) */}
@@ -2824,7 +2845,10 @@ function AdminView() {
                 <table style={S.table}>
                   <thead><tr>{["#Pedido","Cliente","Teléfono","Envío","Total","Estado","Cambiar","Avisar"].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
                   <tbody>
-                    {pedidosReales.map(o => (
+                    {pedidosFiltrados.length === 0 && (
+                      <tr><td colSpan={8} style={{ ...S.td, textAlign: "center", padding: 30, color: GRAY3 }}>{busquedaPedidos ? "No se encontró ningún pedido" : "No hay pedidos aún"}</td></tr>
+                    )}
+                    {pedidosFiltrados.map(o => (
                       <tr key={o.id}>
                         <td style={{ ...S.td, fontWeight: 700, color: RED }}>
                           {o.codigo}
@@ -2871,9 +2895,9 @@ function AdminView() {
 
               {/* TARJETAS (solo celular) */}
               <div className="oft-only-mobile" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                {pedidosReales.length === 0 ? (
-                  <div style={{ textAlign: "center", padding: 30, color: GRAY3 }}>No hay pedidos aún</div>
-                ) : pedidosReales.map(o => (
+                {pedidosFiltrados.length === 0 ? (
+                  <div style={{ textAlign: "center", padding: 30, color: GRAY3 }}>{busquedaPedidos ? "No se encontró ningún pedido" : "No hay pedidos aún"}</div>
+                ) : pedidosFiltrados.map(o => (
                   <div key={o.id} style={{ background: WHITE, borderRadius: 14, border: `1px solid ${GRAY2}`, padding: 16 }}>
                     {/* Cabecera */}
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
