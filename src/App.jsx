@@ -2471,6 +2471,11 @@ function CheckoutView() {
             <button style={{ ...S.btnRed, width: "100%", justifyContent: "center", padding: 16, fontSize: 16, opacity: loading ? 0.7 : 1 }} onClick={handlePlace} disabled={loading}>
               {loading ? "Procesando..." : <>Continuar al pago →</>}
             </button>
+            <p style={{ fontSize: 11, color: GRAY3, textAlign: "center", marginTop: 10, lineHeight: 1.4 }}>
+              Este sitio está protegido por reCAPTCHA y se aplican la{" "}
+              <a href="https://policies.google.com/privacy" target="_blank" rel="noopener noreferrer" style={{ color: GRAY3 }}>Política de Privacidad</a>{" "}
+              y los <a href="https://policies.google.com/terms" target="_blank" rel="noopener noreferrer" style={{ color: GRAY3 }}>Términos de Servicio</a> de Google.
+            </p>
           </>
         ) : tarjetaPagoData ? (
           <div ref={tarjetaContainerRef}>
@@ -3386,6 +3391,9 @@ export default function App() {
         .oft-kpi-card { animation: kpiFadeUp 0.45s ease both; }
         @keyframes livePulse { 0% { box-shadow: 0 0 0 0 rgba(176,21,25,0.5); } 70% { box-shadow: 0 0 0 6px rgba(176,21,25,0); } 100% { box-shadow: 0 0 0 0 rgba(176,21,25,0); } }
         .oft-live-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #B01519; animation: livePulse 1.8s infinite; }
+        /* Oculta la insignia flotante de reCAPTCHA -- a cambio, Google exige mostrar el
+           aviso de texto en algún lugar visible (ya está agregado en el checkout). */
+        .grecaptcha-badge { visibility: hidden; }
         @keyframes overlayFade { from { opacity: 0; } to { opacity: 1; } }
         .oft-overlay { animation: overlayFade 0.22s ease both; }
         @keyframes authPop { 0% { opacity: 0; transform: translateY(18px) scale(0.94); } 60% { opacity: 1; transform: translateY(0) scale(1.015); } 100% { transform: translateY(0) scale(1); } }
