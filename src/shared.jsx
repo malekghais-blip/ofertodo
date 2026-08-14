@@ -742,14 +742,14 @@ export function CrearPedidoView() {
             await sb.post("pedido_items", {
               pedido_id: pedidoId, producto_id: it.product.id, nombre_producto: nombreConVariante,
               cantidad: cantidadGrupo, precio_unitario: precioUnit,
-              subtotal: precioUnit * cantidadGrupo,
+              subtotal: precioUnit * cantidadGrupo, presentacion: "pieza",
             });
           }
         } else {
           await sb.post("pedido_items", {
             pedido_id: pedidoId, producto_id: it.product.id, nombre_producto: it.product.nombre,
             cantidad: presToPiezas(it.pres, it.count), precio_unitario: itemUnitPrice(it),
-            subtotal: itemTotal(it),
+            subtotal: itemTotal(it), presentacion: it.pres,
           });
         }
       }
@@ -761,6 +761,7 @@ export function CrearPedidoView() {
             pedido_id: pedidoId, producto_id: l.product.id, nombre_producto: `${l.product.nombre} (${etiqueta})`,
             cantidad: l.piezas, precio_unitario: flexLineUnitPrice(l, pack.modo),
             subtotal: flexLineUnitPrice(l, pack.modo) * l.piezas,
+            presentacion: pack.modo === "media" ? "flexpack_media" : "flexpack_docena",
           });
         }
       }
