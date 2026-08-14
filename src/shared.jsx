@@ -19,6 +19,9 @@ import {
 // ═══════════════════════════════════════════════════════════════
 
 export const SUPABASE_URL = "https://esezhctdiucwovbvxmou.supabase.co";  // ← Cambia esto
+// Site Key de reCAPTCHA v3 -- esta SÍ es pública, va en el navegador de todos (a
+// diferencia de la Secret Key, que solo vive en Supabase y nunca sale de ahí).
+export const RECAPTCHA_SITE_KEY = "6Lc3L4YtAAAAAH6ljusZwZJ9itAforC5p-RAYii3";
 
 const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVzZXpoY3RkaXVjd292YnZ4bW91Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODExMDY0NjgsImV4cCI6MjA5NjY4MjQ2OH0.5u--RCUEWH6hBrH0EFnmW1hZhuVjzqMbJax1qQh7zNo";                  // ← Cambia esto
 
@@ -377,6 +380,41 @@ export function registrarEvento(tipo, valor = null, valorNombre = null, usuarioI
       }),
     }).catch(() => {}); // best-effort: si falla, no importa, nunca debe afectar la experiencia del cliente
   } catch (e) { /* nunca truena la app por esto */ }
+}
+
+// ── reCAPTCHA v3 (protección antibots en el checkout, pedido por BAC) ──────────
+// Carga el script de Google solo una vez, la primera vez que hace falta (no en
+// cada visita), y nunca bloquea la compra si algo sale mal cargándolo.
+let _recaptchaCargando = null;
+function cargarScriptRecaptcha() {
+  if (typeof window === "undefined") return Promise.resolve();
+  if (window.grecaptcha) return Promise.resolve();
+  if (_recaptchaCargando) return _recaptchaCargando;
+  _recaptchaCargando = new Promise((resolve) => {
+    const script = document.createElement("script");
+    script.src = `https://www.google.com/recaptcha/api.js?render=${RECAPTCHA_SITE_KEY}`;
+    script.onload = () => resolve();
+    script.onerror = () => resolve(); // no bloquea la compra si el script no cargó
+    document.head.appendChild(script);
+  });
+  return _recaptchaCargando;
+}
+
+// Pide un token de reCAPTCHA para la acción indicada (ej. "checkout"). Si algo
+// falla en cualquier paso, devuelve null en vez de trabar la compra -- el
+// servidor ya sabe tratar un token ausente sin bloquear al cliente por eso.
+export async function obtenerTokenRecaptcha(accion = "checkout") {
+  try {
+    await cargarScriptRecaptcha();
+    if (!window.grecaptcha || !window.grecaptcha.execute) return null;
+    return await new Promise((resolve) => {
+      window.grecaptcha.ready(() => {
+        window.grecaptcha.execute(RECAPTCHA_SITE_KEY, { action: accion }).then(resolve).catch(() => resolve(null));
+      });
+    });
+  } catch (e) {
+    return null;
+  }
 }
 
 export function imagenOptimizada(url, tamano = 400, calidad = 75) {
