@@ -75,7 +75,7 @@ export const sb = {
   // vencido -- mandarlo hace que Supabase rechace la petición por completo).
   dataHeaders() {
     const ahora = Math.floor(Date.now() / 1000);
-    const tokenSigueValido = this.session?.access_token && (!this.session.expires_at || this.session.expires_at > ahora);
+    const tokenSigueValido = this.session?.access_token && this.session.expires_at && this.session.expires_at > ahora;
     const token = tokenSigueValido ? this.session.access_token : SUPABASE_KEY;
     return { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${token}`, "Content-Type": "application/json", "Prefer": "return=representation" };
   },
@@ -84,7 +84,7 @@ export const sb = {
   // no permiten en su configuración CORS — mandarlo hace que el navegador bloquee la petición.
   functionHeaders() {
     const ahora = Math.floor(Date.now() / 1000);
-    const tokenSigueValido = this.session?.access_token && (!this.session.expires_at || this.session.expires_at > ahora);
+    const tokenSigueValido = this.session?.access_token && this.session.expires_at && this.session.expires_at > ahora;
     const token = tokenSigueValido ? this.session.access_token : SUPABASE_KEY;
     return { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${token}`, "Content-Type": "application/json" };
   },
