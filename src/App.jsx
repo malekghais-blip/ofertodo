@@ -1273,9 +1273,14 @@ function CatalogoView() {
   // Registra la búsqueda solo cuando el cliente deja de escribir un momento
   // (para "búsquedas más frecuentes" en Analítica, sin registrar cada letra)
   useEffect(() => {
+    console.log("[DIAGNOSTICO] search cambió a:", JSON.stringify(search));
     if (search.trim().length < 2) return;
-    const t = setTimeout(() => registrarEvento("busqueda", null, search.trim()), 900);
-    return () => clearTimeout(t);
+    console.log("[DIAGNOSTICO] armando temporizador de 900ms...");
+    const t = setTimeout(() => {
+      console.log("[DIAGNOSTICO] disparando registrarEvento busqueda con:", search.trim());
+      registrarEvento("busqueda", null, search.trim());
+    }, 900);
+    return () => { console.log("[DIAGNOSTICO] se canceló el temporizador (search volvió a cambiar)"); clearTimeout(t); };
   }, [search]);
 
   // Cambia el título de la pestaña del navegador según la categoría que se esté viendo
