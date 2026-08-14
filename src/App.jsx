@@ -2110,7 +2110,7 @@ function CheckoutView() {
         });
         const pedidoId = pedido[0].id;
         for (const item of cart) {
-          await sb.post("pedido_items", { pedido_id: pedidoId, producto_id: item.product.id, nombre_producto: item.product.nombre, cantidad: item.qty, precio_unitario: item.product.precio_pieza, subtotal: cartItemTotal(item) });
+          await sb.post("pedido_items", { pedido_id: pedidoId, producto_id: item.product.id, nombre_producto: item.product.nombre, cantidad: item.qty, precio_unitario: item.product.precio_pieza, subtotal: cartItemTotal(item), presentacion: item.pres || "pieza" });
         }
         // Guarda el pedido pendiente y muestra el botón de Yappy (el pago va primero)
         setPedidoPendiente({ id: pedidoId, codigo, yappyOrderId, total, telefono: telefonoYappy });
