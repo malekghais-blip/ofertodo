@@ -3215,6 +3215,10 @@ export default function App() {
         if (resultadoPago) {
           const codigoPago = paramsPago.get("codigo");
           if (resultadoPago === "exito" && codigoPago) {
+            // El pago con tarjeta se confirmó de verdad (llegamos hasta aquí porque el
+            // banco redirigió con éxito) -- se vacía el carrito, igual que ya se hacía
+            // para Yappy y para el modo de prueba, que antes se quedaba sin vaciar aquí.
+            setCart([]);
             // Trae los datos reales del pedido para mostrar una pantalla de confirmación completa
             try {
               const pedidosEncontrados = await sb.get("pedidos", `?codigo=eq.${encodeURIComponent(codigoPago)}&limit=1`);
