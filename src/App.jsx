@@ -1270,14 +1270,6 @@ function CatalogoView() {
   // Si el usuario eligió una categoría desde el inicio, ábrela
   useEffect(() => { setCatFilter(catalogCat || 0); }, [catalogCat]);
 
-  // Registra la búsqueda solo cuando el cliente deja de escribir un momento
-  // (para "búsquedas más frecuentes" en Analítica, sin registrar cada letra)
-  useEffect(() => {
-    if (search.trim().length < 2) return;
-    const t = setTimeout(() => registrarEvento("busqueda", null, search.trim()), 900);
-    return () => clearTimeout(t);
-  }, [search]);
-
   // Cambia el título de la pestaña del navegador según la categoría que se esté viendo
   useEffect(() => {
     const cat = categories.find(c => c.id === catFilter);
@@ -1326,6 +1318,22 @@ function CatalogoView() {
   // Si lo que escribió coincide con el nombre de una categoría, la resalta visualmente
   // (aunque no la haya seleccionado con clic) para que quede claro qué está viendo.
   const categoriaSugerida = searchNorm !== "" ? categories.find(c => coincideCategoria(c.nombre, search)) : null;
+
+  // Registra la búsqueda solo cuando el cliente deja de escribir un momento (para
+  // "búsquedas más frecuentes" en Analítica, sin registrar cada letra). Si el texto
+  // coincide claramente con una categoría (aunque esté mal escrito, en plural, etc.),
+  // se registra bajo el NOMBRE de esa categoría -- así "jean", "jeans", "geans" se
+  // agrupan todos como una sola búsqueda ("Jeans Hombre"), en vez de aparecer sueltos.
+  // Si no coincide con nada, se guarda el texto tal cual lo escribió (útil para saber
+  // qué buscan los clientes que tu catálogo todavía no tiene).
+  useEffect(() => {
+    if (search.trim().length < 2) return;
+    const t = setTimeout(() => {
+      if (categoriaSugerida) registrarEvento("busqueda", categoriaSugerida.id, categoriaSugerida.nombre);
+      else registrarEvento("busqueda", null, search.trim());
+    }, 900);
+    return () => clearTimeout(t);
+  }, [search, categoriaSugerida]);
 
   if (loading) return <Spinner />;
 
