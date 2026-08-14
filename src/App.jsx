@@ -2112,6 +2112,7 @@ function CheckoutView() {
             costo_envio: 0,
             descuento_codigo: descuentoAplicado?.codigo || null,
             descuento_monto: montoDescuento > 0 ? Number(montoDescuento.toFixed(2)) : 0,
+            visitante_id: idVisitante(),
           }),
         });
         const data = await resp.json();
