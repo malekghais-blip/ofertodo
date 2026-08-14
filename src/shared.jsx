@@ -361,12 +361,20 @@ export function idVisitante() {
 
 export function registrarEvento(tipo, valor = null, valorNombre = null, usuarioId = null) {
   try {
-    sb.post("eventos_analytics", {
-      tipo,
-      valor: valor != null ? String(valor) : null,
-      valor_nombre: valorNombre || null,
-      visitante_id: idVisitante(),
-      usuario_id: usuarioId || null,
+    // No usa sb.post() a propósito: esa función pide de vuelta la fila recién creada
+    // (para poder mostrarla en pantalla en otros casos), pero la tabla de eventos_analytics
+    // solo deja LEER al admin -- pedir la fila de vuelta chocaba con eso y hacía que
+    // Supabase rechazara TODO el intento. Aquí solo se manda a guardar, sin pedir nada de vuelta.
+    fetch(`${SUPABASE_URL}/rest/v1/eventos_analytics`, {
+      method: "POST",
+      headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Content-Type": "application/json", "Prefer": "return=minimal" },
+      body: JSON.stringify({
+        tipo,
+        valor: valor != null ? String(valor) : null,
+        valor_nombre: valorNombre || null,
+        visitante_id: idVisitante(),
+        usuario_id: usuarioId || null,
+      }),
     }).catch(() => {}); // best-effort: si falla, no importa, nunca debe afectar la experiencia del cliente
   } catch (e) { /* nunca truena la app por esto */ }
 }
