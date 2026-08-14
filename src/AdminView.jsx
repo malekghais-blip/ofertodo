@@ -8,7 +8,8 @@ import {
   FileSpreadsheet, FolderPlus, Zap, Lock, Users, BarChart3, DollarSign,
   TrendingUp, Wallet, ShoppingBag, Pencil as PencilIcon, Save,
   Building2, MapPin as MapPinIcon, Send, FilePlus, Download, FileText, Receipt,
-  Calendar as CalendarIcon, Eye, EyeOff, Share2, AlertTriangle, ChevronRight
+  Calendar as CalendarIcon, Eye, EyeOff, Share2, AlertTriangle, ChevronRight,
+  ArrowUpRight, ArrowDownRight
 } from "lucide-react";
 import {
   BLACK, CategoryIcon, ChipAdder, ClienteFormModal, CrearPedidoView,
@@ -864,12 +865,14 @@ function NumeroAnimado({ valor }) {
 // igual duración -- ej. si el rango es "última semana", compara contra la semana previa.
 function FlechaDelta({ actual, anterior, tamano = 12 }) {
   if (!anterior && !actual) return null;
-  if (!anterior) return <span className="oft-delta oft-delta-up" style={{ fontSize: tamano }}>↗ Nuevo</span>;
+  const tamanoIcono = Math.round(tamano * 0.9);
+  if (!anterior) return <span className="oft-delta oft-delta-up" style={{ fontSize: tamano }}><ArrowUpRight size={tamanoIcono} strokeWidth={2.75} /> Nuevo</span>;
   const cambio = ((actual - anterior) / anterior) * 100;
   const esPositivo = cambio >= 0;
+  const Flecha = esPositivo ? ArrowUpRight : ArrowDownRight;
   return (
     <span className={`oft-delta ${esPositivo ? "oft-delta-up" : "oft-delta-down"}`} style={{ fontSize: tamano }}>
-      {esPositivo ? "↗" : "↘"} {Math.abs(Math.round(cambio))}%
+      <Flecha size={tamanoIcono} strokeWidth={2.75} /> {Math.abs(Math.round(cambio))}%
     </span>
   );
 }
@@ -1143,11 +1146,15 @@ function AnalyticsPanel() {
   // "Cómo compran": cuenta cuántas veces se eligió cada presentación (pieza / media
   // docena / docena / flexpack) entre todos los artículos de los pedidos pagados del
   // rango. El flexpack (media y docena) se junta en una sola barra para simplificar.
+  // Los artículos de pedidos de ANTES de este cambio no tienen este dato guardado
+  // (presentacion = null) -- esos se excluyen del conteo en vez de adivinar que
+  // fueron "pieza", para no inflar esa barra con datos que en realidad no se saben.
   const desglosePresentacion = (() => {
     const mapa = { pieza: 0, media: 0, docena: 0, flexpack: 0 };
     pedidosPres.forEach(pedido => {
       (pedido.pedido_items || []).forEach(item => {
-        const key = item.presentacion || "pieza"; // de antes de este cambio: se asume pieza
+        const key = item.presentacion;
+        if (!key) return; // se desconoce -- no se cuenta
         if (key.startsWith("flexpack")) mapa.flexpack += 1;
         else if (mapa[key] !== undefined) mapa[key] += 1;
       });
