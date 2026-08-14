@@ -1198,10 +1198,42 @@ function AnalyticsPanel() {
 
       {cargando ? <Spinner /> : (
         <>
-          {/* 2 WIDGETS GRANDES CON GRÁFICO DE LÍNEA */}
+          {/* 2 WIDGETS GRANDES CON GRÁFICO DE LÍNEA + COMPARACIÓN WEB VS MANUAL */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 18, marginBottom: 24 }}>
             <WidgetGrande titulo="Visitas por día" valor={visitas.length} valorAnterior={visitasAnt} color={RED} icono={Eye} datos={serieDiaria("visitas")} />
             <WidgetGrande titulo="Visitantes únicos por día" valor={visitantesUnicos} valorAnterior={visitantesUnicosAnt} color="#1D4ED8" icono={Users} datos={serieDiaria("visitantes")} />
+            <div style={{ background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 16, padding: 22 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: GRAY3, marginBottom: 18, display: "flex", alignItems: "center", gap: 6 }}>
+                <ShoppingBag size={15} color={RED} /> Ventas: Web vs. Manuales
+              </div>
+              {(() => {
+                const maxMonto = Math.max(1, montoVentasWeb, montoVentasManual);
+                return (
+                  <>
+                    <div style={{ marginBottom: 18 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 6 }}>
+                        <span style={{ fontWeight: 700, fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}><ShoppingBag size={14} color="#1D4ED8" /> Web</span>
+                        <span style={{ fontWeight: 900, fontSize: 15 }}>{ventasWeb.length} <span style={{ fontWeight: 600, fontSize: 12, color: GRAY3 }}>pedidos</span></span>
+                      </div>
+                      <div style={{ height: 8, background: GRAY, borderRadius: 6, overflow: "hidden", marginBottom: 4 }}>
+                        <div className="oft-analytics-bar" style={{ height: "100%", width: `${Math.max((montoVentasWeb / maxMonto) * 100, montoVentasWeb > 0 ? 4 : 0)}%`, background: "#1D4ED8", borderRadius: 6 }} />
+                      </div>
+                      <div style={{ fontSize: 12, color: GRAY3, fontWeight: 700 }}>${montoVentasWeb.toLocaleString("en-US", { minimumFractionDigits: 2 })}</div>
+                    </div>
+                    <div>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 6 }}>
+                        <span style={{ fontWeight: 700, fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}><FilePlus size={14} color="#5B21B6" /> Manuales</span>
+                        <span style={{ fontWeight: 900, fontSize: 15 }}>{ventasManual.length} <span style={{ fontWeight: 600, fontSize: 12, color: GRAY3 }}>pedidos</span></span>
+                      </div>
+                      <div style={{ height: 8, background: GRAY, borderRadius: 6, overflow: "hidden", marginBottom: 4 }}>
+                        <div className="oft-analytics-bar" style={{ height: "100%", width: `${Math.max((montoVentasManual / maxMonto) * 100, montoVentasManual > 0 ? 4 : 0)}%`, background: "#5B21B6", borderRadius: 6 }} />
+                      </div>
+                      <div style={{ fontSize: 12, color: GRAY3, fontWeight: 700 }}>${montoVentasManual.toLocaleString("en-US", { minimumFractionDigits: 2 })}</div>
+                    </div>
+                  </>
+                );
+              })()}
+            </div>
           </div>
 
           {/* KPIs chicos, cada uno con su % vs el periodo anterior */}
