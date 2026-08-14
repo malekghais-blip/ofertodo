@@ -629,7 +629,7 @@ function PagoResultadoView() {
         Si el cargo sí aparece en tu banco, escríbenos por WhatsApp{codigo ? <> con tu número de pedido <strong>{codigo}</strong></> : ""} y lo confirmamos manualmente.
       </p>
       <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
-        <button style={{ ...S.btnWA, justifyContent: "center" }} onClick={() => window.open(`https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(`Hola, tuve un problema confirmando el pago de mi pedido ${codigo || ""}`)}`, "_blank")}>
+        <button style={{ ...S.btnWA, justifyContent: "center" }} onClick={() => { registrarEvento("consulta_whatsapp", null, "Problema con el pago"); window.open(`https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(`Hola, tuve un problema confirmando el pago de mi pedido ${codigo || ""}`)}`, "_blank"); }}>
           <MessageCircle size={16} /> Escribir por WhatsApp
         </button>
         <button style={{ ...S.btnOutline, justifyContent: "center" }} onClick={() => setView("home")}>Ir al inicio</button>
@@ -826,7 +826,7 @@ function HomeView() {
         <h1 className="oft-cta-title">Compra más <span>·</span> Crece más</h1>
         <div className="oft-cta-actions">
           <button className="oft-cta-btn-primary" onClick={() => { setCatalogCat(0); setView("catalogo"); }}>Ver catálogo</button>
-          <button className="oft-cta-btn-whatsapp" onClick={() => window.open(`https://wa.me/${WA_NUMBER}?text=Hola%20Ofertodo%2C%20quiero%20hacer%20un%20pedido`, "_blank")}>
+          <button className="oft-cta-btn-whatsapp" onClick={() => { registrarEvento("consulta_whatsapp", null, "Quiero hacer un pedido (inicio)"); window.open(`https://wa.me/${WA_NUMBER}?text=Hola%20Ofertodo%2C%20quiero%20hacer%20un%20pedido`, "_blank"); }}>
             <MessageCircle size={16} strokeWidth={2.2} /> Consultar por WhatsApp
           </button>
         </div>
@@ -897,7 +897,7 @@ function HomeView() {
         <p style={{ color: "#aaa", marginBottom: 24 }}>Explora todo nuestro catálogo o escríbenos directamente</p>
         <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
           <button style={{ ...S.btnRed, padding: "14px 28px" }} onClick={() => { setCatalogCat(0); setView("catalogo"); }}>Ver Catálogo</button>
-          <button style={{ ...S.btnWA, padding: "14px 24px" }} onClick={() => window.open(`https://wa.me/${WA_NUMBER}`, "_blank")}><MessageCircle size={16} strokeWidth={2.2} /> WhatsApp</button>
+          <button style={{ ...S.btnWA, padding: "14px 24px" }} onClick={() => { registrarEvento("consulta_whatsapp", null, "Contacto general"); window.open(`https://wa.me/${WA_NUMBER}`, "_blank"); }}><MessageCircle size={16} strokeWidth={2.2} /> WhatsApp</button>
         </div>
       </div>
 
@@ -1164,6 +1164,7 @@ function ProductCard({ product }) {
     } else {
       msg += `\n\n(Este producto no tiene foto cargada)`;
     }
+    registrarEvento("consulta_whatsapp", product.id, "Consulta de producto (talla/color)");
     window.open(`https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(msg)}`, "_blank");
   };
 
@@ -1249,7 +1250,7 @@ function ProductCard({ product }) {
           <button ref={btnRef} className="oft-btn-press" disabled={agotadoBloqueado} style={{ ...S.btnRed, flex: 1, justifyContent: "center", background: agotadoBloqueado ? GRAY3 : (added ? "#25D366" : RED), transition: "background 0.3s", cursor: agotadoBloqueado ? "not-allowed" : "pointer", opacity: agotadoBloqueado ? 0.7 : 1 }} onClick={agotadoBloqueado ? undefined : handleAdd}>
             {agotadoBloqueado ? "Agotado" : added ? <><CheckCircle2 size={16} className="oft-check-pop" /> ¡Agregado!</> : <><Plus size={15} strokeWidth={2.5} /> Agregar al pedido</>}
           </button>
-          <button className="oft-btn-press" style={S.btnWA} onClick={() => { let m = `Hola Ofertodo, me interesa: ${product.nombre}`; if (product.referencia) m += ` (Ref: ${product.referencia})`; if (product.imagen_url) m += `\n\n📷 Foto:\n${product.imagen_url}`; window.open(`https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(m)}`, "_blank"); }}><MessageCircle size={16} /></button>
+          <button className="oft-btn-press" style={S.btnWA} onClick={() => { registrarEvento("consulta_whatsapp", product.id, "Interés en producto"); let m = `Hola Ofertodo, me interesa: ${product.nombre}`; if (product.referencia) m += ` (Ref: ${product.referencia})`; if (product.imagen_url) m += `\n\n📷 Foto:\n${product.imagen_url}`; window.open(`https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(m)}`, "_blank"); }}><MessageCircle size={16} /></button>
           <button className="oft-btn-press" style={{ ...S.btnWA, background: GRAY2, color: BLACK }} title="Compartir producto" onClick={() => compartirProducto(product, showToast)}><Share2 size={16} /></button>
         </div>
         )}
@@ -1422,6 +1423,7 @@ function ProductModal() {
     } else {
       msg += `\n\n(Este producto no tiene foto cargada)`;
     }
+    registrarEvento("consulta_whatsapp", product.id, "Consulta de producto (talla/color)");
     window.open(`https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(msg)}`, "_blank");
   };
 
@@ -1484,7 +1486,7 @@ function ProductModal() {
             <button className="oft-btn-press" disabled={agotadoBloqueado} style={{ ...S.btnRed, flex: 1, justifyContent: "center", padding: 14, fontSize: 15, background: agotadoBloqueado ? GRAY3 : (added ? "#25D366" : RED), transition: "background 0.3s", cursor: agotadoBloqueado ? "not-allowed" : "pointer", opacity: agotadoBloqueado ? 0.7 : 1 }} onClick={agotadoBloqueado ? undefined : handleAdd}>
               {agotadoBloqueado ? "Agotado" : added ? <><CheckCircle2 size={17} className="oft-check-pop" /> ¡Agregado!</> : <><Plus size={16} strokeWidth={2.5} /> Agregar al pedido</>}
             </button>
-            <button className="oft-btn-press" style={{ ...S.btnWA, padding: "14px 16px" }} onClick={() => { let m = `Hola Ofertodo, me interesa: ${product.nombre}`; if (product.referencia) m += ` (Ref: ${product.referencia})`; if (product.imagen_url) m += `\n\n📷 Foto:\n${product.imagen_url}`; window.open(`https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(m)}`, "_blank"); }}><MessageCircle size={18} /></button>
+            <button className="oft-btn-press" style={{ ...S.btnWA, padding: "14px 16px" }} onClick={() => { registrarEvento("consulta_whatsapp", product.id, "Interés en producto"); let m = `Hola Ofertodo, me interesa: ${product.nombre}`; if (product.referencia) m += ` (Ref: ${product.referencia})`; if (product.imagen_url) m += `\n\n📷 Foto:\n${product.imagen_url}`; window.open(`https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(m)}`, "_blank"); }}><MessageCircle size={18} /></button>
             <button className="oft-btn-press" style={{ ...S.btnWA, padding: "14px 16px", background: GRAY2, color: BLACK }} title="Compartir producto" onClick={() => compartirProducto(product, showToast)}><Share2 size={18} /></button>
           </div>
           )}
@@ -1579,7 +1581,7 @@ function CartModal() {
               Finalizar Pedido →
             </button>
             <button style={{ ...S.btnWA, width: "100%", justifyContent: "center", padding: 12, marginTop: 10 }}
-              onClick={() => { const msg = cart.map(i => `${i.product.nombre} x${i.qty}`).join(", "); window.open(`https://wa.me/${WA_NUMBER}?text=Hola%20Ofertodo%2C%20quiero%20pedir:%20${encodeURIComponent(msg)}`, "_blank"); }}>
+              onClick={() => { registrarEvento("consulta_whatsapp", null, "Pedido desde el carrito"); const msg = cart.map(i => `${i.product.nombre} x${i.qty}`).join(", "); window.open(`https://wa.me/${WA_NUMBER}?text=Hola%20Ofertodo%2C%20quiero%20pedir:%20${encodeURIComponent(msg)}`, "_blank"); }}>
               <MessageCircle size={16} /> Pedir por WhatsApp
             </button>
           </>
@@ -2889,7 +2891,7 @@ function DashboardView() {
 
                       {/* botón repetir / consultar */}
                       <button style={{ ...S.btnWA, width: "100%", justifyContent: "center", marginTop: 14, padding: 12 }}
-                        onClick={() => window.open(`https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(`Hola Ofertodo, quiero consultar sobre mi pedido ${o.codigo}`)}`, "_blank")}>
+                        onClick={() => { registrarEvento("consulta_whatsapp", null, "Consulta sobre un pedido"); window.open(`https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(`Hola Ofertodo, quiero consultar sobre mi pedido ${o.codigo}`)}`, "_blank"); }}>
                         <MessageCircle size={16} /> Consultar este pedido
                       </button>
                     </div>
