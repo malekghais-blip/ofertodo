@@ -68,17 +68,24 @@ export const sb = {
     } catch(e) { /* si falla la renovación, se sigue con el token anterior */ }
   },
 
-  // Headers para peticiones de datos: usan el token de la persona logueada si existe,
-  // o la llave pública (anon) si nadie ha iniciado sesión.
+  // Headers para peticiones de datos: usan el token de la persona logueada si existe
+  // Y todavía es válido, o la llave pública (anon) si nadie ha iniciado sesión O si el
+  // token venció y por algún motivo no se pudo renovar (ensureFreshToken ya lo intentó
+  // antes de esto, pero si esa renovación falló, aquí es donde se evita mandar un token
+  // vencido -- mandarlo hace que Supabase rechace la petición por completo).
   dataHeaders() {
-    const token = this.session?.access_token || SUPABASE_KEY;
+    const ahora = Math.floor(Date.now() / 1000);
+    const tokenSigueValido = this.session?.access_token && (!this.session.expires_at || this.session.expires_at > ahora);
+    const token = tokenSigueValido ? this.session.access_token : SUPABASE_KEY;
     return { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${token}`, "Content-Type": "application/json", "Prefer": "return=representation" };
   },
   // Headers para llamar Edge Functions (Odoo, crear equipo, etc.) — igual que dataHeaders
   // pero SIN "Prefer", que es un header solo para tablas (PostgREST) y que las Edge Functions
   // no permiten en su configuración CORS — mandarlo hace que el navegador bloquee la petición.
   functionHeaders() {
-    const token = this.session?.access_token || SUPABASE_KEY;
+    const ahora = Math.floor(Date.now() / 1000);
+    const tokenSigueValido = this.session?.access_token && (!this.session.expires_at || this.session.expires_at > ahora);
+    const token = tokenSigueValido ? this.session.access_token : SUPABASE_KEY;
     return { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${token}`, "Content-Type": "application/json" };
   },
   // Headers para login/registro: siempre con la llave pública (antes de tener sesión propia)
@@ -353,7 +360,6 @@ export function idVisitante() {
 }
 
 export function registrarEvento(tipo, valor = null, valorNombre = null, usuarioId = null) {
-  console.log("[DIAGNOSTICO] registrarEvento() llamado con tipo:", tipo);
   try {
     sb.post("eventos_analytics", {
       tipo,
@@ -361,14 +367,8 @@ export function registrarEvento(tipo, valor = null, valorNombre = null, usuarioI
       valor_nombre: valorNombre || null,
       visitante_id: idVisitante(),
       usuario_id: usuarioId || null,
-    }).then((resultado) => {
-      console.log("[DIAGNOSTICO] registrarEvento OK, respuesta:", resultado);
-    }).catch((err) => {
-      console.log("[DIAGNOSTICO] registrarEvento FALLÓ:", err && err.message ? err.message : err);
-    });
-  } catch (e) {
-    console.log("[DIAGNOSTICO] registrarEvento truena antes de mandar la petición:", e && e.message ? e.message : e);
-  }
+    }).catch(() => {}); // best-effort: si falla, no importa, nunca debe afectar la experiencia del cliente
+  } catch (e) { /* nunca truena la app por esto */ }
 }
 
 export function imagenOptimizada(url, tamano = 400, calidad = 75) {
