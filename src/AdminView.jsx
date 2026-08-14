@@ -1079,8 +1079,9 @@ function AnalyticsPanel() {
         // y las que se generan solas al pagar como invitado.
         sb.get("usuarios", `?created_at=gte.${desdeISO}&created_at=lte.${hastaISO}&origen_cuenta=eq.web`),
         sb.get("usuarios", `?created_at=gte.${desdeISO}&created_at=lte.${hastaISO}&origen_cuenta=eq.admin_manual`),
-        // Pedidos pagados del rango, con sus items -- para "cómo compran" (pieza/media/docena/flexpack)
-        sb.get("pedidos", `?created_at=gte.${desdeISO}&created_at=lte.${hastaISO}&pagado=eq.true&select=id,pedido_items(cantidad,presentacion)`),
+        // Pedidos pagados del rango, con sus items -- para "cómo compran" (pieza/media/docena/
+        // flexpack), y también total+creado_por_admin para comparar ventas web vs. manuales
+        sb.get("pedidos", `?created_at=gte.${desdeISO}&created_at=lte.${hastaISO}&pagado=eq.true&select=id,total,creado_por_admin,pedido_items(cantidad,presentacion)`),
         // Mismo trío, pero del periodo anterior -- para calcular el % de cambio
         sb.get("eventos_analytics", `?created_at=gte.${desdeAntISO}&created_at=lte.${hastaAntISO}&limit=8000`),
         sb.get("usuarios", `?created_at=gte.${desdeAntISO}&created_at=lte.${hastaAntISO}&origen_cuenta=eq.web`),
@@ -1169,6 +1170,19 @@ function AnalyticsPanel() {
   ].filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
   const maxPres = Math.max(1, ...topPresentacion.map(([, v]) => v));
 
+  // Ventas web (el cliente compró solo) vs. manuales (tú armaste el pedido) --
+  // tanto en cantidad de pedidos como en monto total vendido
+  const ventasWeb = pedidosPres.filter(p => !p.creado_por_admin);
+  const ventasManual = pedidosPres.filter(p => p.creado_por_admin);
+  const montoVentasWeb = ventasWeb.reduce((s, p) => s + (Number(p.total) || 0), 0);
+  const montoVentasManual = ventasManual.reduce((s, p) => s + (Number(p.total) || 0), 0);
+
+  // "Consultas por WhatsApp" -- de dónde vienen (producto, carrito, inicio, etc.)
+  const topWhatsapp = topPor("consulta_whatsapp");
+  const maxWhatsapp = Math.max(1, ...topWhatsapp.map(([, v]) => v));
+  const totalWhatsapp = eventos.filter(e => e.tipo === "consulta_whatsapp").length;
+  const totalWhatsappAnt = eventosAnterior.filter(e => e.tipo === "consulta_whatsapp").length;
+
   // Series diarias para los 2 widgets grandes (visitas, y visitantes únicos)
   const serieDiaria = (tipoDatos) => {
     const mapa = {};
@@ -1242,6 +1256,7 @@ function AnalyticsPanel() {
             <TarjetaKPI icono={FilePlus} valor={clientesManuales.length} valorAnterior={manualesAnterior.length} etiqueta="Clientes agregados por ti" color="#5B21B6" delay={0.04} />
             <TarjetaKPI icono={EyeOff} valor={visitantesSinCuenta} valorAnterior={visitantesSinCuentaAnt} etiqueta="Visitaron sin cuenta" color={GRAY3} delay={0.08} />
             <TarjetaKPI icono={ShoppingCart} valor={clientesQueAgregaron} valorAnterior={clientesQueAgregaronAnt} etiqueta="Agregaron al carrito" color="#0F6E56" delay={0.12} />
+            <TarjetaKPI icono={MessageCircle} valor={totalWhatsapp} valorAnterior={totalWhatsappAnt} etiqueta="Consultas por WhatsApp" color="#25D366" delay={0.16} />
           </div>
 
           {/* TOP 4 LISTAS */}
@@ -1265,6 +1280,10 @@ function AnalyticsPanel() {
             <div style={{ background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 14, padding: 20 }}>
               <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}><Package size={17} color="#B45309" /> Cómo compran (pieza / media / docena / flexpack)</div>
               {topPresentacion.length === 0 ? <p style={{ color: GRAY3, fontSize: 13 }}>Sin datos en este rango.</p> : topPresentacion.map(([nombre, valor], i) => <BarraTop key={nombre} etiqueta={nombre} valor={valor} maximo={maxPres} color="#B45309" delay={i * 0.04} />)}
+            </div>
+            <div style={{ background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 14, padding: 20 }}>
+              <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}><MessageCircle size={17} color="#25D366" /> Consultas por WhatsApp — de dónde vienen</div>
+              {topWhatsapp.length === 0 ? <p style={{ color: GRAY3, fontSize: 13 }}>Sin datos en este rango.</p> : topWhatsapp.map(([nombre, valor], i) => <BarraTop key={nombre} etiqueta={nombre} valor={valor} maximo={maxWhatsapp} color="#25D366" delay={i * 0.04} />)}
             </div>
           </div>
         </>
