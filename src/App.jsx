@@ -2076,6 +2076,7 @@ function CheckoutView() {
         const itemsPayload = cart.map(item => ({
           producto_id: item.product.id, nombre_producto: item.product.nombre,
           cantidad: item.qty, precio_unitario: item.product.precio_pieza, subtotal: cartItemTotal(item),
+          presentacion: item.pres || "pieza",
         }));
         const resp = await fetch(`${SUPABASE_URL}/functions/v1/crear-pago-tarjeta`, {
           method: "POST", headers: sb.functionHeaders(),
