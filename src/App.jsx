@@ -1967,6 +1967,11 @@ function CheckoutView() {
 
   // Scroll al inicio al abrir el checkout — importante en celular
   useEffect(() => { window.scrollTo({ top: 0, behavior: "instant" }); }, []);
+
+  // Empieza a cargar el script de reCAPTCHA desde que el cliente llega aquí (no
+  // hasta que le dé clic a "Pagar") -- así ya está listo cuando lo necesite, en
+  // vez de tener que esperar esa carga justo en el momento del pago.
+  useEffect(() => { obtenerTokenRecaptcha("checkout_precarga").catch(() => {}); }, []);
   const subtotalBruto = cart.reduce((s, i) => s + cartItemTotal(i), 0);
   // ── DESCUENTO ──
   const [codigoInput, setCodigoInput] = useState("");        // lo que el cliente escribe
