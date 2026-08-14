@@ -353,6 +353,7 @@ export function idVisitante() {
 }
 
 export function registrarEvento(tipo, valor = null, valorNombre = null, usuarioId = null) {
+  console.log("[DIAGNOSTICO] registrarEvento() llamado con tipo:", tipo);
   try {
     sb.post("eventos_analytics", {
       tipo,
@@ -360,8 +361,14 @@ export function registrarEvento(tipo, valor = null, valorNombre = null, usuarioI
       valor_nombre: valorNombre || null,
       visitante_id: idVisitante(),
       usuario_id: usuarioId || null,
-    }).catch(() => {}); // best-effort: si falla, no importa, nunca debe afectar la experiencia del cliente
-  } catch (e) { /* nunca truena la app por esto */ }
+    }).then((resultado) => {
+      console.log("[DIAGNOSTICO] registrarEvento OK, respuesta:", resultado);
+    }).catch((err) => {
+      console.log("[DIAGNOSTICO] registrarEvento FALLÓ:", err && err.message ? err.message : err);
+    });
+  } catch (e) {
+    console.log("[DIAGNOSTICO] registrarEvento truena antes de mandar la petición:", e && e.message ? e.message : e);
+  }
 }
 
 export function imagenOptimizada(url, tamano = 400, calidad = 75) {
