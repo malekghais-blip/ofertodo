@@ -1030,6 +1030,7 @@ function AnalyticsPanel() {
   const [eventos, setEventos] = useState([]);
   const [usuariosNuevos, setUsuariosNuevos] = useState([]);
   const [clientesManuales, setClientesManuales] = useState([]);
+  const [pedidosPres, setPedidosPres] = useState([]); // pedidos con sus items (para "cómo compran": pieza/media/docena/flexpack)
   const [eventosAnterior, setEventosAnterior] = useState([]);
   const [usuariosAnterior, setUsuariosAnterior] = useState([]);
   const [manualesAnterior, setManualesAnterior] = useState([]);
@@ -1068,23 +1069,25 @@ function AnalyticsPanel() {
     try {
       const desdeISO = `${desde}T00:00:00`, hastaISO = `${hasta}T23:59:59`;
       const desdeAntISO = `${desdeAnt}T00:00:00`, hastaAntISO = `${hastaAnt}T23:59:59`;
-      const [evts, usrs, manuales, evtsAnt, usrsAnt, manualesAnt] = await Promise.all([
+      const [evts, usrs, manuales, pedItems, evtsAnt, usrsAnt, manualesAnt] = await Promise.all([
         sb.get("eventos_analytics", `?created_at=gte.${desdeISO}&created_at=lte.${hastaISO}&order=created_at.desc&limit=8000`),
         // Solo cuentas con origen_cuenta='web' -- el cliente se registró solo en la
         // página (o con Google). Excluye las que TÚ creas al hacer un pedido manual,
         // y las que se generan solas al pagar como invitado.
         sb.get("usuarios", `?created_at=gte.${desdeISO}&created_at=lte.${hastaISO}&origen_cuenta=eq.web`),
         sb.get("usuarios", `?created_at=gte.${desdeISO}&created_at=lte.${hastaISO}&origen_cuenta=eq.admin_manual`),
+        // Pedidos pagados del rango, con sus items -- para "cómo compran" (pieza/media/docena/flexpack)
+        sb.get("pedidos", `?created_at=gte.${desdeISO}&created_at=lte.${hastaISO}&pagado=eq.true&select=id,pedido_items(cantidad,presentacion)`),
         // Mismo trío, pero del periodo anterior -- para calcular el % de cambio
         sb.get("eventos_analytics", `?created_at=gte.${desdeAntISO}&created_at=lte.${hastaAntISO}&limit=8000`),
         sb.get("usuarios", `?created_at=gte.${desdeAntISO}&created_at=lte.${hastaAntISO}&origen_cuenta=eq.web`),
         sb.get("usuarios", `?created_at=gte.${desdeAntISO}&created_at=lte.${hastaAntISO}&origen_cuenta=eq.admin_manual`),
       ]);
-      setEventos(evts || []); setUsuariosNuevos(usrs || []); setClientesManuales(manuales || []);
+      setEventos(evts || []); setUsuariosNuevos(usrs || []); setClientesManuales(manuales || []); setPedidosPres(pedItems || []);
       setEventosAnterior(evtsAnt || []); setUsuariosAnterior(usrsAnt || []); setManualesAnterior(manualesAnt || []);
     } catch(e) {
       console.warn("Error cargando analítica:", e.message);
-      setEventos([]); setUsuariosNuevos([]); setClientesManuales([]);
+      setEventos([]); setUsuariosNuevos([]); setClientesManuales([]); setPedidosPres([]);
       setEventosAnterior([]); setUsuariosAnterior([]); setManualesAnterior([]);
     }
     setCargando(false);
@@ -1136,6 +1139,28 @@ function AnalyticsPanel() {
   const maxProd = Math.max(1, ...topProductos.map(([, v]) => v));
   const maxBusq = Math.max(1, ...topBusquedas.map(([, v]) => v));
   const maxCarr = Math.max(1, ...topCarrito.map(([, v]) => v));
+
+  // "Cómo compran": cuenta cuántas veces se eligió cada presentación (pieza / media
+  // docena / docena / flexpack) entre todos los artículos de los pedidos pagados del
+  // rango. El flexpack (media y docena) se junta en una sola barra para simplificar.
+  const desglosePresentacion = (() => {
+    const mapa = { pieza: 0, media: 0, docena: 0, flexpack: 0 };
+    pedidosPres.forEach(pedido => {
+      (pedido.pedido_items || []).forEach(item => {
+        const key = item.presentacion || "pieza"; // de antes de este cambio: se asume pieza
+        if (key.startsWith("flexpack")) mapa.flexpack += 1;
+        else if (mapa[key] !== undefined) mapa[key] += 1;
+      });
+    });
+    return mapa;
+  })();
+  const topPresentacion = [
+    ["Por pieza", desglosePresentacion.pieza],
+    ["Media docena", desglosePresentacion.media],
+    ["Docena", desglosePresentacion.docena],
+    ["FlexPack", desglosePresentacion.flexpack],
+  ].filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
+  const maxPres = Math.max(1, ...topPresentacion.map(([, v]) => v));
 
   // Series diarias para los 2 widgets grandes (visitas, y visitantes únicos)
   const serieDiaria = (tipoDatos) => {
@@ -1197,6 +1222,10 @@ function AnalyticsPanel() {
             <div style={{ background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 14, padding: 20 }}>
               <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}><ShoppingCart size={17} color="#1D4ED8" /> Más agregados al carrito</div>
               {topCarrito.length === 0 ? <p style={{ color: GRAY3, fontSize: 13 }}>Sin datos en este rango.</p> : topCarrito.map(([nombre, valor], i) => <BarraTop key={nombre} etiqueta={nombre} valor={valor} maximo={maxCarr} color="#1D4ED8" delay={i * 0.04} />)}
+            </div>
+            <div style={{ background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 14, padding: 20 }}>
+              <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}><Package size={17} color="#B45309" /> Cómo compran (pieza / media / docena / flexpack)</div>
+              {topPresentacion.length === 0 ? <p style={{ color: GRAY3, fontSize: 13 }}>Sin datos en este rango.</p> : topPresentacion.map(([nombre, valor], i) => <BarraTop key={nombre} etiqueta={nombre} valor={valor} maximo={maxPres} color="#B45309" delay={i * 0.04} />)}
             </div>
           </div>
         </>
