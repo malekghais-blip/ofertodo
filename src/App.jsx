@@ -16,7 +16,7 @@ import {
   GRAY3, Logo, ORDER_STATUS_ENVIO, ORDER_STATUS_RETIRO, RED,
   RED_D, S, STATUS_ICONS_ENVIO, STATUS_ICONS_RETIRO, SUPABASE_KEY,
   SUPABASE_URL, Spinner, StatusBadge, WHITE, colorToHex,
-  idVisitante, registrarEvento,
+  idVisitante, registrarEvento, obtenerTokenRecaptcha,
   imagenOptimizada, mediaDocenaDesdeDistribucion, parseDistribucion, presLabelPlural, presToPiezas,
   presUnitPrice, sb, useApp, useLockBodyScroll,
 } from "./shared.jsx";
@@ -2070,6 +2070,24 @@ function CheckoutView() {
     const localElegido = modoEntrega === "local" ? (localesRetiro.find(l => l.id === localRetiroId) || localesRetiro[0] || null) : null;
 
     setLoading(true);
+
+    // Verificación antibots (reCAPTCHA v3, pedida por el banco) -- nunca bloquea
+    // la compra si el servicio de Google o nuestra propia verificación fallan,
+    // solo frena si Google mismo dice con seguridad que esto parece un robot.
+    try {
+      const tokenRecaptcha = await obtenerTokenRecaptcha("checkout");
+      const verifResp = await fetch(`${SUPABASE_URL}/functions/v1/verificar-recaptcha`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: tokenRecaptcha }),
+      });
+      const verifData = await verifResp.json();
+      if (verifData && verifData.ok === false) {
+        setLoading(false);
+        setAvisoValidacion("No pudimos confirmar que esto sea una compra real. Por favor recarga la página e intenta de nuevo.");
+        return;
+      }
+    } catch (e) { /* si la verificación misma falla, no se bloquea la compra por eso */ }
+
     try {
       if (metodoPago === "tarjeta") {
         // El pedido se crea DENTRO de la función (junto con el inicio del pago en Powertranz)
