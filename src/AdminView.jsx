@@ -1034,6 +1034,7 @@ function AnalyticsPanel() {
   const [usuariosNuevos, setUsuariosNuevos] = useState([]);
   const [clientesManuales, setClientesManuales] = useState([]);
   const [pedidosPres, setPedidosPres] = useState([]); // pedidos con sus items (para "cómo compran": pieza/media/docena/flexpack)
+  const [cotizaciones, setCotizaciones] = useState([]); // cotizaciones creadas en el rango (creadas y/o ya convertidas)
   const [eventosAnterior, setEventosAnterior] = useState([]);
   const [usuariosAnterior, setUsuariosAnterior] = useState([]);
   const [manualesAnterior, setManualesAnterior] = useState([]);
@@ -1072,26 +1073,33 @@ function AnalyticsPanel() {
     try {
       const desdeISO = `${desde}T00:00:00`, hastaISO = `${hasta}T23:59:59`;
       const desdeAntISO = `${desdeAnt}T00:00:00`, hastaAntISO = `${hastaAnt}T23:59:59`;
-      const [evts, usrs, manuales, pedItems, evtsAnt, usrsAnt, manualesAnt] = await Promise.all([
+      const [evts, usrs, manuales, pedItems, cotizacionesData, evtsAnt, usrsAnt, manualesAnt] = await Promise.all([
         sb.get("eventos_analytics", `?created_at=gte.${desdeISO}&created_at=lte.${hastaISO}&order=created_at.desc&limit=8000`),
         // Solo cuentas con origen_cuenta='web' -- el cliente se registró solo en la
         // página (o con Google). Excluye las que TÚ creas al hacer un pedido manual,
         // y las que se generan solas al pagar como invitado.
         sb.get("usuarios", `?created_at=gte.${desdeISO}&created_at=lte.${hastaISO}&origen_cuenta=eq.web`),
         sb.get("usuarios", `?created_at=gte.${desdeISO}&created_at=lte.${hastaISO}&origen_cuenta=eq.admin_manual`),
-        // Pedidos pagados del rango, con sus items -- para "cómo compran" (pieza/media/docena/
-        // flexpack), y también total+creado_por_admin para comparar ventas web vs. manuales
-        sb.get("pedidos", `?created_at=gte.${desdeISO}&created_at=lte.${hastaISO}&pagado=eq.true&select=id,total,creado_por_admin,pedido_items(cantidad,presentacion)`),
+        // Pedidos pagados del rango (excluyendo cotizaciones -- una cotización no es una
+        // venta comprometida, mismo criterio que ya usa el Dashboard), con sus items --
+        // para "cómo compran", y también total+creado_por_admin para web vs. manuales
+        sb.get("pedidos", `?created_at=gte.${desdeISO}&created_at=lte.${hastaISO}&pagado=eq.true&tipo=neq.cotizacion&select=id,total,creado_por_admin,pedido_items(cantidad,presentacion)`),
+        // Cotizaciones CREADAS en este rango -- incluye tanto las que siguen pendientes
+        // (tipo='cotizacion', usa su propio created_at) como las que ya se convirtieron
+        // en venta (usa fecha_cotizacion_original, porque su created_at ya se sobreescribió
+        // con la fecha en que se confirmó como venta, no la de cuando se creó la cotización)
+        sb.get("pedidos", `?or=(and(tipo.eq.cotizacion,created_at.gte.${desdeISO},created_at.lte.${hastaISO}),and(es_cotizacion_convertida.eq.true,fecha_cotizacion_original.gte.${desdeISO},fecha_cotizacion_original.lte.${hastaISO}))&select=id,es_cotizacion_convertida`),
         // Mismo trío, pero del periodo anterior -- para calcular el % de cambio
         sb.get("eventos_analytics", `?created_at=gte.${desdeAntISO}&created_at=lte.${hastaAntISO}&limit=8000`),
         sb.get("usuarios", `?created_at=gte.${desdeAntISO}&created_at=lte.${hastaAntISO}&origen_cuenta=eq.web`),
         sb.get("usuarios", `?created_at=gte.${desdeAntISO}&created_at=lte.${hastaAntISO}&origen_cuenta=eq.admin_manual`),
       ]);
       setEventos(evts || []); setUsuariosNuevos(usrs || []); setClientesManuales(manuales || []); setPedidosPres(pedItems || []);
+      setCotizaciones(cotizacionesData || []);
       setEventosAnterior(evtsAnt || []); setUsuariosAnterior(usrsAnt || []); setManualesAnterior(manualesAnt || []);
     } catch(e) {
       console.warn("Error cargando analítica:", e.message);
-      setEventos([]); setUsuariosNuevos([]); setClientesManuales([]); setPedidosPres([]);
+      setEventos([]); setUsuariosNuevos([]); setClientesManuales([]); setPedidosPres([]); setCotizaciones([]);
       setEventosAnterior([]); setUsuariosAnterior([]); setManualesAnterior([]);
     }
     setCargando(false);
@@ -1144,21 +1152,24 @@ function AnalyticsPanel() {
   const maxBusq = Math.max(1, ...topBusquedas.map(([, v]) => v));
   const maxCarr = Math.max(1, ...topCarrito.map(([, v]) => v));
 
-  // "Cómo compran": cuenta cuántas veces se eligió cada presentación (pieza / media
-  // docena / docena / flexpack) entre todos los artículos de los pedidos pagados del
-  // rango. El flexpack (media y docena) se junta en una sola barra para simplificar.
+  // "Cómo compran": cuenta cuántos PEDIDOS incluyeron cada presentación (pieza /
+  // media docena / docena / flexpack), no cuántas líneas de producto -- un mismo
+  // FlexPack puede mezclar varios productos en un solo pedido (ej. 10 piezas de un
+  // jean + 2 de otro, en la misma docena), y eso debe contar como "1 flexpack", no
+  // "2", aunque haya generado 2 líneas de artículo distintas.
   // Los artículos de pedidos de ANTES de este cambio no tienen este dato guardado
   // (presentacion = null) -- esos se excluyen del conteo en vez de adivinar que
   // fueron "pieza", para no inflar esa barra con datos que en realidad no se saben.
   const desglosePresentacion = (() => {
     const mapa = { pieza: 0, media: 0, docena: 0, flexpack: 0 };
     pedidosPres.forEach(pedido => {
+      const tiposEnEstePedido = new Set();
       (pedido.pedido_items || []).forEach(item => {
         const key = item.presentacion;
         if (!key) return; // se desconoce -- no se cuenta
-        if (key.startsWith("flexpack")) mapa.flexpack += 1;
-        else if (mapa[key] !== undefined) mapa[key] += 1;
+        tiposEnEstePedido.add(key.startsWith("flexpack") ? "flexpack" : key);
       });
+      tiposEnEstePedido.forEach(tipo => { if (mapa[tipo] !== undefined) mapa[tipo] += 1; });
     });
     return mapa;
   })();
@@ -1182,6 +1193,12 @@ function AnalyticsPanel() {
   const maxWhatsapp = Math.max(1, ...topWhatsapp.map(([, v]) => v));
   const totalWhatsapp = eventos.filter(e => e.tipo === "consulta_whatsapp").length;
   const totalWhatsappAnt = eventosAnterior.filter(e => e.tipo === "consulta_whatsapp").length;
+
+  // Cotizaciones: cuántas se crearon en el rango, cuántas de esas ya se convirtieron
+  // en venta real (sin importar cuándo se convirtieron), y el % de conversión
+  const cotizacionesCreadas = cotizaciones.length;
+  const cotizacionesConvertidas = cotizaciones.filter(c => c.es_cotizacion_convertida).length;
+  const tasaConversion = cotizacionesCreadas > 0 ? (cotizacionesConvertidas / cotizacionesCreadas) * 100 : 0;
 
   // Series diarias para los 2 widgets grandes (visitas, y visitantes únicos)
   const serieDiaria = (tipoDatos) => {
@@ -1247,6 +1264,22 @@ function AnalyticsPanel() {
                   </>
                 );
               })()}
+            </div>
+            <div style={{ background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 16, padding: 22 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: GRAY3, marginBottom: 4, display: "flex", alignItems: "center", gap: 6 }}>
+                <FileText size={15} color={RED} /> Cotizaciones: creadas y convertidas
+              </div>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 14 }}>
+                <div style={{ fontSize: 34, fontWeight: 900 }}><NumeroAnimado valor={Math.round(tasaConversion)} />%</div>
+                <span style={{ fontSize: 12, color: GRAY3 }}>tasa de conversión</span>
+              </div>
+              <div style={{ height: 8, background: GRAY, borderRadius: 6, overflow: "hidden", marginBottom: 14 }}>
+                <div className="oft-analytics-bar" style={{ height: "100%", width: `${Math.max(tasaConversion, cotizacionesConvertidas > 0 ? 4 : 0)}%`, background: "#0F6E56", borderRadius: 6 }} />
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
+                <span style={{ fontWeight: 700 }}>{cotizacionesCreadas} <span style={{ color: GRAY3, fontWeight: 600 }}>creadas</span></span>
+                <span style={{ fontWeight: 700 }}>{cotizacionesConvertidas} <span style={{ color: GRAY3, fontWeight: 600 }}>convertidas</span></span>
+              </div>
             </div>
           </div>
 
@@ -1642,8 +1675,11 @@ function AdminView() {
       const nuevoCodigo = "OFT-" + (cot.num_factura || Date.now().toString().slice(-6));
       // La fecha pasa a HOY: la venta cuenta el día en que se confirma, no el día de la cotización
       const ahora = new Date().toISOString();
-      await sb.patch("pedidos", cot.id, { tipo: "pedido", codigo: nuevoCodigo, estado: 0, created_at: ahora });
-      setOrders(prev => prev.map(o => o.id === cot.id ? { ...o, tipo: "pedido", codigo: nuevoCodigo, estado: 0, created_at: ahora } : o));
+      await sb.patch("pedidos", cot.id, {
+        tipo: "pedido", codigo: nuevoCodigo, estado: 0, created_at: ahora,
+        es_cotizacion_convertida: true, fecha_cotizacion_original: cot.created_at,
+      });
+      setOrders(prev => prev.map(o => o.id === cot.id ? { ...o, tipo: "pedido", codigo: nuevoCodigo, estado: 0, created_at: ahora, es_cotizacion_convertida: true, fecha_cotizacion_original: cot.created_at } : o));
       showToast(`¡Cotización convertida en pedido ${nuevoCodigo}!`);
 
       // Crea la venta en Odoo. Esta conversión tampoco pasa por Yappy (igual que un pedido
