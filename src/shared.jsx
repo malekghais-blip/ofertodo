@@ -417,6 +417,70 @@ export async function obtenerTokenRecaptcha(accion = "checkout") {
   }
 }
 
+// ── PÍXELES DE MARKETING (Meta / Google) — para que el admin pueda medir y
+// optimizar sus campañas de publicidad. Solo se cargan si el admin puso un ID
+// en el panel; si no, todas las funciones de abajo simplemente no hacen nada.
+let _metaPixelCargado = false;
+export function cargarMetaPixel(pixelId) {
+  if (!pixelId || _metaPixelCargado || typeof window === "undefined") return;
+  _metaPixelCargado = true;
+  try {
+    (function (f, b, e, v, n, t, s) {
+      if (f.fbq) return;
+      n = f.fbq = function () { n.callMethod ? n.callMethod.apply(n, arguments) : n.queue.push(arguments); };
+      if (!f._fbq) f._fbq = n;
+      n.push = n; n.loaded = true; n.version = "2.0"; n.queue = [];
+      t = b.createElement(e); t.async = true; t.src = v;
+      s = b.getElementsByTagName(e)[0]; s.parentNode.insertBefore(t, s);
+    })(window, document, "script", "https://connect.facebook.net/en_US/fbevents.js");
+    window.fbq("init", pixelId);
+    window.fbq("track", "PageView");
+  } catch (e) { /* si Meta falla en cargar, no debe romper la tienda */ }
+}
+
+let _googlePixelCargado = false;
+export function cargarGooglePixel(measurementId) {
+  if (!measurementId || _googlePixelCargado || typeof window === "undefined") return;
+  _googlePixelCargado = true;
+  try {
+    const script = document.createElement("script");
+    script.async = true;
+    script.src = `https://www.googletagmanager.com/gtag/js?id=${measurementId}`;
+    document.head.appendChild(script);
+    window.dataLayer = window.dataLayer || [];
+    window.gtag = function () { window.dataLayer.push(arguments); };
+    window.gtag("js", new Date());
+    window.gtag("config", measurementId);
+  } catch (e) { /* si Google falla en cargar, no debe romper la tienda */ }
+}
+
+// Ver producto (ViewContent / view_item)
+export function trackVerProducto({ id, nombre, precio }) {
+  try { window.fbq && window.fbq("track", "ViewContent", { content_ids: [String(id)], content_name: nombre, content_type: "product", value: Number(precio) || 0, currency: "USD" }); } catch (e) {}
+  try { window.gtag && window.gtag("event", "view_item", { currency: "USD", value: Number(precio) || 0, items: [{ item_id: String(id), item_name: nombre, price: Number(precio) || 0 }] }); } catch (e) {}
+}
+
+// Agregar al carrito (AddToCart / add_to_cart)
+export function trackAgregarCarrito({ id, nombre, precio, cantidad = 1 }) {
+  const valor = (Number(precio) || 0) * cantidad;
+  try { window.fbq && window.fbq("track", "AddToCart", { content_ids: [String(id)], content_name: nombre, content_type: "product", value: valor, currency: "USD" }); } catch (e) {}
+  try { window.gtag && window.gtag("event", "add_to_cart", { currency: "USD", value: valor, items: [{ item_id: String(id), item_name: nombre, price: Number(precio) || 0, quantity: cantidad }] }); } catch (e) {}
+}
+
+// Iniciar checkout (InitiateCheckout / begin_checkout)
+export function trackIniciarCheckout({ total, items }) {
+  const lista = items || [];
+  try { window.fbq && window.fbq("track", "InitiateCheckout", { value: Number(total) || 0, currency: "USD", content_ids: lista.map(i => String(i.id)), num_items: lista.length }); } catch (e) {}
+  try { window.gtag && window.gtag("event", "begin_checkout", { currency: "USD", value: Number(total) || 0, items: lista.map(i => ({ item_id: String(i.id), item_name: i.nombre, price: Number(i.precio) || 0, quantity: i.cantidad || 1 })) }); } catch (e) {}
+}
+
+// Compra completada (Purchase / purchase) -- el evento más importante para medir campañas
+export function trackCompra({ codigo, total, items }) {
+  const lista = items || [];
+  try { window.fbq && window.fbq("track", "Purchase", { value: Number(total) || 0, currency: "USD", content_ids: lista.map(i => String(i.id)) }); } catch (e) {}
+  try { window.gtag && window.gtag("event", "purchase", { transaction_id: codigo, currency: "USD", value: Number(total) || 0, items: lista.map(i => ({ item_id: String(i.id), item_name: i.nombre, price: Number(i.precio) || 0, quantity: i.cantidad || 1 })) }); } catch (e) {}
+}
+
 export function imagenOptimizada(url, tamano = 400, calidad = 75) {
   if (!url || !url.includes("/storage/v1/object/public/")) return url;
   // Confirmado: Supabase no comprime archivos .svg con esta transformación (los sirve
