@@ -1035,6 +1035,7 @@ function AnalyticsPanel() {
   const [clientesManuales, setClientesManuales] = useState([]);
   const [pedidosPres, setPedidosPres] = useState([]); // pedidos con sus items (para "cómo compran": pieza/media/docena/flexpack)
   const [cotizaciones, setCotizaciones] = useState([]); // cotizaciones creadas en el rango (creadas y/o ya convertidas)
+  const [equipoNombres, setEquipoNombres] = useState([]); // cuentas del equipo (admin/operadores), para mostrar nombres
   const [eventosAnterior, setEventosAnterior] = useState([]);
   const [usuariosAnterior, setUsuariosAnterior] = useState([]);
   const [manualesAnterior, setManualesAnterior] = useState([]);
@@ -1073,7 +1074,7 @@ function AnalyticsPanel() {
     try {
       const desdeISO = `${desde}T00:00:00`, hastaISO = `${hasta}T23:59:59`;
       const desdeAntISO = `${desdeAnt}T00:00:00`, hastaAntISO = `${hastaAnt}T23:59:59`;
-      const [evts, usrs, manuales, pedItems, cotizacionesData, evtsAnt, usrsAnt, manualesAnt] = await Promise.all([
+      const [evts, usrs, manuales, pedItems, cotizacionesData, equipo, evtsAnt, usrsAnt, manualesAnt] = await Promise.all([
         sb.get("eventos_analytics", `?created_at=gte.${desdeISO}&created_at=lte.${hastaISO}&order=created_at.desc&limit=8000`),
         // Solo cuentas con origen_cuenta='web' -- el cliente se registró solo en la
         // página (o con Google). Excluye las que TÚ creas al hacer un pedido manual,
@@ -1082,24 +1083,26 @@ function AnalyticsPanel() {
         sb.get("usuarios", `?created_at=gte.${desdeISO}&created_at=lte.${hastaISO}&origen_cuenta=eq.admin_manual`),
         // Pedidos pagados del rango (excluyendo cotizaciones -- una cotización no es una
         // venta comprometida, mismo criterio que ya usa el Dashboard), con sus items --
-        // para "cómo compran", y también total+creado_por_admin para web vs. manuales
-        sb.get("pedidos", `?created_at=gte.${desdeISO}&created_at=lte.${hastaISO}&pagado=eq.true&tipo=neq.cotizacion&select=id,total,creado_por_admin,pedido_items(cantidad,presentacion)`),
+        // para "cómo compran", web vs. manuales, y también por operador (creado_por_usuario_id)
+        sb.get("pedidos", `?created_at=gte.${desdeISO}&created_at=lte.${hastaISO}&pagado=eq.true&tipo=neq.cotizacion&select=id,total,creado_por_admin,creado_por_usuario_id,pedido_items(cantidad,presentacion)`),
         // Cotizaciones CREADAS en este rango -- incluye tanto las que siguen pendientes
         // (tipo='cotizacion', usa su propio created_at) como las que ya se convirtieron
         // en venta (usa fecha_cotizacion_original, porque su created_at ya se sobreescribió
         // con la fecha en que se confirmó como venta, no la de cuando se creó la cotización)
-        sb.get("pedidos", `?or=(and(tipo.eq.cotizacion,created_at.gte.${desdeISO},created_at.lte.${hastaISO}),and(es_cotizacion_convertida.eq.true,fecha_cotizacion_original.gte.${desdeISO},fecha_cotizacion_original.lte.${hastaISO}))&select=id,es_cotizacion_convertida`),
+        sb.get("pedidos", `?or=(and(tipo.eq.cotizacion,created_at.gte.${desdeISO},created_at.lte.${hastaISO}),and(es_cotizacion_convertida.eq.true,fecha_cotizacion_original.gte.${desdeISO},fecha_cotizacion_original.lte.${hastaISO}))&select=id,es_cotizacion_convertida,creado_por_usuario_id`),
+        // Cuentas del equipo (admin/operadores), para poder mostrar el nombre de cada uno
+        sb.get("usuarios", `?or=(rol.not.is.null,es_admin.eq.true)&select=id,nombre`),
         // Mismo trío, pero del periodo anterior -- para calcular el % de cambio
         sb.get("eventos_analytics", `?created_at=gte.${desdeAntISO}&created_at=lte.${hastaAntISO}&limit=8000`),
         sb.get("usuarios", `?created_at=gte.${desdeAntISO}&created_at=lte.${hastaAntISO}&origen_cuenta=eq.web`),
         sb.get("usuarios", `?created_at=gte.${desdeAntISO}&created_at=lte.${hastaAntISO}&origen_cuenta=eq.admin_manual`),
       ]);
       setEventos(evts || []); setUsuariosNuevos(usrs || []); setClientesManuales(manuales || []); setPedidosPres(pedItems || []);
-      setCotizaciones(cotizacionesData || []);
+      setCotizaciones(cotizacionesData || []); setEquipoNombres(equipo || []);
       setEventosAnterior(evtsAnt || []); setUsuariosAnterior(usrsAnt || []); setManualesAnterior(manualesAnt || []);
     } catch(e) {
       console.warn("Error cargando analítica:", e.message);
-      setEventos([]); setUsuariosNuevos([]); setClientesManuales([]); setPedidosPres([]); setCotizaciones([]);
+      setEventos([]); setUsuariosNuevos([]); setClientesManuales([]); setPedidosPres([]); setCotizaciones([]); setEquipoNombres([]);
       setEventosAnterior([]); setUsuariosAnterior([]); setManualesAnterior([]);
     }
     setCargando(false);
@@ -1199,6 +1202,26 @@ function AnalyticsPanel() {
   const cotizacionesCreadas = cotizaciones.length;
   const cotizacionesConvertidas = cotizaciones.filter(c => c.es_cotizacion_convertida).length;
   const tasaConversion = cotizacionesCreadas > 0 ? (cotizacionesConvertidas / cotizacionesCreadas) * 100 : 0;
+
+  // Análisis por operador/vendedor: cuántas cotizaciones crea cada quien, cuántas
+  // ventas genera, y su propia tasa de conversión. Solo cuenta lo que quedó
+  // etiquetado con creado_por_usuario_id -- los pedidos de antes de este cambio (o
+  // hechos por el cliente solo desde la web) no tienen a quién atribuírselos.
+  const numDiasRango = Math.max(1, Math.round((new Date(hasta) - new Date(desde)) / (24 * 60 * 60 * 1000)) + 1);
+  const analisisPorOperador = equipoNombres.map(op => {
+    const susVentas = pedidosPres.filter(p => p.creado_por_usuario_id === op.id);
+    const susCotizaciones = cotizaciones.filter(c => c.creado_por_usuario_id === op.id);
+    const susConvertidas = susCotizaciones.filter(c => c.es_cotizacion_convertida).length;
+    const montoVentas = susVentas.reduce((s, p) => s + (Number(p.total) || 0), 0);
+    return {
+      id: op.id, nombre: op.nombre,
+      cotizaciones: susCotizaciones.length,
+      cotizacionesPorDia: susCotizaciones.length / numDiasRango,
+      ventas: susVentas.length, monto: montoVentas,
+      tasaConversion: susCotizaciones.length > 0 ? (susConvertidas / susCotizaciones.length) * 100 : 0,
+    };
+  }).filter(op => op.cotizaciones > 0 || op.ventas > 0) // solo muestra a quien tuvo actividad en el rango
+    .sort((a, b) => b.monto - a.monto);
 
   // Series diarias para los 2 widgets grandes (visitas, y visitantes únicos)
   const serieDiaria = (tipoDatos) => {
@@ -1318,6 +1341,46 @@ function AnalyticsPanel() {
               <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}><MessageCircle size={17} color="#25D366" /> Consultas por WhatsApp — de dónde vienen</div>
               {topWhatsapp.length === 0 ? <p style={{ color: GRAY3, fontSize: 13 }}>Sin datos en este rango.</p> : topWhatsapp.map(([nombre, valor], i) => <BarraTop key={nombre} etiqueta={nombre} valor={valor} maximo={maxWhatsapp} color="#25D366" delay={i * 0.04} />)}
             </div>
+          </div>
+
+          {/* ANÁLISIS POR OPERADOR / VENDEDOR */}
+          <div style={{ background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 14, padding: 20, marginTop: 18 }}>
+            <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 4, display: "flex", alignItems: "center", gap: 8 }}><Users size={17} color={RED} /> Por operador / vendedor</div>
+            <p style={{ fontSize: 12, color: GRAY3, marginBottom: 16 }}>Solo cuenta lo creado desde "Crear Pedido" en este panel, a partir de que se activó este seguimiento.</p>
+            {analisisPorOperador.length === 0 ? (
+              <p style={{ color: GRAY3, fontSize: 13 }}>Sin actividad registrada por operador en este rango.</p>
+            ) : (
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 560 }}>
+                  <thead>
+                    <tr style={{ borderBottom: `2px solid ${GRAY2}` }}>
+                      <th style={{ textAlign: "left", padding: "8px 10px", color: GRAY3, fontWeight: 700 }}>Operador</th>
+                      <th style={{ textAlign: "right", padding: "8px 10px", color: GRAY3, fontWeight: 700 }}>Cotizaciones</th>
+                      <th style={{ textAlign: "right", padding: "8px 10px", color: GRAY3, fontWeight: 700 }}>Por día</th>
+                      <th style={{ textAlign: "right", padding: "8px 10px", color: GRAY3, fontWeight: 700 }}>Ventas</th>
+                      <th style={{ textAlign: "right", padding: "8px 10px", color: GRAY3, fontWeight: 700 }}>Monto</th>
+                      <th style={{ textAlign: "right", padding: "8px 10px", color: GRAY3, fontWeight: 700 }}>Conversión</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {analisisPorOperador.map(op => (
+                      <tr key={op.id} style={{ borderBottom: `1px solid ${GRAY}` }}>
+                        <td style={{ padding: "10px", fontWeight: 700 }}>{op.nombre}</td>
+                        <td style={{ padding: "10px", textAlign: "right" }}>{op.cotizaciones}</td>
+                        <td style={{ padding: "10px", textAlign: "right", color: GRAY3 }}>{op.cotizacionesPorDia.toFixed(1)}</td>
+                        <td style={{ padding: "10px", textAlign: "right" }}>{op.ventas}</td>
+                        <td style={{ padding: "10px", textAlign: "right", fontWeight: 700 }}>${op.monto.toLocaleString("en-US", { minimumFractionDigits: 2 })}</td>
+                        <td style={{ padding: "10px", textAlign: "right" }}>
+                          <span style={{ fontWeight: 800, color: op.tasaConversion >= 50 ? "#0F6E56" : op.tasaConversion > 0 ? "#856404" : GRAY3 }}>
+                            {Math.round(op.tasaConversion)}%
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         </>
       )}
