@@ -1159,11 +1159,9 @@ function ProductCard({ product }) {
     if (talla) msg += `\nTalla: ${talla}`;
     if (color) msg += `\nColor: ${color}`;
     msg += `\nPresentación: Por pieza`;
-    if (product.imagen_url) {
-      msg += `\n\n📷 Foto del producto:\n${product.imagen_url}`;
-    } else {
-      msg += `\n\n(Este producto no tiene foto cargada)`;
-    }
+    // Se manda el LINK del producto (no la foto directa) -- así WhatsApp arma la
+    // vista previa con imagen usando la misma página que ya funciona bien al compartir.
+    msg += `\n\nVer producto: ${window.location.origin}/producto/${product.id}`;
     registrarEvento("consulta_whatsapp", product.id, "Consulta de producto (talla/color)");
     window.open(`https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(msg)}`, "_blank");
   };
@@ -1250,7 +1248,7 @@ function ProductCard({ product }) {
           <button ref={btnRef} className="oft-btn-press" disabled={agotadoBloqueado} style={{ ...S.btnRed, flex: 1, justifyContent: "center", background: agotadoBloqueado ? GRAY3 : (added ? "#25D366" : RED), transition: "background 0.3s", cursor: agotadoBloqueado ? "not-allowed" : "pointer", opacity: agotadoBloqueado ? 0.7 : 1 }} onClick={agotadoBloqueado ? undefined : handleAdd}>
             {agotadoBloqueado ? "Agotado" : added ? <><CheckCircle2 size={16} className="oft-check-pop" /> ¡Agregado!</> : <><Plus size={15} strokeWidth={2.5} /> Agregar al pedido</>}
           </button>
-          <button className="oft-btn-press" style={S.btnWA} onClick={() => { registrarEvento("consulta_whatsapp", product.id, "Interés en producto"); let m = `Hola Ofertodo, me interesa: ${product.nombre}`; if (product.referencia) m += ` (Ref: ${product.referencia})`; if (product.imagen_url) m += `\n\n📷 Foto:\n${product.imagen_url}`; window.open(`https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(m)}`, "_blank"); }}><MessageCircle size={16} /></button>
+          <button className="oft-btn-press" style={S.btnWA} onClick={() => { registrarEvento("consulta_whatsapp", product.id, "Interés en producto"); let m = `Hola Ofertodo, me interesa: ${product.nombre}`; if (product.referencia) m += ` (Ref: ${product.referencia})`; m += `\n\nVer producto: ${window.location.origin}/producto/${product.id}`; window.open(`https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(m)}`, "_blank"); }}><MessageCircle size={16} /></button>
           <button className="oft-btn-press" style={{ ...S.btnWA, background: GRAY2, color: BLACK }} title="Compartir producto" onClick={() => compartirProducto(product, showToast)}><Share2 size={16} /></button>
         </div>
         )}
@@ -1418,11 +1416,9 @@ function ProductModal() {
     if (talla) msg += `\nTalla: ${talla}`;
     if (color) msg += `\nColor: ${color}`;
     msg += `\nPresentación: Por pieza`;
-    if (product.imagen_url) {
-      msg += `\n\n📷 Foto del producto:\n${product.imagen_url}`;
-    } else {
-      msg += `\n\n(Este producto no tiene foto cargada)`;
-    }
+    // Se manda el LINK del producto (no la foto directa) -- así WhatsApp arma la
+    // vista previa con imagen usando la misma página que ya funciona bien al compartir.
+    msg += `\n\nVer producto: ${window.location.origin}/producto/${product.id}`;
     registrarEvento("consulta_whatsapp", product.id, "Consulta de producto (talla/color)");
     window.open(`https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(msg)}`, "_blank");
   };
@@ -1486,7 +1482,7 @@ function ProductModal() {
             <button className="oft-btn-press" disabled={agotadoBloqueado} style={{ ...S.btnRed, flex: 1, justifyContent: "center", padding: 14, fontSize: 15, background: agotadoBloqueado ? GRAY3 : (added ? "#25D366" : RED), transition: "background 0.3s", cursor: agotadoBloqueado ? "not-allowed" : "pointer", opacity: agotadoBloqueado ? 0.7 : 1 }} onClick={agotadoBloqueado ? undefined : handleAdd}>
               {agotadoBloqueado ? "Agotado" : added ? <><CheckCircle2 size={17} className="oft-check-pop" /> ¡Agregado!</> : <><Plus size={16} strokeWidth={2.5} /> Agregar al pedido</>}
             </button>
-            <button className="oft-btn-press" style={{ ...S.btnWA, padding: "14px 16px" }} onClick={() => { registrarEvento("consulta_whatsapp", product.id, "Interés en producto"); let m = `Hola Ofertodo, me interesa: ${product.nombre}`; if (product.referencia) m += ` (Ref: ${product.referencia})`; if (product.imagen_url) m += `\n\n📷 Foto:\n${product.imagen_url}`; window.open(`https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(m)}`, "_blank"); }}><MessageCircle size={18} /></button>
+            <button className="oft-btn-press" style={{ ...S.btnWA, padding: "14px 16px" }} onClick={() => { registrarEvento("consulta_whatsapp", product.id, "Interés en producto"); let m = `Hola Ofertodo, me interesa: ${product.nombre}`; if (product.referencia) m += ` (Ref: ${product.referencia})`; m += `\n\nVer producto: ${window.location.origin}/producto/${product.id}`; window.open(`https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(m)}`, "_blank"); }}><MessageCircle size={18} /></button>
             <button className="oft-btn-press" style={{ ...S.btnWA, padding: "14px 16px", background: GRAY2, color: BLACK }} title="Compartir producto" onClick={() => compartirProducto(product, showToast)}><Share2 size={18} /></button>
           </div>
           )}
