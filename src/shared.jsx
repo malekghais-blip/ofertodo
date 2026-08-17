@@ -554,7 +554,7 @@ const COLOR_HEX = {
 const colorToHex = (name) => COLOR_HEX[(name || "").toLowerCase().trim()] || "#CCCCCC";
 
 export function CrearPedidoView() {
-  const { products, empresas, sucursales, localesRetiro, showToast } = useApp();
+  const { products, empresas, sucursales, localesRetiro, showToast, user } = useApp();
   const [items, setItems] = useState([]); // { product, pres, count }
   const [search, setSearch] = useState("");
   const [cliente, setCliente] = useState({ id: null, nombre: "", telefono: "", direccion: "" });
@@ -751,6 +751,7 @@ export function CrearPedidoView() {
         retiro_local: retiroLocal,
         local_retiro_id: localElegidoAdmin?.id || null, local_retiro_nombre: localElegidoAdmin?.nombre || null,
         tipo, num_factura: numFactura, creado_por_admin: true, costo_envio: costoEnvio,
+        creado_por_usuario_id: user?.id || null,
         // Las cotizaciones se marcan pagadas de una vez (no son ventas reales).
         // Los PEDIDOS se insertan como NO pagados y se marcan pagados en un segundo paso
         // (más abajo, después de crear los items) — igual que el flujo web con Yappy.
