@@ -1388,6 +1388,97 @@ function AnalyticsPanel() {
   );
 }
 
+// ═══════════════════════════════════════════════════════════════
+//  PÍXELES DE MARKETING (Meta / Google) — el admin solo pega el ID
+//  y automáticamente empiezan a medirse: ver producto, agregar al
+//  carrito, iniciar checkout, y compra completada.
+// ═══════════════════════════════════════════════════════════════
+function CampoPixel({ etiqueta, claveConfig, descripcion, placeholder, valor, colorAcento, ayudaUrl }) {
+  const { showToast } = useApp();
+  const [texto, setTexto] = useState(valor || "");
+  const [guardando, setGuardando] = useState(false);
+  useEffect(() => { setTexto(valor || ""); }, [valor]);
+
+  const guardar = async () => {
+    setGuardando(true);
+    try {
+      const respPatch = await fetch(`${SUPABASE_URL}/rest/v1/configuracion?clave=eq.${claveConfig}`, {
+        method: "PATCH", headers: sb.dataHeaders(), body: JSON.stringify({ valor: texto.trim() || null }),
+      });
+      if (!respPatch.ok) throw new Error(await respPatch.text());
+      const actualizado = await respPatch.json();
+      if (!Array.isArray(actualizado) || actualizado.length === 0) {
+        // No existía la fila todavía -- la crea
+        const respPost = await fetch(`${SUPABASE_URL}/rest/v1/configuracion`, {
+          method: "POST", headers: sb.dataHeaders(), body: JSON.stringify({ clave: claveConfig, valor: texto.trim() || null }),
+        });
+        if (!respPost.ok) throw new Error(await respPost.text());
+      }
+      showToast("Guardado — se activa la próxima vez que alguien cargue la página");
+    } catch (e) {
+      showToast("Error al guardar: " + (e.message || ""));
+    }
+    setGuardando(false);
+  };
+
+  return (
+    <div style={{ background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 14, padding: 20, marginBottom: 16 }}>
+      <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 4 }}>{etiqueta}</div>
+      <p style={{ fontSize: 13, color: GRAY3, marginBottom: 14 }}>{descripcion} {ayudaUrl && <a href={ayudaUrl} target="_blank" rel="noopener noreferrer" style={{ color: colorAcento }}>¿Dónde lo encuentro?</a>}</p>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <input value={texto} onChange={e => setTexto(e.target.value)} placeholder={placeholder} style={{ ...S.input, marginBottom: 0, flex: 1, minWidth: 220 }} />
+        <button onClick={guardar} disabled={guardando} className="oft-btn-press" style={{ ...S.btnRed, background: colorAcento, opacity: guardando ? 0.6 : 1 }}>
+          {guardando ? "Guardando..." : "Guardar"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function PixelesPanel() {
+  const [valores, setValores] = useState({ meta_pixel_id: "", google_pixel_id: "" });
+  const [cargando, setCargando] = useState(true);
+
+  useEffect(() => {
+    sb.get("configuracion", "?clave=in.(meta_pixel_id,google_pixel_id)")
+      .then(data => {
+        const mapa = {};
+        (data || []).forEach(c => { mapa[c.clave] = c.valor || ""; });
+        setValores({ meta_pixel_id: mapa.meta_pixel_id || "", google_pixel_id: mapa.google_pixel_id || "" });
+      })
+      .catch(() => {})
+      .finally(() => setCargando(false));
+  }, []);
+
+  return (
+    <>
+      <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 8, display: "flex", alignItems: "center", gap: 10 }}><Zap size={24} color={RED} /> Píxeles de Marketing</div>
+      <p style={{ fontSize: 13, color: GRAY3, marginBottom: 24, maxWidth: 640 }}>
+        Pega el ID de cada uno y listo — no hace falta tocar nada más. Automáticamente se conectan estos 4 momentos de la compra, para que puedas optimizar tus campañas:
+        <b> ver un producto</b>, <b>agregar al carrito</b>, <b>iniciar el pago</b>, y <b>compra completada</b> (el más importante para medir resultados reales).
+      </p>
+      {cargando ? <Spinner /> : (
+        <>
+          <CampoPixel
+            etiqueta="Meta" claveConfig="meta_pixel_id" colorAcento="#0866FF"
+            descripcion="El ID de tu Píxel de Meta (Facebook/Instagram Ads) — un número, ej. 1234567890123456."
+            placeholder="1234567890123456"
+            valor={valores.meta_pixel_id}
+            ayudaUrl="https://www.facebook.com/business/help/952192354843755"
+          />
+          <CampoPixel
+            etiqueta="Google" claveConfig="google_pixel_id" colorAcento="#4285F4"
+            descripcion="El ID de medición de Google Ads o Google Analytics (GA4) — empieza con G- o AW-."
+            placeholder="G-XXXXXXXXXX"
+            valor={valores.google_pixel_id}
+            ayudaUrl="https://support.google.com/analytics/answer/9539598"
+          />
+        </>
+      )}
+    </>
+  );
+}
+
 function AdminView() {
   const { products, setProducts, categories, setCategories, gruposCategorias, setGruposCategorias, banners, setBanners, popups, setPopups, empresas, setEmpresas, sucursales, setSucursales, localesRetiro, setLocalesRetiro, retiroLocalHabilitado, setRetiroLocalHabilitado, showToast, setView, setUser, user } = useApp();
   // Rol del usuario actual: 'admin' = módulo completo, 'operador' = acceso limitado.
@@ -2680,6 +2771,7 @@ function AdminView() {
     ["shipping", "Envíos", Truck],
     ["users", "Clientes", Users],
     ["equipo", "Equipo", Lock],
+    ["pixeles", "Píxeles", Zap],
   ];
 
   const money = (n) => "$" + Number(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -5038,6 +5130,9 @@ function AdminView() {
         )}
 
         {/* ═══════════ RETIRO EN LOCAL ═══════════ */}
+        {/* ═══════════ PÍXELES DE MARKETING ═══════════ */}
+        {tab === "pixeles" && esAdminCompleto && <PixelesPanel />}
+
         {tab === "retirolocal" && esAdminCompleto && (
           <>
             <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 24, display: "flex", alignItems: "center", gap: 10 }}><Home size={24} color={RED} /> Retiro en Local</div>
