@@ -17,6 +17,7 @@ import {
   RED_D, S, STATUS_ICONS_ENVIO, STATUS_ICONS_RETIRO, SUPABASE_KEY,
   SUPABASE_URL, Spinner, StatusBadge, WHITE, colorToHex,
   idVisitante, registrarEvento, obtenerTokenRecaptcha,
+  cargarMetaPixel, cargarGooglePixel, trackVerProducto, trackAgregarCarrito, trackIniciarCheckout, trackCompra,
   imagenOptimizada, mediaDocenaDesdeDistribucion, parseDistribucion, presLabelPlural, presToPiezas,
   presUnitPrice, sb, useApp, useLockBodyScroll,
 } from "./shared.jsx";
@@ -1394,9 +1395,13 @@ function ProductModal() {
     return () => { document.title = anterior; };
   }, [product]);
 
-  // Registra que se vio este producto (para "productos más vistos" en Analítica)
+  // Registra que se vio este producto (para "productos más vistos" en Analítica),
+  // y avisa a los píxeles de marketing (si están configurados)
   useEffect(() => {
-    if (product?.id) registrarEvento("click_producto", product.id, product.nombre);
+    if (product?.id) {
+      registrarEvento("click_producto", product.id, product.nombre);
+      trackVerProducto({ id: product.id, nombre: product.nombre, precio: product.precio_pieza });
+    }
   }, [product?.id]);
 
   if (!product) return null;
@@ -1970,6 +1975,17 @@ function CheckoutView() {
   // hasta que le dé clic a "Pagar") -- así ya está listo cuando lo necesite, en
   // vez de tener que esperar esa carga justo en el momento del pago.
   useEffect(() => { obtenerTokenRecaptcha("checkout_precarga").catch(() => {}); }, []);
+
+  // Avisa a los píxeles de marketing que el cliente llegó al checkout (una sola
+  // vez, al entrar a esta pantalla con productos en el carrito)
+  useEffect(() => {
+    if (cart.length > 0) {
+      trackIniciarCheckout({
+        total: cart.reduce((s, i) => s + cartItemTotal(i), 0),
+        items: cart.map(i => ({ id: i.product.id, nombre: i.product.nombre, precio: i.product.precio_pieza, cantidad: i.qty })),
+      });
+    }
+  }, []);
   const subtotalBruto = cart.reduce((s, i) => s + cartItemTotal(i), 0);
   // ── DESCUENTO ──
   const [codigoInput, setCodigoInput] = useState("");        // lo que el cliente escribe
@@ -2174,6 +2190,10 @@ function CheckoutView() {
     // oficial viene del IPN de Yappy, pero así el cliente lo ve de inmediato).
     try { if (pedidoPendiente?.id) await sb.patch("pedidos", pedidoPendiente.id, { pagado: true }); } catch(e) {}
     setPlaced(pedidoPendiente.codigo);
+    trackCompra({
+      codigo: pedidoPendiente.codigo, total: pedidoPendiente.total,
+      items: cart.map(i => ({ id: i.product.id, nombre: i.product.nombre, precio: i.product.precio_pieza, cantidad: i.qty })),
+    });
     setCart([]);
     setPedidoPendiente(null);
     showToast("¡Pago recibido! Tu pedido está confirmado.");
@@ -3088,6 +3108,7 @@ export default function App() {
     });
     setCartPulse(p => p + 1); // dispara animación del carrito
     registrarEvento("agregar_carrito", product.id, product.nombre, user?.id);
+    trackAgregarCarrito({ id: product.id, nombre: product.nombre, precio: product.precio_pieza, cantidad: qty });
   };
 
   // Cargar datos de Supabase al iniciar
@@ -3188,6 +3209,18 @@ export default function App() {
         .then(data => setPopups(data || []))
         .catch(e => console.warn("Pop-ups promocionales no cargados:", e.message));
 
+      // Píxeles de marketing (Meta/Google) -- solo se cargan si el admin puso un ID
+      // en el panel. Se piden desde ya, en paralelo, para que empiecen a medir apenas
+      // sea posible (incluye la primera "visita" de la sesión, si cargan a tiempo).
+      sb.get("configuracion", "?clave=in.(meta_pixel_id,google_pixel_id)")
+        .then(data => {
+          const mapa = {};
+          (data || []).forEach(c => { mapa[c.clave] = c.valor; });
+          if (mapa.meta_pixel_id) cargarMetaPixel(mapa.meta_pixel_id);
+          if (mapa.google_pixel_id) cargarGooglePixel(mapa.google_pixel_id);
+        })
+        .catch(e => console.warn("Píxeles de marketing no cargados:", e.message));
+
       try {
         const [cats, prods] = await Promise.all([
           sb.get("categorias", "?activa=eq.true&order=id"),
@@ -3230,6 +3263,10 @@ export default function App() {
               if (pedido) {
                 const items = await sb.get("pedido_items", `?pedido_id=eq.${pedido.id}`).catch(() => []);
                 setPagoResultado({ tipo: "exito", codigo: codigoPago, pedido: { ...pedido, items: items || [] } });
+                trackCompra({
+                  codigo: codigoPago, total: pedido.total,
+                  items: (items || []).map(i => ({ id: i.producto_id, nombre: i.nombre_producto, precio: i.precio_unitario, cantidad: i.cantidad })),
+                });
               } else {
                 setPagoResultado({ tipo: "exito", codigo: codigoPago, pedido: null });
               }
