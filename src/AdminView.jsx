@@ -9,7 +9,7 @@ import {
   TrendingUp, Wallet, ShoppingBag, Pencil as PencilIcon, Save,
   Building2, MapPin as MapPinIcon, Send, FilePlus, Download, FileText, Receipt,
   Calendar as CalendarIcon, Eye, EyeOff, Share2, AlertTriangle, ChevronRight,
-  ArrowUpRight, ArrowDownRight
+  ArrowUpRight, ArrowDownRight, MousePointerClick, Target
 } from "lucide-react";
 import {
   BLACK, CategoryIcon, ChipAdder, ClienteFormModal, CrearPedidoView,
@@ -1485,64 +1485,212 @@ function PixelesPanel() {
 //  (comparando lo gastado contra las ventas de ese producto desde
 //  que arrancó la campaña).
 // ═══════════════════════════════════════════════════════════════
-function CampanasMetaPanel() {
-  const { products, categories, showToast } = useApp();
+// ═══════════════════════════════════════════════════════════════
+//  MÓDULO DE ANÁLISIS DE ADS — métricas de campañas de Meta, con
+//  gráfica de evolución diaria, y selector de varios productos por
+//  campaña (buscando por nombre o referencia) para ver rentabilidad.
+// ═══════════════════════════════════════════════════════════════
+
+// Chip con una "x" para quitar un producto ya asignado a la campaña
+function ChipProducto({ nombre, referencia, onQuitar }) {
+  return (
+    <span className="oft-chip-prod" style={{
+      display: "inline-flex", alignItems: "center", gap: 6, background: "linear-gradient(135deg, #EEF2FF, #E0E7FF)",
+      border: "1px solid #C7D2FE", color: "#3730A3", borderRadius: 20, padding: "5px 6px 5px 12px", fontSize: 12.5, fontWeight: 700,
+    }}>
+      {referencia ? `${referencia} — ` : ""}{nombre}
+      <button onClick={onQuitar} style={{ background: "rgba(55,48,163,0.12)", border: "none", borderRadius: "50%", width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#3730A3" }}>
+        <X size={11} strokeWidth={3} />
+      </button>
+    </span>
+  );
+}
+
+// Buscador de productos (por nombre o referencia) para asignarle varios a una campaña
+function SelectorProductosCampana({ campanaId, productos, asignados, onCambio, showToast }) {
+  const [busqueda, setBusqueda] = useState("");
+  const [agregando, setAgregando] = useState(false);
+  const idsYaAsignados = new Set(asignados.map(a => a.producto_id));
+
+  const coincidencias = busqueda.trim().length >= 2
+    ? productos.filter(p => !idsYaAsignados.has(p.id) && (
+        p.nombre.toLowerCase().includes(busqueda.toLowerCase()) ||
+        (p.referencia || "").toLowerCase().includes(busqueda.toLowerCase())
+      )).slice(0, 6)
+    : [];
+
+  const agregar = async (producto) => {
+    setBusqueda(""); setAgregando(true);
+    try { await sb.post("meta_campana_productos", { campana_id: campanaId, producto_id: producto.id }); onCambio(); }
+    catch (e) { showToast("No se pudo agregar: " + e.message); }
+    setAgregando(false);
+  };
+  const quitar = async (asignacion) => {
+    try { await sb.delete("meta_campana_productos", asignacion.id); onCambio(); }
+    catch (e) { showToast("No se pudo quitar: " + e.message); }
+  };
+
+  return (
+    <div>
+      {asignados.length > 0 && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+          {asignados.map(a => (
+            <ChipProducto key={a.id} nombre={a.productos?.nombre || "…"} referencia={a.productos?.referencia} onQuitar={() => quitar(a)} />
+          ))}
+        </div>
+      )}
+      <div style={{ position: "relative" }}>
+        <div style={{ position: "relative" }}>
+          <Search size={14} color={GRAY3} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)" }} />
+          <input
+            value={busqueda} onChange={e => setBusqueda(e.target.value)} disabled={agregando}
+            placeholder="Busca por nombre o referencia para agregar..."
+            style={{ ...S.input, marginBottom: 0, fontSize: 13, paddingLeft: 32 }}
+          />
+        </div>
+        {coincidencias.length > 0 && (
+          <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 10, boxShadow: "0 8px 24px rgba(0,0,0,0.12)", zIndex: 20, maxHeight: 220, overflowY: "auto" }}>
+            {coincidencias.map(p => (
+              <div key={p.id} onClick={() => agregar(p)} className="oft-btn-press"
+                style={{ padding: "10px 12px", cursor: "pointer", fontSize: 13, borderBottom: `1px solid ${GRAY}`, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                <span><b>{p.referencia ? `${p.referencia} — ` : ""}</b>{p.nombre}</span>
+                <Plus size={14} color={RED} />
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Tarjeta individual de campaña -- métricas, selector de productos, rentabilidad
+function TarjetaCampanaAds({ campana, productos, asignaciones, ingresosPorProducto, onCambio, showToast, delay }) {
+  const asignadosDeEsta = asignaciones.filter(a => a.campana_id === campana.id);
+  const ctr = campana.impresiones > 0 ? (campana.clics / campana.impresiones) * 100 : 0;
+  const cpc = campana.clics > 0 ? campana.gasto_total / campana.clics : 0;
+
+  const desde = campana.fecha_inicio ? new Date(campana.fecha_inicio) : null;
+  const hasta = campana.fecha_fin ? new Date(campana.fecha_fin + "T23:59:59") : null;
+  let ingresos = 0;
+  asignadosDeEsta.forEach(a => {
+    (ingresosPorProducto[a.producto_id] || []).forEach(v => {
+      const f = new Date(v.fecha);
+      if (desde && f < desde) return;
+      if (hasta && f > hasta) return;
+      ingresos += v.monto;
+    });
+  });
+  const gasto = Number(campana.gasto_total) || 0;
+  const ganancia = ingresos - gasto;
+  const roas = gasto > 0 ? ingresos / gasto : 0;
+
+  return (
+    <div className="oft-prod-anim" style={{ background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 16, padding: 20, animationDelay: `${delay}s` }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap", marginBottom: 14 }}>
+        <div>
+          <div style={{ fontWeight: 800, fontSize: 15 }}>{campana.nombre}</div>
+          <div style={{ fontSize: 11, marginTop: 3, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <span style={{ fontWeight: 700, color: campana.estado === "ACTIVE" ? "#0F6E56" : GRAY3, display: "inline-flex", alignItems: "center", gap: 4 }}>
+              <span style={{ width: 6, height: 6, borderRadius: "50%", background: campana.estado === "ACTIVE" ? "#0F6E56" : GRAY3, display: "inline-block", animation: campana.estado === "ACTIVE" ? "livePulse 1.8s infinite" : "none" }} />
+              {campana.estado === "ACTIVE" ? "Activa" : campana.estado || "—"}
+            </span>
+            <span style={{ color: GRAY3 }}>·</span>
+            <span style={{ color: GRAY3 }}>{Number(campana.impresiones).toLocaleString("en-US")} impr.</span>
+            <span style={{ color: GRAY3 }}>·</span>
+            <span style={{ color: GRAY3 }}>{Number(campana.clics).toLocaleString("en-US")} clics</span>
+            <span style={{ color: GRAY3 }}>·</span>
+            <span style={{ color: GRAY3 }}>CTR {ctr.toFixed(2)}%</span>
+            <span style={{ color: GRAY3 }}>·</span>
+            <span style={{ color: GRAY3 }}>CPC ${cpc.toFixed(2)}</span>
+          </div>
+        </div>
+        <div style={{ textAlign: "right" }}>
+          <div style={{ fontSize: 11, color: GRAY3, fontWeight: 600 }}>Gastado</div>
+          <div style={{ fontSize: 22, fontWeight: 900 }}>$<NumeroAnimado valor={Math.round(gasto)} />{gasto % 1 !== 0 ? `.${gasto.toFixed(2).split(".")[1]}` : ""}</div>
+        </div>
+      </div>
+
+      <SelectorProductosCampana campanaId={campana.id} productos={productos} asignados={asignadosDeEsta} onCambio={onCambio} showToast={showToast} />
+
+      {asignadosDeEsta.length > 0 && (
+        <div style={{ display: "flex", gap: 24, marginTop: 16, paddingTop: 14, borderTop: `1px solid ${GRAY}`, flexWrap: "wrap" }}>
+          <div><div style={{ fontSize: 11, color: GRAY3, fontWeight: 600 }}>Ventas generadas</div><div style={{ fontWeight: 800, fontSize: 15 }}>${ingresos.toLocaleString("en-US", { minimumFractionDigits: 2 })}</div></div>
+          <div><div style={{ fontSize: 11, color: GRAY3, fontWeight: 600 }}>ROAS</div><div style={{ fontWeight: 800, fontSize: 15 }}>{roas.toFixed(2)}x</div></div>
+          <div>
+            <div style={{ fontSize: 11, color: GRAY3, fontWeight: 600 }}>Resultado</div>
+            <div style={{ fontWeight: 900, fontSize: 16, color: ganancia >= 0 ? "#0F6E56" : "#B01519", display: "flex", alignItems: "center", gap: 4 }}>
+              {ganancia >= 0 ? <ArrowUpRight size={16} /> : <ArrowDownRight size={16} />}
+              {ganancia >= 0 ? "+" : ""}{ganancia.toLocaleString("en-US", { minimumFractionDigits: 2 })}
+              <span style={{ fontSize: 11, fontWeight: 700, marginLeft: 2, padding: "2px 8px", borderRadius: 10, background: ganancia >= 0 ? "#DCFCE7" : "#FEE2E2", color: ganancia >= 0 ? "#0F6E56" : "#B01519" }}>
+                {ganancia >= 0 ? "Rentable" : "No rentable"}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Tarjeta chica de KPI para el módulo de ads, con degradado -- se ve más "futurista" que las KPI normales
+function TarjetaKPIAds({ icono: Icono, valor, prefijo = "", sufijo = "", decimales = 0, colorDesde, colorHasta, etiqueta, delay = 0 }) {
+  return (
+    <div className="oft-prod-anim" style={{
+      background: `linear-gradient(135deg, ${colorDesde}, ${colorHasta})`, borderRadius: 16, padding: "18px 20px",
+      color: WHITE, animationDelay: `${delay}s`, boxShadow: `0 8px 24px ${colorDesde}33`, position: "relative", overflow: "hidden",
+    }}>
+      <Icono size={68} style={{ position: "absolute", right: -14, bottom: -14, opacity: 0.15 }} />
+      <div style={{ fontSize: 12, fontWeight: 700, opacity: 0.9, marginBottom: 6, display: "flex", alignItems: "center", gap: 6 }}><Icono size={14} /> {etiqueta}</div>
+      <div style={{ fontSize: 26, fontWeight: 900 }}>
+        {prefijo}<NumeroAnimado valor={decimales > 0 ? Math.round(valor * Math.pow(10, decimales)) / Math.pow(10, decimales) : Math.round(valor)} />{sufijo}
+      </div>
+    </div>
+  );
+}
+
+function AnalisisAdsPanel() {
+  const { products, showToast } = useApp();
   const [campanas, setCampanas] = useState([]);
+  const [diario, setDiario] = useState([]);
+  const [asignaciones, setAsignaciones] = useState([]);
+  const [ingresosPorProducto, setIngresosPorProducto] = useState({});
   const [cargando, setCargando] = useState(true);
   const [sincronizando, setSincronizando] = useState(false);
-  const [ingresosPorProducto, setIngresosPorProducto] = useState({}); // producto_id -> [{fecha, monto}]
-  const [ingresosPorCategoria, setIngresosPorCategoria] = useState({});
 
-  const cargarCampanas = async () => {
+  const cargarTodo = async () => {
     setCargando(true);
     try {
-      const data = await sb.get("meta_campanas", "?order=gasto_total.desc");
-      setCampanas(data || []);
-    } catch (e) { showToast("Error cargando campañas: " + e.message); }
+      const [camps, diarios, asigs] = await Promise.all([
+        sb.get("meta_campanas", "?order=gasto_total.desc"),
+        sb.get("meta_campanas_diario", "?order=fecha.asc&limit=5000"),
+        sb.get("meta_campana_productos", "?select=id,campana_id,producto_id,productos(id,nombre,referencia,precio_pieza)"),
+      ]);
+      setCampanas(camps || []);
+      setDiario(diarios || []);
+      setAsignaciones(asigs || []);
+    } catch (e) { showToast("Error cargando análisis de ads: " + e.message); }
     setCargando(false);
   };
 
-  useEffect(() => { cargarCampanas(); }, []);
+  useEffect(() => { cargarTodo(); }, []);
 
-  // Para las campañas que YA tienen un producto/categoría asignado, trae las
-  // ventas pagadas de ese producto/categoría, para poder calcular la rentabilidad
   useEffect(() => {
-    const idsProducto = [...new Set(campanas.filter(c => c.producto_id).map(c => c.producto_id))];
-    const idsCategoria = [...new Set(campanas.filter(c => c.categoria_id).map(c => c.categoria_id))];
-    if (idsProducto.length === 0 && idsCategoria.length === 0) return;
-
+    const idsProducto = [...new Set(asignaciones.map(a => a.producto_id))];
+    if (idsProducto.length === 0) { setIngresosPorProducto({}); return; }
     (async () => {
       try {
-        if (idsProducto.length > 0) {
-          const items = await sb.get("pedido_items", `?producto_id=in.(${idsProducto.join(",")})&select=producto_id,subtotal,pedido_id,pedidos(created_at,pagado)`);
-          const mapa = {};
-          (items || []).forEach(it => {
-            if (!it.pedidos?.pagado) return;
-            if (!mapa[it.producto_id]) mapa[it.producto_id] = [];
-            mapa[it.producto_id].push({ fecha: it.pedidos.created_at, monto: Number(it.subtotal) || 0 });
-          });
-          setIngresosPorProducto(mapa);
-        }
-        if (idsCategoria.length > 0) {
-          const productosDeEstasCategorias = products.filter(p => idsCategoria.includes(p.categoria_id)).map(p => p.id);
-          if (productosDeEstasCategorias.length > 0) {
-            const items = await sb.get("pedido_items", `?producto_id=in.(${productosDeEstasCategorias.join(",")})&select=producto_id,subtotal,pedido_id,pedidos(created_at,pagado)`);
-            const mapaProdCat = {};
-            products.forEach(p => { if (p.categoria_id) mapaProdCat[p.id] = p.categoria_id; });
-            const mapa = {};
-            (items || []).forEach(it => {
-              if (!it.pedidos?.pagado) return;
-              const catId = mapaProdCat[it.producto_id];
-              if (!catId) return;
-              if (!mapa[catId]) mapa[catId] = [];
-              mapa[catId].push({ fecha: it.pedidos.created_at, monto: Number(it.subtotal) || 0 });
-            });
-            setIngresosPorCategoria(mapa);
-          }
-        }
-      } catch (e) { console.warn("Error trayendo ingresos para rentabilidad:", e.message); }
+        const items = await sb.get("pedido_items", `?producto_id=in.(${idsProducto.join(",")})&select=producto_id,subtotal,pedidos(created_at,pagado)`);
+        const mapa = {};
+        (items || []).forEach(it => {
+          if (!it.pedidos?.pagado) return;
+          if (!mapa[it.producto_id]) mapa[it.producto_id] = [];
+          mapa[it.producto_id].push({ fecha: it.pedidos.created_at, monto: Number(it.subtotal) || 0 });
+        });
+        setIngresosPorProducto(mapa);
+      } catch (e) { console.warn("Error trayendo ingresos:", e.message); }
     })();
-  }, [campanas, products]);
+  }, [asignaciones]);
 
   const sincronizar = async () => {
     setSincronizando(true);
@@ -1550,109 +1698,96 @@ function CampanasMetaPanel() {
       const resp = await fetch(`${SUPABASE_URL}/functions/v1/sincronizar-meta-ads`, { method: "POST", headers: sb.functionHeaders() });
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.error || "Error desconocido");
-      showToast(`Sincronizado: ${data.sincronizadas} campaña(s)`);
-      await cargarCampanas();
+      showToast(`Sincronizado: ${data.sincronizadas} campaña(s), ${data.dias_guardados || 0} días de historial`);
+      await cargarTodo();
     } catch (e) {
       showToast("Error al sincronizar con Meta: " + e.message);
     }
     setSincronizando(false);
   };
 
-  const asignar = async (campana, campo, valor) => {
-    const cambios = campo === "producto_id" ? { producto_id: valor, categoria_id: null } : { categoria_id: valor, producto_id: null };
-    setCampanas(prev => prev.map(c => c.id === campana.id ? { ...c, ...cambios } : c));
-    try { await sb.patch("meta_campanas", campana.id, cambios); }
-    catch (e) { showToast("No se pudo guardar: " + e.message); }
-  };
+  // ── Métricas generales ──────────────────────────────────────────
+  const gastoTotal = campanas.reduce((s, c) => s + (Number(c.gasto_total) || 0), 0);
+  const impresionesTotal = campanas.reduce((s, c) => s + (Number(c.impresiones) || 0), 0);
+  const clicsTotal = campanas.reduce((s, c) => s + (Number(c.clics) || 0), 0);
+  const ctrGeneral = impresionesTotal > 0 ? (clicsTotal / impresionesTotal) * 100 : 0;
+  const cpcGeneral = clicsTotal > 0 ? gastoTotal / clicsTotal : 0;
+  const campanasActivas = campanas.filter(c => c.estado === "ACTIVE").length;
 
-  const calcularRentabilidad = (campana) => {
-    const lista = campana.producto_id ? (ingresosPorProducto[campana.producto_id] || []) : campana.categoria_id ? (ingresosPorCategoria[campana.categoria_id] || []) : [];
+  const calcularIngresosCampana = (campana) => {
+    const asignadosDeEsta = asignaciones.filter(a => a.campana_id === campana.id);
     const desde = campana.fecha_inicio ? new Date(campana.fecha_inicio) : null;
     const hasta = campana.fecha_fin ? new Date(campana.fecha_fin + "T23:59:59") : null;
-    const ingresos = lista.filter(v => {
-      const f = new Date(v.fecha);
-      if (desde && f < desde) return false;
-      if (hasta && f > hasta) return false;
-      return true;
-    }).reduce((s, v) => s + v.monto, 0);
-    const gasto = Number(campana.gasto_total) || 0;
-    return { ingresos, gasto, ganancia: ingresos - gasto, tieneAsignacion: !!(campana.producto_id || campana.categoria_id) };
+    let ingresos = 0;
+    asignadosDeEsta.forEach(a => {
+      (ingresosPorProducto[a.producto_id] || []).forEach(v => {
+        const f = new Date(v.fecha);
+        if (desde && f < desde) return;
+        if (hasta && f > hasta) return;
+        ingresos += v.monto;
+      });
+    });
+    return ingresos;
   };
+  const ingresosTotalAtribuido = campanas.reduce((s, c) => s + calcularIngresosCampana(c), 0);
+  const roasGeneral = gastoTotal > 0 ? ingresosTotalAtribuido / gastoTotal : 0;
+
+  // Serie diaria agregada (todas las campañas sumadas por día)
+  const serieDiariaGasto = (() => {
+    const mapa = {};
+    diario.forEach(d => { mapa[d.fecha] = (mapa[d.fecha] || 0) + (Number(d.gasto) || 0); });
+    return Object.entries(mapa).sort((a, b) => a[0].localeCompare(b[0])).map(([fecha, valor]) => ({ dia: fecha, valor: Math.round(valor * 100) / 100 }));
+  })();
+
+  const productosActivos = products.filter(p => p.activo);
 
   return (
-    <div style={{ marginTop: 36 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4, flexWrap: "wrap", gap: 10 }}>
-        <div style={{ fontSize: 18, fontWeight: 900, display: "flex", alignItems: "center", gap: 8 }}><ShoppingCart size={20} color="#0866FF" /> Campañas de Meta Ads</div>
-        <button onClick={sincronizar} disabled={sincronizando} className="oft-btn-press" style={{ ...S.btnRed, background: "#0866FF", opacity: sincronizando ? 0.6 : 1 }}>
-          <RefreshCw size={15} className={sincronizando ? "spin" : ""} /> {sincronizando ? "Sincronizando..." : "Sincronizar ahora"}
+    <>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6, flexWrap: "wrap", gap: 10 }}>
+        <div style={{ fontSize: 22, fontWeight: 900, display: "flex", alignItems: "center", gap: 10 }}><Target size={24} color="#0866FF" /> Análisis de Ads</div>
+        <button onClick={sincronizar} disabled={sincronizando} className="oft-btn-press" style={{ ...S.btnRed, background: "linear-gradient(135deg, #0866FF, #0047B3)" }}>
+          <RefreshCw size={15} className={sincronizando ? "spin" : ""} /> {sincronizando ? "Sincronizando..." : "Sincronizar con Meta"}
         </button>
       </div>
-      <p style={{ fontSize: 12, color: GRAY3, marginBottom: 18, maxWidth: 640 }}>
-        Trae el gasto real de tus campañas desde Meta. Asígnale un producto o categoría a cada una para ver si es rentable — se compara lo gastado contra las ventas de ese producto/categoría desde que empezó la campaña (una aproximación, no un rastreo exacto de qué venta vino de qué anuncio).
+      <p style={{ fontSize: 13, color: GRAY3, marginBottom: 22, maxWidth: 680 }}>
+        Métricas reales de tus campañas de Meta Ads. Asígnale uno o varios productos a cada campaña (buscando por nombre o referencia) para ver si es rentable.
       </p>
-      {cargando ? <Spinner /> : campanas.length === 0 ? (
-        <p style={{ color: GRAY3, fontSize: 13 }}>Todavía no hay campañas sincronizadas — dale a "Sincronizar ahora" (necesitas haber guardado META_ACCESS_TOKEN y META_AD_ACCOUNT_ID en Supabase primero).</p>
-      ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          {campanas.map(camp => {
-            const r = calcularRentabilidad(camp);
-            return (
-              <div key={camp.id} style={{ background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 14, padding: 18 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
-                  <div>
-                    <div style={{ fontWeight: 800, fontSize: 15 }}>{camp.nombre}</div>
-                    <div style={{ fontSize: 11, color: GRAY3, marginTop: 2 }}>
-                      <span style={{ fontWeight: 700, color: camp.estado === "ACTIVE" ? "#0F6E56" : GRAY3 }}>{camp.estado === "ACTIVE" ? "● Activa" : camp.estado || "—"}</span>
-                      {" · "}{Number(camp.impresiones).toLocaleString("en-US")} impresiones · {Number(camp.clics).toLocaleString("en-US")} clics
-                    </div>
-                  </div>
-                  <div style={{ textAlign: "right" }}>
-                    <div style={{ fontSize: 11, color: GRAY3, fontWeight: 600 }}>Gastado</div>
-                    <div style={{ fontSize: 20, fontWeight: 900 }}>${Number(camp.gasto_total).toLocaleString("en-US", { minimumFractionDigits: 2 })}</div>
-                  </div>
-                </div>
 
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", borderTop: `1px solid ${GRAY}`, paddingTop: 12 }}>
-                  <span style={{ fontSize: 12, color: GRAY3, fontWeight: 700 }}>Se le atribuye a:</span>
-                  <select
-                    value={camp.producto_id ? `p_${camp.producto_id}` : camp.categoria_id ? `c_${camp.categoria_id}` : ""}
-                    onChange={e => {
-                      const v = e.target.value;
-                      if (!v) { asignar(camp, "producto_id", null); return; }
-                      const [tipo, id] = v.split("_");
-                      asignar(camp, tipo === "p" ? "producto_id" : "categoria_id", Number(id));
-                    }}
-                    style={{ ...S.input, marginBottom: 0, fontSize: 13, flex: 1, minWidth: 200 }}
-                  >
-                    <option value="">Sin asignar todavía</option>
-                    <optgroup label="Categorías">
-                      {categories.map(c => <option key={`c_${c.id}`} value={`c_${c.id}`}>{c.nombre}</option>)}
-                    </optgroup>
-                    <optgroup label="Productos">
-                      {products.filter(p => p.activo).map(p => <option key={`p_${p.id}`} value={`p_${p.id}`}>{p.referencia ? `${p.referencia} — ` : ""}{p.nombre}</option>)}
-                    </optgroup>
-                  </select>
-                </div>
+      {cargando ? <Spinner /> : (
+        <>
+          {/* KPIs generales, con degradado */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 14, marginBottom: 22 }}>
+            <TarjetaKPIAds icono={DollarSign} valor={gastoTotal} prefijo="$" decimales={2} colorDesde="#0866FF" colorHasta="#0047B3" etiqueta="Gasto total" delay={0} />
+            <TarjetaKPIAds icono={TrendingUp} valor={ingresosTotalAtribuido} prefijo="$" decimales={2} colorDesde="#0F6E56" colorHasta="#065F46" etiqueta="Ventas atribuidas" delay={0.05} />
+            <TarjetaKPIAds icono={Target} valor={roasGeneral} sufijo="x" decimales={2} colorDesde="#7C3AED" colorHasta="#5B21B6" etiqueta="ROAS general" delay={0.1} />
+            <TarjetaKPIAds icono={MousePointerClick} valor={ctrGeneral} sufijo="%" decimales={2} colorDesde="#EA580C" colorHasta="#C2410C" etiqueta="CTR general" delay={0.15} />
+            <TarjetaKPIAds icono={Zap} valor={campanasActivas} colorDesde="#0EA5E9" colorHasta="#0369A1" etiqueta="Campañas activas" delay={0.2} />
+          </div>
 
-                {r.tieneAsignacion && (
-                  <div style={{ display: "flex", gap: 20, marginTop: 12, paddingTop: 12, borderTop: `1px solid ${GRAY}`, flexWrap: "wrap" }}>
-                    <div><div style={{ fontSize: 11, color: GRAY3 }}>Ventas generadas</div><div style={{ fontWeight: 800 }}>${r.ingresos.toLocaleString("en-US", { minimumFractionDigits: 2 })}</div></div>
-                    <div>
-                      <div style={{ fontSize: 11, color: GRAY3 }}>Resultado</div>
-                      <div style={{ fontWeight: 900, fontSize: 16, color: r.ganancia >= 0 ? "#0F6E56" : "#B01519", display: "flex", alignItems: "center", gap: 4 }}>
-                        {r.ganancia >= 0 ? <ArrowUpRight size={16} /> : <ArrowDownRight size={16} />}
-                        {r.ganancia >= 0 ? "+" : ""}{r.ganancia.toLocaleString("en-US", { minimumFractionDigits: 2 })}
-                        <span style={{ fontSize: 11, fontWeight: 700, marginLeft: 4 }}>{r.ganancia >= 0 ? "Rentable" : "No rentable"}</span>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
+          {/* Gráfica de línea -- gasto diario, últimos 30 días */}
+          <div style={{ background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 16, padding: 22, marginBottom: 24 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: GRAY3, marginBottom: 4, display: "flex", alignItems: "center", gap: 6 }}>
+              <TrendingUp size={15} color="#0866FF" /> Gasto diario (últimos 30 días, todas las campañas)
+            </div>
+            <div style={{ fontSize: 26, fontWeight: 900, marginBottom: 10 }}>${gastoTotal.toLocaleString("en-US", { minimumFractionDigits: 2 })} <span style={{ fontSize: 12, color: GRAY3, fontWeight: 600 }}>acumulado histórico</span></div>
+            <GraficoLineal datos={serieDiariaGasto} color="#0866FF" />
+          </div>
+
+          {/* Lista de campañas */}
+          <div style={{ fontSize: 16, fontWeight: 800, marginBottom: 14 }}>Campañas ({campanas.length})</div>
+          {campanas.length === 0 ? (
+            <p style={{ color: GRAY3, fontSize: 13 }}>Todavía no hay campañas sincronizadas — dale a "Sincronizar con Meta" (necesitas haber guardado META_ACCESS_TOKEN y META_AD_ACCOUNT_ID en Supabase primero).</p>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              {campanas.map((camp, i) => (
+                <TarjetaCampanaAds key={camp.id} campana={camp} productos={productosActivos} asignaciones={asignaciones}
+                  ingresosPorProducto={ingresosPorProducto} onCambio={cargarTodo} showToast={showToast} delay={Math.min(i * 0.03, 0.6)} />
+              ))}
+            </div>
+          )}
+        </>
       )}
-    </div>
+    </>
   );
 }
 
@@ -2949,6 +3084,7 @@ function AdminView() {
     ["users", "Clientes", Users],
     ["equipo", "Equipo", Lock],
     ["pixeles", "Píxeles", Zap],
+    ["analisisads", "Análisis Ads", Target],
   ];
 
   const money = (n) => "$" + Number(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -5308,12 +5444,9 @@ function AdminView() {
 
         {/* ═══════════ RETIRO EN LOCAL ═══════════ */}
         {/* ═══════════ PÍXELES DE MARKETING ═══════════ */}
-        {tab === "pixeles" && esAdminCompleto && (
-          <>
-            <PixelesPanel />
-            <CampanasMetaPanel />
-          </>
-        )}
+        {tab === "pixeles" && esAdminCompleto && <PixelesPanel />}
+
+        {tab === "analisisads" && esAdminCompleto && <AnalisisAdsPanel />}
 
         {tab === "retirolocal" && esAdminCompleto && (
           <>
