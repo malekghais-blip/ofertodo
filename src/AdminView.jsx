@@ -1510,6 +1510,8 @@ function ChipProducto({ nombre, referencia, onQuitar }) {
 function SelectorProductosCampana({ campanaId, productos, asignados, onCambio, showToast }) {
   const [busqueda, setBusqueda] = useState("");
   const [agregando, setAgregando] = useState(false);
+  const [coords, setCoords] = useState(null); // posición calculada para el menú (portal)
+  const inputRef = useRef(null);
   const idsYaAsignados = new Set(asignados.map(a => a.producto_id));
 
   const coincidencias = busqueda.trim().length >= 2
@@ -1518,6 +1520,23 @@ function SelectorProductosCampana({ campanaId, productos, asignados, onCambio, s
         (p.referencia || "").toLowerCase().includes(busqueda.toLowerCase())
       )).slice(0, 6)
     : [];
+
+  // Las tarjetas de campaña tienen una animación de entrada, y eso "atrapa" cualquier
+  // menú desplegable dentro de su propia capa visual (las tarjetas de abajo terminan
+  // tapándolo). Por eso el menú se dibuja aparte, con un portal directo a <body>, en
+  // la posición exacta del buscador -- así siempre queda por encima de todo.
+  useEffect(() => {
+    if (coincidencias.length === 0) { setCoords(null); return; }
+    const actualizarPosicion = () => {
+      if (!inputRef.current) return;
+      const r = inputRef.current.getBoundingClientRect();
+      setCoords({ top: r.bottom + 4, left: r.left, width: r.width });
+    };
+    actualizarPosicion();
+    window.addEventListener("scroll", actualizarPosicion, true);
+    window.addEventListener("resize", actualizarPosicion);
+    return () => { window.removeEventListener("scroll", actualizarPosicion, true); window.removeEventListener("resize", actualizarPosicion); };
+  }, [busqueda, coincidencias.length]);
 
   const agregar = async (producto) => {
     setBusqueda(""); setAgregando(true);
@@ -1540,26 +1559,26 @@ function SelectorProductosCampana({ campanaId, productos, asignados, onCambio, s
         </div>
       )}
       <div style={{ position: "relative" }}>
-        <div style={{ position: "relative" }}>
-          <Search size={14} color={GRAY3} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)" }} />
-          <input
-            value={busqueda} onChange={e => setBusqueda(e.target.value)} disabled={agregando}
-            placeholder="Busca por nombre o referencia para agregar..."
-            style={{ ...S.input, marginBottom: 0, fontSize: 13, paddingLeft: 32 }}
-          />
-        </div>
-        {coincidencias.length > 0 && (
-          <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 10, boxShadow: "0 8px 24px rgba(0,0,0,0.12)", zIndex: 20, maxHeight: 220, overflowY: "auto" }}>
-            {coincidencias.map(p => (
-              <div key={p.id} onClick={() => agregar(p)} className="oft-btn-press"
-                style={{ padding: "10px 12px", cursor: "pointer", fontSize: 13, borderBottom: `1px solid ${GRAY}`, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-                <span><b>{p.referencia ? `${p.referencia} — ` : ""}</b>{p.nombre}</span>
-                <Plus size={14} color={RED} />
-              </div>
-            ))}
-          </div>
-        )}
+        <Search size={14} color={GRAY3} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)" }} />
+        <input
+          ref={inputRef}
+          value={busqueda} onChange={e => setBusqueda(e.target.value)} disabled={agregando}
+          placeholder="Busca por nombre o referencia para agregar..."
+          style={{ ...S.input, marginBottom: 0, fontSize: 13, paddingLeft: 32 }}
+        />
       </div>
+      {coincidencias.length > 0 && coords && createPortal(
+        <div style={{ position: "fixed", top: coords.top, left: coords.left, width: coords.width, background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 10, boxShadow: "0 10px 30px rgba(0,0,0,0.18)", zIndex: 9999, maxHeight: 220, overflowY: "auto" }}>
+          {coincidencias.map(p => (
+            <div key={p.id} onClick={() => agregar(p)} className="oft-btn-press"
+              style={{ padding: "10px 12px", cursor: "pointer", fontSize: 13, borderBottom: `1px solid ${GRAY}`, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+              <span><b>{p.referencia ? `${p.referencia} — ` : ""}</b>{p.nombre}</span>
+              <Plus size={14} color={RED} />
+            </div>
+          ))}
+        </div>,
+        document.body
+      )}
     </div>
   );
 }
