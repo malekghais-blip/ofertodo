@@ -662,7 +662,7 @@ function PopupPromocional() {
     let yaVisto = false;
     try { yaVisto = sessionStorage.getItem(`oft_popup_${elegido.id}`) === "1"; } catch (e) { /* si el navegador bloquea sessionStorage, simplemente lo muestra */ }
     if (yaVisto) return;
-    const t = setTimeout(() => { setPopupActivo(elegido); setMostrar(true); }, 1200);
+    const t = setTimeout(() => { setPopupActivo(elegido); setMostrar(true); }, 4000);
     return () => clearTimeout(t);
   }, [popups]);
 
