@@ -1479,6 +1479,183 @@ function PixelesPanel() {
   );
 }
 
+// ═══════════════════════════════════════════════════════════════
+//  CAMPAÑAS DE META ADS — trae el gasto real de cada campaña desde
+//  Meta, y deja asignarle un producto para ver si es rentable
+//  (comparando lo gastado contra las ventas de ese producto desde
+//  que arrancó la campaña).
+// ═══════════════════════════════════════════════════════════════
+function CampanasMetaPanel() {
+  const { products, categories, showToast } = useApp();
+  const [campanas, setCampanas] = useState([]);
+  const [cargando, setCargando] = useState(true);
+  const [sincronizando, setSincronizando] = useState(false);
+  const [ingresosPorProducto, setIngresosPorProducto] = useState({}); // producto_id -> [{fecha, monto}]
+  const [ingresosPorCategoria, setIngresosPorCategoria] = useState({});
+
+  const cargarCampanas = async () => {
+    setCargando(true);
+    try {
+      const data = await sb.get("meta_campanas", "?order=gasto_total.desc");
+      setCampanas(data || []);
+    } catch (e) { showToast("Error cargando campañas: " + e.message); }
+    setCargando(false);
+  };
+
+  useEffect(() => { cargarCampanas(); }, []);
+
+  // Para las campañas que YA tienen un producto/categoría asignado, trae las
+  // ventas pagadas de ese producto/categoría, para poder calcular la rentabilidad
+  useEffect(() => {
+    const idsProducto = [...new Set(campanas.filter(c => c.producto_id).map(c => c.producto_id))];
+    const idsCategoria = [...new Set(campanas.filter(c => c.categoria_id).map(c => c.categoria_id))];
+    if (idsProducto.length === 0 && idsCategoria.length === 0) return;
+
+    (async () => {
+      try {
+        if (idsProducto.length > 0) {
+          const items = await sb.get("pedido_items", `?producto_id=in.(${idsProducto.join(",")})&select=producto_id,subtotal,pedido_id,pedidos(created_at,pagado)`);
+          const mapa = {};
+          (items || []).forEach(it => {
+            if (!it.pedidos?.pagado) return;
+            if (!mapa[it.producto_id]) mapa[it.producto_id] = [];
+            mapa[it.producto_id].push({ fecha: it.pedidos.created_at, monto: Number(it.subtotal) || 0 });
+          });
+          setIngresosPorProducto(mapa);
+        }
+        if (idsCategoria.length > 0) {
+          const productosDeEstasCategorias = products.filter(p => idsCategoria.includes(p.categoria_id)).map(p => p.id);
+          if (productosDeEstasCategorias.length > 0) {
+            const items = await sb.get("pedido_items", `?producto_id=in.(${productosDeEstasCategorias.join(",")})&select=producto_id,subtotal,pedido_id,pedidos(created_at,pagado)`);
+            const mapaProdCat = {};
+            products.forEach(p => { if (p.categoria_id) mapaProdCat[p.id] = p.categoria_id; });
+            const mapa = {};
+            (items || []).forEach(it => {
+              if (!it.pedidos?.pagado) return;
+              const catId = mapaProdCat[it.producto_id];
+              if (!catId) return;
+              if (!mapa[catId]) mapa[catId] = [];
+              mapa[catId].push({ fecha: it.pedidos.created_at, monto: Number(it.subtotal) || 0 });
+            });
+            setIngresosPorCategoria(mapa);
+          }
+        }
+      } catch (e) { console.warn("Error trayendo ingresos para rentabilidad:", e.message); }
+    })();
+  }, [campanas, products]);
+
+  const sincronizar = async () => {
+    setSincronizando(true);
+    try {
+      const resp = await fetch(`${SUPABASE_URL}/functions/v1/sincronizar-meta-ads`, { method: "POST", headers: sb.functionHeaders() });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || "Error desconocido");
+      showToast(`Sincronizado: ${data.sincronizadas} campaña(s)`);
+      await cargarCampanas();
+    } catch (e) {
+      showToast("Error al sincronizar con Meta: " + e.message);
+    }
+    setSincronizando(false);
+  };
+
+  const asignar = async (campana, campo, valor) => {
+    const cambios = campo === "producto_id" ? { producto_id: valor, categoria_id: null } : { categoria_id: valor, producto_id: null };
+    setCampanas(prev => prev.map(c => c.id === campana.id ? { ...c, ...cambios } : c));
+    try { await sb.patch("meta_campanas", campana.id, cambios); }
+    catch (e) { showToast("No se pudo guardar: " + e.message); }
+  };
+
+  const calcularRentabilidad = (campana) => {
+    const lista = campana.producto_id ? (ingresosPorProducto[campana.producto_id] || []) : campana.categoria_id ? (ingresosPorCategoria[campana.categoria_id] || []) : [];
+    const desde = campana.fecha_inicio ? new Date(campana.fecha_inicio) : null;
+    const hasta = campana.fecha_fin ? new Date(campana.fecha_fin + "T23:59:59") : null;
+    const ingresos = lista.filter(v => {
+      const f = new Date(v.fecha);
+      if (desde && f < desde) return false;
+      if (hasta && f > hasta) return false;
+      return true;
+    }).reduce((s, v) => s + v.monto, 0);
+    const gasto = Number(campana.gasto_total) || 0;
+    return { ingresos, gasto, ganancia: ingresos - gasto, tieneAsignacion: !!(campana.producto_id || campana.categoria_id) };
+  };
+
+  return (
+    <div style={{ marginTop: 36 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4, flexWrap: "wrap", gap: 10 }}>
+        <div style={{ fontSize: 18, fontWeight: 900, display: "flex", alignItems: "center", gap: 8 }}><ShoppingCart size={20} color="#0866FF" /> Campañas de Meta Ads</div>
+        <button onClick={sincronizar} disabled={sincronizando} className="oft-btn-press" style={{ ...S.btnRed, background: "#0866FF", opacity: sincronizando ? 0.6 : 1 }}>
+          <RefreshCw size={15} className={sincronizando ? "spin" : ""} /> {sincronizando ? "Sincronizando..." : "Sincronizar ahora"}
+        </button>
+      </div>
+      <p style={{ fontSize: 12, color: GRAY3, marginBottom: 18, maxWidth: 640 }}>
+        Trae el gasto real de tus campañas desde Meta. Asígnale un producto o categoría a cada una para ver si es rentable — se compara lo gastado contra las ventas de ese producto/categoría desde que empezó la campaña (una aproximación, no un rastreo exacto de qué venta vino de qué anuncio).
+      </p>
+      {cargando ? <Spinner /> : campanas.length === 0 ? (
+        <p style={{ color: GRAY3, fontSize: 13 }}>Todavía no hay campañas sincronizadas — dale a "Sincronizar ahora" (necesitas haber guardado META_ACCESS_TOKEN y META_AD_ACCOUNT_ID en Supabase primero).</p>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {campanas.map(camp => {
+            const r = calcularRentabilidad(camp);
+            return (
+              <div key={camp.id} style={{ background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 14, padding: 18 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
+                  <div>
+                    <div style={{ fontWeight: 800, fontSize: 15 }}>{camp.nombre}</div>
+                    <div style={{ fontSize: 11, color: GRAY3, marginTop: 2 }}>
+                      <span style={{ fontWeight: 700, color: camp.estado === "ACTIVE" ? "#0F6E56" : GRAY3 }}>{camp.estado === "ACTIVE" ? "● Activa" : camp.estado || "—"}</span>
+                      {" · "}{Number(camp.impresiones).toLocaleString("en-US")} impresiones · {Number(camp.clics).toLocaleString("en-US")} clics
+                    </div>
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <div style={{ fontSize: 11, color: GRAY3, fontWeight: 600 }}>Gastado</div>
+                    <div style={{ fontSize: 20, fontWeight: 900 }}>${Number(camp.gasto_total).toLocaleString("en-US", { minimumFractionDigits: 2 })}</div>
+                  </div>
+                </div>
+
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", borderTop: `1px solid ${GRAY}`, paddingTop: 12 }}>
+                  <span style={{ fontSize: 12, color: GRAY3, fontWeight: 700 }}>Se le atribuye a:</span>
+                  <select
+                    value={camp.producto_id ? `p_${camp.producto_id}` : camp.categoria_id ? `c_${camp.categoria_id}` : ""}
+                    onChange={e => {
+                      const v = e.target.value;
+                      if (!v) { asignar(camp, "producto_id", null); return; }
+                      const [tipo, id] = v.split("_");
+                      asignar(camp, tipo === "p" ? "producto_id" : "categoria_id", Number(id));
+                    }}
+                    style={{ ...S.input, marginBottom: 0, fontSize: 13, flex: 1, minWidth: 200 }}
+                  >
+                    <option value="">Sin asignar todavía</option>
+                    <optgroup label="Categorías">
+                      {categories.map(c => <option key={`c_${c.id}`} value={`c_${c.id}`}>{c.nombre}</option>)}
+                    </optgroup>
+                    <optgroup label="Productos">
+                      {products.filter(p => p.activo).map(p => <option key={`p_${p.id}`} value={`p_${p.id}`}>{p.referencia ? `${p.referencia} — ` : ""}{p.nombre}</option>)}
+                    </optgroup>
+                  </select>
+                </div>
+
+                {r.tieneAsignacion && (
+                  <div style={{ display: "flex", gap: 20, marginTop: 12, paddingTop: 12, borderTop: `1px solid ${GRAY}`, flexWrap: "wrap" }}>
+                    <div><div style={{ fontSize: 11, color: GRAY3 }}>Ventas generadas</div><div style={{ fontWeight: 800 }}>${r.ingresos.toLocaleString("en-US", { minimumFractionDigits: 2 })}</div></div>
+                    <div>
+                      <div style={{ fontSize: 11, color: GRAY3 }}>Resultado</div>
+                      <div style={{ fontWeight: 900, fontSize: 16, color: r.ganancia >= 0 ? "#0F6E56" : "#B01519", display: "flex", alignItems: "center", gap: 4 }}>
+                        {r.ganancia >= 0 ? <ArrowUpRight size={16} /> : <ArrowDownRight size={16} />}
+                        {r.ganancia >= 0 ? "+" : ""}{r.ganancia.toLocaleString("en-US", { minimumFractionDigits: 2 })}
+                        <span style={{ fontSize: 11, fontWeight: 700, marginLeft: 4 }}>{r.ganancia >= 0 ? "Rentable" : "No rentable"}</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AdminView() {
   const { products, setProducts, categories, setCategories, gruposCategorias, setGruposCategorias, banners, setBanners, popups, setPopups, empresas, setEmpresas, sucursales, setSucursales, localesRetiro, setLocalesRetiro, retiroLocalHabilitado, setRetiroLocalHabilitado, showToast, setView, setUser, user } = useApp();
   // Rol del usuario actual: 'admin' = módulo completo, 'operador' = acceso limitado.
@@ -5131,7 +5308,12 @@ function AdminView() {
 
         {/* ═══════════ RETIRO EN LOCAL ═══════════ */}
         {/* ═══════════ PÍXELES DE MARKETING ═══════════ */}
-        {tab === "pixeles" && esAdminCompleto && <PixelesPanel />}
+        {tab === "pixeles" && esAdminCompleto && (
+          <>
+            <PixelesPanel />
+            <CampanasMetaPanel />
+          </>
+        )}
 
         {tab === "retirolocal" && esAdminCompleto && (
           <>
