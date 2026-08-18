@@ -1584,23 +1584,13 @@ function SelectorProductosCampana({ campanaId, productos, asignados, onCambio, s
 }
 
 // Tarjeta individual de campaña -- métricas, selector de productos, rentabilidad
-function TarjetaCampanaAds({ campana, productos, asignaciones, ingresosPorProducto, onCambio, showToast, delay }) {
+function TarjetaCampanaAds({ campana, productos, asignaciones, gastoEnRango, impresionesEnRango, clicsEnRango, ingresosEnRango, onCambio, showToast, delay }) {
   const asignadosDeEsta = asignaciones.filter(a => a.campana_id === campana.id);
-  const ctr = campana.impresiones > 0 ? (campana.clics / campana.impresiones) * 100 : 0;
-  const cpc = campana.clics > 0 ? campana.gasto_total / campana.clics : 0;
+  const ctr = impresionesEnRango > 0 ? (clicsEnRango / impresionesEnRango) * 100 : 0;
+  const cpc = clicsEnRango > 0 ? gastoEnRango / clicsEnRango : 0;
 
-  const desde = campana.fecha_inicio ? new Date(campana.fecha_inicio) : null;
-  const hasta = campana.fecha_fin ? new Date(campana.fecha_fin + "T23:59:59") : null;
-  let ingresos = 0;
-  asignadosDeEsta.forEach(a => {
-    (ingresosPorProducto[a.producto_id] || []).forEach(v => {
-      const f = new Date(v.fecha);
-      if (desde && f < desde) return;
-      if (hasta && f > hasta) return;
-      ingresos += v.monto;
-    });
-  });
-  const gasto = Number(campana.gasto_total) || 0;
+  const gasto = Number(gastoEnRango) || 0;
+  const ingresos = Number(ingresosEnRango) || 0;
   const ganancia = ingresos - gasto;
   const roas = gasto > 0 ? ingresos / gasto : 0;
 
@@ -1615,9 +1605,9 @@ function TarjetaCampanaAds({ campana, productos, asignaciones, ingresosPorProduc
               {campana.estado === "ACTIVE" ? "Activa" : campana.estado || "—"}
             </span>
             <span style={{ color: GRAY3 }}>·</span>
-            <span style={{ color: GRAY3 }}>{Number(campana.impresiones).toLocaleString("en-US")} impr.</span>
+            <span style={{ color: GRAY3 }}>{Number(impresionesEnRango).toLocaleString("en-US")} impr.</span>
             <span style={{ color: GRAY3 }}>·</span>
-            <span style={{ color: GRAY3 }}>{Number(campana.clics).toLocaleString("en-US")} clics</span>
+            <span style={{ color: GRAY3 }}>{Number(clicsEnRango).toLocaleString("en-US")} clics</span>
             <span style={{ color: GRAY3 }}>·</span>
             <span style={{ color: GRAY3 }}>CTR {ctr.toFixed(2)}%</span>
             <span style={{ color: GRAY3 }}>·</span>
@@ -1625,7 +1615,7 @@ function TarjetaCampanaAds({ campana, productos, asignaciones, ingresosPorProduc
           </div>
         </div>
         <div style={{ textAlign: "right" }}>
-          <div style={{ fontSize: 11, color: GRAY3, fontWeight: 600 }}>Gastado</div>
+          <div style={{ fontSize: 11, color: GRAY3, fontWeight: 600 }}>Gastado (en este rango)</div>
           <div style={{ fontSize: 22, fontWeight: 900 }}>$<NumeroAnimado valor={Math.round(gasto)} />{gasto % 1 !== 0 ? `.${gasto.toFixed(2).split(".")[1]}` : ""}</div>
         </div>
       </div>
@@ -1670,12 +1660,28 @@ function TarjetaKPIAds({ icono: Icono, valor, prefijo = "", sufijo = "", decimal
 
 function AnalisisAdsPanel() {
   const { products, showToast } = useApp();
+  const [rangoTipo, setRangoTipo] = useState("mes"); // dia | semana | mes | anio | todo | personalizado
+  const [rangoInicioP, setRangoInicioP] = useState("");
+  const [rangoFinP, setRangoFinP] = useState("");
   const [campanas, setCampanas] = useState([]);
   const [diario, setDiario] = useState([]);
   const [asignaciones, setAsignaciones] = useState([]);
   const [ingresosPorProducto, setIngresosPorProducto] = useState({});
   const [cargando, setCargando] = useState(true);
   const [sincronizando, setSincronizando] = useState(false);
+
+  const calcularRango = (tipo) => {
+    const hoyD = new Date();
+    const hastaS = hoyD.toISOString().slice(0, 10);
+    if (tipo === "dia") return [hastaS, hastaS];
+    if (tipo === "semana") { const d = new Date(hoyD); d.setDate(d.getDate() - 6); return [d.toISOString().slice(0, 10), hastaS]; }
+    if (tipo === "mes") { const d = new Date(hoyD.getFullYear(), hoyD.getMonth(), 1); return [d.toISOString().slice(0, 10), hastaS]; }
+    if (tipo === "anio") { const d = new Date(hoyD.getFullYear(), 0, 1); return [d.toISOString().slice(0, 10), hastaS]; }
+    if (tipo === "todo") return ["2020-01-01", hastaS];
+    if (tipo === "personalizado") return [rangoInicioP || hastaS, rangoFinP || hastaS];
+    return [hastaS, hastaS];
+  };
+  const [desde, hasta] = calcularRango(rangoTipo);
 
   const cargarTodo = async () => {
     setCargando(true);
@@ -1725,40 +1731,61 @@ function AnalisisAdsPanel() {
     setSincronizando(false);
   };
 
-  // ── Métricas generales ──────────────────────────────────────────
-  const gastoTotal = campanas.reduce((s, c) => s + (Number(c.gasto_total) || 0), 0);
-  const impresionesTotal = campanas.reduce((s, c) => s + (Number(c.impresiones) || 0), 0);
-  const clicsTotal = campanas.reduce((s, c) => s + (Number(c.clics) || 0), 0);
-  const ctrGeneral = impresionesTotal > 0 ? (clicsTotal / impresionesTotal) * 100 : 0;
-  const cpcGeneral = clicsTotal > 0 ? gastoTotal / clicsTotal : 0;
-  const campanasActivas = campanas.filter(c => c.estado === "ACTIVE").length;
+  // El detalle día por día solo llega hasta donde Meta nos lo dio (últimos ~90 días).
+  // Para "Todo" usamos el total real de cada campaña (más exacto); para cualquier
+  // otro rango, sumamos el detalle diario dentro de esas fechas específicas.
+  const diarioEnRango = diario.filter(d => d.fecha >= desde && d.fecha <= hasta);
+
+  const gastoPorCampanaEnRango = (campanaId) => {
+    if (rangoTipo === "todo") { const c = campanas.find(x => x.id === campanaId); return c ? Number(c.gasto_total) || 0 : 0; }
+    return diarioEnRango.filter(d => d.campana_id === campanaId).reduce((s, d) => s + (Number(d.gasto) || 0), 0);
+  };
+  const impresionesPorCampanaEnRango = (campanaId) => {
+    if (rangoTipo === "todo") { const c = campanas.find(x => x.id === campanaId); return c ? Number(c.impresiones) || 0 : 0; }
+    return diarioEnRango.filter(d => d.campana_id === campanaId).reduce((s, d) => s + (Number(d.impresiones) || 0), 0);
+  };
+  const clicsPorCampanaEnRango = (campanaId) => {
+    if (rangoTipo === "todo") { const c = campanas.find(x => x.id === campanaId); return c ? Number(c.clics) || 0 : 0; }
+    return diarioEnRango.filter(d => d.campana_id === campanaId).reduce((s, d) => s + (Number(d.clics) || 0), 0);
+  };
 
   const calcularIngresosCampana = (campana) => {
     const asignadosDeEsta = asignaciones.filter(a => a.campana_id === campana.id);
-    const desde = campana.fecha_inicio ? new Date(campana.fecha_inicio) : null;
-    const hasta = campana.fecha_fin ? new Date(campana.fecha_fin + "T23:59:59") : null;
+    const desdeCampana = campana.fecha_inicio ? new Date(campana.fecha_inicio) : null;
+    const hastaCampana = campana.fecha_fin ? new Date(campana.fecha_fin + "T23:59:59") : null;
+    const desdeFiltro = new Date(desde + "T00:00:00");
+    const hastaFiltro = new Date(hasta + "T23:59:59");
     let ingresos = 0;
     asignadosDeEsta.forEach(a => {
       (ingresosPorProducto[a.producto_id] || []).forEach(v => {
         const f = new Date(v.fecha);
-        if (desde && f < desde) return;
-        if (hasta && f > hasta) return;
+        if (desdeCampana && f < desdeCampana) return;
+        if (hastaCampana && f > hastaCampana) return;
+        if (f < desdeFiltro || f > hastaFiltro) return; // también dentro del rango de fecha elegido
         ingresos += v.monto;
       });
     });
     return ingresos;
   };
+
+  // ── Métricas generales, ya filtradas por el rango elegido ────────────────
+  const gastoTotal = campanas.reduce((s, c) => s + gastoPorCampanaEnRango(c.id), 0);
+  const impresionesTotal = campanas.reduce((s, c) => s + impresionesPorCampanaEnRango(c.id), 0);
+  const clicsTotal = campanas.reduce((s, c) => s + clicsPorCampanaEnRango(c.id), 0);
+  const ctrGeneral = impresionesTotal > 0 ? (clicsTotal / impresionesTotal) * 100 : 0;
+  const campanasActivas = campanas.filter(c => c.estado === "ACTIVE").length;
   const ingresosTotalAtribuido = campanas.reduce((s, c) => s + calcularIngresosCampana(c), 0);
   const roasGeneral = gastoTotal > 0 ? ingresosTotalAtribuido / gastoTotal : 0;
 
-  // Serie diaria agregada (todas las campañas sumadas por día)
+  // Serie diaria agregada, ya filtrada por el rango elegido
   const serieDiariaGasto = (() => {
     const mapa = {};
-    diario.forEach(d => { mapa[d.fecha] = (mapa[d.fecha] || 0) + (Number(d.gasto) || 0); });
+    diarioEnRango.forEach(d => { mapa[d.fecha] = (mapa[d.fecha] || 0) + (Number(d.gasto) || 0); });
     return Object.entries(mapa).sort((a, b) => a[0].localeCompare(b[0])).map(([fecha, valor]) => ({ dia: fecha, valor: Math.round(valor * 100) / 100 }));
   })();
 
   const productosActivos = products.filter(p => p.activo);
+  const hayDatosDiariosLimitados = rangoTipo !== "todo" && rangoTipo !== "dia" && diario.length > 0 && desde < diario[0]?.fecha;
 
   return (
     <>
@@ -1768,12 +1795,19 @@ function AnalisisAdsPanel() {
           <RefreshCw size={15} className={sincronizando ? "spin" : ""} /> {sincronizando ? "Sincronizando..." : "Sincronizar con Meta"}
         </button>
       </div>
-      <p style={{ fontSize: 13, color: GRAY3, marginBottom: 22, maxWidth: 680 }}>
+      <p style={{ fontSize: 13, color: GRAY3, marginBottom: 16, maxWidth: 680 }}>
         Métricas reales de tus campañas de Meta Ads. Asígnale uno o varios productos a cada campaña (buscando por nombre o referencia) para ver si es rentable.
       </p>
 
+      <SelectorRangoAnalytics rangoTipo={rangoTipo} setRangoTipo={setRangoTipo} rangoInicioP={rangoInicioP} setRangoInicioP={setRangoInicioP} rangoFinP={rangoFinP} setRangoFinP={setRangoFinP} />
+
       {cargando ? <Spinner /> : (
         <>
+          {hayDatosDiariosLimitados && (
+            <div style={{ background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 10, padding: "10px 14px", fontSize: 12.5, color: "#92400E", marginBottom: 18, display: "flex", alignItems: "center", gap: 8 }}>
+              <AlertTriangle size={15} /> El detalle día por día de Meta solo llega hasta el {new Date(diario[0].fecha + "T00:00:00").toLocaleDateString("es-PA", { day: "2-digit", month: "short" })} — este rango puede verse incompleto en la gráfica. Usa "Todo" para ver el gasto total real de cada campaña.
+            </div>
+          )}
           {/* KPIs generales, con degradado */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 14, marginBottom: 22 }}>
             <TarjetaKPIAds icono={DollarSign} valor={gastoTotal} prefijo="$" decimales={2} colorDesde="#0866FF" colorHasta="#0047B3" etiqueta="Gasto total" delay={0} />
@@ -1783,12 +1817,12 @@ function AnalisisAdsPanel() {
             <TarjetaKPIAds icono={Zap} valor={campanasActivas} colorDesde="#0EA5E9" colorHasta="#0369A1" etiqueta="Campañas activas" delay={0.2} />
           </div>
 
-          {/* Gráfica de línea -- gasto diario, últimos 30 días */}
+          {/* Gráfica de línea -- gasto diario, del rango elegido */}
           <div style={{ background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 16, padding: 22, marginBottom: 24 }}>
             <div style={{ fontSize: 13, fontWeight: 700, color: GRAY3, marginBottom: 4, display: "flex", alignItems: "center", gap: 6 }}>
-              <TrendingUp size={15} color="#0866FF" /> Gasto diario (últimos 30 días, todas las campañas)
+              <TrendingUp size={15} color="#0866FF" /> Gasto diario, en el rango elegido
             </div>
-            <div style={{ fontSize: 26, fontWeight: 900, marginBottom: 10 }}>${gastoTotal.toLocaleString("en-US", { minimumFractionDigits: 2 })} <span style={{ fontSize: 12, color: GRAY3, fontWeight: 600 }}>acumulado histórico</span></div>
+            <div style={{ fontSize: 26, fontWeight: 900, marginBottom: 10 }}>${gastoTotal.toLocaleString("en-US", { minimumFractionDigits: 2 })} <span style={{ fontSize: 12, color: GRAY3, fontWeight: 600 }}>en este rango</span></div>
             <GraficoLineal datos={serieDiariaGasto} color="#0866FF" />
           </div>
 
@@ -1800,7 +1834,9 @@ function AnalisisAdsPanel() {
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               {campanas.map((camp, i) => (
                 <TarjetaCampanaAds key={camp.id} campana={camp} productos={productosActivos} asignaciones={asignaciones}
-                  ingresosPorProducto={ingresosPorProducto} onCambio={cargarTodo} showToast={showToast} delay={Math.min(i * 0.03, 0.6)} />
+                  gastoEnRango={gastoPorCampanaEnRango(camp.id)} impresionesEnRango={impresionesPorCampanaEnRango(camp.id)} clicsEnRango={clicsPorCampanaEnRango(camp.id)}
+                  ingresosEnRango={calcularIngresosCampana(camp)}
+                  onCambio={cargarTodo} showToast={showToast} delay={Math.min(i * 0.03, 0.6)} />
               ))}
             </div>
           )}
