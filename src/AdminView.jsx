@@ -1644,6 +1644,11 @@ function TarjetaCampanaAds({ campana, productos, asignaciones, gastoEnRango, imp
 
 // Tarjeta chica de KPI para el módulo de ads, con degradado -- se ve más "futurista" que las KPI normales
 function TarjetaKPIAds({ icono: Icono, valor, prefijo = "", sufijo = "", decimales = 0, colorDesde, colorHasta, etiqueta, delay = 0 }) {
+  // NumeroAnimado redondea a entero por dentro (está pensado para conteos como
+  // "23 visitas") -- para no perder los decimales en cosas como "1.35x" o "$12.50",
+  // se anima solo la parte entera, y la parte decimal se muestra aparte, exacta.
+  const valorFijo = (Number(valor) || 0).toFixed(decimales);
+  const [parteEntera, parteDecimal] = valorFijo.split(".");
   return (
     <div className="oft-prod-anim" style={{
       background: `linear-gradient(135deg, ${colorDesde}, ${colorHasta})`, borderRadius: 16, padding: "18px 20px",
@@ -1652,7 +1657,7 @@ function TarjetaKPIAds({ icono: Icono, valor, prefijo = "", sufijo = "", decimal
       <Icono size={68} style={{ position: "absolute", right: -14, bottom: -14, opacity: 0.15 }} />
       <div style={{ fontSize: 12, fontWeight: 700, opacity: 0.9, marginBottom: 6, display: "flex", alignItems: "center", gap: 6 }}><Icono size={14} /> {etiqueta}</div>
       <div style={{ fontSize: 26, fontWeight: 900 }}>
-        {prefijo}<NumeroAnimado valor={decimales > 0 ? Math.round(valor * Math.pow(10, decimales)) / Math.pow(10, decimales) : Math.round(valor)} />{sufijo}
+        {prefijo}<NumeroAnimado valor={Number(parteEntera)} />{parteDecimal ? `.${parteDecimal}` : ""}{sufijo}
       </div>
     </div>
   );
