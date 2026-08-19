@@ -1074,6 +1074,14 @@ function AnalyticsPanel() {
     try {
       const desdeISO = `${desde}T00:00:00`, hastaISO = `${hasta}T23:59:59`;
       const desdeAntISO = `${desdeAnt}T00:00:00`, hastaAntISO = `${hastaAnt}T23:59:59`;
+      // El seguimiento de "cotización → convertida" (es_cotizacion_convertida /
+      // fecha_cotizacion_original) empezó a existir el 15 de agosto de 2026 -- las
+      // cotizaciones de antes de esa fecha no tienen ese dato guardado, y contarlas
+      // infla el número de "creadas" sin poder saber si en verdad se convirtieron,
+      // dando una tasa de conversión falsamente baja. Por eso, para ESTA métrica
+      // puntual, nunca se busca antes de esa fecha, sin importar el rango elegido.
+      const FECHA_INICIO_SEGUIMIENTO_COTIZACIONES = "2026-08-15T17:50:01";
+      const desdeCotizacionesISO = desdeISO > FECHA_INICIO_SEGUIMIENTO_COTIZACIONES ? desdeISO : FECHA_INICIO_SEGUIMIENTO_COTIZACIONES;
       const [evts, usrs, manuales, pedItems, cotizacionesData, equipo, evtsAnt, usrsAnt, manualesAnt] = await Promise.all([
         sb.get("eventos_analytics", `?created_at=gte.${desdeISO}&created_at=lte.${hastaISO}&order=created_at.desc&limit=8000`),
         // Solo cuentas con origen_cuenta='web' -- el cliente se registró solo en la
@@ -1088,8 +1096,9 @@ function AnalyticsPanel() {
         // Cotizaciones CREADAS en este rango -- incluye tanto las que siguen pendientes
         // (tipo='cotizacion', usa su propio created_at) como las que ya se convirtieron
         // en venta (usa fecha_cotizacion_original, porque su created_at ya se sobreescribió
-        // con la fecha en que se confirmó como venta, no la de cuando se creó la cotización)
-        sb.get("pedidos", `?or=(and(tipo.eq.cotizacion,created_at.gte.${desdeISO},created_at.lte.${hastaISO}),and(es_cotizacion_convertida.eq.true,fecha_cotizacion_original.gte.${desdeISO},fecha_cotizacion_original.lte.${hastaISO}))&select=id,es_cotizacion_convertida,creado_por_usuario_id`),
+        // con la fecha en que se confirmó como venta, no la de cuando se creó la cotización).
+        // Usa desdeCotizacionesISO (nunca antes del inicio del seguimiento), no desdeISO.
+        sb.get("pedidos", `?or=(and(tipo.eq.cotizacion,created_at.gte.${desdeCotizacionesISO},created_at.lte.${hastaISO}),and(es_cotizacion_convertida.eq.true,fecha_cotizacion_original.gte.${desdeCotizacionesISO},fecha_cotizacion_original.lte.${hastaISO}))&select=id,es_cotizacion_convertida,creado_por_usuario_id`),
         // Cuentas del equipo (admin/operadores), para poder mostrar el nombre de cada uno
         sb.get("usuarios", `?or=(rol.not.is.null,es_admin.eq.true)&select=id,nombre`),
         // Mismo trío, pero del periodo anterior -- para calcular el % de cambio
@@ -1303,6 +1312,11 @@ function AnalyticsPanel() {
                 <span style={{ fontWeight: 700 }}>{cotizacionesCreadas} <span style={{ color: GRAY3, fontWeight: 600 }}>creadas</span></span>
                 <span style={{ fontWeight: 700 }}>{cotizacionesConvertidas} <span style={{ color: GRAY3, fontWeight: 600 }}>convertidas</span></span>
               </div>
+              {desde < "2026-08-15" && (
+                <p style={{ fontSize: 10.5, color: GRAY3, marginTop: 10, lineHeight: 1.4 }}>
+                  Solo cuenta cotizaciones desde el 15 de agosto de 2026, cuando empezó a guardarse si se convirtieron o no — antes de esa fecha no hay ese dato.
+                </p>
+              )}
             </div>
           </div>
 
