@@ -1682,6 +1682,7 @@ function AnalisisAdsPanel() {
   const [rangoTipo, setRangoTipo] = useState("mes"); // dia | semana | mes | anio | todo | personalizado
   const [rangoInicioP, setRangoInicioP] = useState("");
   const [rangoFinP, setRangoFinP] = useState("");
+  const [criterioRanking, setCriterioRanking] = useState("roas"); // roas | ganancia | ventas | ctr
   const [campanas, setCampanas] = useState([]);
   const [diario, setDiario] = useState([]);
   const [asignaciones, setAsignaciones] = useState([]);
@@ -1806,6 +1807,35 @@ function AnalisisAdsPanel() {
   const productosActivos = products.filter(p => p.activo);
   const hayDatosDiariosLimitados = rangoTipo !== "todo" && rangoTipo !== "dia" && diario.length > 0 && desde < diario[0]?.fecha;
 
+  // Métricas completas por campaña (para el ranking de "mejor rendimiento" y para
+  // evitar recalcular lo mismo varias veces)
+  const campanasConMetricas = campanas.map(c => {
+    const gasto = gastoPorCampanaEnRango(c.id);
+    const impresiones = impresionesPorCampanaEnRango(c.id);
+    const clics = clicsPorCampanaEnRango(c.id);
+    const ingresos = calcularIngresosCampana(c);
+    const tieneProducto = asignaciones.some(a => a.campana_id === c.id);
+    return {
+      ...c, gasto, impresiones, clics, ingresos, tieneProducto,
+      ctr: impresiones > 0 ? (clics / impresiones) * 100 : 0,
+      ganancia: ingresos - gasto,
+      roas: gasto > 0 ? ingresos / gasto : 0,
+    };
+  });
+
+  const CRITERIOS_RANKING = {
+    roas: { etiqueta: "ROAS", requiereProducto: true, valor: c => c.roas, formato: v => `${v.toFixed(2)}x`, color: "#7C3AED" },
+    ganancia: { etiqueta: "Ganancia", requiereProducto: true, valor: c => c.ganancia, formato: v => `$${v.toLocaleString("en-US", { minimumFractionDigits: 2 })}`, color: "#0F6E56" },
+    ventas: { etiqueta: "Ventas generadas", requiereProducto: true, valor: c => c.ingresos, formato: v => `$${v.toLocaleString("en-US", { minimumFractionDigits: 2 })}`, color: "#0EA5E9" },
+    ctr: { etiqueta: "CTR", requiereProducto: false, valor: c => c.ctr, formato: v => `${v.toFixed(2)}%`, color: "#EA580C" },
+  };
+  const criterioActivo = CRITERIOS_RANKING[criterioRanking];
+  const topCampanas = campanasConMetricas
+    .filter(c => criterioActivo.requiereProducto ? c.tieneProducto : c.impresiones > 0)
+    .filter(c => criterioActivo.valor(c) !== 0 || !criterioActivo.requiereProducto)
+    .sort((a, b) => criterioActivo.valor(b) - criterioActivo.valor(a))
+    .slice(0, 5);
+
   return (
     <>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6, flexWrap: "wrap", gap: 10 }}>
@@ -1843,6 +1873,41 @@ function AnalisisAdsPanel() {
             </div>
             <div style={{ fontSize: 26, fontWeight: 900, marginBottom: 10 }}>${gastoTotal.toLocaleString("en-US", { minimumFractionDigits: 2 })} <span style={{ fontSize: 12, color: GRAY3, fontWeight: 600 }}>en este rango</span></div>
             <GraficoLineal datos={serieDiariaGasto} color="#0866FF" />
+          </div>
+
+          {/* Mejor rendimiento -- ranking de campañas según el criterio elegido */}
+          <div style={{ background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 16, padding: 22, marginBottom: 24 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
+              <div style={{ fontSize: 15, fontWeight: 800, display: "flex", alignItems: "center", gap: 6 }}><Target size={16} color="#7C3AED" /> Mejor rendimiento</div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {Object.entries(CRITERIOS_RANKING).map(([k, c]) => (
+                  <button key={k} onClick={() => setCriterioRanking(k)} className="oft-btn-press"
+                    style={{ padding: "6px 13px", borderRadius: 18, border: `2px solid ${criterioRanking === k ? c.color : GRAY2}`, background: criterioRanking === k ? c.color : WHITE, color: criterioRanking === k ? WHITE : BLACK, fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+                    {c.etiqueta}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {topCampanas.length === 0 ? (
+              <p style={{ color: GRAY3, fontSize: 13 }}>
+                {criterioActivo.requiereProducto ? "Todavía ninguna campaña tiene un producto asignado para calcular esto." : "Sin datos suficientes en este rango."}
+              </p>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                {topCampanas.map((c, i) => (
+                  <div key={c.id} className="oft-prod-anim" style={{ display: "flex", alignItems: "center", gap: 14, padding: "10px 8px", borderRadius: 10, animationDelay: `${i * 0.05}s` }}>
+                    <div style={{ width: 26, height: 26, borderRadius: "50%", background: i === 0 ? "#FEF3C7" : i === 1 ? "#F1F5F9" : i === 2 ? "#FEE2E2" : GRAY, color: i === 0 ? "#92400E" : i === 1 ? "#475569" : i === 2 ? "#991B1B" : GRAY3, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 900, flexShrink: 0 }}>
+                      {i + 1}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 700, fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.nombre}</div>
+                      <div style={{ fontSize: 11, color: GRAY3 }}>${c.gasto.toLocaleString("en-US", { minimumFractionDigits: 2 })} gastado · {Number(c.clics).toLocaleString("en-US")} clics</div>
+                    </div>
+                    <div style={{ fontWeight: 900, fontSize: 16, color: criterioActivo.color, flexShrink: 0 }}>{criterioActivo.formato(criterioActivo.valor(c))}</div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Lista de campañas */}
