@@ -1062,6 +1062,7 @@ function EditorComision({ valorActual, onGuardado, showToast }) {
 }
 
 function AnalyticsPanel() {
+  const { showToast } = useApp();
   const [rangoTipo, setRangoTipo] = useState("semana"); // dia | semana | mes | anio | todo | personalizado
   const [rangoInicioP, setRangoInicioP] = useState("");
   const [rangoFinP, setRangoFinP] = useState("");
