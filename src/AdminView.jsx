@@ -1026,6 +1026,41 @@ function SelectorRangoAnalytics({ rangoTipo, setRangoTipo, rangoInicioP, setRang
   );
 }
 
+// Campo chico para ajustar el % de comisión de los operadores, directo desde
+// la tabla de Analítica -- se guarda en la misma tabla de configuración general.
+function EditorComision({ valorActual, onGuardado, showToast }) {
+  const [valor, setValor] = useState(valorActual);
+  const [guardando, setGuardando] = useState(false);
+  useEffect(() => { setValor(valorActual); }, [valorActual]);
+
+  const guardar = async () => {
+    const num = Number(valor);
+    if (isNaN(num) || num < 0) { showToast("Pon un número válido (0 o más)"); return; }
+    setGuardando(true);
+    try {
+      const respPatch = await fetch(`${SUPABASE_URL}/rest/v1/configuracion?clave=eq.comision_operador_porcentaje`, {
+        method: "PATCH", headers: sb.dataHeaders(), body: JSON.stringify({ valor: num }),
+      });
+      if (!respPatch.ok) throw new Error(await respPatch.text());
+      onGuardado(num);
+      showToast("Porcentaje de comisión actualizado");
+    } catch (e) { showToast("Error al guardar: " + e.message); }
+    setGuardando(false);
+  };
+
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+      <span style={{ fontSize: 12, color: GRAY3, fontWeight: 700 }}>% comisión por venta:</span>
+      <input type="number" step="0.1" min="0" value={valor} onChange={e => setValor(e.target.value)}
+        style={{ width: 64, padding: "5px 8px", borderRadius: 8, border: `1px solid ${GRAY2}`, fontSize: 13, textAlign: "center" }} />
+      <button onClick={guardar} disabled={guardando} className="oft-btn-press"
+        style={{ padding: "5px 12px", borderRadius: 8, border: "none", background: RED, color: WHITE, fontSize: 12, fontWeight: 700, cursor: "pointer", opacity: guardando ? 0.6 : 1 }}>
+        {guardando ? "..." : "Guardar"}
+      </button>
+    </div>
+  );
+}
+
 function AnalyticsPanel() {
   const [rangoTipo, setRangoTipo] = useState("semana"); // dia | semana | mes | anio | todo | personalizado
   const [rangoInicioP, setRangoInicioP] = useState("");
@@ -1041,6 +1076,14 @@ function AnalyticsPanel() {
   const [manualesAnterior, setManualesAnterior] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [enVivo, setEnVivo] = useState(0);
+  const [comisionPorcentaje, setComisionPorcentaje] = useState(1); // % que se le paga a cada operador por venta
+
+  // Se carga aparte -- es una configuración general, no depende del rango de fechas elegido
+  useEffect(() => {
+    sb.get("configuracion", "?clave=eq.comision_operador_porcentaje&limit=1")
+      .then(data => { if (data?.[0]?.valor != null) setComisionPorcentaje(Number(data[0].valor)); })
+      .catch(() => {});
+  }, []);
 
   // Convierte el tipo de rango elegido (o las fechas personalizadas) en fechas concretas
   const calcularRango = (tipo) => {
@@ -1227,6 +1270,7 @@ function AnalyticsPanel() {
       cotizaciones: susCotizaciones.length,
       cotizacionesPorDia: susCotizaciones.length / numDiasRango,
       ventas: susVentas.length, monto: montoVentas,
+      comision: montoVentas * (comisionPorcentaje / 100),
       tasaConversion: susCotizaciones.length > 0 ? (susConvertidas / susCotizaciones.length) * 100 : 0,
     };
   }).filter(op => op.cotizaciones > 0 || op.ventas > 0) // solo muestra a quien tuvo actividad en el rango
@@ -1359,13 +1403,16 @@ function AnalyticsPanel() {
 
           {/* ANÁLISIS POR OPERADOR / VENDEDOR */}
           <div style={{ background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 14, padding: 20, marginTop: 18 }}>
-            <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 4, display: "flex", alignItems: "center", gap: 8 }}><Users size={17} color={RED} /> Por operador / vendedor</div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 4 }}>
+              <div style={{ fontWeight: 800, fontSize: 15, display: "flex", alignItems: "center", gap: 8 }}><Users size={17} color={RED} /> Por operador / vendedor</div>
+              <EditorComision valorActual={comisionPorcentaje} onGuardado={setComisionPorcentaje} showToast={showToast} />
+            </div>
             <p style={{ fontSize: 12, color: GRAY3, marginBottom: 16 }}>Solo cuenta lo creado desde "Crear Pedido" en este panel, a partir de que se activó este seguimiento.</p>
             {analisisPorOperador.length === 0 ? (
               <p style={{ color: GRAY3, fontSize: 13 }}>Sin actividad registrada por operador en este rango.</p>
             ) : (
               <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 560 }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 620 }}>
                   <thead>
                     <tr style={{ borderBottom: `2px solid ${GRAY2}` }}>
                       <th style={{ textAlign: "left", padding: "8px 10px", color: GRAY3, fontWeight: 700 }}>Operador</th>
@@ -1373,6 +1420,7 @@ function AnalyticsPanel() {
                       <th style={{ textAlign: "right", padding: "8px 10px", color: GRAY3, fontWeight: 700 }}>Por día</th>
                       <th style={{ textAlign: "right", padding: "8px 10px", color: GRAY3, fontWeight: 700 }}>Ventas</th>
                       <th style={{ textAlign: "right", padding: "8px 10px", color: GRAY3, fontWeight: 700 }}>Monto</th>
+                      <th style={{ textAlign: "right", padding: "8px 10px", color: GRAY3, fontWeight: 700 }}>Comisión</th>
                       <th style={{ textAlign: "right", padding: "8px 10px", color: GRAY3, fontWeight: 700 }}>Conversión</th>
                     </tr>
                   </thead>
@@ -1384,6 +1432,7 @@ function AnalyticsPanel() {
                         <td style={{ padding: "10px", textAlign: "right", color: GRAY3 }}>{op.cotizacionesPorDia.toFixed(1)}</td>
                         <td style={{ padding: "10px", textAlign: "right" }}>{op.ventas}</td>
                         <td style={{ padding: "10px", textAlign: "right", fontWeight: 700 }}>${op.monto.toLocaleString("en-US", { minimumFractionDigits: 2 })}</td>
+                        <td style={{ padding: "10px", textAlign: "right", fontWeight: 700, color: "#0F6E56" }}>${op.comision.toLocaleString("en-US", { minimumFractionDigits: 2 })}</td>
                         <td style={{ padding: "10px", textAlign: "right" }}>
                           <span style={{ fontWeight: 800, color: op.tasaConversion >= 50 ? "#0F6E56" : op.tasaConversion > 0 ? "#856404" : GRAY3 }}>
                             {Math.round(op.tasaConversion)}%
