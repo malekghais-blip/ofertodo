@@ -2044,6 +2044,15 @@ function AdminView() {
   const [reporteHasta, setReporteHasta] = useState(() => new Date().toISOString().slice(0, 10));
   const [reporteFilas, setReporteFilas] = useState(null); // null = todavía no generado
   const [reporteBusy, setReporteBusy] = useState(false);
+  const [reportePorOperador, setReportePorOperador] = useState(null); // null = todavía no generado
+  const [comisionPctReporte, setComisionPctReporte] = useState(1);
+
+  // Se carga aparte -- es una configuración general (la misma que se ajusta en Analítica)
+  useEffect(() => {
+    sb.get("configuracion", "?clave=eq.comision_operador_porcentaje&limit=1")
+      .then(data => { if (data?.[0]?.valor != null) setComisionPctReporte(Number(data[0].valor)); })
+      .catch(() => {});
+  }, []);
   const [guardandoToggleRetiro, setGuardandoToggleRetiro] = useState(false);
   const [proveedorAEliminar, setProveedorAEliminar] = useState(null); // proveedor a eliminar (confirmación)
   // ── DESCUENTOS ──
@@ -3184,6 +3193,42 @@ function AdminView() {
       totalUnidades: filas.reduce((s, f) => s + f.cantidad, 0),
       totalIngreso: filas.reduce((s, f) => s + f.ingreso, 0),
     });
+
+    // Desglose por vendedor/administrador -- para pagar comisiones. Solo cuenta
+    // pedidos con creado_por_usuario_id guardado (desde que se activó ese
+    // seguimiento); lo que hizo el cliente solo desde la web no se le atribuye a nadie.
+    const mapaOperador = {};
+    pedidosEnRango.forEach(o => {
+      if (!o.creado_por_usuario_id) return;
+      if (!mapaOperador[o.creado_por_usuario_id]) {
+        const persona = users.find(u => u.id === o.creado_por_usuario_id);
+        mapaOperador[o.creado_por_usuario_id] = { id: o.creado_por_usuario_id, nombre: persona?.nombre || "—", ventas: 0, monto: 0 };
+      }
+      mapaOperador[o.creado_por_usuario_id].ventas += 1;
+      mapaOperador[o.creado_por_usuario_id].monto += Number(o.total) || 0;
+    });
+    const filasOperador = Object.values(mapaOperador)
+      .map(f => ({ ...f, comision: f.monto * (comisionPctReporte / 100) }))
+      .sort((a, b) => b.monto - a.monto);
+    setReportePorOperador({ filas: filasOperador, totalMonto: filasOperador.reduce((s, f) => s + f.monto, 0), totalComision: filasOperador.reduce((s, f) => s + f.comision, 0) });
+  };
+
+  // Arma y descarga un CSV con el desglose por vendedor/administrador -- fácil de
+  // abrir en Excel para pagar comisiones.
+  const descargarReporteOperadorCSV = () => {
+    if (!reportePorOperador || reportePorOperador.filas.length === 0) return;
+    const filasCSV = [
+      ["Vendedor/Administrador", "Ventas", "Monto vendido", `Comisión (${comisionPctReporte}%)`],
+      ...reportePorOperador.filas.map(f => [f.nombre, f.ventas, f.monto.toFixed(2), f.comision.toFixed(2)]),
+      ["TOTAL", reportePorOperador.filas.reduce((s, f) => s + f.ventas, 0), reportePorOperador.totalMonto.toFixed(2), reportePorOperador.totalComision.toFixed(2)],
+    ];
+    const csv = filasCSV.map(fila => fila.map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
+    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `Ventas_por_vendedor_${reporteDesde}_a_${reporteHasta}.csv`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   };
 
   const reporteVentasRef = useRef(null);
@@ -5818,6 +5863,55 @@ function AdminView() {
                     </tfoot>
                   </table>
                 </div>
+              </div>
+            )}
+
+            {/* ═══ REPORTE POR VENDEDOR / ADMINISTRADOR ═══ */}
+            {reportePorOperador && (
+              <div style={{ background: WHITE, borderRadius: 16, border: `1px solid ${GRAY2}`, padding: 24, marginTop: 24, overflowX: "auto" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 16 }}>
+                  <div style={{ fontWeight: 800, fontSize: 17, display: "flex", alignItems: "center", gap: 8 }}><Users size={19} color={RED} /> Ventas por vendedor / administrador</div>
+                  {reportePorOperador.filas.length > 0 && (
+                    <button onClick={descargarReporteOperadorCSV} className="oft-btn-press" style={{ ...S.btnOutline, padding: "8px 16px", height: 38 }}>
+                      <Download size={15} /> Descargar CSV
+                    </button>
+                  )}
+                </div>
+                <p style={{ fontSize: 12, color: GRAY3, marginBottom: 16 }}>
+                  Comisión calculada al {comisionPctReporte}% (ajustable en Analítica Web). Solo incluye pedidos creados desde "Crear Pedido" con vendedor asignado — lo que compra el cliente solo desde la web no se le atribuye a nadie.
+                </p>
+                {reportePorOperador.filas.length === 0 ? (
+                  <p style={{ color: GRAY3, fontSize: 13 }}>Ningún pedido en este rango tiene un vendedor/administrador asignado.</p>
+                ) : (
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
+                    <thead>
+                      <tr style={{ borderBottom: `2px solid ${BLACK}` }}>
+                        <th style={{ textAlign: "left", padding: "8px" }}>Vendedor / Administrador</th>
+                        <th style={{ textAlign: "center", padding: "8px" }}>Ventas</th>
+                        <th style={{ textAlign: "right", padding: "8px" }}>Monto vendido</th>
+                        <th style={{ textAlign: "right", padding: "8px" }}>Comisión ({comisionPctReporte}%)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {reportePorOperador.filas.map(f => (
+                        <tr key={f.id} style={{ borderBottom: `1px solid ${GRAY}` }}>
+                          <td style={{ padding: "8px", fontWeight: 700 }}>{f.nombre}</td>
+                          <td style={{ padding: "8px", textAlign: "center" }}>{f.ventas}</td>
+                          <td style={{ padding: "8px", textAlign: "right", fontWeight: 700 }}>{money(f.monto)}</td>
+                          <td style={{ padding: "8px", textAlign: "right", fontWeight: 700, color: "#0F6E56" }}>{money(f.comision)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr style={{ borderTop: `2px solid ${BLACK}` }}>
+                        <td style={{ padding: "10px 8px", fontWeight: 900 }}>TOTAL</td>
+                        <td style={{ padding: "10px 8px", textAlign: "center", fontWeight: 900 }}>{reportePorOperador.filas.reduce((s, f) => s + f.ventas, 0)}</td>
+                        <td style={{ padding: "10px 8px", textAlign: "right", fontWeight: 900 }}>{money(reportePorOperador.totalMonto)}</td>
+                        <td style={{ padding: "10px 8px", textAlign: "right", fontWeight: 900, color: "#0F6E56" }}>{money(reportePorOperador.totalComision)}</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                )}
               </div>
             )}
           </>
