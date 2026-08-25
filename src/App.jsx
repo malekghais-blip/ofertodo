@@ -2926,14 +2926,20 @@ function DashboardView() {
 function ProgressTracker({ estado, compact, retiro = false }) {
   const etiquetas = retiro ? ORDER_STATUS_RETIRO : ORDER_STATUS_ENVIO;
   const iconos = retiro ? STATUS_ICONS_RETIRO : STATUS_ICONS_ENVIO;
-  const pct = (estado / (etiquetas.length - 1)) * 100;
+  const n = etiquetas.length;
+  // Con "flex: 1" cada paso ocupa una columna de ancho igual (100%/n), y su círculo
+  // queda centrado DENTRO de esa columna -- no a una distancia fija del borde. Por
+  // eso la línea tiene que ir de centro a centro en porcentajes, no en píxeles fijos:
+  // el círculo del paso i está en el (i + 0.5) / n de todo el ancho.
+  const offset = (50 / n); // % desde el borde hasta el centro del primer/último círculo
+  const pct = (estado / (n - 1)) * (100 - offset * 2);
   return (
     <div>
       <div style={{ position: "relative", display: "flex", justifyContent: "space-between", marginTop: compact ? 8 : 4 }}>
-        {/* línea base */}
-        <div style={{ position: "absolute", top: 18, left: 18, right: 18, height: 4, background: GRAY2, borderRadius: 2, zIndex: 0 }} />
+        {/* línea base -- va de centro del primer círculo a centro del último */}
+        <div style={{ position: "absolute", top: 18, left: `${offset}%`, right: `${offset}%`, height: 4, background: GRAY2, borderRadius: 2, zIndex: 0 }} />
         {/* línea de progreso animada */}
-        <div className="oft-progress-fill" style={{ position: "absolute", top: 18, left: 18, height: 4, background: `linear-gradient(90deg, ${RED}, ${RED_D})`, borderRadius: 2, zIndex: 1, width: `calc((100% - 36px) * ${pct / 100})` }} />
+        <div className="oft-progress-fill" style={{ position: "absolute", top: 18, left: `${offset}%`, height: 4, background: `linear-gradient(90deg, ${RED}, ${RED_D})`, borderRadius: 2, zIndex: 1, width: `${pct}%` }} />
         {/* pasos */}
         {etiquetas.map((s, i) => {
           const SIcon = iconos[i];
