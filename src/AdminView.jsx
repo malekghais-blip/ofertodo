@@ -2045,6 +2045,7 @@ function AdminView() {
   const [reporteFilas, setReporteFilas] = useState(null); // null = todavía no generado
   const [reporteBusy, setReporteBusy] = useState(false);
   const [reportePorOperador, setReportePorOperador] = useState(null); // null = todavía no generado
+  const [reporteOperadorBusy, setReporteOperadorBusy] = useState(false);
   const [comisionPctReporte, setComisionPctReporte] = useState(1);
 
   // Se carga aparte -- es una configuración general (la misma que se ajusta en Analítica)
@@ -3273,6 +3274,50 @@ function AdminView() {
       pdf.save(`reporte-ventas-${reporteDesde}-a-${reporteHasta}.pdf`);
     } catch(e) { alert("Error generando PDF: " + e.message); }
     setReporteBusy(false);
+  };
+
+  const reportePorOperadorRef = useRef(null);
+  const descargarReporteOperadorPDF = async () => {
+    if (!window.html2canvas || !window.jspdf) { alert("Cargando generador de PDF, intenta de nuevo en unos segundos."); return; }
+    setReporteOperadorBusy(true);
+    try {
+      const source = reportePorOperadorRef.current;
+      const clone = source.cloneNode(true);
+      const holder = document.createElement("div");
+      holder.style.position = "fixed";
+      holder.style.left = "-10000px";
+      holder.style.top = "0";
+      holder.style.width = "700px";
+      holder.style.background = "#ffffff";
+      clone.style.width = "700px";
+      clone.style.maxWidth = "700px";
+      holder.appendChild(clone);
+      document.body.appendChild(holder);
+      let canvas;
+      try {
+        canvas = await window.html2canvas(clone, { scale: 2, backgroundColor: "#ffffff", useCORS: true, width: 700, windowWidth: 700 });
+      } finally {
+        document.body.removeChild(holder);
+      }
+      const imgData = canvas.toDataURL("image/png");
+      const { jsPDF } = window.jspdf;
+      const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+      const pageW = 210, pageH = 297, margin = 10;
+      const imgW = pageW - margin * 2;
+      const imgH = (canvas.height * imgW) / canvas.width;
+      let heightLeft = imgH;
+      let position = margin;
+      pdf.addImage(imgData, "PNG", margin, position, imgW, imgH);
+      heightLeft -= (pageH - margin * 2);
+      while (heightLeft > 0) {
+        pdf.addPage();
+        position = margin - (imgH - heightLeft);
+        pdf.addImage(imgData, "PNG", margin, position, imgW, imgH);
+        heightLeft -= (pageH - margin * 2);
+      }
+      pdf.save(`ventas-por-vendedor-${reporteDesde}-a-${reporteHasta}.pdf`);
+    } catch(e) { alert("Error generando PDF: " + e.message); }
+    setReporteOperadorBusy(false);
   };
 
   const ventasPorProveedor = (() => {
@@ -5872,46 +5917,66 @@ function AdminView() {
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 16 }}>
                   <div style={{ fontWeight: 800, fontSize: 17, display: "flex", alignItems: "center", gap: 8 }}><Users size={19} color={RED} /> Ventas por vendedor / administrador</div>
                   {reportePorOperador.filas.length > 0 && (
-                    <button onClick={descargarReporteOperadorCSV} className="oft-btn-press" style={{ ...S.btnOutline, padding: "8px 16px", height: 38 }}>
-                      <Download size={15} /> Descargar CSV
-                    </button>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button onClick={descargarReporteOperadorCSV} className="oft-btn-press" style={{ ...S.btnOutline, padding: "8px 16px", height: 38 }}>
+                        <Download size={15} /> Descargar CSV
+                      </button>
+                      <button onClick={descargarReporteOperadorPDF} disabled={reporteOperadorBusy} className="oft-btn-press" style={{ ...S.btnOutline, padding: "8px 16px", height: 38, opacity: reporteOperadorBusy ? 0.7 : 1 }}>
+                        <Download size={15} /> {reporteOperadorBusy ? "Generando..." : "Descargar PDF"}
+                      </button>
+                    </div>
                   )}
                 </div>
-                <p style={{ fontSize: 12, color: GRAY3, marginBottom: 16 }}>
-                  Comisión calculada al {comisionPctReporte}% (ajustable en Analítica Web). Solo incluye pedidos creados desde "Crear Pedido" con vendedor asignado — lo que compra el cliente solo desde la web no se le atribuye a nadie.
-                </p>
-                {reportePorOperador.filas.length === 0 ? (
-                  <p style={{ color: GRAY3, fontSize: 13 }}>Ningún pedido en este rango tiene un vendedor/administrador asignado.</p>
-                ) : (
-                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
-                    <thead>
-                      <tr style={{ borderBottom: `2px solid ${BLACK}` }}>
-                        <th style={{ textAlign: "left", padding: "8px" }}>Vendedor / Administrador</th>
-                        <th style={{ textAlign: "center", padding: "8px" }}>Ventas</th>
-                        <th style={{ textAlign: "right", padding: "8px" }}>Monto vendido</th>
-                        <th style={{ textAlign: "right", padding: "8px" }}>Comisión ({comisionPctReporte}%)</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {reportePorOperador.filas.map(f => (
-                        <tr key={f.id} style={{ borderBottom: `1px solid ${GRAY}` }}>
-                          <td style={{ padding: "8px", fontWeight: 700 }}>{f.nombre}</td>
-                          <td style={{ padding: "8px", textAlign: "center" }}>{f.ventas}</td>
-                          <td style={{ padding: "8px", textAlign: "right", fontWeight: 700 }}>{money(f.monto)}</td>
-                          <td style={{ padding: "8px", textAlign: "right", fontWeight: 700, color: "#0F6E56" }}>{money(f.comision)}</td>
+                {/* ── Este bloque es exactamente lo que se convierte en el PDF ── */}
+                <div ref={reportePorOperadorRef} style={{ padding: reportePorOperador.filas.length > 0 ? 24 : 0, fontFamily: "Helvetica, Arial, sans-serif" }}>
+                  {reportePorOperador.filas.length > 0 && (
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20, borderBottom: `3px solid ${RED}`, paddingBottom: 16 }}>
+                      <div>
+                        <div style={{ fontSize: 22, fontWeight: 900 }}>OFERTODO</div>
+                        <div style={{ fontSize: 12, color: GRAY3 }}>Ventas por Vendedor / Administrador</div>
+                      </div>
+                      <div style={{ textAlign: "right", fontSize: 12, color: GRAY3 }}>
+                        <div><strong style={{ color: BLACK }}>Periodo:</strong> {reporteDesde} a {reporteHasta}</div>
+                        <div>Generado: {new Date().toLocaleDateString("es-PA")}</div>
+                      </div>
+                    </div>
+                  )}
+                  <p style={{ fontSize: 12, color: GRAY3, marginBottom: 16 }}>
+                    Comisión calculada al {comisionPctReporte}% (ajustable en Analítica Web). Solo incluye pedidos creados desde "Crear Pedido" con vendedor asignado — lo que compra el cliente solo desde la web no se le atribuye a nadie.
+                  </p>
+                  {reportePorOperador.filas.length === 0 ? (
+                    <p style={{ color: GRAY3, fontSize: 13 }}>Ningún pedido en este rango tiene un vendedor/administrador asignado.</p>
+                  ) : (
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
+                      <thead>
+                        <tr style={{ borderBottom: `2px solid ${BLACK}` }}>
+                          <th style={{ textAlign: "left", padding: "8px" }}>Vendedor / Administrador</th>
+                          <th style={{ textAlign: "center", padding: "8px" }}>Ventas</th>
+                          <th style={{ textAlign: "right", padding: "8px" }}>Monto vendido</th>
+                          <th style={{ textAlign: "right", padding: "8px" }}>Comisión ({comisionPctReporte}%)</th>
                         </tr>
-                      ))}
-                    </tbody>
-                    <tfoot>
-                      <tr style={{ borderTop: `2px solid ${BLACK}` }}>
-                        <td style={{ padding: "10px 8px", fontWeight: 900 }}>TOTAL</td>
-                        <td style={{ padding: "10px 8px", textAlign: "center", fontWeight: 900 }}>{reportePorOperador.filas.reduce((s, f) => s + f.ventas, 0)}</td>
-                        <td style={{ padding: "10px 8px", textAlign: "right", fontWeight: 900 }}>{money(reportePorOperador.totalMonto)}</td>
-                        <td style={{ padding: "10px 8px", textAlign: "right", fontWeight: 900, color: "#0F6E56" }}>{money(reportePorOperador.totalComision)}</td>
-                      </tr>
-                    </tfoot>
-                  </table>
-                )}
+                      </thead>
+                      <tbody>
+                        {reportePorOperador.filas.map(f => (
+                          <tr key={f.id} style={{ borderBottom: `1px solid ${GRAY}` }}>
+                            <td style={{ padding: "8px", fontWeight: 700 }}>{f.nombre}</td>
+                            <td style={{ padding: "8px", textAlign: "center" }}>{f.ventas}</td>
+                            <td style={{ padding: "8px", textAlign: "right", fontWeight: 700 }}>{money(f.monto)}</td>
+                            <td style={{ padding: "8px", textAlign: "right", fontWeight: 700, color: "#0F6E56" }}>{money(f.comision)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot>
+                        <tr style={{ borderTop: `2px solid ${BLACK}` }}>
+                          <td style={{ padding: "10px 8px", fontWeight: 900 }}>TOTAL</td>
+                          <td style={{ padding: "10px 8px", textAlign: "center", fontWeight: 900 }}>{reportePorOperador.filas.reduce((s, f) => s + f.ventas, 0)}</td>
+                          <td style={{ padding: "10px 8px", textAlign: "right", fontWeight: 900 }}>{money(reportePorOperador.totalMonto)}</td>
+                          <td style={{ padding: "10px 8px", textAlign: "right", fontWeight: 900, color: "#0F6E56" }}>{money(reportePorOperador.totalComision)}</td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  )}
+                </div>
               </div>
             )}
           </>
