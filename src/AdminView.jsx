@@ -1980,6 +1980,54 @@ function AnalisisAdsPanel() {
   );
 }
 
+// Campo para el costo FIJO de "puerta a puerta" -- es un solo valor general,
+// no depende de sucursal ni ubicación del cliente.
+function EditorCostoPuertaAPuerta({ showToast }) {
+  const [valor, setValor] = useState("0");
+  const [cargando, setCargando] = useState(true);
+  const [guardando, setGuardando] = useState(false);
+
+  useEffect(() => {
+    sb.get("configuracion", "?clave=eq.costo_envio_puerta_a_puerta&limit=1")
+      .then(data => { if (data?.[0]?.valor != null) setValor(String(data[0].valor)); })
+      .catch(() => {})
+      .finally(() => setCargando(false));
+  }, []);
+
+  const guardar = async () => {
+    const num = Number(valor);
+    if (isNaN(num) || num < 0) { showToast("Pon un número válido (0 o más)"); return; }
+    setGuardando(true);
+    try {
+      const resp = await fetch(`${SUPABASE_URL}/rest/v1/configuracion?clave=eq.costo_envio_puerta_a_puerta`, {
+        method: "PATCH", headers: sb.dataHeaders(), body: JSON.stringify({ valor: num }),
+      });
+      if (!resp.ok) throw new Error(await resp.text());
+      showToast("Costo de puerta a puerta actualizado");
+    } catch (e) { showToast("Error al guardar: " + e.message); }
+    setGuardando(false);
+  };
+
+  if (cargando) return null;
+  return (
+    <div style={{ background: WHITE, borderRadius: 16, padding: 20, marginBottom: 20, border: `1px solid ${GRAY2}`, display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+      <MapPin size={22} color={RED} style={{ flexShrink: 0 }} />
+      <div style={{ flex: 1, minWidth: 200 }}>
+        <div style={{ fontWeight: 800, fontSize: 14 }}>Costo de envío puerta a puerta</div>
+        <div style={{ fontSize: 12, color: GRAY3 }}>Un solo precio fijo, sin importar la dirección del cliente</div>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{ fontSize: 14, fontWeight: 700 }}>$</span>
+        <input type="number" step="0.01" min="0" value={valor} onChange={e => setValor(e.target.value)}
+          style={{ width: 90, padding: "8px 10px", borderRadius: 8, border: `1px solid ${GRAY2}`, fontSize: 14, textAlign: "center" }} />
+        <button onClick={guardar} disabled={guardando} className="oft-btn-press" style={{ ...S.btnRed, padding: "8px 16px", opacity: guardando ? 0.6 : 1 }}>
+          {guardando ? "..." : "Guardar"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function AdminView() {
   const { products, setProducts, categories, setCategories, gruposCategorias, setGruposCategorias, banners, setBanners, popups, setPopups, empresas, setEmpresas, sucursales, setSucursales, localesRetiro, setLocalesRetiro, retiroLocalHabilitado, setRetiroLocalHabilitado, showToast, setView, setUser, user } = useApp();
   // Rol del usuario actual: 'admin' = módulo completo, 'operador' = acceso limitado.
@@ -3136,11 +3184,19 @@ function AdminView() {
     const form = sucForm[empId] || {};
     if (!form.nombre?.trim()) { alert("Escribe el nombre de la sucursal."); return; }
     try {
-      const saved = await sb.post("sucursales", { empresa_id: empId, nombre: form.nombre.trim(), direccion: form.direccion || "", telefono: form.telefono || "", activa: true });
+      const saved = await sb.post("sucursales", { empresa_id: empId, nombre: form.nombre.trim(), direccion: form.direccion || "", telefono: form.telefono || "", costo_envio: Number(form.costo_envio) || 0, activa: true });
       setSucursales(prev => [...prev, saved[0]]);
-      setSucForm(prev => ({ ...prev, [empId]: { nombre: "", direccion: "", telefono: "" } }));
+      setSucForm(prev => ({ ...prev, [empId]: { nombre: "", direccion: "", telefono: "", costo_envio: "" } }));
       showToast("Sucursal agregada");
     } catch(e) { alert("Error: " + e.message); }
+  };
+
+  // Cambia el costo de envío de una sucursal YA existente (se guarda apenas se sale del campo)
+  const handleCambiarCostoSucursal = async (suc, nuevoCosto) => {
+    const valor = Number(nuevoCosto) || 0;
+    setSucursales(prev => prev.map(s => s.id === suc.id ? { ...s, costo_envio: valor } : s));
+    try { await sb.patch("sucursales", suc.id, { costo_envio: valor }); }
+    catch(e) { showToast("No se pudo guardar el costo: " + e.message); }
   };
 
   const handleDeleteSucursal = async (suc) => {
@@ -6011,6 +6067,8 @@ function AdminView() {
           <>
             <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 24, display: "flex", alignItems: "center", gap: 10 }}><Truck size={24} color={RED} /> Empresas de Envío</div>
 
+            <EditorCostoPuertaAPuerta showToast={showToast} />
+
             {/* AGREGAR EMPRESA */}
             <div style={{ background: WHITE, borderRadius: 16, padding: 20, marginBottom: 20, border: `1px solid ${GRAY2}`, display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap" }}>
               <div style={{ flex: 1, minWidth: 200 }}>
@@ -6059,13 +6117,19 @@ function AdminView() {
                                   <div style={{ fontWeight: 700, fontSize: 13 }}>{suc.nombre}</div>
                                   {(suc.direccion || suc.telefono) && <div style={{ fontSize: 11, color: GRAY3 }}>{suc.direccion}{suc.direccion && suc.telefono ? " · " : ""}{suc.telefono ? `Tel: ${suc.telefono}` : ""}</div>}
                                 </div>
+                                <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                                  <span style={{ fontSize: 11, color: GRAY3 }}>Envío $</span>
+                                  <input type="number" step="0.01" min="0" defaultValue={suc.costo_envio || 0}
+                                    onBlur={e => handleCambiarCostoSucursal(suc, e.target.value)}
+                                    style={{ width: 64, padding: "5px 7px", borderRadius: 6, border: `1px solid ${GRAY2}`, fontSize: 12, textAlign: "center" }} />
+                                </div>
                                 <button onClick={() => handleDeleteSucursal(suc)} style={{ background: "none", border: "none", color: RED, cursor: "pointer", display: "flex" }}><Trash2 size={15} /></button>
                               </div>
                             ))}
                           </div>
                         )}
                         {/* FORM NUEVA SUCURSAL */}
-                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr auto", gap: 8, alignItems: "end" }} className="oft-dash-grid-2">
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 0.7fr auto", gap: 8, alignItems: "end" }} className="oft-dash-grid-2">
                           <div>
                             <label style={{ ...S.label, fontSize: 11 }}>Nombre sucursal *</label>
                             <input style={{ ...S.input, marginBottom: 0 }} placeholder="Ej: Sucursal Centro" value={form.nombre} onChange={e => setSucForm(prev => ({ ...prev, [emp.id]: { ...form, nombre: e.target.value } }))} />
@@ -6077,6 +6141,10 @@ function AdminView() {
                           <div>
                             <label style={{ ...S.label, fontSize: 11 }}>Teléfono</label>
                             <input style={{ ...S.input, marginBottom: 0 }} placeholder="Teléfono" value={form.telefono} onChange={e => setSucForm(prev => ({ ...prev, [emp.id]: { ...form, telefono: e.target.value } }))} />
+                          </div>
+                          <div>
+                            <label style={{ ...S.label, fontSize: 11 }}>Envío $</label>
+                            <input type="number" step="0.01" min="0" style={{ ...S.input, marginBottom: 0 }} placeholder="0.00" value={form.costo_envio || ""} onChange={e => setSucForm(prev => ({ ...prev, [emp.id]: { ...form, costo_envio: e.target.value } }))} />
                           </div>
                           <button style={{ ...S.btnRed, height: 42, display: "inline-flex", alignItems: "center", gap: 5, whiteSpace: "nowrap" }} onClick={() => handleAddSucursal(emp.id)}><Plus size={15} /> Sucursal</button>
                         </div>
