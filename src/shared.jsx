@@ -645,7 +645,13 @@ const COLOR_HEX = {
   plateado: "#C0C0C0", crema: "#F5F0E1", fucsia: "#E3197D",
 };
 
-const colorToHex = (name) => COLOR_HEX[(name || "").toLowerCase().trim()] || "#CCCCCC";
+const colorToHex = (nombre) => {
+  const limpio = (nombre || "").trim();
+  // Si ya es un código hex válido (ej. "#FF0000" o "#F00"), se usa tal cual --
+  // así el admin puede escribir el código directo, no solo nombres conocidos.
+  if (/^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$/.test(limpio)) return limpio;
+  return COLOR_HEX[limpio.toLowerCase()] || "#CCCCCC";
+};
 
 export function CrearPedidoView() {
   const { products, empresas, sucursales, localesRetiro, showToast, user } = useApp();
@@ -1914,6 +1920,55 @@ export function ChipAdder({ valor, onChange, placeholder, color }) {
             <span key={idx} className="oft-chip-pop" style={{ display: "inline-flex", alignItems: "center", gap: 6, background: WHITE, border: `1.5px solid ${GRAY2}`, borderRadius: 20, padding: "5px 8px 5px 12px", fontSize: 13, fontWeight: 700 }}>
               {it}
               <button type="button" onClick={() => remove(idx)} style={{ background: GRAY2, border: "none", borderRadius: "50%", width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: BLACK }}>
+                <X size={11} />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Selector de colores con cuadro de color nativo (para elegir visualmente), un
+// círculo de vista previa por cada color agregado, y un campo para escribir el
+// nombre o el código hex directamente.
+export function SelectorColores({ valor, onChange }) {
+  const [texto, setTexto] = useState("");
+  const colores = (valor || "").split(",").map(s => s.trim()).filter(Boolean);
+
+  const agregar = (entrada) => {
+    const limpio = (entrada || "").trim();
+    if (!limpio) return;
+    if (colores.some(c => c.toLowerCase() === limpio.toLowerCase())) { setTexto(""); return; }
+    onChange([...colores, limpio].join(", "));
+    setTexto("");
+  };
+  const quitar = (c) => onChange(colores.filter(x => x !== c).join(", "));
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 8, marginBottom: colores.length ? 10 : 0 }}>
+        {/* Cuadro de color nativo -- al elegir uno, se agrega directo con su código hex */}
+        <input type="color" defaultValue="#E31E24" title="Elige un color"
+          onChange={e => agregar(e.target.value.toUpperCase())}
+          style={{ width: 44, height: 42, borderRadius: 8, border: `1px solid ${GRAY2}`, padding: 3, cursor: "pointer", flexShrink: 0 }} />
+        <input
+          style={{ ...S.input, marginBottom: 0 }}
+          placeholder="O escribe un nombre o código (ej: Rojo, #FF0000)..."
+          value={texto}
+          onChange={e => setTexto(e.target.value)}
+          onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); agregar(texto); } }}
+        />
+        <button type="button" onClick={() => agregar(texto)} className="oft-btn-press" style={{ background: BLACK, color: WHITE, border: "none", borderRadius: 8, padding: "0 16px", fontWeight: 800, fontSize: 18, cursor: "pointer", flexShrink: 0 }}>+</button>
+      </div>
+      {colores.length > 0 && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+          {colores.map((c, idx) => (
+            <span key={idx} className="oft-chip-pop" style={{ display: "inline-flex", alignItems: "center", gap: 7, background: WHITE, border: `1.5px solid ${GRAY2}`, borderRadius: 20, padding: "5px 8px 5px 8px", fontSize: 13, fontWeight: 700 }}>
+              <span style={{ width: 18, height: 18, borderRadius: "50%", background: colorToHex(c), border: `1px solid ${GRAY2}`, flexShrink: 0 }} />
+              {c}
+              <button type="button" onClick={() => quitar(c)} style={{ background: GRAY2, border: "none", borderRadius: "50%", width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: BLACK }}>
                 <X size={11} />
               </button>
             </span>
