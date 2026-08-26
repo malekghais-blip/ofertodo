@@ -15,7 +15,7 @@ import {
   AppCtx, BLACK, CategoryIcon, GRAY, GRAY2,
   GRAY3, Logo, ORDER_STATUS_ENVIO, ORDER_STATUS_RETIRO, RED,
   RED_D, S, STATUS_ICONS_ENVIO, STATUS_ICONS_RETIRO, SUPABASE_KEY,
-  SUPABASE_URL, Spinner, StatusBadge, WHITE, colorToHex,
+  SUPABASE_URL, Spinner, StatusBadge, WHITE, colorToHex, nombreColorLimpio,
   idVisitante, registrarEvento, obtenerTokenRecaptcha, notaFragancia,
   cargarMetaPixel, cargarGooglePixel, trackVerProducto, trackAgregarCarrito, trackIniciarCheckout, trackCompra,
   imagenOptimizada, mediaDocenaDesdeDistribucion, parseDistribucion, presLabelPlural, presToPiezas,
@@ -1073,7 +1073,7 @@ function VariantPicker({ product, talla, setTalla, color, setColor }) {
                   title={c}
                   style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 10px 4px 5px", borderRadius: 20, border: `2px solid ${active ? RED : GRAY2}`, background: active ? "#FFF5F5" : WHITE, cursor: "pointer", transition: "all 0.15s", transform: active ? "scale(1.05)" : "scale(1)" }}>
                   <span style={{ width: 16, height: 16, borderRadius: "50%", background: colorToHex(c), border: `1px solid ${GRAY2}`, flexShrink: 0 }} />
-                  <span style={{ fontSize: 12, fontWeight: 700, color: active ? RED : BLACK }}>{c}</span>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: active ? RED : BLACK }}>{nombreColorLimpio(c)}</span>
                 </button>
               );
             })}
@@ -1140,6 +1140,7 @@ function ProductCard({ product }) {
   const [color, setColor] = useState("");
   const total = presTotal(product, pres, count);
   const imgUrl = product.imagen_url ? imagenOptimizada(product.imagen_url, 400) : null;
+  const coloresDisponibles = product.tiene_colores ? (product.colores || "").split(",").map(s => s.trim()).filter(Boolean) : [];
   const btnRef = useRef(null);
   // Solo bloqueamos la compra cuando se agota un producto PROPIO (sin proveedor).
   // Los productos de proveedor externo siempre se pueden comprar — el stock ahí
@@ -1218,6 +1219,17 @@ function ProductCard({ product }) {
       <div className="oft-prod-body" style={{ padding: 16, display: "flex", flexDirection: "column", flex: 1 }}>
         <div style={{ fontSize: 11, color: GRAY3, fontWeight: 600, marginBottom: 4 }}>REF: {product.referencia || "—"}</div>
         <div onClick={() => setQuickView(product)} style={{ fontSize: 15, fontWeight: 800, marginBottom: 6, cursor: "pointer", lineHeight: 1.3, height: 39, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{product.nombre}</div>
+        {coloresDisponibles.length > 0 && (
+          <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 8 }}>
+            {coloresDisponibles.slice(0, 5).map((c, i) => (
+              <span key={i} className="oft-btn-press" title={nombreColorLimpio(c)} style={{
+                width: 14, height: 14, borderRadius: "50%", background: colorToHex(c), flexShrink: 0,
+                boxShadow: `0 0 0 2px ${WHITE}, 0 0 0 2.5px ${GRAY2}, 0 1px 4px rgba(0,0,0,0.18)`,
+              }} />
+            ))}
+            {coloresDisponibles.length > 5 && <span style={{ fontSize: 10.5, color: GRAY3, fontWeight: 800, marginLeft: 2 }}>+{coloresDisponibles.length - 5}</span>}
+          </div>
+        )}
         <div style={{ fontSize: 13, color: GRAY3, marginBottom: 12, lineHeight: 1.4, height: 36, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{product.descripcion}</div>
         {/* SELECTOR DE PRESENTACIÓN + CANTIDAD + TOTAL */}
         <div style={{ marginBottom: 10 }}>
