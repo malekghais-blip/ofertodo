@@ -1989,6 +1989,14 @@ function CheckoutView() {
   const [empresaId, setEmpresaId] = useState(null);
   const [sucursalId, setSucursalId] = useState(null);
   const [modoEntrega, setModoEntrega] = useState("sucursal"); // "sucursal" | "puerta"
+  const [costoEnvioPuerta, setCostoEnvioPuerta] = useState(0);
+
+  // Costo fijo de puerta a puerta -- un solo valor, configurado en el admin
+  useEffect(() => {
+    sb.get("configuracion", "?clave=eq.costo_envio_puerta_a_puerta&limit=1")
+      .then(data => { if (data?.[0]?.valor != null) setCostoEnvioPuerta(Number(data[0].valor)); })
+      .catch(() => {});
+  }, []);
   const [metodoPago, setMetodoPago] = useState("yappy"); // "yappy" | "tarjeta"
   const [tarjetaPagoData, setTarjetaPagoData] = useState(null); // { RedirectData, codigo } — cuando se muestra el iframe de la tarjeta
   const tarjetaContainerRef = useRef(null);
@@ -2032,6 +2040,12 @@ function CheckoutView() {
     return baseAplicable * pct;
   })();
   const total = Math.max(subtotalBruto - montoDescuento, 0);
+  // Costo de envío según el modo elegido: gratis en retiro local, fijo en puerta a
+  // puerta, o el que tenga configurada la sucursal elegida (puede ser $0 también)
+  const costoEnvioFinal = modoEntrega === "local" ? 0
+    : modoEntrega === "puerta" ? costoEnvioPuerta
+    : Number(sucursalSel?.costo_envio) || 0;
+  const totalConEnvio = total + costoEnvioFinal;
   const money = (n) => "$" + Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
   // Valida el código contra la tabla de descuentos
@@ -2144,12 +2158,12 @@ function CheckoutView() {
         const resp = await fetch(`${SUPABASE_URL}/functions/v1/crear-pago-tarjeta`, {
           method: "POST", headers: sb.functionHeaders(),
           body: JSON.stringify({
-            usuario_id: user.id, nombre_cliente: nombre, telefono, direccion: address, notas: notes, total,
+            usuario_id: user.id, nombre_cliente: nombre, telefono, direccion: address, notas: notes, total: totalConEnvio,
             items: itemsPayload,
             empresa_envio_id: empresaFinalId, empresa_envio_nombre: empresaFinalNombre,
             sucursal_id: sucursalFinalId, sucursal_nombre: sucursalFinalNombre,
             retiro_local: modoEntrega === "local", local_retiro_id: localElegido?.id || null, local_retiro_nombre: localElegido?.nombre || null,
-            costo_envio: 0,
+            costo_envio: costoEnvioFinal,
             descuento_codigo: descuentoAplicado?.codigo || null,
             descuento_monto: montoDescuento > 0 ? Number(montoDescuento.toFixed(2)) : 0,
             visitante_id: idVisitante(),
@@ -2164,12 +2178,13 @@ function CheckoutView() {
         const codigo = `OFT-${Date.now().toString().slice(-6)}`;
         const pedido = await sb.post("pedidos", {
           codigo, usuario_id: user.id, nombre_cliente: nombre, telefono: telefono,
-          direccion: address, notas: notes, total, estado: 0,
+          direccion: address, notas: notes, total: totalConEnvio, estado: 0,
           empresa_envio_id: empresaFinalId, empresa_envio_nombre: empresaFinalNombre,
           sucursal_id: sucursalFinalId, sucursal_nombre: sucursalFinalNombre,
           retiro_local: modoEntrega === "local",
           local_retiro_id: localElegido?.id || null, local_retiro_nombre: localElegido?.nombre || null,
           pagado: false, yappy_order_id: yappyOrderId, metodo_pago: "yappy",
+          costo_envio: costoEnvioFinal,
           descuento_codigo: descuentoAplicado?.codigo || null,
           descuento_monto: montoDescuento > 0 ? Number(montoDescuento.toFixed(2)) : 0,
         });
@@ -2178,7 +2193,7 @@ function CheckoutView() {
           await sb.post("pedido_items", { pedido_id: pedidoId, producto_id: item.product.id, nombre_producto: item.product.nombre, cantidad: item.qty, precio_unitario: item.product.precio_pieza, subtotal: cartItemTotal(item), presentacion: item.pres || "pieza" });
         }
         // Guarda el pedido pendiente y muestra el botón de Yappy (el pago va primero)
-        setPedidoPendiente({ id: pedidoId, codigo, yappyOrderId, total, telefono: telefonoYappy });
+        setPedidoPendiente({ id: pedidoId, codigo, yappyOrderId, total: totalConEnvio, telefono: telefonoYappy });
       }
     } catch(e) { setAvisoValidacion("Error al guardar el pedido: " + e.message); }
     setLoading(false);
@@ -2423,6 +2438,9 @@ function CheckoutView() {
                     {suc.direccion && <div style={{ fontSize: 12, color: GRAY3 }}>{suc.direccion}</div>}
                     {suc.telefono && <div style={{ fontSize: 12, color: GRAY3 }}>Tel: {suc.telefono}</div>}
                   </div>
+                  <span style={{ fontSize: 13, fontWeight: 800, color: Number(suc.costo_envio) > 0 ? BLACK : "#0F6E56" }}>
+                    {Number(suc.costo_envio) > 0 ? money(suc.costo_envio) : "Gratis"}
+                  </span>
                   {sucursalId === suc.id && <CheckCircle2 size={18} color={RED} />}
                 </div>
               ))}
@@ -2442,7 +2460,7 @@ function CheckoutView() {
         <div style={{ background: "#FFF5F5", border: `1.5px solid ${RED}`, borderRadius: 12, padding: 16, marginBottom: 16, display: "flex", alignItems: "center", gap: 12 }}>
           <Truck size={22} color={RED} />
           <div style={{ fontSize: 13 }}>
-            <strong>Envío puerta a puerta por Servientrega.</strong> Te lo llevamos a la dirección que indiques abajo. <span style={{ color: RED, fontWeight: 700 }}>La dirección es obligatoria.</span>
+            <strong>Envío puerta a puerta por Servientrega — {costoEnvioPuerta > 0 ? money(costoEnvioPuerta) : "Gratis"}.</strong> Te lo llevamos a la dirección que indiques abajo. <span style={{ color: RED, fontWeight: 700 }}>La dirección es obligatoria.</span>
           </div>
         </div>
       )}
@@ -2466,9 +2484,19 @@ function CheckoutView() {
 
         {!pedidoPendiente && !tarjetaPagoData ? (
           <>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: GRAY, borderRadius: 10, padding: "12px 16px", marginBottom: 14 }}>
-              <span style={{ fontWeight: 700 }}>Total a pagar</span>
-              <span style={{ fontWeight: 900, fontSize: 22, color: RED }}>{money(total)}</span>
+            <div style={{ background: GRAY, borderRadius: 10, padding: "12px 16px", marginBottom: 14 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13.5, color: GRAY3, marginBottom: 6 }}>
+                <span>Subtotal</span>
+                <span>{money(total)}</span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13.5, color: GRAY3, marginBottom: 10 }}>
+                <span>Envío {modoEntrega === "local" ? "(retiro en local)" : modoEntrega === "puerta" ? "(puerta a puerta)" : sucursalSel ? `(${sucursalSel.nombre})` : ""}</span>
+                <span>{costoEnvioFinal > 0 ? money(costoEnvioFinal) : "Gratis"}</span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderTop: `1px solid ${GRAY2}`, paddingTop: 10 }}>
+                <span style={{ fontWeight: 700 }}>Total a pagar</span>
+                <span style={{ fontWeight: 900, fontSize: 22, color: RED }}>{money(totalConEnvio)}</span>
+              </div>
             </div>
 
             {/* MÉTODO DE PAGO */}
