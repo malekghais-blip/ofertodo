@@ -8,7 +8,9 @@ import {
   FileSpreadsheet, FolderPlus, Zap, Lock, Users, BarChart3, DollarSign,
   TrendingUp, Wallet, ShoppingBag, Pencil as PencilIcon, Save,
   Building2, MapPin as MapPinIcon, Send, FilePlus, Download, FileText, Receipt,
-  Calendar as CalendarIcon, Eye, EyeOff, Share2, AlertTriangle, ChevronRight
+  Calendar as CalendarIcon, Eye, EyeOff, Share2, AlertTriangle, ChevronRight,
+  Citrus, Flower2, Flower, Cherry, TreePine, Trees, Feather, Flame, Sun,
+  Droplets, Leaf, Cookie, Coffee, CloudFog, Wind, Shield,
 } from "lucide-react";
 
 // ═══════════════════════════════════════════════════════════════
@@ -224,6 +226,34 @@ export const sb = {
 };
 
 export const RED = "#E31E24", RED_D = "#B01519", BLACK = "#111", GRAY = "#F5F5F5", GRAY2 = "#E0E0E0", GRAY3 = "#9E9E9E", WHITE = "#FFFFFF";
+
+// Catálogo de notas de fragancia para perfumes -- cada una con su ícono y color,
+// para mostrarlas en la página del producto de forma visual, no solo como texto.
+export const NOTAS_FRAGANCIA = [
+  { nombre: "Cítricos", icono: Citrus, color: "#F59E0B" },
+  { nombre: "Floral", icono: Flower2, color: "#EC4899" },
+  { nombre: "Rosa", icono: Flower, color: "#F472B6" },
+  { nombre: "Frutal", icono: Cherry, color: "#EF4444" },
+  { nombre: "Vainilla", icono: Cookie, color: "#D97706" },
+  { nombre: "Dulce/Oriental", icono: Sparkles, color: "#C026D3" },
+  { nombre: "Amaderado", icono: TreePine, color: "#78350F" },
+  { nombre: "Sándalo", icono: Trees, color: "#92400E" },
+  { nombre: "Almizcle", icono: Feather, color: "#78716C" },
+  { nombre: "Cuero", icono: Shield, color: "#57534E" },
+  { nombre: "Especiado", icono: Flame, color: "#DC2626" },
+  { nombre: "Ámbar", icono: Sun, color: "#D97706" },
+  { nombre: "Marino/Acuático", icono: Droplets, color: "#0EA5E9" },
+  { nombre: "Fresco", icono: Wind, color: "#38BDF8" },
+  { nombre: "Verde/Herbal", icono: Leaf, color: "#16A34A" },
+  { nombre: "Café", icono: Coffee, color: "#6F4E37" },
+  { nombre: "Polvorado", icono: CloudFog, color: "#94A3B8" },
+];
+// Busca una nota por nombre (sin importar mayúsculas) -- si no la encuentra
+// (ej. quedó guardada de una versión vieja del catálogo), usa un ícono genérico.
+export function notaFragancia(nombre) {
+  return NOTAS_FRAGANCIA.find(n => n.nombre.toLowerCase() === (nombre || "").trim().toLowerCase())
+    || { nombre, icono: Sparkles, color: GRAY3 };
+}
 
 const AppCtx = createContext(null);
 
