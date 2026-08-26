@@ -1396,6 +1396,7 @@ function ProductModal() {
   const [added, setAdded] = useState(false);
   const [talla, setTalla] = useState("");
   const [color, setColor] = useState("");
+  const coloresDisponibles = product?.tiene_colores ? (product.colores || "").split(",").map(s => s.trim()).filter(Boolean) : [];
 
   useEffect(() => { setPres("docena"); setCount(1); setAdded(false); setTalla(""); setColor(""); }, [product]);
 
@@ -1468,6 +1469,17 @@ function ProductModal() {
         <div style={{ padding: 24, maxHeight: "50vh", overflowY: "auto" }}>
           <div style={{ fontSize: 12, color: GRAY3, fontWeight: 600, marginBottom: 4 }}>REF: {product.referencia}</div>
           <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 8 }}>{product.nombre}</div>
+          {coloresDisponibles.length > 0 && (
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 14 }}>
+              {coloresDisponibles.slice(0, 8).map((c, i) => (
+                <span key={i} title={nombreColorLimpio(c)} style={{
+                  width: 17, height: 17, borderRadius: "50%", background: colorToHex(c), flexShrink: 0,
+                  boxShadow: `0 0 0 2px ${WHITE}, 0 0 0 2.5px ${GRAY2}, 0 1px 4px rgba(0,0,0,0.18)`,
+                }} />
+              ))}
+              {coloresDisponibles.length > 8 && <span style={{ fontSize: 11, color: GRAY3, fontWeight: 800, marginLeft: 2 }}>+{coloresDisponibles.length - 8}</span>}
+            </div>
+          )}
           {product.descripcion && <div style={{ fontSize: 14, color: GRAY3, marginBottom: 16, lineHeight: 1.5 }}>{product.descripcion}</div>}
 
           {/* NOTAS DE FRAGANCIA -- solo se muestra si el producto tiene alguna guardada */}
