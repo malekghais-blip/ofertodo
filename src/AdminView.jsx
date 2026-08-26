@@ -14,7 +14,7 @@ import {
 import {
   BLACK, CategoryIcon, ChipAdder, ClienteFormModal, CrearPedidoView,
   DistribucionEditor, GRAY, GRAY2, GRAY3, Logo,
-  RED, RED_D, S, SUPABASE_URL, ShippingLabelModal,
+  RED, RED_D, S, SUPABASE_URL, ShippingLabelModal, NOTAS_FRAGANCIA,
   Spinner, StatusBadge, WHITE, comprimirImagen, estadosDe,
   imagenOptimizada, resolverAreaVenta, sb, useApp, useLockBodyScroll,
 } from "./shared.jsx";
@@ -1999,7 +1999,7 @@ function AdminView() {
   const [bulkLoading, setBulkLoading] = useState(false);
   const [newCatName, setNewCatName] = useState("");
   const [catUploading, setCatUploading] = useState(null); // id de categoría subiendo icono
-  const emptyProd = { referencia: "", nombre: "", descripcion: "", categoria_id: categories[0]?.id || 1, precio_pieza: "", precio_media_docena: "", precio_docena: "", badge: "", activo: true, destacado: false, imagen_url: "", tiene_tallas: false, tiene_colores: false, tallas: "", colores: "", distribucion_docena: "", distribucion_eje: "", proveedor_id: null, venta_por_unidad: false, tiene_stock_fisico: false };
+  const emptyProd = { referencia: "", nombre: "", descripcion: "", categoria_id: categories[0]?.id || 1, precio_pieza: "", precio_media_docena: "", precio_docena: "", badge: "", activo: true, destacado: false, imagen_url: "", tiene_tallas: false, tiene_colores: false, tallas: "", colores: "", distribucion_docena: "", distribucion_eje: "", proveedor_id: null, venta_por_unidad: false, tiene_stock_fisico: false, notas_fragancia: "" };
   const [prodForm, setProdForm] = useState(emptyProd);
   const fileInputRef = useRef(null);
   const catFileRef = useRef(null);
@@ -2563,7 +2563,7 @@ function AdminView() {
   // ── GUARDAR / EDITAR PRODUCTO ──────────────────────────────────
   const openNewProduct = () => { setProdForm(emptyProd); setEditingId(null); setShowProdForm(true); setShowBulk(false); };
   const openEditProduct = (p) => {
-    setProdForm({ referencia: p.referencia || "", nombre: p.nombre || "", descripcion: p.descripcion || "", categoria_id: p.categoria_id || categories[0]?.id || 1, precio_pieza: p.precio_pieza, precio_media_docena: p.precio_media_docena, precio_docena: p.precio_docena, badge: p.badge || "", activo: p.activo, destacado: p.destacado || false, imagen_url: p.imagen_url || "", tiene_tallas: p.tiene_tallas || false, tiene_colores: p.tiene_colores || false, tallas: p.tallas || "", colores: p.colores || "", distribucion_docena: p.distribucion_docena || "", distribucion_eje: p.distribucion_eje || "", proveedor_id: p.proveedor_id || null, venta_por_unidad: p.venta_por_unidad || false, tiene_stock_fisico: p.tiene_stock_fisico || false });
+    setProdForm({ referencia: p.referencia || "", nombre: p.nombre || "", descripcion: p.descripcion || "", categoria_id: p.categoria_id || categories[0]?.id || 1, precio_pieza: p.precio_pieza, precio_media_docena: p.precio_media_docena, precio_docena: p.precio_docena, badge: p.badge || "", activo: p.activo, destacado: p.destacado || false, imagen_url: p.imagen_url || "", tiene_tallas: p.tiene_tallas || false, tiene_colores: p.tiene_colores || false, tallas: p.tallas || "", colores: p.colores || "", distribucion_docena: p.distribucion_docena || "", distribucion_eje: p.distribucion_eje || "", proveedor_id: p.proveedor_id || null, venta_por_unidad: p.venta_por_unidad || false, tiene_stock_fisico: p.tiene_stock_fisico || false, notas_fragancia: p.notas_fragancia || "" });
     setEditingId(p.id);
     setShowProdForm(true);
     setShowBulk(false);
@@ -4459,6 +4459,30 @@ function AdminView() {
                   {prodForm.tiene_colores && (
                     <ChipAdder valor={prodForm.colores} onChange={v => setProdForm({...prodForm, colores: v})} placeholder="Ej: Rojo, Azul, Negro..." color={BLACK} />
                   )}
+
+                  {/* NOTAS DE FRAGANCIA (para perfumes) */}
+                  <div style={{ margin: "18px 0 8px" }}>
+                    <span style={{ fontWeight: 700, fontSize: 13 }}>Notas de fragancia <span style={{ fontWeight: 400, color: GRAY3 }}>(opcional, para perfumes)</span></span>
+                  </div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 8 }}>
+                    {NOTAS_FRAGANCIA.map(n => {
+                      const seleccionadas = (prodForm.notas_fragancia || "").split(",").map(s => s.trim()).filter(Boolean);
+                      const activa = seleccionadas.includes(n.nombre);
+                      const Icono = n.icono;
+                      return (
+                        <button key={n.nombre} type="button" onClick={() => {
+                          const nuevo = activa ? seleccionadas.filter(x => x !== n.nombre) : [...seleccionadas, n.nombre];
+                          setProdForm({ ...prodForm, notas_fragancia: nuevo.join(",") });
+                        }} className="oft-btn-press" style={{
+                          display: "flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 20,
+                          border: `1.5px solid ${activa ? n.color : GRAY2}`, background: activa ? `${n.color}18` : WHITE,
+                          color: activa ? n.color : GRAY3, fontWeight: 700, fontSize: 12.5, cursor: "pointer",
+                        }}>
+                          <Icono size={14} /> {n.nombre}
+                        </button>
+                      );
+                    })}
+                  </div>
 
                   {/* DISTRIBUCIÓN POR DOCENA (calcula la media docena automáticamente) */}
                   <DistribucionEditor prodForm={prodForm} setProdForm={setProdForm} />
