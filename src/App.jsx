@@ -2040,12 +2040,6 @@ function CheckoutView() {
     return baseAplicable * pct;
   })();
   const total = Math.max(subtotalBruto - montoDescuento, 0);
-  // Costo de envío según el modo elegido: gratis en retiro local, fijo en puerta a
-  // puerta, o el que tenga configurada la sucursal elegida (puede ser $0 también)
-  const costoEnvioFinal = modoEntrega === "local" ? 0
-    : modoEntrega === "puerta" ? costoEnvioPuerta
-    : Number(sucursalSel?.costo_envio) || 0;
-  const totalConEnvio = total + costoEnvioFinal;
   const money = (n) => "$" + Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
   // Valida el código contra la tabla de descuentos
@@ -2088,6 +2082,13 @@ function CheckoutView() {
   const sucursalSel = sucursales.find(s => s.id === sucursalId);
   // Para puerta a puerta: busca la empresa Servientrega en la lista (por nombre)
   const servientrega = empresas.find(e => (e.nombre || "").toLowerCase().includes("servientrega"));
+
+  // Costo de envío según el modo elegido: gratis en retiro local, fijo en puerta a
+  // puerta, o el que tenga configurada la sucursal elegida (puede ser $0 también)
+  const costoEnvioFinal = modoEntrega === "local" ? 0
+    : modoEntrega === "puerta" ? costoEnvioPuerta
+    : Number(sucursalSel?.costo_envio) || 0;
+  const totalConEnvio = total + costoEnvioFinal;
 
   const [pedidoPendiente, setPedidoPendiente] = useState(null); // pedido guardado, esperando pago Yappy
 
