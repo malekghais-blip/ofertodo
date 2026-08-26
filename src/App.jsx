@@ -16,7 +16,7 @@ import {
   GRAY3, Logo, ORDER_STATUS_ENVIO, ORDER_STATUS_RETIRO, RED,
   RED_D, S, STATUS_ICONS_ENVIO, STATUS_ICONS_RETIRO, SUPABASE_KEY,
   SUPABASE_URL, Spinner, StatusBadge, WHITE, colorToHex,
-  idVisitante, registrarEvento, obtenerTokenRecaptcha,
+  idVisitante, registrarEvento, obtenerTokenRecaptcha, notaFragancia,
   cargarMetaPixel, cargarGooglePixel, trackVerProducto, trackAgregarCarrito, trackIniciarCheckout, trackCompra,
   imagenOptimizada, mediaDocenaDesdeDistribucion, parseDistribucion, presLabelPlural, presToPiezas,
   presUnitPrice, sb, useApp, useLockBodyScroll,
@@ -1457,6 +1457,32 @@ function ProductModal() {
           <div style={{ fontSize: 12, color: GRAY3, fontWeight: 600, marginBottom: 4 }}>REF: {product.referencia}</div>
           <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 8 }}>{product.nombre}</div>
           {product.descripcion && <div style={{ fontSize: 14, color: GRAY3, marginBottom: 16, lineHeight: 1.5 }}>{product.descripcion}</div>}
+
+          {/* NOTAS DE FRAGANCIA -- solo se muestra si el producto tiene alguna guardada */}
+          {product.notas_fragancia && product.notas_fragancia.trim() && (
+            <div style={{ marginBottom: 18 }}>
+              <div style={{ fontSize: 11.5, fontWeight: 800, color: GRAY3, marginBottom: 9, display: "flex", alignItems: "center", gap: 6, textTransform: "uppercase", letterSpacing: 0.6 }}>
+                <Sparkles size={13} /> Notas de fragancia
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                {product.notas_fragancia.split(",").map(n => n.trim()).filter(Boolean).map((nombreNota, i) => {
+                  const nota = notaFragancia(nombreNota);
+                  const Icono = nota.icono;
+                  return (
+                    <div key={nombreNota} className="oft-prod-anim" style={{
+                      display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 20,
+                      background: `linear-gradient(135deg, ${nota.color}22, ${nota.color}08)`,
+                      border: `1px solid ${nota.color}45`, boxShadow: `0 2px 10px ${nota.color}22`,
+                      animationDelay: `${i * 0.06}s`,
+                    }}>
+                      <Icono size={15} color={nota.color} strokeWidth={2.2} />
+                      <span style={{ fontSize: 12.5, fontWeight: 700, color: BLACK }}>{nota.nombre}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {/* SELECTOR DE PRESENTACIÓN + CANTIDAD + TOTAL */}
           <div style={{ background: GRAY, borderRadius: 12, padding: 16, margin: "8px 0 16px" }}>
