@@ -647,11 +647,16 @@ const COLOR_HEX = {
 
 const colorToHex = (nombre) => {
   const limpio = (nombre || "").trim();
-  // Si ya es un código hex válido (ej. "#FF0000" o "#F00"), se usa tal cual --
-  // así el admin puede escribir el código directo, no solo nombres conocidos.
+  // Formato combinado "Nombre (#HEX)" -- se usa el código de adentro del paréntesis
+  const combinado = limpio.match(/\(#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})\)\s*$/);
+  if (combinado) return `#${combinado[1]}`;
+  // Si ya es un código hex válido por sí solo (ej. "#FF0000" o "#F00")
   if (/^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$/.test(limpio)) return limpio;
   return COLOR_HEX[limpio.toLowerCase()] || "#CCCCCC";
 };
+// Para mostrar como TEXTO: quita el "(#HEX)" técnico si lo hay, dejando solo el
+// nombre -- el círculo de color ya muestra el tono exacto, no hace falta repetirlo en texto.
+export const nombreColorLimpio = (nombre) => (nombre || "").replace(/\s*\(#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})\)\s*$/, "").trim() || nombre;
 
 export function CrearPedidoView() {
   const { products, empresas, sucursales, localesRetiro, showToast, user } = useApp();
@@ -1932,42 +1937,55 @@ export function ChipAdder({ valor, onChange, placeholder, color }) {
 
 // Selector de colores con cuadro de color nativo (para elegir visualmente), un
 // círculo de vista previa por cada color agregado, y un campo para escribir el
-// nombre o el código hex directamente.
+// nombre. El color solo se agrega al darle al "+" -- el cuadrito de color dispara
+// "onChange" mientras uno todavía está explorando tonos, así que solo GUARDA la
+// selección en lo que se confirma, en vez de agregar cada tono que se ve de paso.
 export function SelectorColores({ valor, onChange }) {
   const [texto, setTexto] = useState("");
+  const [hexElegido, setHexElegido] = useState(null); // null = todavía no se tocó el cuadro de color
   const colores = (valor || "").split(",").map(s => s.trim()).filter(Boolean);
 
-  const agregar = (entrada) => {
-    const limpio = (entrada || "").trim();
-    if (!limpio) return;
-    if (colores.some(c => c.toLowerCase() === limpio.toLowerCase())) { setTexto(""); return; }
-    onChange([...colores, limpio].join(", "));
-    setTexto("");
+  const agregar = () => {
+    const nombre = texto.trim();
+    // Combina nombre + código si se dieron los dos ("Rojo (#FF0000)"); si solo se
+    // escribió un nombre, se agrega tal cual; si solo se eligió del cuadro, se
+    // agrega el código solo.
+    const entrada = nombre && hexElegido ? `${nombre} (${hexElegido})` : (nombre || hexElegido || "");
+    if (!entrada) return;
+    if (colores.some(c => c.toLowerCase() === entrada.toLowerCase())) { setTexto(""); setHexElegido(null); return; }
+    onChange([...colores, entrada].join(", "));
+    setTexto(""); setHexElegido(null);
   };
   const quitar = (c) => onChange(colores.filter(x => x !== c).join(", "));
 
   return (
     <div>
       <div style={{ display: "flex", gap: 8, marginBottom: colores.length ? 10 : 0 }}>
-        {/* Cuadro de color nativo -- al elegir uno, se agrega directo con su código hex */}
-        <input type="color" defaultValue="#E31E24" title="Elige un color"
-          onChange={e => agregar(e.target.value.toUpperCase())}
-          style={{ width: 44, height: 42, borderRadius: 8, border: `1px solid ${GRAY2}`, padding: 3, cursor: "pointer", flexShrink: 0 }} />
+        {/* Cuadro de color nativo -- solo GUARDA el tono elegido, no lo agrega todavía */}
+        <input type="color" value={hexElegido || "#E31E24"} title="Elige un color"
+          onChange={e => setHexElegido(e.target.value.toUpperCase())}
+          style={{ width: 44, height: 42, borderRadius: 8, border: `2px solid ${hexElegido ? BLACK : GRAY2}`, padding: 3, cursor: "pointer", flexShrink: 0 }} />
         <input
           style={{ ...S.input, marginBottom: 0 }}
-          placeholder="O escribe un nombre o código (ej: Rojo, #FF0000)..."
+          placeholder="Nombre del color (ej: Rojo cereza)..."
           value={texto}
           onChange={e => setTexto(e.target.value)}
-          onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); agregar(texto); } }}
+          onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); agregar(); } }}
         />
-        <button type="button" onClick={() => agregar(texto)} className="oft-btn-press" style={{ background: BLACK, color: WHITE, border: "none", borderRadius: 8, padding: "0 16px", fontWeight: 800, fontSize: 18, cursor: "pointer", flexShrink: 0 }}>+</button>
+        <button type="button" onClick={agregar} className="oft-btn-press" style={{ background: BLACK, color: WHITE, border: "none", borderRadius: 8, padding: "0 16px", fontWeight: 800, fontSize: 18, cursor: "pointer", flexShrink: 0 }}>+</button>
       </div>
+      {hexElegido && (
+        <div style={{ fontSize: 11.5, color: GRAY3, marginBottom: 10, display: "flex", alignItems: "center", gap: 6 }}>
+          <span style={{ width: 12, height: 12, borderRadius: "50%", background: hexElegido, border: `1px solid ${GRAY2}` }} />
+          Color elegido: {hexElegido} — ponle un nombre (opcional) y dale a "+" para agregarlo
+        </div>
+      )}
       {colores.length > 0 && (
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
           {colores.map((c, idx) => (
             <span key={idx} className="oft-chip-pop" style={{ display: "inline-flex", alignItems: "center", gap: 7, background: WHITE, border: `1.5px solid ${GRAY2}`, borderRadius: 20, padding: "5px 8px 5px 8px", fontSize: 13, fontWeight: 700 }}>
               <span style={{ width: 18, height: 18, borderRadius: "50%", background: colorToHex(c), border: `1px solid ${GRAY2}`, flexShrink: 0 }} />
-              {c}
+              {nombreColorLimpio(c)}
               <button type="button" onClick={() => quitar(c)} style={{ background: GRAY2, border: "none", borderRadius: "50%", width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: BLACK }}>
                 <X size={11} />
               </button>
