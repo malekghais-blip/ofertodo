@@ -12,7 +12,7 @@ import {
   ArrowUpRight, ArrowDownRight, MousePointerClick, Target
 } from "lucide-react";
 import {
-  BLACK, CategoryIcon, ChipAdder, ClienteFormModal, CrearPedidoView,
+  BLACK, CategoryIcon, ChipAdder, ClienteFormModal, CrearPedidoView, SelectorColores,
   DistribucionEditor, GRAY, GRAY2, GRAY3, Logo,
   RED, RED_D, S, SUPABASE_URL, ShippingLabelModal, NOTAS_FRAGANCIA,
   Spinner, StatusBadge, WHITE, comprimirImagen, estadosDe,
@@ -4513,7 +4513,7 @@ function AdminView() {
                     </label>
                   </div>
                   {prodForm.tiene_colores && (
-                    <ChipAdder valor={prodForm.colores} onChange={v => setProdForm({...prodForm, colores: v})} placeholder="Ej: Rojo, Azul, Negro..." color={BLACK} />
+                    <SelectorColores valor={prodForm.colores} onChange={v => setProdForm({...prodForm, colores: v})} />
                   )}
 
                   {/* NOTAS DE FRAGANCIA (para perfumes) */}
@@ -4804,7 +4804,7 @@ function AdminView() {
                     <option value="0">Desactivar colores</option>
                   </select>
                   {bulkEdit.tiene_colores === "1" && (
-                    <ChipAdder valor={bulkEdit.colores} onChange={v => setBulkEdit({...bulkEdit, colores: v})} placeholder="Ej: Rojo, Azul, Negro..." color={BLACK} />
+                    <SelectorColores valor={bulkEdit.colores} onChange={v => setBulkEdit({...bulkEdit, colores: v})} />
                   )}
 
                   {/* DISTRIBUCIÓN POR DOCENA — se aplica igual a todos los seleccionados */}
