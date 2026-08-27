@@ -141,6 +141,33 @@ export const sb = {
     const r = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, { method: "POST", headers: this.authHeaders(), body: JSON.stringify({ email, password }) });
     return r.json();
   },
+  // Manda un correo con un link para restablecer la contraseña (el cliente la olvidó
+  // y no puede iniciar sesión). Supabase decide si el correo existe o no -- por
+  // seguridad, siempre responde "enviado" igual, para no revelar qué correos existen.
+  async recoverPassword(email) {
+    // redirect_to va como parámetro en la URL (no en el body) -- así el link del
+    // correo regresa al dominio desde el que se pidió, sin depender de que la
+    // configuración general de Supabase tenga el dominio correcto puesto.
+    const redirectTo = typeof window !== "undefined" ? encodeURIComponent(window.location.origin) : "";
+    await fetch(`${SUPABASE_URL}/auth/v1/recover${redirectTo ? `?redirect_to=${redirectTo}` : ""}`, {
+      method: "POST", headers: this.authHeaders(), body: JSON.stringify({ email }),
+    });
+    return true;
+  },
+  // Cambia la contraseña. Si viene "tokenRecuperacion" (del link del correo, cuando
+  // el cliente todavía no puede iniciar sesión normal), se usa ese; si no, se usa la
+  // sesión actual (cliente que ya inició sesión y solo quiere cambiarla desde Mi Cuenta).
+  async updatePassword(nuevaPassword, tokenRecuperacion) {
+    const token = tokenRecuperacion || this.session?.access_token;
+    if (!token) return { ok: false, error: "No hay sesión activa" };
+    const r = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+      method: "PUT",
+      headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ password: nuevaPassword }),
+    });
+    const data = await r.json();
+    return { ok: r.ok, data };
+  },
   // Inicia sesión con Google (OAuth). Redirige a Google y vuelve a la app.
   async signInWithGoogle() {
     // PKCE: generamos un verificador y su reto (challenge) para un login seguro
