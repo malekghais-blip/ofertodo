@@ -1665,8 +1665,12 @@ function LoginModal() {
 
   const handle = async () => {
     setLoading(true); setErr("");
+    // .trim() por si acaso -- al copiar y pegar el correo/contraseña de otro lado
+    // (notas, WhatsApp, etc.) es fácil que se cuele un espacio invisible al inicio
+    // o al final, y eso hace que no coincida con lo guardado aunque se vea igual.
+    const emailLimpio = email.trim(), passLimpio = pass.trim();
     try {
-      const res = await sb.signIn(email, pass);
+      const res = await sb.signIn(emailLimpio, passLimpio);
       // IMPORTANTE: nos fijamos en si realmente llegó un access_token, no en si "hay un campo error"
       // (Supabase puede devolver el error en formatos distintos según la versión — confiar solo en
       // detectar el error es justo lo que dejaba entrar a cualquiera con credenciales inválidas).
@@ -1676,7 +1680,7 @@ function LoginModal() {
       } else {
         // Activa la sesión (aunque sea parcial) para poder consultar el perfil y, si aplica, el 2do factor
         sb.setSession(res);
-        const users = await sb.get("usuarios", `?email=eq.${encodeURIComponent(email)}&limit=1`);
+        const users = await sb.get("usuarios", `?email=eq.${encodeURIComponent(emailLimpio)}&limit=1`);
         let factorVerificado = null;
         try {
           const factores = await sb.mfaListFactors();
@@ -1806,22 +1810,23 @@ function RegisterModal() {
   const [loading, setLoading] = useState(false), [err, setErr] = useState("");
 
   const handle = async () => {
-    if (!form.nombre || !form.email || !form.pass) { setErr("Por favor completa todos los campos."); return; }
-    if (form.pass.length < 6) { setErr("La contraseña debe tener al menos 6 caracteres."); return; }
-    if (form.pass !== form.pass2) { setErr("Las contraseñas no coinciden. Verifica que sean iguales."); return; }
+    const nombreLimpio = form.nombre.trim(), emailLimpio = form.email.trim(), passLimpio = form.pass.trim(), pass2Limpio = form.pass2.trim();
+    if (!nombreLimpio || !emailLimpio || !passLimpio) { setErr("Por favor completa todos los campos."); return; }
+    if (passLimpio.length < 6) { setErr("La contraseña debe tener al menos 6 caracteres."); return; }
+    if (passLimpio !== pass2Limpio) { setErr("Las contraseñas no coinciden. Verifica que sean iguales."); return; }
     setLoading(true); setErr("");
     try {
-      const auth = await sb.signUp(form.email, form.pass, { nombre: form.nombre });
+      const auth = await sb.signUp(emailLimpio, passLimpio, { nombre: nombreLimpio });
       if (auth.error || auth.error_description || auth.msg) {
         setErr(auth.error?.message || auth.error_description || auth.msg || "No se pudo crear la cuenta.");
       } else {
-        await sb.post("usuarios", { nombre: form.nombre, email: form.email, telefono: form.telefono, es_admin: false, origen_cuenta: "web" });
+        await sb.post("usuarios", { nombre: nombreLimpio, email: emailLimpio, telefono: form.telefono.trim(), es_admin: false, origen_cuenta: "web" });
         // Enviar email de bienvenida (sin bloquear el flujo si falla)
         try {
           fetch(SUPABASE_URL + "/functions/v1/bienvenida-cliente", {
             method: "POST",
             headers: { "Content-Type": "application/json", "Authorization": "Bearer " + SUPABASE_KEY },
-            body: JSON.stringify({ nombre: form.nombre, email: form.email }),
+            body: JSON.stringify({ nombre: nombreLimpio, email: emailLimpio }),
           });
         } catch(e) {}
         showToast("¡Cuenta creada! Revisa tu correo para confirmar y luego inicia sesión.");
@@ -1876,11 +1881,12 @@ function SeccionCambiarPassword() {
   const [loading, setLoading] = useState(false), [err, setErr] = useState("");
 
   const guardar = async () => {
-    if (pass.length < 6) { setErr("La contraseña debe tener al menos 6 caracteres."); return; }
-    if (pass !== pass2) { setErr("Las contraseñas no coinciden."); return; }
+    const passLimpio = pass.trim(), pass2Limpio = pass2.trim();
+    if (passLimpio.length < 6) { setErr("La contraseña debe tener al menos 6 caracteres."); return; }
+    if (passLimpio !== pass2Limpio) { setErr("Las contraseñas no coinciden."); return; }
     setLoading(true); setErr("");
     try {
-      const r = await sb.updatePassword(pass);
+      const r = await sb.updatePassword(passLimpio);
       if (!r.ok) { setErr(r.data?.msg || r.data?.error_description || "No se pudo cambiar la contraseña."); setLoading(false); return; }
       showToast("Contraseña actualizada");
       setPass(""); setPass2(""); setAbierto(false);
@@ -1926,11 +1932,12 @@ function ResetPasswordModal() {
   const [listo, setListo] = useState(false);
 
   const confirmar = async () => {
-    if (pass.length < 6) { setErr("La contraseña debe tener al menos 6 caracteres."); return; }
-    if (pass !== pass2) { setErr("Las contraseñas no coinciden."); return; }
+    const passLimpio = pass.trim(), pass2Limpio = pass2.trim();
+    if (passLimpio.length < 6) { setErr("La contraseña debe tener al menos 6 caracteres."); return; }
+    if (passLimpio !== pass2Limpio) { setErr("Las contraseñas no coinciden."); return; }
     setLoading(true); setErr("");
     try {
-      const r = await sb.updatePassword(pass, recuperacionToken);
+      const r = await sb.updatePassword(passLimpio, recuperacionToken);
       if (!r.ok) { setErr(r.data?.msg || r.data?.error_description || "No se pudo cambiar la contraseña. El link puede haber vencido -- pide uno nuevo."); setLoading(false); return; }
       setListo(true);
     } catch(e) { setErr("Error de conexión, intenta de nuevo."); }
