@@ -599,6 +599,91 @@ function EquipoFormModal({ onClose, onSaved, showToast }) {
   , document.body);
 }
 
+// Para cuando alguien YA tiene una cuenta de cliente y se le quiere dar acceso
+// al panel de admin, sin intentar crear una cuenta nueva con el mismo correo
+// (eso falla, porque el correo ya está en uso).
+function PromoverClienteModal({ onClose, onSaved, showToast, users }) {
+  useLockBodyScroll();
+  const [busqueda, setBusqueda] = useState("");
+  const [seleccionado, setSeleccionado] = useState(null);
+  const [rol, setRol] = useState("operador");
+  const [guardando, setGuardando] = useState(false);
+
+  const coincidencias = busqueda.trim().length >= 2
+    ? users.filter(u => !u.es_admin && (
+        (u.nombre || "").toLowerCase().includes(busqueda.toLowerCase()) ||
+        (u.email || "").toLowerCase().includes(busqueda.toLowerCase())
+      )).slice(0, 6)
+    : [];
+
+  const guardar = async () => {
+    if (!seleccionado) { showToast("Busca y elige una cuenta primero"); return; }
+    setGuardando(true);
+    try {
+      await sb.patch("usuarios", seleccionado.id, { es_admin: true, rol });
+      onSaved({ ...seleccionado, es_admin: true, rol });
+      showToast(`${seleccionado.nombre} ahora es ${rol === "admin" ? "Administrador" : "Operador"}`);
+      onClose();
+    } catch(e) {
+      showToast("Error: " + (e.message || "no se pudo actualizar"));
+    }
+    setGuardando(false);
+  };
+
+  return createPortal(
+    <div className="oft-overlay" style={S.overlay} onClick={() => !guardando && onClose()}>
+      <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 16, maxWidth: 440, width: "92%", padding: 24 }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+          <div style={{ fontWeight: 800, fontSize: 18, display: "flex", alignItems: "center", gap: 8 }}><Users size={18} color={RED} /> Promover cliente existente</div>
+          <button onClick={() => !guardando && onClose()} style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}><X size={22} /></button>
+        </div>
+        <p style={{ fontSize: 13, color: GRAY3, marginBottom: 16 }}>Para cuando alguien ya tiene cuenta de cliente y quieres darle acceso al panel, sin crear una cuenta nueva.</p>
+
+        {!seleccionado ? (
+          <>
+            <label style={S.label}>Busca por nombre o correo</label>
+            <input style={{ ...S.input, marginBottom: 0 }} placeholder="Escribe para buscar..." value={busqueda} onChange={e => setBusqueda(e.target.value)} autoFocus />
+            {coincidencias.length > 0 && (
+              <div style={{ border: `1px solid ${GRAY2}`, borderRadius: 10, marginTop: 8, marginBottom: 16, maxHeight: 220, overflowY: "auto" }}>
+                {coincidencias.map(u => (
+                  <div key={u.id} onClick={() => setSeleccionado(u)} className="oft-btn-press"
+                    style={{ padding: "10px 12px", cursor: "pointer", fontSize: 13, borderBottom: `1px solid ${GRAY}` }}>
+                    <div style={{ fontWeight: 700 }}>{u.nombre}</div>
+                    <div style={{ fontSize: 11, color: GRAY3 }}>{u.email}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {busqueda.trim().length >= 2 && coincidencias.length === 0 && (
+              <p style={{ fontSize: 12, color: GRAY3, marginTop: 8, marginBottom: 16 }}>No se encontró ninguna cuenta de cliente con eso (recuerda: solo busca entre quienes ya tienen cuenta creada).</p>
+            )}
+          </>
+        ) : (
+          <>
+            <div style={{ background: GRAY, borderRadius: 10, padding: 14, marginBottom: 16, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{seleccionado.nombre}</div>
+                <div style={{ fontSize: 12, color: GRAY3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{seleccionado.email}</div>
+              </div>
+              <button onClick={() => setSeleccionado(null)} style={{ background: "none", border: "none", color: RED, cursor: "pointer", fontSize: 12, fontWeight: 700, flexShrink: 0 }}>Cambiar</button>
+            </div>
+            <label style={S.label}>Función</label>
+            <select style={S.input} value={rol} onChange={e => setRol(e.target.value)}>
+              <option value="operador">Operador</option>
+              <option value="admin">Administrador</option>
+            </select>
+          </>
+        )}
+
+        <button onClick={guardar} disabled={guardando || !seleccionado} className="oft-btn-press" style={{ ...S.btnRed, width: "100%", justifyContent: "center", marginTop: 8, opacity: (guardando || !seleccionado) ? 0.6 : 1 }}>
+          {guardando ? "Guardando..." : "Agregar al equipo"}
+        </button>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
 // ═══════════════════════════════════════════════════════════════
 //  CREAR / EDITAR CLIENTE (reutilizable — desde la sección Clientes
 //  o directo desde el formulario de Nuevo Pedido/Cotización)
@@ -2082,6 +2167,7 @@ function AdminView() {
   const [proveedorExpandidoId, setProveedorExpandidoId] = useState(null); // qué proveedor tiene su análisis de stock abierto
   const [clienteForm, setClienteForm] = useState(null); // null | {} (crear) | {id,...} (editar)
   const [equipoForm, setEquipoForm] = useState(false); // true = mostrar modal de agregar miembro
+  const [promoverForm, setPromoverForm] = useState(false); // true = mostrar modal de promover cliente existente
   const [miembroAQuitar, setMiembroAQuitar] = useState(null); // usuario del equipo a quitar (confirmación)
   const [mfaModal, setMfaModal] = useState(false); // true = mostrar modal de verificación en dos pasos
   const [proveedorForm, setProveedorForm] = useState(null); // null | {} (crear) | {id,...} (editar)
@@ -4215,6 +4301,15 @@ function AdminView() {
           />
         )}
 
+        {promoverForm && (
+          <PromoverClienteModal
+            showToast={showToast}
+            users={users}
+            onClose={() => setPromoverForm(false)}
+            onSaved={(actualizado) => setUsers(prev => prev.map(u => u.id === actualizado.id ? actualizado : u))}
+          />
+        )}
+
         {/* CONFIRMAR QUITAR DEL EQUIPO */}
         {miembroAQuitar && createPortal(
           <div className="oft-overlay" style={S.overlay} onClick={() => setMiembroAQuitar(null)}>
@@ -6283,12 +6378,18 @@ function AdminView() {
           <>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12, marginBottom: 24 }}>
               <div style={{ fontSize: 22, fontWeight: 900, display: "flex", alignItems: "center", gap: 10 }}><Lock size={24} color={RED} /> Equipo</div>
-              <button onClick={() => setEquipoForm(true)} className="oft-btn-press" style={{ ...S.btnRed, padding: "10px 18px", fontSize: 14 }}>
-                <Plus size={16} /> Agregar al equipo
-              </button>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                <button onClick={() => setPromoverForm(true)} className="oft-btn-press" style={{ ...S.btnOutline, padding: "10px 18px", fontSize: 14 }}>
+                  <Users size={16} /> Promover cliente existente
+                </button>
+                <button onClick={() => setEquipoForm(true)} className="oft-btn-press" style={{ ...S.btnRed, padding: "10px 18px", fontSize: 14 }}>
+                  <Plus size={16} /> Agregar al equipo
+                </button>
+              </div>
             </div>
             <p style={{ fontSize: 13, color: GRAY3, marginBottom: 24, maxWidth: 560 }}>
               Los <strong>administradores</strong> tienen acceso al módulo completo. Los <strong>operadores</strong> solo ven Inicio, Pedidos, Crear pedido/cotización, Retornos, y Clientes (pueden crear clientes nuevos, pero no editarlos).
+              {" "}Si la persona ya tiene una cuenta de cliente, usa "Promover cliente existente" — "Agregar al equipo" es solo para crear una cuenta desde cero.
             </p>
             {loadingData ? <Spinner /> : (() => {
               const miembros = users.filter(u => u.es_admin);
