@@ -1651,6 +1651,17 @@ function LoginModal() {
   // Paso de verificación en dos pasos (solo aparece si la cuenta lo tiene activado)
   const [mfaPaso, setMfaPaso] = useState(null); // null | { factorId, res, users }
   const [mfaCodigo, setMfaCodigo] = useState("");
+  // "Olvidé mi contraseña" -- un modo aparte, más simple, solo pide el correo
+  const [modoRecuperar, setModoRecuperar] = useState(false);
+  const [recuperarEnviado, setRecuperarEnviado] = useState(false);
+
+  const enviarRecuperacion = async () => {
+    if (!email.trim()) { setErr("Escribe tu correo primero"); return; }
+    setLoading(true); setErr("");
+    try { await sb.recoverPassword(email.trim()); setRecuperarEnviado(true); }
+    catch(e) { setErr("No se pudo enviar el correo, intenta de nuevo"); }
+    setLoading(false);
+  };
 
   const handle = async () => {
     setLoading(true); setErr("");
@@ -1704,6 +1715,39 @@ function LoginModal() {
     setLoading(false);
   };
 
+  if (modoRecuperar) {
+    return (
+      <div className="oft-overlay" style={S.overlay} onClick={() => setShowLogin(false)}>
+        <div className="oft-modal-sheet oft-modal oft-auth-pop" style={S.modal} onClick={e => e.stopPropagation()}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}><Logo height={28} /><button onClick={() => setShowLogin(false)} style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}><X size={22} /></button></div>
+          {recuperarEnviado ? (
+            <>
+              <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 8 }}>Revisa tu correo</div>
+              <p style={{ fontSize: 13, color: GRAY3, marginBottom: 18 }}>Si <strong>{email}</strong> tiene una cuenta con nosotros, te llegó un link para crear una contraseña nueva. Puede tardar unos minutos, y revisa spam por si acaso.</p>
+              <button style={{ ...S.btnRed, width: "100%", justifyContent: "center", padding: 14, fontSize: 15 }} onClick={() => { setModoRecuperar(false); setRecuperarEnviado(false); }}>
+                Volver a iniciar sesión
+              </button>
+            </>
+          ) : (
+            <>
+              <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 8 }}>¿Olvidaste tu contraseña?</div>
+              <p style={{ fontSize: 13, color: GRAY3, marginBottom: 18 }}>Escribe tu correo y te mandamos un link para crear una nueva.</p>
+              <label style={S.label}>Correo electrónico</label>
+              <input style={S.input} type="email" placeholder="tu@email.com" value={email} onChange={e => setEmail(e.target.value)} onKeyDown={e => e.key === "Enter" && enviarRecuperacion()} autoFocus />
+              {err && <div style={{ color: RED, fontSize: 13, marginBottom: 12 }}>{err}</div>}
+              <button style={{ ...S.btnRed, width: "100%", justifyContent: "center", padding: 14, fontSize: 15, opacity: loading ? 0.7 : 1 }} onClick={enviarRecuperacion} disabled={loading}>
+                {loading ? "Enviando..." : "Enviar link de recuperación"}
+              </button>
+              <div style={{ textAlign: "center", marginTop: 16, fontSize: 13, color: GRAY3, cursor: "pointer" }} onClick={() => { setModoRecuperar(false); setErr(""); }}>
+                ← Volver a iniciar sesión
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   if (mfaPaso) {
     return (
       <div className="oft-overlay" style={S.overlay} onClick={() => setShowLogin(false)}>
@@ -1741,6 +1785,9 @@ function LoginModal() {
         <input style={S.input} type="email" placeholder="tu@email.com" value={email} onChange={e => setEmail(e.target.value)} />
         <label style={S.label}>Contraseña</label>
         <input style={S.input} type="password" placeholder="••••••••" value={pass} onChange={e => setPass(e.target.value)} onKeyDown={e => e.key === "Enter" && handle()} />
+        <div style={{ textAlign: "right", marginTop: -12, marginBottom: 16 }}>
+          <span style={{ fontSize: 12.5, color: GRAY3, cursor: "pointer" }} onClick={() => { setModoRecuperar(true); setErr(""); }}>¿Olvidaste tu contraseña?</span>
+        </div>
         {err && <div style={{ color: RED, fontSize: 13, marginBottom: 12 }}>{err}</div>}
         <button style={{ ...S.btnRed, width: "100%", justifyContent: "center", padding: 14, fontSize: 15, opacity: loading ? 0.7 : 1 }} onClick={handle} disabled={loading}>
           {loading ? "Verificando..." : "Iniciar sesión"}
@@ -1820,6 +1867,106 @@ function RegisterModal() {
 // ═══════════════════════════════════════════════════════════════
 //  2FA AL INICIAR SESIÓN CON GOOGLE (cuenta con verificación en dos pasos activada)
 // ═══════════════════════════════════════════════════════════════
+// Sección dentro de "Mi Cuenta" para cambiar la contraseña estando ya logueado
+// (distinto del flujo de "olvidé mi contraseña", que es para cuando NO se puede entrar)
+function SeccionCambiarPassword() {
+  const { showToast } = useApp();
+  const [abierto, setAbierto] = useState(false);
+  const [pass, setPass] = useState(""), [pass2, setPass2] = useState("");
+  const [loading, setLoading] = useState(false), [err, setErr] = useState("");
+
+  const guardar = async () => {
+    if (pass.length < 6) { setErr("La contraseña debe tener al menos 6 caracteres."); return; }
+    if (pass !== pass2) { setErr("Las contraseñas no coinciden."); return; }
+    setLoading(true); setErr("");
+    try {
+      const r = await sb.updatePassword(pass);
+      if (!r.ok) { setErr(r.data?.msg || r.data?.error_description || "No se pudo cambiar la contraseña."); setLoading(false); return; }
+      showToast("Contraseña actualizada");
+      setPass(""); setPass2(""); setAbierto(false);
+    } catch(e) { setErr("Error de conexión, intenta de nuevo."); }
+    setLoading(false);
+  };
+
+  return (
+    <div style={{ background: WHITE, borderRadius: 14, padding: 20, border: `1px solid ${GRAY2}`, marginBottom: 32 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: abierto ? 16 : 0 }}>
+        <div style={{ fontWeight: 800, fontSize: 16, display: "flex", alignItems: "center", gap: 8 }}><Lock size={17} color={RED} /> Contraseña</div>
+        {!abierto && (
+          <button onClick={() => setAbierto(true)} className="oft-btn-press" style={{ background: "none", border: `1.5px solid ${BLACK}`, color: BLACK, borderRadius: 8, padding: "6px 12px", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 5 }}>
+            <PencilIcon size={14} /> Cambiar
+          </button>
+        )}
+      </div>
+      {abierto && (
+        <div>
+          <label style={S.label}>Nueva contraseña</label>
+          <input style={S.input} type="password" placeholder="••••••••" value={pass} onChange={e => setPass(e.target.value)} />
+          <label style={S.label}>Confirma la contraseña</label>
+          <input style={S.input} type="password" placeholder="••••••••" value={pass2} onChange={e => setPass2(e.target.value)} onKeyDown={e => e.key === "Enter" && guardar()} />
+          {err && <div style={{ color: RED, fontSize: 13, marginBottom: 12 }}>{err}</div>}
+          <div style={{ display: "flex", gap: 10, marginTop: 6 }}>
+            <button onClick={guardar} disabled={loading} className="oft-btn-press" style={{ ...S.btnRed, justifyContent: "center", opacity: loading ? 0.7 : 1 }}>
+              {loading ? "Guardando..." : "Guardar contraseña"}
+            </button>
+            <button onClick={() => { setAbierto(false); setErr(""); setPass(""); setPass2(""); }} className="oft-btn-press" style={S.btnOutline}>Cancelar</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Pantalla para poner una contraseña nueva, después de darle clic al link que
+// llega por correo al pedir "olvidé mi contraseña"
+function ResetPasswordModal() {
+  const { recuperacionToken, setRecuperacionToken, showToast } = useApp();
+  const [pass, setPass] = useState(""), [pass2, setPass2] = useState("");
+  const [loading, setLoading] = useState(false), [err, setErr] = useState("");
+  const [listo, setListo] = useState(false);
+
+  const confirmar = async () => {
+    if (pass.length < 6) { setErr("La contraseña debe tener al menos 6 caracteres."); return; }
+    if (pass !== pass2) { setErr("Las contraseñas no coinciden."); return; }
+    setLoading(true); setErr("");
+    try {
+      const r = await sb.updatePassword(pass, recuperacionToken);
+      if (!r.ok) { setErr(r.data?.msg || r.data?.error_description || "No se pudo cambiar la contraseña. El link puede haber vencido -- pide uno nuevo."); setLoading(false); return; }
+      setListo(true);
+    } catch(e) { setErr("Error de conexión, intenta de nuevo."); }
+    setLoading(false);
+  };
+
+  return (
+    <div className="oft-overlay" style={S.overlay}>
+      <div className="oft-modal-sheet oft-modal oft-auth-pop" style={S.modal} onClick={e => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "center", marginBottom: 24 }}><Logo height={28} /></div>
+        {listo ? (
+          <>
+            <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 8, textAlign: "center" }}>¡Contraseña actualizada!</div>
+            <p style={{ fontSize: 13, color: GRAY3, marginBottom: 18, textAlign: "center" }}>Ya puedes iniciar sesión con tu nueva contraseña.</p>
+            <button style={{ ...S.btnRed, width: "100%", justifyContent: "center", padding: 14, fontSize: 15 }} onClick={() => setRecuperacionToken(null)}>
+              Entendido
+            </button>
+          </>
+        ) : (
+          <>
+            <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 8 }}>Crea tu nueva contraseña</div>
+            <label style={S.label}>Nueva contraseña</label>
+            <input style={S.input} type="password" placeholder="••••••••" value={pass} onChange={e => setPass(e.target.value)} />
+            <label style={S.label}>Confirma la contraseña</label>
+            <input style={S.input} type="password" placeholder="••••••••" value={pass2} onChange={e => setPass2(e.target.value)} onKeyDown={e => e.key === "Enter" && confirmar()} />
+            {err && <div style={{ color: RED, fontSize: 13, marginBottom: 12 }}>{err}</div>}
+            <button style={{ ...S.btnRed, width: "100%", justifyContent: "center", padding: 14, fontSize: 15, opacity: loading ? 0.7 : 1 }} onClick={confirmar} disabled={loading}>
+              {loading ? "Guardando..." : "Guardar contraseña"}
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function GoogleMfaModal() {
   const { googleMfaPaso, setGoogleMfaPaso, setUser, showToast } = useApp();
   const [codigo, setCodigo] = useState("");
@@ -2821,6 +2968,9 @@ function DashboardView() {
         )}
       </div>
 
+      {/* CAMBIAR CONTRASEÑA */}
+      <SeccionCambiarPassword />
+
       {/* COMPRAR OTRA VEZ */}
       {comprarOtraVez.length > 0 && (
         <div style={{ marginBottom: 32 }}>
@@ -3156,6 +3306,7 @@ export default function App() {
   const [catalogCat, setCatalogCat] = useState(0); // categoría a abrir en el catálogo (0 = todas)
   const [completeProfile, setCompleteProfile] = useState(null); // usuario de Google que debe completar sus datos
   const [googleMfaPaso, setGoogleMfaPaso] = useState(null); // pide el código 2FA cuando el login fue con Google
+  const [recuperacionToken, setRecuperacionToken] = useState(null); // token del link de "olvidé mi contraseña", mientras el cliente escribe la nueva
   const [pendingCheckout, setPendingCheckout] = useState(false); // el cliente quería pagar y tuvo que loguearse
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -3202,6 +3353,18 @@ export default function App() {
     const procesarRetornoGoogle = async () => {
       const hash = window.location.hash || "";
       const query = window.location.search || "";
+
+      // Link de "olvidé mi contraseña" -- también trae #access_token, pero con
+      // type=recovery. Hay que distinguirlo ANTES de que se trate como login de
+      // Google, o entraría a la cuenta directo sin dejar poner la contraseña nueva.
+      if (hash.includes("type=recovery") && hash.includes("access_token")) {
+        const hashParams = new URLSearchParams(hash.substring(1));
+        const tokenRecuperacion = hashParams.get("access_token");
+        window.history.replaceState(null, "", window.location.origin + window.location.pathname);
+        if (tokenRecuperacion) setRecuperacionToken(tokenRecuperacion);
+        return;
+      }
+
       let token = null, refreshToken = null, expiresIn = null;
 
       // ¿Hubo un error devuelto por Google/Supabase?
@@ -3424,7 +3587,7 @@ export default function App() {
   }, []);
 
   const isAdmin = view === "admin";
-  const ctx = { view, setView, cart, setCart, addToCart, cartPulse, user, setUser, showLogin, setShowLogin, showRegister, setShowRegister, showCart, setShowCart, quickView, setQuickView, pagoResultado, setPagoResultado, catalogCat, setCatalogCat, completeProfile, setCompleteProfile, googleMfaPaso, setGoogleMfaPaso, pendingCheckout, setPendingCheckout, products, setProducts, categories, setCategories, gruposCategorias, setGruposCategorias, banners, setBanners, popups, setPopups, empresas, setEmpresas, sucursales, setSucursales, localesRetiro, setLocalesRetiro, retiroLocalHabilitado, setRetiroLocalHabilitado, loading, showToast };
+  const ctx = { view, setView, cart, setCart, addToCart, cartPulse, user, setUser, showLogin, setShowLogin, showRegister, setShowRegister, showCart, setShowCart, quickView, setQuickView, pagoResultado, setPagoResultado, catalogCat, setCatalogCat, completeProfile, setCompleteProfile, googleMfaPaso, setGoogleMfaPaso, recuperacionToken, setRecuperacionToken, pendingCheckout, setPendingCheckout, products, setProducts, categories, setCategories, gruposCategorias, setGruposCategorias, banners, setBanners, popups, setPopups, empresas, setEmpresas, sucursales, setSucursales, localesRetiro, setLocalesRetiro, retiroLocalHabilitado, setRetiroLocalHabilitado, loading, showToast };
 
   return (
     <AppCtx.Provider value={ctx}>
@@ -3691,6 +3854,7 @@ export default function App() {
         {showRegister && <RegisterModal />}
         {completeProfile && <CompleteProfileModal />}
         {googleMfaPaso && <GoogleMfaModal />}
+        {recuperacionToken && <ResetPasswordModal />}
         {quickView && <ProductModal />}
         {!isAdmin && <PopupPromocional />}
         {!isAdmin && <FloatingCart />}
