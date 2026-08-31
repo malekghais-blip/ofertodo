@@ -19,6 +19,19 @@ import {
   imagenOptimizada, resolverAreaVenta, sb, useApp, useLockBodyScroll,
 } from "./shared.jsx";
 
+// "YYYY-MM-DD" según la hora de PANAMÁ (America/Panama, UTC-5), sin importar la
+// zona horaria del navegador o servidor. Se usa en vez de .toISOString().slice(0,10)
+// -- ese método siempre da la fecha en UTC, así que cerca de la noche en Panamá
+// (después de las 7pm aprox.) UTC ya cambió al día siguiente mientras aquí
+// todavía es "hoy" -- eso hacía que el filtro de "Hoy" en Analítica y Reportes
+// mostrara datos del día equivocado justo esas horas.
+function fechaPanama(fecha = new Date()) {
+  const partes = new Intl.DateTimeFormat("en-US", { timeZone: "America/Panama", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(fecha);
+  const obj = {};
+  partes.forEach(p => { obj[p.type] = p.value; });
+  return `${obj.year}-${obj.month}-${obj.day}`;
+}
+
 // ═══════════════════════════════════════════════════════════════
 //  PANEL DE ADMINISTRADOR — separado en su propio archivo para que
 //  los clientes normales nunca tengan que descargar este código
@@ -1085,7 +1098,7 @@ function WidgetGrande({ titulo, valor, valorAnterior, color, datos, icono: Icono
 // Selector de rango de fechas, mismo estilo visual del Dashboard (Día/Semana/Mes/Año/Todo + personalizado)
 function SelectorRangoAnalytics({ rangoTipo, setRangoTipo, rangoInicioP, setRangoInicioP, rangoFinP, setRangoFinP }) {
   const [mostrarPersonalizado, setMostrarPersonalizado] = useState(false);
-  const hoyISO = new Date().toISOString().slice(0, 10);
+  const hoyISO = fechaPanama();
   return (
     <div style={{ marginBottom: 20 }}>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
@@ -1174,11 +1187,11 @@ function AnalyticsPanel() {
   // Convierte el tipo de rango elegido (o las fechas personalizadas) en fechas concretas
   const calcularRango = (tipo) => {
     const hoyD = new Date();
-    const hastaS = hoyD.toISOString().slice(0, 10);
+    const hastaS = fechaPanama(hoyD);
     if (tipo === "dia") return [hastaS, hastaS];
-    if (tipo === "semana") { const d = new Date(hoyD); d.setDate(d.getDate() - 6); return [d.toISOString().slice(0, 10), hastaS]; }
-    if (tipo === "mes") { const d = new Date(hoyD.getFullYear(), hoyD.getMonth(), 1); return [d.toISOString().slice(0, 10), hastaS]; }
-    if (tipo === "anio") { const d = new Date(hoyD.getFullYear(), 0, 1); return [d.toISOString().slice(0, 10), hastaS]; }
+    if (tipo === "semana") { const d = new Date(hoyD); d.setDate(d.getDate() - 6); return [fechaPanama(d), hastaS]; }
+    if (tipo === "mes") { const d = new Date(hoyD.getFullYear(), hoyD.getMonth(), 1); return [fechaPanama(d), hastaS]; }
+    if (tipo === "anio") { const d = new Date(hoyD.getFullYear(), 0, 1); return [fechaPanama(d), hastaS]; }
     if (tipo === "todo") return ["2020-01-01", hastaS];
     if (tipo === "personalizado") return [rangoInicioP || hastaS, rangoFinP || hastaS];
     return [hastaS, hastaS];
@@ -1194,7 +1207,7 @@ function AnalyticsPanel() {
     const duracionMs = hastaD - desdeD;
     const hastaAntD = new Date(desdeD.getTime() - diaMs);
     const desdeAntD = new Date(hastaAntD.getTime() - duracionMs);
-    return [desdeAntD.toISOString().slice(0, 10), hastaAntD.toISOString().slice(0, 10)];
+    return [fechaPanama(desdeAntD), fechaPanama(hastaAntD)];
   };
   const [desdeAnt, hastaAnt] = calcularRangoAnterior();
 
@@ -1827,11 +1840,11 @@ function AnalisisAdsPanel() {
 
   const calcularRango = (tipo) => {
     const hoyD = new Date();
-    const hastaS = hoyD.toISOString().slice(0, 10);
+    const hastaS = fechaPanama(hoyD);
     if (tipo === "dia") return [hastaS, hastaS];
-    if (tipo === "semana") { const d = new Date(hoyD); d.setDate(d.getDate() - 6); return [d.toISOString().slice(0, 10), hastaS]; }
-    if (tipo === "mes") { const d = new Date(hoyD.getFullYear(), hoyD.getMonth(), 1); return [d.toISOString().slice(0, 10), hastaS]; }
-    if (tipo === "anio") { const d = new Date(hoyD.getFullYear(), 0, 1); return [d.toISOString().slice(0, 10), hastaS]; }
+    if (tipo === "semana") { const d = new Date(hoyD); d.setDate(d.getDate() - 6); return [fechaPanama(d), hastaS]; }
+    if (tipo === "mes") { const d = new Date(hoyD.getFullYear(), hoyD.getMonth(), 1); return [fechaPanama(d), hastaS]; }
+    if (tipo === "anio") { const d = new Date(hoyD.getFullYear(), 0, 1); return [fechaPanama(d), hastaS]; }
     if (tipo === "todo") return ["2020-01-01", hastaS];
     if (tipo === "personalizado") return [rangoInicioP || hastaS, rangoFinP || hastaS];
     return [hastaS, hastaS];
@@ -2174,8 +2187,8 @@ function AdminView() {
   const [localForm, setLocalForm] = useState(null); // null | {} (crear) | {id,...} (editar) — local de retiro
   const [localAEliminar, setLocalAEliminar] = useState(null); // local de retiro a eliminar (confirmación)
   // Reporte de ventas por rango de fechas
-  const [reporteDesde, setReporteDesde] = useState(() => { const d = new Date(); d.setDate(d.getDate() - 30); return d.toISOString().slice(0, 10); });
-  const [reporteHasta, setReporteHasta] = useState(() => new Date().toISOString().slice(0, 10));
+  const [reporteDesde, setReporteDesde] = useState(() => { const d = new Date(); d.setDate(d.getDate() - 30); return fechaPanama(d); });
+  const [reporteHasta, setReporteHasta] = useState(() => fechaPanama());
   const [reporteFilas, setReporteFilas] = useState(null); // null = todavía no generado
   const [reporteBusy, setReporteBusy] = useState(false);
   const [reportePorOperador, setReportePorOperador] = useState(null); // null = todavía no generado
@@ -6000,7 +6013,7 @@ function AdminView() {
                 </div>
                 <div>
                   <label style={S.label}>Hasta</label>
-                  <input type="date" style={S.input} value={reporteHasta} onChange={e => setReporteHasta(e.target.value)} min={reporteDesde} max={new Date().toISOString().slice(0, 10)} />
+                  <input type="date" style={S.input} value={reporteHasta} onChange={e => setReporteHasta(e.target.value)} min={reporteDesde} max={fechaPanama()} />
                 </div>
                 <button onClick={generarReporteVentas} className="oft-btn-press" style={{ ...S.btnRed, padding: "10px 20px", height: 44 }}>
                   <FileSpreadsheet size={16} /> Generar reporte
