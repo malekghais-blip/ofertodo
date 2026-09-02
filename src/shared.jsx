@@ -655,6 +655,12 @@ export function resolverAreaVenta(pedido) {
   if (pedido.sucursal_nombre && pedido.sucursal_nombre.trim()) {
     return pedido.sucursal_nombre.trim();
   }
+  // Retiro en el propio local -- esto no es "sin dirección", es un destino conocido,
+  // solo que no es una sucursal de una empresa de envío. Antes de este arreglo, estos
+  // pedidos caían incorrectamente en "Sin dirección" aunque sí tenían destino.
+  if (pedido.retiro_local) {
+    return (pedido.local_retiro_nombre && pedido.local_retiro_nombre.trim()) || "Retiro en local";
+  }
   const texto = `${pedido.direccion || ""}`.toLowerCase();
   if (!texto.trim()) return "Sin dirección";
   for (const zona of PANAMA_ZONAS) {
