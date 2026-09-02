@@ -615,6 +615,26 @@ function EquipoFormModal({ onClose, onSaved, showToast }) {
 // Para cuando alguien YA tiene una cuenta de cliente y se le quiere dar acceso
 // al panel de admin, sin intentar crear una cuenta nueva con el mismo correo
 // (eso falla, porque el correo ya está en uso).
+// Campo chico y opcional para anotar quién va a recoger un pedido de retiro en
+// local -- útil cuando no es la misma persona que hizo la compra. Se guarda al
+// salir del campo (onBlur), no hace falta un botón aparte.
+function CampoQuienRecoge({ order, onGuardar }) {
+  const [valor, setValor] = useState(order.retiro_nombre_autorizado || "");
+  return (
+    <div style={{ marginTop: 6 }}>
+      <label style={{ fontSize: 10.5, fontWeight: 700, color: "#856404", display: "block", marginBottom: 3 }}>¿Quién lo recoge? (opcional)</label>
+      <input
+        value={valor}
+        onChange={e => setValor(e.target.value)}
+        onBlur={() => { if (valor.trim() !== (order.retiro_nombre_autorizado || "")) onGuardar(order.id, valor.trim()); }}
+        placeholder="Nombre de la persona autorizada..."
+        style={{ width: "100%", padding: "7px 9px", borderRadius: 7, border: "1.5px solid #F5D68E", fontSize: 12.5, fontFamily: "inherit", background: WHITE }}
+      />
+    </div>
+  );
+}
+
+
 function PromoverClienteModal({ onClose, onSaved, showToast, users }) {
   useLockBodyScroll();
   const [busqueda, setBusqueda] = useState("");
@@ -2491,6 +2511,15 @@ function AdminView() {
     } catch(e) { alert("Error al actualizar estado"); }
   };
 
+  // Guarda (opcionalmente) quién está autorizado a recoger un pedido de retiro en local
+  const handleGuardarQuienRecoge = async (orderId, nombre) => {
+    try {
+      await sb.patch("pedidos", orderId, { retiro_nombre_autorizado: nombre || null });
+      setOrders(prev => prev.map(o => o.id === orderId ? { ...o, retiro_nombre_autorizado: nombre || null } : o));
+      showToast("Guardado");
+    } catch(e) { showToast("No se pudo guardar: " + e.message); }
+  };
+
   // ── CONVERTIR COTIZACIÓN EN PEDIDO ─────────────────────────────
   const convertirAPedido = async (cot) => {
     const ok = confirm(`¿Convertir la cotización ${cot.codigo} en un pedido real?\n\nSe registrará como venta de HOY y aparecerá en Pedidos.`);
@@ -4121,8 +4150,11 @@ function AdminView() {
 
                     {/* Envío o Retiro en el local */}
                     {o.retiro_local ? (
-                      <div style={{ fontSize: 12, color: "#856404", background: "#FFF3CD", borderRadius: 8, padding: "8px 10px", marginBottom: 12, display: "flex", alignItems: "center", gap: 6, fontWeight: 700 }}>
-                        <Home size={14} /> Retiro en el local
+                      <div style={{ fontSize: 12, color: "#856404", background: "#FFF3CD", borderRadius: 8, padding: "8px 10px", marginBottom: 12 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 700 }}>
+                          <Home size={14} /> Retiro en el local
+                        </div>
+                        <CampoQuienRecoge order={o} onGuardar={handleGuardarQuienRecoge} />
                       </div>
                     ) : o.empresa_envio_nombre && (
                       <div style={{ fontSize: 12, color: GRAY3, background: GRAY, borderRadius: 8, padding: "8px 10px", marginBottom: 12, display: "flex", alignItems: "center", gap: 6 }}>
