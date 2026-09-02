@@ -1211,7 +1211,15 @@ function AnalyticsPanel() {
   };
   const [desdeAnt, hastaAnt] = calcularRangoAnterior();
 
+  // Protege contra respuestas que llegan "fuera de orden" -- si el usuario cambia
+  // de filtro rápido (ej. Hoy -> Semana -> Mes), varias peticiones quedan en el
+  // aire a la vez. Como "Hoy" trae mucho menos datos, puede responder MÁS RÁPIDO
+  // que "Semana" o "Mes" aunque se haya pedido antes -- y sin este control, esa
+  // respuesta vieja pero más rápida terminaba pisando a la más nueva pero más
+  // lenta, dejando pegados los números de "Hoy" sin importar qué se eligiera.
+  const idPeticionRef = useRef(0);
   const cargarDatos = async () => {
+    const miId = ++idPeticionRef.current;
     setCargando(true);
     try {
       const desdeISO = `${desde}T00:00:00`, hastaISO = `${hasta}T23:59:59`;
@@ -1248,15 +1256,20 @@ function AnalyticsPanel() {
         sb.get("usuarios", `?created_at=gte.${desdeAntISO}&created_at=lte.${hastaAntISO}&origen_cuenta=eq.web`),
         sb.get("usuarios", `?created_at=gte.${desdeAntISO}&created_at=lte.${hastaAntISO}&origen_cuenta=eq.admin_manual`),
       ]);
+      // Si mientras esperábamos ya se disparó una petición más nueva (otro clic de
+      // filtro), esta respuesta quedó vieja -- se descarta en silencio, sin tocar
+      // el estado, para no pisar los datos correctos que ya está por mostrar la otra.
+      if (miId !== idPeticionRef.current) return;
       setEventos(evts || []); setUsuariosNuevos(usrs || []); setClientesManuales(manuales || []); setPedidosPres(pedItems || []);
       setCotizaciones(cotizacionesData || []); setEquipoNombres(equipo || []);
       setEventosAnterior(evtsAnt || []); setUsuariosAnterior(usrsAnt || []); setManualesAnterior(manualesAnt || []);
     } catch(e) {
+      if (miId !== idPeticionRef.current) return;
       console.warn("Error cargando analítica:", e.message);
       setEventos([]); setUsuariosNuevos([]); setClientesManuales([]); setPedidosPres([]); setCotizaciones([]); setEquipoNombres([]);
       setEventosAnterior([]); setUsuariosAnterior([]); setManualesAnterior([]);
     }
-    setCargando(false);
+    if (miId === idPeticionRef.current) setCargando(false);
   };
 
   useEffect(() => { cargarDatos(); }, [desde, hasta]);
