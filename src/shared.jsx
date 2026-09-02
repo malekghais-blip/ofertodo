@@ -117,7 +117,16 @@ export const sb = {
     let desde = 0, todas = [], total = Infinity;
     while (desde < total && todas.length < maxFilas) {
       const r = await fetch(this.url(table, query), {
-        headers: { ...this.dataHeaders(), Range: `${desde}-${desde + TAMANO_BLOQUE - 1}` },
+        headers: {
+          ...this.dataHeaders(),
+          Range: `${desde}-${desde + TAMANO_BLOQUE - 1}`,
+          // "count=exact" es indispensable -- sin esto, Supabase regresa el total
+          // como "*" (desconocido) en vez del número real, y sin saber cuántas
+          // filas hay en total, no hay forma de saber cuándo parar de pedir más
+          // páginas -- se quedaba cortando después del primer bloque de 1000, el
+          // mismo problema de siempre, con un arreglo que nunca llegaba a aplicarse.
+          Prefer: "count=exact",
+        },
       });
       if (!r.ok) throw new Error(await r.text());
       const bloque = await r.json();
