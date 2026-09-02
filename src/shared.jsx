@@ -1865,15 +1865,23 @@ export function ShippingLabelModal({ order, onClose }) {
               </div>
             </div>
 
-            {/* EMPRESA DE ENVÍO — lo más importante, bien grande */}
-            <div style={{ background: RED, color: WHITE, borderRadius: 10, padding: "14px 18px", marginBottom: 12 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, opacity: 0.85, letterSpacing: 1 }}>ENVIAR POR</div>
-              <div style={{ fontSize: 24, fontWeight: 900, lineHeight: 1.1, marginTop: 2 }}>{order.empresa_envio_nombre || "— Sin empresa asignada —"}</div>
-              {order.sucursal_nombre && <div style={{ fontSize: 15, fontWeight: 700, marginTop: 4 }}>📍 Sucursal: {order.sucursal_nombre}</div>}
-            </div>
+            {/* EMPRESA DE ENVÍO, o RETIRO EN EL LOCAL — lo más importante, bien grande */}
+            {order.retiro_local ? (
+              <div style={{ background: "#856404", color: WHITE, borderRadius: 10, padding: "14px 18px", marginBottom: 12 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, opacity: 0.85, letterSpacing: 1 }}>ENTREGA</div>
+                <div style={{ fontSize: 24, fontWeight: 900, lineHeight: 1.1, marginTop: 2 }}>🏠 Retiro en el local</div>
+                {order.retiro_nombre_autorizado && <div style={{ fontSize: 15, fontWeight: 700, marginTop: 4 }}>👤 Autorizado a recoger: {order.retiro_nombre_autorizado}</div>}
+              </div>
+            ) : (
+              <div style={{ background: RED, color: WHITE, borderRadius: 10, padding: "14px 18px", marginBottom: 12 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, opacity: 0.85, letterSpacing: 1 }}>ENVIAR POR</div>
+                <div style={{ fontSize: 24, fontWeight: 900, lineHeight: 1.1, marginTop: 2 }}>{order.empresa_envio_nombre || "— Sin empresa asignada —"}</div>
+                {order.sucursal_nombre && <div style={{ fontSize: 15, fontWeight: 700, marginTop: 4 }}>📍 Sucursal: {order.sucursal_nombre}</div>}
+              </div>
+            )}
 
-            {/* ESTADO DEL PAGO DEL ENVÍO */}
-            {(() => {
+            {/* ESTADO DEL PAGO DEL ENVÍO -- no aplica en retiro en el local, ahí nunca hay costo de envío que cobrar */}
+            {!order.retiro_local && (() => {
               const envioPagado = Number(order.costo_envio || 0) > 0;
               return (
                 <div style={{ display: "flex", alignItems: "center", gap: 10, borderRadius: 10, padding: "12px 16px", marginBottom: 16, border: `2px solid ${envioPagado ? "#155724" : "#856404"}`, background: envioPagado ? "#E6F4EA" : "#FFF8E1" }}>
