@@ -106,6 +106,30 @@ export const sb = {
     if (!r.ok) throw new Error(await r.text());
     return r.json();
   },
+  // Como sb.get(), pero trae TODAS las filas que hagan falta, sin importar cuántas
+  // sean -- Supabase nunca regresa más de 1000 filas por petición aunque se le pida
+  // "limit=8000" en la URL (lo ignora en silencio), así que para tablas grandes
+  // (como eventos_analytics) hay que pedir por bloques de 1000 hasta completar el
+  // total real. "query" no debe traer su propio &limit=, este método pone el suyo.
+  async getTodo(table, query = "", maxFilas = 20000) {
+    await this.ensureFreshToken();
+    const TAMANO_BLOQUE = 1000;
+    let desde = 0, todas = [], total = Infinity;
+    while (desde < total && todas.length < maxFilas) {
+      const r = await fetch(this.url(table, query), {
+        headers: { ...this.dataHeaders(), Range: `${desde}-${desde + TAMANO_BLOQUE - 1}` },
+      });
+      if (!r.ok) throw new Error(await r.text());
+      const bloque = await r.json();
+      todas = todas.concat(bloque);
+      const contentRange = r.headers.get("content-range"); // ej. "0-999/3456"
+      const totalReportado = contentRange ? Number(contentRange.split("/")[1]) : NaN;
+      total = isNaN(totalReportado) ? todas.length : totalReportado; // si no viene el header, se corta aquí
+      desde += TAMANO_BLOQUE;
+      if (bloque.length < TAMANO_BLOQUE) break; // último bloque, ya no hay más
+    }
+    return todas;
+  },
   async post(table, body) {
     await this.ensureFreshToken();
     const r = await fetch(this.url(table), { method: "POST", headers: this.dataHeaders(), body: JSON.stringify(body) });
