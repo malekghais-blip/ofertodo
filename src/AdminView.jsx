@@ -1233,7 +1233,7 @@ function AnalyticsPanel() {
       const FECHA_INICIO_SEGUIMIENTO_COTIZACIONES = "2026-08-15T17:50:01";
       const desdeCotizacionesISO = desdeISO > FECHA_INICIO_SEGUIMIENTO_COTIZACIONES ? desdeISO : FECHA_INICIO_SEGUIMIENTO_COTIZACIONES;
       const [evts, usrs, manuales, pedItems, cotizacionesData, equipo, evtsAnt, usrsAnt, manualesAnt] = await Promise.all([
-        sb.get("eventos_analytics", `?created_at=gte.${desdeISO}&created_at=lte.${hastaISO}&order=created_at.desc&limit=8000`),
+        sb.getTodo("eventos_analytics", `?created_at=gte.${desdeISO}&created_at=lte.${hastaISO}&order=created_at.desc`),
         // Solo cuentas con origen_cuenta='web' -- el cliente se registró solo en la
         // página (o con Google). Excluye las que TÚ creas al hacer un pedido manual,
         // y las que se generan solas al pagar como invitado.
@@ -1252,7 +1252,7 @@ function AnalyticsPanel() {
         // Cuentas del equipo (admin/operadores), para poder mostrar el nombre de cada uno
         sb.get("usuarios", `?or=(rol.not.is.null,es_admin.eq.true)&select=id,nombre`),
         // Mismo trío, pero del periodo anterior -- para calcular el % de cambio
-        sb.get("eventos_analytics", `?created_at=gte.${desdeAntISO}&created_at=lte.${hastaAntISO}&limit=8000`),
+        sb.getTodo("eventos_analytics", `?created_at=gte.${desdeAntISO}&created_at=lte.${hastaAntISO}`),
         sb.get("usuarios", `?created_at=gte.${desdeAntISO}&created_at=lte.${hastaAntISO}&origen_cuenta=eq.web`),
         sb.get("usuarios", `?created_at=gte.${desdeAntISO}&created_at=lte.${hastaAntISO}&origen_cuenta=eq.admin_manual`),
       ]);
@@ -1869,7 +1869,7 @@ function AnalisisAdsPanel() {
     try {
       const [camps, diarios, asigs] = await Promise.all([
         sb.get("meta_campanas", "?order=gasto_total.desc"),
-        sb.get("meta_campanas_diario", "?order=fecha.asc&limit=5000"),
+        sb.getTodo("meta_campanas_diario", "?order=fecha.asc"),
         sb.get("meta_campana_productos", "?select=id,campana_id,producto_id,productos(id,nombre,referencia,precio_pieza)"),
       ]);
       setCampanas(camps || []);
