@@ -1025,6 +1025,30 @@ function BarraTop({ etiqueta, valor, maximo, color, delay = 0 }) {
   );
 }
 
+// Modal para ver la lista completa (sin el límite de 8) de cualquiera de las
+// listas de Analítica Web -- misma barra animada, solo que con scroll y todos
+// los resultados, uno apareciendo tras otro.
+function ListaCompletaModal({ titulo, Icono, color, datos, maximo, onClose }) {
+  useLockBodyScroll();
+  return createPortal(
+    <div className="oft-overlay" style={S.overlay} onClick={onClose}>
+      <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 16, maxWidth: 480, width: "92%", maxHeight: "78vh", display: "flex", flexDirection: "column", padding: 0, overflow: "hidden" }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "18px 22px", borderBottom: `1px solid ${GRAY2}`, flexShrink: 0 }}>
+          <div style={{ fontWeight: 800, fontSize: 16, display: "flex", alignItems: "center", gap: 8 }}><Icono size={18} color={color} /> {titulo}</div>
+          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}><X size={22} /></button>
+        </div>
+        <div style={{ padding: "18px 22px", overflowY: "auto", flex: 1 }}>
+          {datos.map(([nombre, valor], i) => (
+            <BarraTop key={nombre} etiqueta={nombre} valor={valor} maximo={maximo} color={color} delay={Math.min(i * 0.025, 0.6)} />
+          ))}
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+
 // Gráfico de línea con área rellena y tooltip interactivo al pasar el mouse/dedo
 function GraficoLineal({ datos, color }) {
   const [hoverIdx, setHoverIdx] = useState(null);
@@ -1195,6 +1219,7 @@ function AnalyticsPanel() {
   const [manualesAnterior, setManualesAnterior] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [enVivo, setEnVivo] = useState(0);
+  const [listaCompletaModal, setListaCompletaModal] = useState(null); // null | { titulo, Icono, color, datos, maximo }
   const [comisionPorcentaje, setComisionPorcentaje] = useState(1); // % que se le paga a cada operador por venta
 
   // Se carga aparte -- es una configuración general, no depende del rango de fechas elegido
@@ -1322,18 +1347,22 @@ function AnalyticsPanel() {
   const visitantesSinCuentaAnt = [...new Set(eventosAnterior.map(e => e.visitante_id))].filter(v => !visitantesConUsuarioAnt.has(v)).length;
   const clientesQueAgregaronAnt = new Set(eventosAnterior.filter(e => e.tipo === "agregar_carrito").map(e => e.visitante_id)).size;
 
-  const topPor = (tipo, n = 8) => {
+  const topPor = (tipo) => {
     const mapa = {};
     eventos.filter(e => e.tipo === tipo).forEach(e => {
       const clave = e.valor_nombre || "(sin nombre)";
       mapa[clave] = (mapa[clave] || 0) + 1;
     });
-    return Object.entries(mapa).sort((a, b) => b[1] - a[1]).slice(0, n);
+    return Object.entries(mapa).sort((a, b) => b[1] - a[1]); // sin límite -- se recorta donde se muestra
   };
-  const topCategorias = topPor("click_categoria");
-  const topProductos = topPor("click_producto");
-  const topBusquedas = topPor("busqueda");
-  const topCarrito = topPor("agregar_carrito");
+  const topCategoriasFull = topPor("click_categoria");
+  const topProductosFull = topPor("click_producto");
+  const topBusquedasFull = topPor("busqueda");
+  const topCarritoFull = topPor("agregar_carrito");
+  const topCategorias = topCategoriasFull.slice(0, 8);
+  const topProductos = topProductosFull.slice(0, 8);
+  const topBusquedas = topBusquedasFull.slice(0, 8);
+  const topCarrito = topCarritoFull.slice(0, 8);
   const maxCat = Math.max(1, ...topCategorias.map(([, v]) => v));
   const maxProd = Math.max(1, ...topProductos.map(([, v]) => v));
   const maxBusq = Math.max(1, ...topBusquedas.map(([, v]) => v));
@@ -1376,7 +1405,8 @@ function AnalyticsPanel() {
   const montoVentasManual = ventasManual.reduce((s, p) => s + (Number(p.total) || 0), 0);
 
   // "Consultas por WhatsApp" -- de dónde vienen (producto, carrito, inicio, etc.)
-  const topWhatsapp = topPor("consulta_whatsapp");
+  const topWhatsappFull = topPor("consulta_whatsapp");
+  const topWhatsapp = topWhatsappFull.slice(0, 8);
   const maxWhatsapp = Math.max(1, ...topWhatsapp.map(([, v]) => v));
   const totalWhatsapp = eventos.filter(e => e.tipo === "consulta_whatsapp").length;
   const totalWhatsappAnt = eventosAnterior.filter(e => e.tipo === "consulta_whatsapp").length;
@@ -1510,18 +1540,38 @@ function AnalyticsPanel() {
             <div style={{ background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 14, padding: 20 }}>
               <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}><LayoutGrid size={17} color={RED} /> Categorías más vistas</div>
               {topCategorias.length === 0 ? <p style={{ color: GRAY3, fontSize: 13 }}>Sin datos en este rango.</p> : topCategorias.map(([nombre, valor], i) => <BarraTop key={nombre} etiqueta={nombre} valor={valor} maximo={maxCat} color={RED} delay={i * 0.04} />)}
+              {topCategoriasFull.length > 8 && (
+                <button onClick={() => setListaCompletaModal({ titulo: "Categorías más vistas", Icono: LayoutGrid, color: RED, datos: topCategoriasFull, maximo: maxCat })} className="oft-btn-press" style={{ marginTop: 4, background: "none", border: "none", color: RED, fontWeight: 800, fontSize: 12, cursor: "pointer", padding: 0, textDecoration: "underline" }}>
+                  Ver todas ({topCategoriasFull.length}) →
+                </button>
+              )}
             </div>
             <div style={{ background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 14, padding: 20 }}>
               <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}><Tag size={17} color="#856404" /> Productos más vistos</div>
               {topProductos.length === 0 ? <p style={{ color: GRAY3, fontSize: 13 }}>Sin datos en este rango.</p> : topProductos.map(([nombre, valor], i) => <BarraTop key={nombre} etiqueta={nombre} valor={valor} maximo={maxProd} color="#856404" delay={i * 0.04} />)}
+              {topProductosFull.length > 8 && (
+                <button onClick={() => setListaCompletaModal({ titulo: "Productos más vistos", Icono: Tag, color: "#856404", datos: topProductosFull, maximo: maxProd })} className="oft-btn-press" style={{ marginTop: 4, background: "none", border: "none", color: "#856404", fontWeight: 800, fontSize: 12, cursor: "pointer", padding: 0, textDecoration: "underline" }}>
+                  Ver todos ({topProductosFull.length}) →
+                </button>
+              )}
             </div>
             <div style={{ background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 14, padding: 20 }}>
               <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}><Search size={17} color="#0F6E56" /> Búsquedas más frecuentes</div>
               {topBusquedas.length === 0 ? <p style={{ color: GRAY3, fontSize: 13 }}>Sin datos en este rango.</p> : topBusquedas.map(([nombre, valor], i) => <BarraTop key={nombre} etiqueta={nombre} valor={valor} maximo={maxBusq} color="#0F6E56" delay={i * 0.04} />)}
+              {topBusquedasFull.length > 8 && (
+                <button onClick={() => setListaCompletaModal({ titulo: "Búsquedas más frecuentes", Icono: Search, color: "#0F6E56", datos: topBusquedasFull, maximo: maxBusq })} className="oft-btn-press" style={{ marginTop: 4, background: "none", border: "none", color: "#0F6E56", fontWeight: 800, fontSize: 12, cursor: "pointer", padding: 0, textDecoration: "underline" }}>
+                  Ver todas ({topBusquedasFull.length}) →
+                </button>
+              )}
             </div>
             <div style={{ background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 14, padding: 20 }}>
               <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}><ShoppingCart size={17} color="#1D4ED8" /> Más agregados al carrito</div>
               {topCarrito.length === 0 ? <p style={{ color: GRAY3, fontSize: 13 }}>Sin datos en este rango.</p> : topCarrito.map(([nombre, valor], i) => <BarraTop key={nombre} etiqueta={nombre} valor={valor} maximo={maxCarr} color="#1D4ED8" delay={i * 0.04} />)}
+              {topCarritoFull.length > 8 && (
+                <button onClick={() => setListaCompletaModal({ titulo: "Más agregados al carrito", Icono: ShoppingCart, color: "#1D4ED8", datos: topCarritoFull, maximo: maxCarr })} className="oft-btn-press" style={{ marginTop: 4, background: "none", border: "none", color: "#1D4ED8", fontWeight: 800, fontSize: 12, cursor: "pointer", padding: 0, textDecoration: "underline" }}>
+                  Ver todos ({topCarritoFull.length}) →
+                </button>
+              )}
             </div>
             <div style={{ background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 14, padding: 20 }}>
               <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}><Package size={17} color="#B45309" /> Cómo compran (pieza / media / docena / flexpack)</div>
@@ -1530,8 +1580,24 @@ function AnalyticsPanel() {
             <div style={{ background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 14, padding: 20 }}>
               <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}><MessageCircle size={17} color="#25D366" /> Consultas por WhatsApp — de dónde vienen</div>
               {topWhatsapp.length === 0 ? <p style={{ color: GRAY3, fontSize: 13 }}>Sin datos en este rango.</p> : topWhatsapp.map(([nombre, valor], i) => <BarraTop key={nombre} etiqueta={nombre} valor={valor} maximo={maxWhatsapp} color="#25D366" delay={i * 0.04} />)}
+              {topWhatsappFull.length > 8 && (
+                <button onClick={() => setListaCompletaModal({ titulo: "Consultas por WhatsApp", Icono: MessageCircle, color: "#25D366", datos: topWhatsappFull, maximo: maxWhatsapp })} className="oft-btn-press" style={{ marginTop: 4, background: "none", border: "none", color: "#25D366", fontWeight: 800, fontSize: 12, cursor: "pointer", padding: 0, textDecoration: "underline" }}>
+                  Ver todas ({topWhatsappFull.length}) →
+                </button>
+              )}
             </div>
           </div>
+
+          {listaCompletaModal && (
+            <ListaCompletaModal
+              titulo={listaCompletaModal.titulo}
+              Icono={listaCompletaModal.Icono}
+              color={listaCompletaModal.color}
+              datos={listaCompletaModal.datos}
+              maximo={listaCompletaModal.maximo}
+              onClose={() => setListaCompletaModal(null)}
+            />
+          )}
 
           {/* ANÁLISIS POR OPERADOR / VENDEDOR */}
           <div style={{ background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 14, padding: 20, marginTop: 18 }}>
