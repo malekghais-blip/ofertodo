@@ -1357,7 +1357,10 @@ function AnalyticsPanel() {
   };
   const topCategoriasFull = topPor("click_categoria");
   const topProductosFull = topPor("click_producto");
-  const topBusquedasFull = topPor("busqueda");
+  // Solo texto -- se descartan las búsquedas que son referencias/SKU con números
+  // (ej. "60650", "TH-1049"), porque no aportan nada útil para saber qué palabras
+  // busca la gente; esas quedan igual registradas, solo no se muestran aquí.
+  const topBusquedasFull = topPor("busqueda").filter(([nombre]) => !/\d/.test(nombre));
   const topCarritoFull = topPor("agregar_carrito");
   const topCategorias = topCategoriasFull.slice(0, 8);
   const topProductos = topProductosFull.slice(0, 8);
