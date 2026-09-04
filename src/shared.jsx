@@ -266,6 +266,11 @@ export const sb = {
   uploadUrl(bucket, path) { return `${SUPABASE_URL}/storage/v1/object/${bucket}/${path}`; },
   publicUrl(bucket, path) { return `${SUPABASE_URL}/storage/v1/object/public/${bucket}/${path}`; },
   async upload(bucket, path, file) {
+    // Faltaba esto -- a diferencia de get/post/patch, upload() nunca revisaba si la
+    // sesión ya había vencido antes de mandar la petición. Si el token expiró (ej.
+    // llevas un rato con el panel abierto), Supabase rechaza la subida con "exp
+    // claim timestamp check failed" -- por eso las imágenes no se subían.
+    await this.ensureFreshToken();
     const r = await fetch(this.uploadUrl(bucket, path), {
       method: "POST",
       headers: {
