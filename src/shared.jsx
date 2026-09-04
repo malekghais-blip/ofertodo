@@ -597,6 +597,12 @@ export function comprimirImagen(file, maxDimension = 1400, calidad = 0.82, forza
     if (!file.type || !file.type.startsWith("image/") || (esSvg && !forzarRaster) || file.type === "image/gif") {
       resolve(file); return;
     }
+    // Si el original es PNG, se mantiene como PNG -- un PNG casi siempre tiene fondo
+    // transparente a propósito (íconos, logos), y convertir a JPG (que no soporta
+    // transparencia) hace que esas zonas se rellenen de negro al aplanar la imagen.
+    const mantenerTransparencia = file.type === "image/png";
+    const formatoSalida = mantenerTransparencia ? "image/png" : "image/jpeg";
+    const extensionSalida = mantenerTransparencia ? ".png" : ".jpg";
     const reader = new FileReader();
     reader.onload = (e) => {
       const img = new Image();
@@ -612,9 +618,9 @@ export function comprimirImagen(file, maxDimension = 1400, calidad = 0.82, forza
         ctx.drawImage(img, 0, 0, width, height);
         canvas.toBlob((blob) => {
           if (!blob || blob.size >= file.size) { resolve(file); return; } // si no mejora, sube la original
-          const nombreFinal = file.name.replace(/\.\w+$/, "") + ".jpg";
-          resolve(new File([blob], nombreFinal, { type: "image/jpeg" }));
-        }, "image/jpeg", calidad);
+          const nombreFinal = file.name.replace(/\.\w+$/, "") + extensionSalida;
+          resolve(new File([blob], nombreFinal, { type: formatoSalida }));
+        }, formatoSalida, mantenerTransparencia ? undefined : calidad); // PNG no usa "calidad" (no es compresión con pérdida)
       };
       img.onerror = () => resolve(file);
       img.src = e.target.result;
