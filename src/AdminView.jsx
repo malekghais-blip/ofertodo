@@ -1357,10 +1357,46 @@ function AnalyticsPanel() {
   };
   const topCategoriasFull = topPor("click_categoria");
   const topProductosFull = topPor("click_producto");
+  // Distancia de edición (Levenshtein) -- cuántos cambios (agregar, quitar o cambiar
+  // una letra) hacen falta para convertir un texto en otro. Sirve para detectar
+  // errores de dedo y variantes de singular/plural sin tener que enumerarlas a mano.
+  const distanciaEdicion = (a, b) => {
+    const m = a.length, n = b.length;
+    const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+    for (let i = 0; i <= m; i++) dp[i][0] = i;
+    for (let j = 0; j <= n; j++) dp[0][j] = j;
+    for (let i = 1; i <= m; i++) {
+      for (let j = 1; j <= n; j++) {
+        dp[i][j] = a[i - 1] === b[j - 1]
+          ? dp[i - 1][j - 1]
+          : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+      }
+    }
+    return dp[m][n];
+  };
+
+  // Junta búsquedas parecidas (errores de dedo, singular/plural) bajo una sola
+  // entrada -- ej. "ropa de muje" y "ropa de mujer" cuentan como la misma. Se
+  // queda con el nombre de la variante MÁS buscada como el que se muestra, y
+  // suma los conteos de todas las variantes que se le parezcan.
+  const unificarSimilares = (lista) => {
+    const ordenada = [...lista].sort((a, b) => b[1] - a[1]); // la más buscada primero, para que "gane" el nombre
+    const grupos = [];
+    for (const [nombre, valor] of ordenada) {
+      const grupo = grupos.find(g => {
+        const umbral = Math.max(1, Math.floor(Math.max(nombre.length, g.nombre.length) * 0.22));
+        return distanciaEdicion(nombre, g.nombre) <= umbral;
+      });
+      if (grupo) grupo.valor += valor;
+      else grupos.push({ nombre, valor });
+    }
+    return grupos.map(g => [g.nombre, g.valor]).sort((a, b) => b[1] - a[1]);
+  };
+
   // Solo texto -- se descartan las búsquedas que son referencias/SKU con números
   // (ej. "60650", "TH-1049"), porque no aportan nada útil para saber qué palabras
   // busca la gente; esas quedan igual registradas, solo no se muestran aquí.
-  const topBusquedasFull = topPor("busqueda").filter(([nombre]) => !/\d/.test(nombre));
+  const topBusquedasFull = unificarSimilares(topPor("busqueda").filter(([nombre]) => !/\d/.test(nombre)));
   const topCarritoFull = topPor("agregar_carrito");
   const topCategorias = topCategoriasFull.slice(0, 8);
   const topProductos = topProductosFull.slice(0, 8);
