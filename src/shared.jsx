@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useContext, createContext } from "react";
+import { useState, useEffect, useRef, useContext, createContext, Fragment } from "react";
 import { createPortal } from "react-dom";
 import {
   ShoppingCart, Search, Trash2, MessageCircle, X, Package, CheckCircle2,
@@ -833,6 +833,14 @@ export function CrearPedidoView() {
       return { ...pack, lineas: pack.lineas.map(l => l.product.id === prodId ? { ...l, precioOverride: precio } : l) };
     }));
   };
+  // Talla/color de esta referencia dentro del FlexPack -- para que en la guía se vea
+  // exactamente qué variante va empacada de cada producto, no solo el nombre genérico.
+  const updateFlexLineVariante = (packId, prodId, campo, val) => {
+    setFlexPacks(prev => prev.map(pack => {
+      if (pack.id !== packId) return pack;
+      return { ...pack, lineas: pack.lineas.map(l => l.product.id === prodId ? { ...l, [campo]: val } : l) };
+    }));
+  };
 
   const subtotalNormal = items.reduce((s, it) => s + itemTotal(it), 0);
   const subtotalFlex = flexPacks.reduce((s, pack) => s + flexTotal(pack), 0);
@@ -858,7 +866,8 @@ export function CrearPedidoView() {
     setItems(prev => prev.map((it, i) => {
       if (i !== idx) return it;
       // Si cambia la presentación, se borra el precio editado (era para la otra presentación)
-      if (field === "pres") return { ...it, pres: val, precioOverride: undefined };
+      // y la distribución personalizada (el total objetivo -12, 6, o ninguno- cambió)
+      if (field === "pres") return { ...it, pres: val, precioOverride: undefined, distribucionPersonalizada: null };
       if (field === "count") {
         // Ajusta el arreglo de variantes (talla/color por pieza) al nuevo tamaño
         const nuevoCount = Math.max(1, val);
@@ -906,6 +915,19 @@ export function CrearPedidoView() {
       const asignadas = variantes.filter(v => (!requiereTalla || v.talla) && (!requiereColor || v.color)).length;
       if (asignadas < it.count) {
         alert(`"${it.product.nombre}" tiene ${asignadas} de ${it.count} piezas con talla/color asignados. Completa todas las piezas antes de generar el pedido.`);
+        return;
+      }
+    }
+    // Validar que la distribución personalizada (docena/media docena) sume exacto, si se activó
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      if ((it.pres !== "docena" && it.pres !== "media") || !it.distribucionPersonalizada) continue;
+      const eje = it.product.distribucion_eje || (it.product.tiene_tallas ? "talla" : "color");
+      const variantesDisponibles = (eje === "talla" ? it.product.tallas : it.product.colores || "").split(",").map(s => s.trim()).filter(Boolean);
+      const totalObjetivo = (it.pres === "docena" ? 12 : 6) * it.count;
+      const totalActual = variantesDisponibles.reduce((s, v) => s + (Number(it.distribucionPersonalizada[v]) || 0), 0);
+      if (totalActual !== totalObjetivo) {
+        alert(`La distribución personalizada de "${it.product.nombre}" suma ${totalActual}, pero debe sumar exactamente ${totalObjetivo}. Ajústala antes de generar el pedido.`);
         return;
       }
     }
@@ -967,10 +989,14 @@ export function CrearPedidoView() {
             });
           }
         } else {
+          const eje = it.product.distribucion_eje || (it.product.tiene_tallas ? "talla" : "color");
+          const variantesDisponibles = (eje === "talla" ? it.product.tallas : it.product.colores || "").split(",").map(s => s.trim()).filter(Boolean);
+          const distribucionValida = it.distribucionPersonalizada && variantesDisponibles.some(v => Number(it.distribucionPersonalizada[v]) > 0);
           await sb.post("pedido_items", {
             pedido_id: pedidoId, producto_id: it.product.id, nombre_producto: it.product.nombre,
             cantidad: presToPiezas(it.pres, it.count), precio_unitario: itemUnitPrice(it),
             subtotal: itemTotal(it), presentacion: it.pres,
+            distribucion_tallas: distribucionValida ? JSON.stringify({ eje, cantidades: it.distribucionPersonalizada }) : null,
           });
         }
       }
@@ -978,8 +1004,10 @@ export function CrearPedidoView() {
       for (const pack of flexPacks) {
         const etiqueta = pack.modo === "media" ? "FLEXPACK ½ doc" : "FLEXPACK docena";
         for (const l of pack.lineas) {
+          const variante = [l.talla ? `Talla: ${l.talla}` : null, l.color ? `Color: ${l.color}` : null].filter(Boolean).join(" · ");
+          const nombreConVariante = variante ? `${l.product.nombre} (${variante}) (${etiqueta})` : `${l.product.nombre} (${etiqueta})`;
           await sb.post("pedido_items", {
-            pedido_id: pedidoId, producto_id: l.product.id, nombre_producto: `${l.product.nombre} (${etiqueta})`,
+            pedido_id: pedidoId, producto_id: l.product.id, nombre_producto: nombreConVariante,
             cantidad: l.piezas, precio_unitario: flexLineUnitPrice(l, pack.modo),
             subtotal: flexLineUnitPrice(l, pack.modo) * l.piezas,
             presentacion: pack.modo === "media" ? "flexpack_media" : "flexpack_docena",
@@ -1019,13 +1047,16 @@ export function CrearPedidoView() {
             subtotal: itemTotal(it),
           }];
         }),
-        ...flexPacks.flatMap(pack => pack.lineas.map(l => ({
-          nombre: l.product.nombre, referencia: l.product.referencia,
-          presentacion: pack.modo === "media" ? "FLEXPACK ½ doc" : "FLEXPACK docena",
-          piezas: l.piezas,
-          precioUnit: flexLineUnitPrice(l, pack.modo),
-          subtotal: flexLineUnitPrice(l, pack.modo) * l.piezas,
-        }))),
+        ...flexPacks.flatMap(pack => pack.lineas.map(l => {
+          const variante = [l.talla ? `Talla: ${l.talla}` : null, l.color ? `Color: ${l.color}` : null].filter(Boolean).join(" · ");
+          return {
+            nombre: variante ? `${l.product.nombre} (${variante})` : l.product.nombre, referencia: l.product.referencia,
+            presentacion: pack.modo === "media" ? "FLEXPACK ½ doc" : "FLEXPACK docena",
+            piezas: l.piezas,
+            precioUnit: flexLineUnitPrice(l, pack.modo),
+            subtotal: flexLineUnitPrice(l, pack.modo) * l.piezas,
+          };
+        })),
       ];
 
       if (tipo !== "cotizacion") {
@@ -1232,6 +1263,62 @@ export function CrearPedidoView() {
                       </div>
                     );
                   })()}
+
+                  {/* DISTRIBUCIÓN DE TALLA/COLOR PERSONALIZADA — solo para Docena/Media Docena
+                      con tallas o colores. Por defecto usa la distribución predeterminada del
+                      producto; si el cliente se lleva una mezcla distinta según lo que hay en
+                      stock, se puede personalizar aquí para que salga correcta en la guía. */}
+                  {(it.pres === "docena" || it.pres === "media") && (it.product.tiene_tallas || it.product.tiene_colores) && (() => {
+                    const eje = it.product.distribucion_eje || (it.product.tiene_tallas ? "talla" : "color");
+                    const variantesDisponibles = (eje === "talla" ? it.product.tallas : it.product.colores || "").split(",").map(s => s.trim()).filter(Boolean);
+                    if (variantesDisponibles.length === 0) return null;
+                    const totalObjetivo = (it.pres === "docena" ? 12 : 6) * it.count;
+                    const personalizado = !!it.distribucionPersonalizada;
+                    const dist = it.distribucionPersonalizada || {};
+                    const totalActual = variantesDisponibles.reduce((s, v) => s + (Number(dist[v]) || 0), 0);
+
+                    const setQty = (v, qty) => {
+                      const n = Math.max(0, Number(qty.replace(/[^0-9]/g, "")) || 0);
+                      updateItem(idx, "distribucionPersonalizada", { ...dist, [v]: n });
+                    };
+
+                    return (
+                      <div style={{ marginTop: 8, background: GRAY, borderRadius: 8, padding: 10 }}>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8, flexWrap: "wrap", gap: 6 }}>
+                          <span style={{ fontSize: 12, fontWeight: 800 }}>Distribución de {eje === "talla" ? "tallas" : "colores"}</span>
+                          <div style={{ display: "flex", gap: 4 }}>
+                            <button type="button" onClick={() => updateItem(idx, "distribucionPersonalizada", null)}
+                              style={{ fontSize: 11, fontWeight: 700, padding: "4px 9px", borderRadius: 7, border: `1.5px solid ${!personalizado ? RED : GRAY2}`, background: !personalizado ? RED : WHITE, color: !personalizado ? WHITE : GRAY3, cursor: "pointer" }}>
+                              Predeterminada
+                            </button>
+                            <button type="button" onClick={() => updateItem(idx, "distribucionPersonalizada", Object.fromEntries(variantesDisponibles.map(v => [v, 0])))}
+                              style={{ fontSize: 11, fontWeight: 700, padding: "4px 9px", borderRadius: 7, border: `1.5px solid ${personalizado ? RED : GRAY2}`, background: personalizado ? RED : WHITE, color: personalizado ? WHITE : GRAY3, cursor: "pointer" }}>
+                              Personalizar
+                            </button>
+                          </div>
+                        </div>
+                        {!personalizado ? (
+                          <p style={{ fontSize: 11, color: GRAY3, margin: 0 }}>Se usará la distribución predeterminada del producto — se verá en la guía tal como está configurada en el catálogo.</p>
+                        ) : (
+                          <>
+                            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
+                              {variantesDisponibles.map(v => (
+                                <div key={v} style={{ display: "flex", alignItems: "center", gap: 5, background: WHITE, border: `1.5px solid ${GRAY2}`, borderRadius: 8, padding: "5px 8px" }}>
+                                  <span style={{ fontSize: 12, fontWeight: 700 }}>{v}</span>
+                                  <input type="number" min="0" inputMode="numeric" value={dist[v] || ""} placeholder="0"
+                                    onChange={e => setQty(v, e.target.value)}
+                                    style={{ width: 36, border: "none", borderBottom: `2px solid ${GRAY2}`, textAlign: "center", fontWeight: 800, fontSize: 13, outline: "none" }} />
+                                </div>
+                              ))}
+                            </div>
+                            <div style={{ fontSize: 11, fontWeight: 700, color: totalActual === totalObjetivo ? "#1FA64A" : RED }}>
+                              Total: {totalActual} / {totalObjetivo} {totalActual === totalObjetivo ? "✓ Completo" : totalActual < totalObjetivo ? `— faltan ${totalObjetivo - totalActual}` : `— sobran ${totalActual - totalObjetivo}`}
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
                 );
               })}
@@ -1316,6 +1403,44 @@ export function CrearPedidoView() {
                             </button>
                           )}
                         </div>
+                        {/* TALLA / COLOR DE ESTA REFERENCIA DENTRO DEL PACK */}
+                        {(l.product.tiene_tallas || l.product.tiene_colores) && (() => {
+                          const tallasDisp = (l.product.tallas || "").split(",").map(s => s.trim()).filter(Boolean);
+                          const coloresDisp = (l.product.colores || "").split(",").map(s => s.trim()).filter(Boolean);
+                          return (
+                            <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px dashed ${GRAY2}` }}>
+                              {l.product.tiene_tallas && tallasDisp.length > 0 && (
+                                <div style={{ marginBottom: coloresDisp.length > 0 ? 6 : 0 }}>
+                                  <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                                    {tallasDisp.map(t => {
+                                      const active = l.talla === t;
+                                      return (
+                                        <button key={t} type="button" onClick={() => updateFlexLineVariante(pack.id, l.product.id, "talla", active ? "" : t)}
+                                          style={{ minWidth: 28, padding: "3px 7px", borderRadius: 5, border: `2px solid ${active ? RED : GRAY2}`, background: active ? RED : WHITE, color: active ? WHITE : BLACK, fontWeight: 800, fontSize: 10, cursor: "pointer" }}>
+                                          {t}
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              )}
+                              {l.product.tiene_colores && coloresDisp.length > 0 && (
+                                <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                                  {coloresDisp.map(c => {
+                                    const active = l.color === c;
+                                    return (
+                                      <button key={c} type="button" onClick={() => updateFlexLineVariante(pack.id, l.product.id, "color", active ? "" : c)}
+                                        style={{ display: "inline-flex", alignItems: "center", gap: 3, padding: "2px 7px 2px 4px", borderRadius: 14, border: `2px solid ${active ? RED : GRAY2}`, background: active ? "#FFF5F5" : WHITE, cursor: "pointer" }}>
+                                        <span style={{ width: 11, height: 11, borderRadius: "50%", background: colorToHex(c), border: `1px solid ${GRAY2}` }} />
+                                        <span style={{ fontSize: 10, fontWeight: 700, color: active ? RED : BLACK }}>{c}</span>
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </div>
                       );
                     })}
@@ -1945,15 +2070,33 @@ export function ShippingLabelModal({ order, onClose }) {
               <tbody>
                 {(order.items || []).map((it, i) => {
                   const prod = products.find(p => p.id === it.producto_id);
+                  const dist = (() => { try { return it.distribucion_tallas ? JSON.parse(it.distribucion_tallas) : null; } catch { return null; } })();
                   return (
-                    <tr key={i} style={{ borderBottom: `1px solid ${GRAY2}` }}>
-                      <td style={{ textAlign: "center", padding: "10px 6px" }}>
-                        <span style={{ display: "inline-block", width: 18, height: 18, border: `2px solid ${BLACK}`, borderRadius: 4 }} />
-                      </td>
-                      <td style={{ padding: "10px", fontSize: 13, fontWeight: 700 }}>{it.nombre_producto}</td>
-                      <td style={{ padding: "10px 6px", fontSize: 13, fontWeight: 700, color: GRAY3 }}>{prod?.referencia || "—"}</td>
-                      <td style={{ textAlign: "center", padding: "10px 6px", fontSize: 15, fontWeight: 900 }}>{it.cantidad}</td>
-                    </tr>
+                    <Fragment key={i}>
+                      <tr style={{ borderBottom: dist ? "none" : `1px solid ${GRAY2}` }}>
+                        <td style={{ textAlign: "center", padding: "10px 6px" }}>
+                          <span style={{ display: "inline-block", width: 18, height: 18, border: `2px solid ${BLACK}`, borderRadius: 4 }} />
+                        </td>
+                        <td style={{ padding: "10px", fontSize: 13, fontWeight: 700 }}>{it.nombre_producto}</td>
+                        <td style={{ padding: "10px 6px", fontSize: 13, fontWeight: 700, color: GRAY3 }}>{prod?.referencia || "—"}</td>
+                        <td style={{ textAlign: "center", padding: "10px 6px", fontSize: 15, fontWeight: 900 }}>{it.cantidad}</td>
+                      </tr>
+                      {dist && (
+                        <tr style={{ borderBottom: `1px solid ${GRAY2}` }}>
+                          <td></td>
+                          <td colSpan={3} style={{ padding: "0 10px 10px" }}>
+                            <div style={{ background: "#FFF3CD", border: "1px solid #F5D68E", borderRadius: 8, padding: "8px 10px", display: "flex", flexWrap: "wrap", gap: 8 }}>
+                              <span style={{ fontSize: 10.5, fontWeight: 800, color: "#856404", letterSpacing: 0.3 }}>
+                                DISTRIBUCIÓN DE {dist.eje === "color" ? "COLOR" : "TALLA"}:
+                              </span>
+                              {Object.entries(dist.cantidades || {}).filter(([, q]) => Number(q) > 0).map(([v, q]) => (
+                                <span key={v} style={{ fontSize: 12.5, fontWeight: 800, background: WHITE, borderRadius: 6, padding: "2px 8px", border: "1px solid #F5D68E" }}>{q}× {v}</span>
+                              ))}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
                   );
                 })}
               </tbody>
