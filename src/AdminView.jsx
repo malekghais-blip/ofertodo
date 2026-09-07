@@ -721,7 +721,7 @@ function PromoverClienteModal({ onClose, onSaved, showToast, users }) {
 //  CREAR / EDITAR CLIENTE (reutilizable — desde la sección Clientes
 //  o directo desde el formulario de Nuevo Pedido/Cotización)
 // ═══════════════════════════════════════════════════════════════
-function StockRankingModal({ tipo, items, onClose }) {
+function StockRankingModal({ tipo, items, itemsSinFiltroNiLimite, proveedores, proveedorIdInicial, onClose }) {
   useLockBodyScroll();
   const money = (n) => "$" + Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const config = {
@@ -731,18 +731,61 @@ function StockRankingModal({ tipo, items, onClose }) {
     zona: { title: "Ventas por zona", accent: RED },
   }[tipo];
 
+  // Solo para "reponer": selector de proveedor DENTRO del modal (independiente del
+  // filtro con el que se haya abierto), para poder cambiar de proveedor sin cerrar
+  // y volver a abrir, y descargar la lista completa (no solo los primeros 50).
+  const esReponer = tipo === "reponer";
+  const [proveedorFiltroModal, setProveedorFiltroModal] = useState(proveedorIdInicial || "todos");
+  const listaReponerFiltrada = esReponer
+    ? (proveedorFiltroModal === "todos" ? itemsSinFiltroNiLimite : itemsSinFiltroNiLimite.filter(f => f.prod?.proveedor_id === Number(proveedorFiltroModal)))
+    : [];
+  const itemsAMostrar = esReponer ? listaReponerFiltrada.slice(0, 50) : items;
+
+  const descargarCSV = () => {
+    const filas = [
+      ["Referencia", "Producto", "Proveedor", "Stock actual", "Días para reponer", "Cantidad sugerida a comprar"],
+      ...listaReponerFiltrada.map(f => {
+        const nombreProveedor = proveedores.find(p => p.id === f.prod?.proveedor_id)?.nombre || "Sin proveedor";
+        return [f.prod?.referencia || "", f.prod?.nombre || "", nombreProveedor, f.stockActual ?? "", f.diasParaReponer, f.sugerenciaCompra];
+      }),
+    ];
+    const csv = filas.map(fila => fila.map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
+    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const sufijoProveedor = proveedorFiltroModal === "todos" ? "todos_los_proveedores" : (proveedores.find(p => p.id === Number(proveedorFiltroModal))?.nombre || "proveedor").replace(/\s+/g, "_");
+    a.href = url; a.download = `Reponer_${sufijoProveedor}.csv`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
   return createPortal(
     <div className="oft-overlay oft-overlay-doc" style={{ ...S.overlay, alignItems: "flex-start", overflowY: "auto", padding: "20px 0", WebkitOverflowScrolling: "touch", overscrollBehavior: "contain" }} onClick={onClose}>
       <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 16, maxWidth: 620, width: "92%", margin: "0 auto", overflow: "hidden" }} onClick={e => e.stopPropagation()}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 18px", borderBottom: `1px solid ${GRAY2}`, background: GRAY }}>
-          <div style={{ fontWeight: 800, fontSize: 15, color: config.accent }}>{config.title} — Top {items.length}</div>
-          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", display: "flex", padding: 4 }}><X size={22} /></button>
+        <div style={{ padding: "14px 18px", borderBottom: `1px solid ${GRAY2}`, background: GRAY }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div style={{ fontWeight: 800, fontSize: 15, color: config.accent }}>{config.title} — {esReponer ? `${listaReponerFiltrada.length} en total` : `Top ${items.length}`}</div>
+            <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", display: "flex", padding: 4 }}><X size={22} /></button>
+          </div>
+          {esReponer && (
+            <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap", alignItems: "center" }}>
+              <select value={proveedorFiltroModal} onChange={e => setProveedorFiltroModal(e.target.value)} style={{ padding: "7px 10px", borderRadius: 8, border: `1px solid ${GRAY2}`, fontSize: 12.5, fontWeight: 700, background: WHITE, flex: 1, minWidth: 160 }}>
+                <option value="todos">Todos los proveedores</option>
+                {proveedores.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+              </select>
+              <button onClick={descargarCSV} disabled={listaReponerFiltrada.length === 0} className="oft-btn-press" style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "#856404", color: WHITE, border: "none", borderRadius: 8, padding: "7px 14px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", opacity: listaReponerFiltrada.length === 0 ? 0.5 : 1 }}>
+                <Download size={14} /> Descargar Excel
+              </button>
+            </div>
+          )}
         </div>
         <div style={{ padding: "6px 18px 18px", maxHeight: "75vh", overflowY: "auto" }}>
-          {items.length === 0 ? (
-            <div style={{ textAlign: "center", color: GRAY3, padding: "30px 0", fontSize: 13 }}>No hay datos suficientes todavía.</div>
-          ) : tipo === "zona" ? items.map((f, i) => (
-            <div key={f.area} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 0", borderBottom: i < items.length - 1 ? `1px solid ${GRAY2}` : "none" }}>
+          {itemsAMostrar.length === 0 ? (
+            <div style={{ textAlign: "center", color: GRAY3, padding: "30px 0", fontSize: 13 }}>
+              {esReponer && proveedorFiltroModal !== "todos" ? "Este proveedor no tiene productos pendientes de reponer." : "No hay datos suficientes todavía."}
+            </div>
+          ) : tipo === "zona" ? itemsAMostrar.map((f, i) => (
+            <div key={f.area} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 0", borderBottom: i < itemsAMostrar.length - 1 ? `1px solid ${GRAY2}` : "none" }}>
               <div style={{ fontSize: 13, fontWeight: 900, color: GRAY3, width: 22, flexShrink: 0 }}>{i + 1}</div>
               <div style={{ width: 34, height: 34, borderRadius: 6, background: GRAY, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                 <MapPin size={16} color={RED} />
@@ -753,8 +796,8 @@ function StockRankingModal({ tipo, items, onClose }) {
               </div>
               <div style={{ fontWeight: 900, fontSize: 13, color: RED, flexShrink: 0 }}>{money(f.total)}</div>
             </div>
-          )) : items.map((f, i) => (
-            <div key={f.producto_id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 0", borderBottom: i < items.length - 1 ? `1px solid ${GRAY2}` : "none" }}>
+          )) : itemsAMostrar.map((f, i) => (
+            <div key={f.producto_id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 0", borderBottom: i < itemsAMostrar.length - 1 ? `1px solid ${GRAY2}` : "none" }}>
               <div style={{ fontSize: 13, fontWeight: 900, color: GRAY3, width: 22, flexShrink: 0 }}>{i + 1}</div>
               {f.prod.imagen_url ? <img src={f.prod.imagen_url} style={{ width: 34, height: 34, borderRadius: 6, objectFit: "cover", flexShrink: 0 }} /> : <div style={{ width: 34, height: 34, borderRadius: 6, background: GRAY, flexShrink: 0 }} />}
               <div style={{ flex: 1, minWidth: 0 }}>
@@ -4355,6 +4398,9 @@ function AdminView() {
                 : base;
               return filtrado.slice(0, 50);
             })()}
+            itemsSinFiltroNiLimite={rankingModal === "reponer" ? urgentesReponer : null}
+            proveedores={proveedores}
+            proveedorIdInicial={rankingModalProveedorId}
             onClose={() => { setRankingModal(null); setRankingModalProveedorId(null); }}
           />
         )}
@@ -5803,9 +5849,9 @@ function AdminView() {
                         </div>
                       ))}
                     </div>
-                    {urgentesReponer.length > 5 && (
+                    {urgentesReponer.length > 0 && (
                       <button onClick={() => setRankingModal("reponer")} className="oft-btn-press" style={{ marginTop: 12, background: "none", border: "none", color: "#856404", fontWeight: 800, fontSize: 13, cursor: "pointer", padding: 0, textDecoration: "underline" }}>
-                        Ver los {Math.min(urgentesReponer.length, 50)} productos →
+                        Ver todos y filtrar por proveedor →
                       </button>
                     )}
                   </div>
@@ -5931,8 +5977,9 @@ function AdminView() {
               </button>
             </div>
             <p style={{ fontSize: 13, color: GRAY3, marginBottom: 24, maxWidth: 640 }}>
-              Productos de proveedores externos (comprados bajo pedido) — nunca se bloquean por falta de stock en la
-              web, ya que la disponibilidad real se confirma yendo directo al proveedor cuando llega el pedido.
+              Asigna cada producto a su proveedor (desde el formulario del producto) para ver aquí cuánto ingreso
+              genera cada uno. Para saber qué reponer y descargar la lista por proveedor, ve a{" "}
+              <strong>Análisis de Stock → Reponer pronto</strong>.
             </p>
             {proveedores.length === 0 ? (
               <div style={{ background: WHITE, borderRadius: 16, padding: "40px 24px", border: `2px dashed ${GRAY2}`, textAlign: "center" }}>
