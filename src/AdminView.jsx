@@ -4742,21 +4742,19 @@ function AdminView() {
                       {categories.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
                     </select>
                   </div>
-                  <div><label style={S.label}>Proveedor</label>
+                  <div><label style={S.label}>¿A qué proveedor le compraste esta mercancía? (opcional, para tu análisis)</label>
                     <select style={{ ...S.input }} value={prodForm.proveedor_id || ""} onChange={e => setProdForm({...prodForm, proveedor_id: e.target.value ? Number(e.target.value) : null})}>
-                      <option value="">Producto propio de Ofertodo</option>
+                      <option value="">Sin proveedor asignado</option>
                       {proveedores.map(pv => <option key={pv.id} value={pv.id}>{pv.nombre}</option>)}
                     </select>
                   </div>
-                  {prodForm.proveedor_id && (
-                    <div style={{ display: "flex", alignItems: "center", gap: 10, background: WHITE, border: `1.5px solid ${GRAY2}`, borderRadius: 10, padding: "10px 14px" }}>
-                      <input type="checkbox" id="tiene_stock_fisico" checked={!!prodForm.tiene_stock_fisico} onChange={e => setProdForm({...prodForm, tiene_stock_fisico: e.target.checked})} style={{ width: 18, height: 18 }} />
-                      <label htmlFor="tiene_stock_fisico" style={{ fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
-                        Tengo este producto en stock físico
-                        <div style={{ fontSize: 11, color: GRAY3, fontWeight: 400 }}>Actívalo si ya le compraste esta mercancía al proveedor y la tienes en tu tienda — aplican los mismos bloqueos por stock que tus productos propios (agotado, límites de docena/media docena). Si sigues comprándolo bajo pedido, déjalo apagado.</div>
-                      </label>
-                    </div>
-                  )}
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, background: WHITE, border: `1.5px solid ${GRAY2}`, borderRadius: 10, padding: "10px 14px" }}>
+                    <input type="checkbox" id="tiene_stock_fisico" checked={!!prodForm.tiene_stock_fisico} onChange={e => setProdForm({...prodForm, tiene_stock_fisico: e.target.checked})} style={{ width: 18, height: 18 }} />
+                    <label htmlFor="tiene_stock_fisico" style={{ fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+                      Tengo este producto en stock físico
+                      <div style={{ fontSize: 11, color: GRAY3, fontWeight: 400 }}>Actívalo si ya tienes esta mercancía contigo, la hayas comprado a un proveedor o no — aplican los mismos bloqueos por stock que el resto del catálogo (agotado, límites de docena/media docena). Si todavía la compras bajo pedido, déjalo apagado.</div>
+                    </label>
+                  </div>
                   <div style={{ display: "flex", alignItems: "center", gap: 10, background: WHITE, border: `1.5px solid ${GRAY2}`, borderRadius: 10, padding: "10px 14px" }}>
                     <input type="checkbox" id="venta_por_unidad" checked={!!prodForm.venta_por_unidad} onChange={e => setProdForm({...prodForm, venta_por_unidad: e.target.checked})} style={{ width: 18, height: 18 }} />
                     <label htmlFor="venta_por_unidad" style={{ fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
@@ -5076,13 +5074,13 @@ function AdminView() {
                     <option value="1">Sí — mostrar en inicio</option>
                     <option value="0">No destacado</option>
                   </select>
-                  <label style={S.label}>Proveedor</label>
+                  <label style={S.label}>¿A qué proveedor se lo compraste?</label>
                   <select style={S.input} value={bulkEdit.proveedor_id} onChange={e => setBulkEdit({...bulkEdit, proveedor_id: e.target.value})}>
                     <option value="">No cambiar</option>
-                    <option value="__ninguno__">Quitar proveedor (pasa a ser propio de Ofertodo)</option>
+                    <option value="__ninguno__">Quitar proveedor asignado</option>
                     {proveedores.map(pv => <option key={pv.id} value={pv.id}>{pv.nombre}</option>)}
                   </select>
-                  <label style={S.label}>Tengo stock físico (para productos de proveedor)</label>
+                  <label style={S.label}>Tengo stock físico</label>
                   <select style={S.input} value={bulkEdit.tiene_stock_fisico} onChange={e => setBulkEdit({...bulkEdit, tiene_stock_fisico: e.target.value})}>
                     <option value="">No cambiar</option>
                     <option value="1">Sí, ya lo tengo en stock — aplicar bloqueos por stock</option>
