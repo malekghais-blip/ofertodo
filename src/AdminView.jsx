@@ -1213,6 +1213,66 @@ function SelectorRangoAnalytics({ rangoTipo, setRangoTipo, rangoInicioP, setRang
 
 // Campo chico para ajustar el % de comisión de los operadores, directo desde
 // la tabla de Analítica -- se guarda en la misma tabla de configuración general.
+// Correo donde llegan las alertas automáticas de "hay que reponer" (una vez al día,
+// solo si hay algo urgente), y un botón para probarlo al momento sin esperar al cron.
+function EditorEmailAlertasReposicion({ showToast }) {
+  const [valor, setValor] = useState("");
+  const [cargando, setCargando] = useState(true);
+  const [guardando, setGuardando] = useState(false);
+  const [probando, setProbando] = useState(false);
+
+  useEffect(() => {
+    sb.get("configuracion", "?clave=eq.email_alertas_reposicion&limit=1")
+      .then(data => { if (data?.[0]?.valor != null) setValor(String(data[0].valor)); })
+      .catch(() => {})
+      .finally(() => setCargando(false));
+  }, []);
+
+  const guardar = async () => {
+    if (valor.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(valor.trim())) { showToast("Ese correo no se ve válido"); return; }
+    setGuardando(true);
+    try {
+      const resp = await fetch(`${SUPABASE_URL}/rest/v1/configuracion?clave=eq.email_alertas_reposicion`, {
+        method: "PATCH", headers: sb.dataHeaders(), body: JSON.stringify({ valor: valor.trim() }),
+      });
+      if (!resp.ok) throw new Error(await resp.text());
+      showToast("Correo de alertas guardado");
+    } catch (e) { showToast("Error al guardar: " + e.message); }
+    setGuardando(false);
+  };
+
+  const probar = async () => {
+    if (!valor.trim()) { showToast("Guarda un correo primero"); return; }
+    setProbando(true);
+    try {
+      const resp = await fetch(`${SUPABASE_URL}/functions/v1/enviar-alerta-reposicion`, {
+        method: "POST", headers: sb.functionHeaders(), body: JSON.stringify({ prueba: true }),
+      });
+      const data = await resp.json();
+      showToast(data.ok ? `Correo de prueba enviado a ${valor.trim()}` : `No se pudo enviar: ${data.motivo || data.error || "error desconocido"}`);
+    } catch (e) { showToast("Error al enviar la prueba: " + e.message); }
+    setProbando(false);
+  };
+
+  if (cargando) return null;
+  return (
+    <div style={{ background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 14, padding: 18, marginBottom: 18 }}>
+      <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 4, display: "flex", alignItems: "center", gap: 8 }}><MessageCircle size={16} color="#856404" /> Alertas de reposición por correo</div>
+      <p style={{ fontSize: 12, color: GRAY3, marginBottom: 12 }}>Todos los días se revisa "Reponer pronto" — si hay algo urgente, se manda un correo agrupado por proveedor. Si no hay nada, no se envía nada.</p>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <input type="email" value={valor} onChange={e => setValor(e.target.value)} placeholder="tucorreo@gmail.com"
+          style={{ flex: 1, minWidth: 200, padding: "8px 10px", borderRadius: 8, border: `1px solid ${GRAY2}`, fontSize: 13 }} />
+        <button onClick={guardar} disabled={guardando} className="oft-btn-press" style={{ ...S.btnRed, padding: "8px 16px", opacity: guardando ? 0.6 : 1 }}>
+          {guardando ? "..." : "Guardar"}
+        </button>
+        <button onClick={probar} disabled={probando} className="oft-btn-press" style={{ ...S.btnOutline, padding: "8px 16px", opacity: probando ? 0.6 : 1 }}>
+          {probando ? "Enviando..." : "Enviar prueba ahora"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function EditorComision({ valorActual, onGuardado, showToast }) {
   const [valor, setValor] = useState(valorActual);
   const [guardando, setGuardando] = useState(false);
@@ -5824,6 +5884,7 @@ function AdminView() {
               </div>
             ) : (
               <>
+                <EditorEmailAlertasReposicion showToast={showToast} />
                 {/* ALERTA: REPONER URGENTE */}
                 {urgentesReponer.length > 0 && (
                   <div style={{ background: "#FFF3CD", border: "2px solid #856404", borderRadius: 14, padding: 18, marginBottom: 24 }}>
