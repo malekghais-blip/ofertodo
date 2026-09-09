@@ -838,6 +838,10 @@ function EditCotizacionModal({ cotizacion, empresas, sucursales, onClose, onSave
   const [lineas, setLineas] = useState(() => (cotizacion.items || []).map(it => ({
     id: it.id, producto_id: it.producto_id, nombre: it.nombre_producto,
     cantidad: Number(it.cantidad) || 1, precio: Number(it.precio_unitario) || 0,
+    // Este modal no deja editar la presentación (pieza/docena/media) ni la distribución
+    // de tallas personalizada -- se guardan tal cual venían, para no perderlas al
+    // editar solo la cantidad o el precio de una línea ya existente.
+    presentacion: it.presentacion || null, distribucion_tallas: it.distribucion_tallas || null,
   })));
   const [cliente, setCliente] = useState({ nombre: cotizacion.nombre_cliente || "", telefono: cotizacion.telefono || "", direccion: cotizacion.direccion || "" });
   const [notas, setNotas] = useState(cotizacion.notas || "");
@@ -885,6 +889,7 @@ function EditCotizacionModal({ cotizacion, empresas, sucursales, onClose, onSave
         const creado = await sb.post("pedido_items", {
           pedido_id: cotizacion.id, producto_id: l.producto_id, nombre_producto: l.nombre,
           cantidad: Number(l.cantidad) || 0, precio_unitario: Number(l.precio) || 0, subtotal: sub,
+          presentacion: l.presentacion || null, distribucion_tallas: l.distribucion_tallas || null,
         });
         if (Array.isArray(creado) && creado[0]) nuevosItems.push(creado[0]);
       }
