@@ -755,6 +755,7 @@ export function CrearPedidoView() {
   const [descuento, setDescuento] = useState(""); // porcentaje
   const [envio, setEnvio] = useState(""); // costo de envío
   const [retiroLocal, setRetiroLocal] = useState(false); // true = el cliente retira en el local, sin envío
+  const [retiroNombreAutorizado, setRetiroNombreAutorizado] = useState(""); // opcional -- quién recoge, si no es el mismo cliente
   const [localRetiroId, setLocalRetiroId] = useState(null); // en cuál local específico (si hay más de uno)
   const [redondeo, setRedondeo] = useState("arriba"); // "arriba" | "abajo" | "no"
   const [saving, setSaving] = useState(false);
@@ -983,6 +984,7 @@ export function CrearPedidoView() {
         empresa_envio_id: empresaId, empresa_envio_nombre: empresaSel?.nombre || "",
         sucursal_id: sucursalId, sucursal_nombre: sucursalSel?.nombre || "",
         retiro_local: retiroLocal,
+        retiro_nombre_autorizado: retiroLocal ? (retiroNombreAutorizado.trim() || null) : null,
         local_retiro_id: localElegidoAdmin?.id || null, local_retiro_nombre: localElegidoAdmin?.nombre || null,
         tipo, num_factura: numFactura, creado_por_admin: true, costo_envio: costoEnvio,
         creado_por_usuario_id: user?.id || null,
@@ -1179,7 +1181,7 @@ export function CrearPedidoView() {
 
   const resetForm = () => {
     setItems([]); setFlexPacks([]); setFlexActiveId(null); setCliente({ nombre: "", telefono: "", direccion: "" }); setNotas("");
-    setEmpresaId(null); setSucursalId(null); setRetiroLocal(false); setLocalRetiroId(null); setTipo("pedido"); setDescuento(""); setEnvio(""); setRedondeo("arriba"); setInvoice(null);
+    setEmpresaId(null); setSucursalId(null); setRetiroLocal(false); setRetiroNombreAutorizado(""); setLocalRetiroId(null); setTipo("pedido"); setDescuento(""); setEnvio(""); setRedondeo("arriba"); setInvoice(null);
   };
 
   return (
@@ -1727,6 +1729,12 @@ export function CrearPedidoView() {
                 <div style={{ fontSize: 11, color: GRAY3 }}>El cliente pasa a recogerlo, sin empresa de envío ni costo</div>
               </div>
             </div>
+            {retiroLocal && (
+              <div style={{ marginBottom: 12 }} onClick={e => e.stopPropagation()}>
+                <label style={{ ...S.label, fontSize: 11 }}>¿Quién lo recoge? (opcional, si no es el mismo cliente)</label>
+                <input style={{ ...S.input, marginBottom: 0 }} placeholder="Nombre de la persona autorizada..." value={retiroNombreAutorizado} onChange={e => setRetiroNombreAutorizado(e.target.value)} />
+              </div>
+            )}
             {!retiroLocal && (
               <>
                 <select style={S.input} value={empresaId || ""} onChange={e => { setEmpresaId(e.target.value ? Number(e.target.value) : null); setSucursalId(null); }}>
