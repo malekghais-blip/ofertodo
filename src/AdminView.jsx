@@ -2078,6 +2078,7 @@ function AnalisisAdsPanel() {
   const [rangoFinP, setRangoFinP] = useState("");
   const [criterioRanking, setCriterioRanking] = useState("roas"); // roas | ganancia | ventas | ctr
   const [campanas, setCampanas] = useState([]);
+  const [filtroCampanas, setFiltroCampanas] = useState("todas"); // todas | activas | generaron
   const [diario, setDiario] = useState([]);
   const [asignaciones, setAsignaciones] = useState([]);
   const [ingresosPorProducto, setIngresosPorProducto] = useState({});
@@ -2181,6 +2182,14 @@ function AnalisisAdsPanel() {
     });
     return ingresos;
   };
+
+  // Lista de campañas según el filtro elegido: todas, solo activas, o todas
+  // ordenadas por lo que más generaron en el rango de fecha actual.
+  const campanasFiltradas = (() => {
+    if (filtroCampanas === "activas") return campanas.filter(c => c.estado === "ACTIVE");
+    if (filtroCampanas === "generaron") return [...campanas].sort((a, b) => calcularIngresosCampana(b) - calcularIngresosCampana(a));
+    return campanas;
+  })();
 
   // ── Métricas generales, ya filtradas por el rango elegido ────────────────
   const gastoTotal = campanas.reduce((s, c) => s + gastoPorCampanaEnRango(c.id), 0);
@@ -2305,12 +2314,28 @@ function AnalisisAdsPanel() {
           </div>
 
           {/* Lista de campañas */}
-          <div style={{ fontSize: 16, fontWeight: 800, marginBottom: 14 }}>Campañas ({campanas.length})</div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 14 }}>
+            <div style={{ fontSize: 16, fontWeight: 800 }}>Campañas ({campanasFiltradas.length})</div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {[
+                { k: "todas", etiqueta: "Todas" },
+                { k: "activas", etiqueta: "Activas" },
+                { k: "generaron", etiqueta: "Más generaron" },
+              ].map(op => (
+                <button key={op.k} onClick={() => setFiltroCampanas(op.k)} className="oft-btn-press"
+                  style={{ padding: "6px 13px", borderRadius: 18, border: `2px solid ${filtroCampanas === op.k ? RED : GRAY2}`, background: filtroCampanas === op.k ? RED : WHITE, color: filtroCampanas === op.k ? WHITE : BLACK, fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+                  {op.etiqueta}
+                </button>
+              ))}
+            </div>
+          </div>
           {campanas.length === 0 ? (
             <p style={{ color: GRAY3, fontSize: 13 }}>Todavía no hay campañas sincronizadas — dale a "Sincronizar con Meta" (necesitas haber guardado META_ACCESS_TOKEN y META_AD_ACCOUNT_ID en Supabase primero).</p>
+          ) : campanasFiltradas.length === 0 ? (
+            <p style={{ color: GRAY3, fontSize: 13 }}>Ninguna campaña activa en este momento.</p>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              {campanas.map((camp, i) => (
+              {campanasFiltradas.map((camp, i) => (
                 <TarjetaCampanaAds key={camp.id} campana={camp} productos={productosActivos} asignaciones={asignaciones}
                   gastoEnRango={gastoPorCampanaEnRango(camp.id)} impresionesEnRango={impresionesPorCampanaEnRango(camp.id)} clicsEnRango={clicsPorCampanaEnRango(camp.id)}
                   ingresosEnRango={calcularIngresosCampana(camp)}
