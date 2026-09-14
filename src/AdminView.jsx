@@ -859,7 +859,17 @@ function EditCotizacionModal({ cotizacion, empresas, sucursales, onClose, onSave
   const setLinea = (idx, campo, val) => setLineas(prev => prev.map((l, i) => i === idx ? { ...l, [campo]: val } : l));
   const quitarLinea = (idx) => setLineas(prev => prev.filter((_, i) => i !== idx));
 
-  const subtotal = lineas.reduce((s, l) => s + (Number(l.cantidad) || 0) * (Number(l.precio) || 0), 0);
+  // "cantidad" siempre se guarda en PIEZAS (12 para una docena, 6 para media) pero
+  // "precio" es el precio de la presentación COMPLETA (ej. $84 la docena), no por
+  // pieza suelta -- por eso no se puede multiplicar cantidad × precio directo para
+  // docena/media, o el total sale 12 veces más grande de lo que debería.
+  const unidadesPresentacion = (pres) => pres === "docena" ? 12 : pres === "media" ? 6 : 1;
+  const subtotalLinea = (l) => {
+    const unidades = unidadesPresentacion(l.presentacion);
+    return (Number(l.precio) || 0) * ((Number(l.cantidad) || 0) / unidades);
+  };
+
+  const subtotal = lineas.reduce((s, l) => s + subtotalLinea(l), 0);
   const costoEnvio = Number(envio) || 0;
   const totalReal = subtotal + costoEnvio;
   const totalArriba = Math.ceil(totalReal * 2) / 2;
@@ -885,7 +895,7 @@ function EditCotizacionModal({ cotizacion, empresas, sucursales, onClose, onSave
       } catch(e) {}
       const nuevosItems = [];
       for (const l of lineas) {
-        const sub = (Number(l.cantidad) || 0) * (Number(l.precio) || 0);
+        const sub = subtotalLinea(l);
         const creado = await sb.post("pedido_items", {
           pedido_id: cotizacion.id, producto_id: l.producto_id, nombre_producto: l.nombre,
           cantidad: Number(l.cantidad) || 0, precio_unitario: Number(l.precio) || 0, subtotal: sub,
@@ -919,16 +929,23 @@ function EditCotizacionModal({ cotizacion, empresas, sucursales, onClose, onSave
                 </div>
                 <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                   <div style={{ flex: 1 }}>
-                    <label style={{ fontSize: 11, color: GRAY3, fontWeight: 700 }}>Cantidad</label>
+                    <label style={{ fontSize: 11, color: GRAY3, fontWeight: 700 }}>Cantidad (piezas)</label>
                     <input type="number" min="0" value={l.cantidad} onChange={e => setLinea(idx, "cantidad", e.target.value)} style={{ ...S.input, marginBottom: 0 }} />
+                    {(l.presentacion === "docena" || l.presentacion === "media") && (
+                      <div style={{ fontSize: 10, color: GRAY3, marginTop: 2 }}>
+                        = {((Number(l.cantidad) || 0) / unidadesPresentacion(l.presentacion)).toFixed(2)} {l.presentacion === "docena" ? "docena(s)" : "media(s) docena"}
+                      </div>
+                    )}
                   </div>
                   <div style={{ flex: 1 }}>
-                    <label style={{ fontSize: 11, color: GRAY3, fontWeight: 700 }}>Precio c/u $</label>
+                    <label style={{ fontSize: 11, color: GRAY3, fontWeight: 700 }}>
+                      Precio {(l.presentacion === "docena" || l.presentacion === "media") ? `x ${l.presentacion === "docena" ? "docena" : "media docena"} $` : "c/u $"}
+                    </label>
                     <input type="number" min="0" step="0.01" value={l.precio} onChange={e => setLinea(idx, "precio", e.target.value)} style={{ ...S.input, marginBottom: 0 }} />
                   </div>
                   <div style={{ minWidth: 64, textAlign: "right" }}>
                     <label style={{ fontSize: 11, color: GRAY3, fontWeight: 700, display: "block" }}>Subtotal</label>
-                    <span style={{ fontWeight: 800, color: RED }}>{money((Number(l.cantidad) || 0) * (Number(l.precio) || 0))}</span>
+                    <span style={{ fontWeight: 800, color: RED }}>{money(subtotalLinea(l))}</span>
                   </div>
                 </div>
               </div>
@@ -2629,38 +2646,51 @@ function AdminView() {
   // ── ANÁLISIS DE STOCK (rotación, ingreso, sugerencia de compra) ──
   // Usa SOLO ventas reales de la web (pedidosRealesTodos), sin importar el filtro de fecha del dashboard.
   const LEAD_TIME_DIAS = 7; // tiempo que tarda en llegar la mercancía de tu proveedor
+  const VENTANA_VELOCIDAD_DIAS = 30; // solo se usan las ventas de los últimos 30 días para calcular qué tan rápido se está vendiendo
   const analisisStock = (() => {
-    const map = {}; // producto_id -> { cantidad, ingreso, primeraFecha, ultimaFecha }
+    const hoy = new Date();
+    const map = {}; // producto_id -> { cantidad, cantidadReciente, ingreso, primeraFecha, ultimaFecha }
     pedidosRealesTodos.forEach(o => {
+      const fechaPedido = new Date(o.created_at);
+      const diasDesdeVenta = (hoy - fechaPedido) / 86400000;
       (o.items || []).forEach(it => {
         if (!it.producto_id) return;
         const key = it.producto_id;
-        if (!map[key]) map[key] = { producto_id: key, cantidad: 0, ingreso: 0, primeraFecha: o.created_at, ultimaFecha: o.created_at };
+        if (!map[key]) map[key] = { producto_id: key, cantidad: 0, cantidadReciente: 0, ingreso: 0, primeraFecha: o.created_at, ultimaFecha: o.created_at };
         map[key].cantidad += Number(it.cantidad || 0);
+        // Solo cuenta para la VELOCIDAD si la venta fue dentro de la ventana reciente --
+        // esto es lo que hace que "reponer pronto" reaccione a lo que se vende AHORA,
+        // no a un promedio diluido desde que el producto se creó.
+        if (diasDesdeVenta <= VENTANA_VELOCIDAD_DIAS) map[key].cantidadReciente += Number(it.cantidad || 0);
         map[key].ingreso += Number(it.subtotal || 0);
-        if (new Date(o.created_at) < new Date(map[key].primeraFecha)) map[key].primeraFecha = o.created_at;
-        if (new Date(o.created_at) > new Date(map[key].ultimaFecha)) map[key].ultimaFecha = o.created_at;
+        if (fechaPedido < new Date(map[key].primeraFecha)) map[key].primeraFecha = o.created_at;
+        if (fechaPedido > new Date(map[key].ultimaFecha)) map[key].ultimaFecha = o.created_at;
       });
     });
 
-    const hoy = new Date();
     const filas = Object.values(map).map(m => {
       const prod = products.find(p => p.id === m.producto_id);
       if (!prod) return null;
       const diasDesdeInicio = Math.max(1, Math.ceil((hoy - new Date(m.primeraFecha)) / 86400000));
-      const velocidadDiaria = m.cantidad / diasDesdeInicio; // unidades vendidas por día
+      // Ventana real a usar: 30 días, o menos si el producto es más nuevo que eso
+      // (para no diluir la velocidad de algo que apenas lleva unos días a la venta).
+      const diasVentana = Math.min(VENTANA_VELOCIDAD_DIAS, diasDesdeInicio);
+      const velocidadDiaria = m.cantidadReciente / diasVentana; // unidades vendidas por día, RECIENTE
       const costoUnit = Number(prod.costo || 0);
       const margen = costoUnit > 0 ? m.ingreso - (costoUnit * m.cantidad) : null; // null = sin dato de costo
       // Stock actual (si está sincronizado con Odoo)
       const tieneStock = !!prod.stock_actualizado_at;
       const stockActual = tieneStock ? Number(prod.stock || 0) : null;
-      // Días hasta agotar stock, según velocidad de venta actual
+      // Días hasta agotar stock, según velocidad de venta reciente
       const diasHastaAgotar = (tieneStock && velocidadDiaria > 0) ? Math.floor(stockActual / velocidadDiaria) : null;
       // Sugerencia de compra: cubrir ventas del lead time + un colchón de seguridad (otro lead time)
       const sugerenciaCompra = Math.ceil(velocidadDiaria * LEAD_TIME_DIAS * 2);
       // ¿Cuándo reponer? Si ya sabemos el stock, restamos lo que tardará en agotarse menos el lead time
       let diasParaReponer = null;
       if (diasHastaAgotar !== null) diasParaReponer = Math.max(0, diasHastaAgotar - LEAD_TIME_DIAS);
+      // Si el stock YA está en 0 (o casi) y todavía se está vendiendo, es urgente sin
+      // importar el promedio -- no depende solo de la velocidad calculada.
+      if (tieneStock && stockActual <= 0 && m.cantidadReciente > 0) diasParaReponer = 0;
       return {
         ...m, prod, diasDesdeInicio, velocidadDiaria, margen, stockActual, diasHastaAgotar,
         sugerenciaCompra, diasParaReponer, tieneStock,
