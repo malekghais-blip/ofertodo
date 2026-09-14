@@ -1999,6 +1999,32 @@ export function ShippingLabelModal({ order, onClose }) {
   const [busy, setBusy] = useState(false);
   const fecha = order.created_at ? new Date(order.created_at) : new Date();
   const totalPiezas = (order.items || []).reduce((s, it) => s + Number(it.cantidad || 0), 0);
+  // Unifica líneas que son el mismo producto con la misma variante (ej. varios
+  // FlexPacks que llevaron la misma referencia y talla) en una sola fila con la
+  // cantidad total -- antes de esto, cada FlexPack generaba su propia línea, y con
+  // varios FlexPacks parecidos la lista se llenaba de renglones repetidos que
+  // confundían a quien empacaba. Se agrupa por producto + nombre exacto (el nombre
+  // ya incluye la talla/color, así que variantes distintas del mismo producto NUNCA
+  // se mezclan entre sí).
+  const itemsAgrupados = (() => {
+    const mapa = {};
+    const orden = [];
+    (order.items || []).forEach(it => {
+      const key = `${it.producto_id ?? "sin"}|||${it.nombre_producto}`;
+      if (!mapa[key]) { mapa[key] = { ...it, cantidad: 0, _distribucionSumada: null }; orden.push(key); }
+      mapa[key].cantidad += Number(it.cantidad) || 0;
+      if (it.distribucion_tallas) {
+        try {
+          const d = JSON.parse(it.distribucion_tallas);
+          if (!mapa[key]._distribucionSumada) mapa[key]._distribucionSumada = { eje: d.eje, cantidades: {} };
+          Object.entries(d.cantidades || {}).forEach(([v, q]) => {
+            mapa[key]._distribucionSumada.cantidades[v] = (mapa[key]._distribucionSumada.cantidades[v] || 0) + (Number(q) || 0);
+          });
+        } catch {}
+      }
+    });
+    return orden.map(key => mapa[key]);
+  })();
   const money = (n) => "$" + Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
   const renderCanvas = async () => {
@@ -2063,6 +2089,49 @@ export function ShippingLabelModal({ order, onClose }) {
     setTimeout(lanzarImpresion, 500);
   };
 
+  // Etiqueta compacta para el rollo de 4x6" -- solo lo que exige la empresa de envío
+  // (nombre, teléfono, dirección), en letra grande para que se lea bien pegada en
+  // la caja. Separada de la guía interna, que trae mucha más información como para
+  // caber o ser legible en una etiqueta de rollo.
+  const printEtiquetaCliente = () => {
+    const direccionCompleta = [order.direccion, order.sucursal_nombre ? `Sucursal: ${order.sucursal_nombre}` : null].filter(Boolean).join(" — ");
+    const contenido = `
+      <div style="width:4in;height:6in;box-sizing:border-box;padding:0.35in;display:flex;flex-direction:column;font-family:Helvetica,Arial,sans-serif;">
+        <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:3px solid #111;padding-bottom:0.12in;margin-bottom:0.28in;">
+          <div style="font-size:22pt;font-weight:900;color:#111;">Ofer<span style="background:#E31E24;color:#fff;padding:0 8px;border-radius:4px;">todo</span></div>
+          <div style="text-align:right;">
+            <div style="font-size:11pt;font-weight:700;color:#666;">${order.codigo}</div>
+            <div style="font-size:9pt;color:#999;">${new Date(order.created_at || Date.now()).toLocaleDateString("es-PA")}</div>
+          </div>
+        </div>
+        <div style="font-size:12pt;font-weight:800;color:#999;letter-spacing:1px;margin-bottom:0.08in;">ENVIAR A:</div>
+        <div style="font-size:30pt;font-weight:900;color:#111;line-height:1.15;margin-bottom:0.22in;word-break:break-word;">${order.nombre_cliente || "—"}</div>
+        <div style="font-size:12pt;font-weight:800;color:#999;letter-spacing:1px;margin-bottom:0.08in;">TELÉFONO:</div>
+        <div style="font-size:26pt;font-weight:900;color:#111;margin-bottom:0.22in;">${order.telefono || "—"}</div>
+        <div style="font-size:12pt;font-weight:800;color:#999;letter-spacing:1px;margin-bottom:0.08in;">DIRECCIÓN:</div>
+        <div style="font-size:18pt;font-weight:700;color:#111;line-height:1.35;flex:1;word-break:break-word;">${direccionCompleta || "Retiro en local"}</div>
+        <div style="border-top:2px solid #ccc;padding-top:0.12in;font-size:10pt;color:#999;text-align:center;">ofertodo.com.pa</div>
+      </div>`;
+    const estilos = `
+      <style>
+        * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; box-sizing: border-box; }
+        @page { size: 4in 6in; margin: 0; }
+        html, body { margin: 0; padding: 0; background: #ffffff; }
+      </style>`;
+    const iframe = document.createElement("iframe");
+    iframe.style.position = "fixed"; iframe.style.right = "0"; iframe.style.bottom = "0";
+    iframe.style.width = "0"; iframe.style.height = "0"; iframe.style.border = "0";
+    document.body.appendChild(iframe);
+    const doc = iframe.contentWindow.document;
+    doc.open();
+    doc.write(`<html><head><title>Etiqueta ${order.codigo}</title>${estilos}</head><body>${contenido}</body></html>`);
+    doc.close();
+    setTimeout(() => {
+      try { iframe.contentWindow.focus(); iframe.contentWindow.print(); } catch(e) {}
+      setTimeout(() => { try { document.body.removeChild(iframe); } catch(e) {} }, 1000);
+    }, 400);
+  };
+
   return createPortal(
     <div className="oft-overlay oft-overlay-doc" style={{ ...S.overlay, alignItems: "flex-start", overflowY: "auto", padding: "20px 0", WebkitOverflowScrolling: "touch", overscrollBehavior: "contain" }} onClick={onClose}>
       <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 16, maxWidth: 620, width: "92%", margin: "0 auto", overflow: "hidden" }} onClick={e => e.stopPropagation()}>
@@ -2075,6 +2144,9 @@ export function ShippingLabelModal({ order, onClose }) {
             </button>
             <button onClick={printLabel} className="oft-btn-press" style={{ ...S.btnOutline, padding: "8px 14px", fontSize: 13, display: "inline-flex", alignItems: "center", gap: 6 }}>
               <FileText size={14} /> Imprimir
+            </button>
+            <button onClick={printEtiquetaCliente} className="oft-btn-press" style={{ background: BLACK, color: WHITE, border: "none", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <Truck size={14} /> Etiqueta (rollo 4x6")
             </button>
             <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", display: "flex", padding: 4 }}><X size={22} /></button>
           </div>
@@ -2145,7 +2217,7 @@ export function ShippingLabelModal({ order, onClose }) {
             <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
               <div style={{ flex: 1, border: `2px solid ${BLACK}`, borderRadius: 10, padding: "12px 14px", textAlign: "center" }}>
                 <div style={{ fontSize: 11, color: GRAY3, fontWeight: 700 }}>PRODUCTOS</div>
-                <div style={{ fontSize: 26, fontWeight: 900 }}>{(order.items || []).length}</div>
+                <div style={{ fontSize: 26, fontWeight: 900 }}>{itemsAgrupados.length}</div>
               </div>
               <div style={{ flex: 1, border: `2px solid ${BLACK}`, borderRadius: 10, padding: "12px 14px", textAlign: "center" }}>
                 <div style={{ fontSize: 11, color: GRAY3, fontWeight: 700 }}>PIEZAS TOTALES</div>
@@ -2165,9 +2237,9 @@ export function ShippingLabelModal({ order, onClose }) {
                 </tr>
               </thead>
               <tbody>
-                {(order.items || []).map((it, i) => {
+                {itemsAgrupados.map((it, i) => {
                   const prod = products.find(p => p.id === it.producto_id);
-                  const dist = (() => { try { return it.distribucion_tallas ? JSON.parse(it.distribucion_tallas) : null; } catch { return null; } })();
+                  const dist = it._distribucionSumada;
                   return (
                     <Fragment key={i}>
                       <tr style={{ borderBottom: dist ? "none" : `1px solid ${GRAY2}` }}>
@@ -2407,15 +2479,35 @@ export function ClienteFormModal({ cliente, onClose, onSaved, showToast }) {
     setGuardando(true);
     try {
       if (esEdicion) {
+        const telefonoNuevo = form.telefono.trim();
+        const telefonoCambio = telefonoNuevo !== (cliente.telefono || "").trim();
         const payload = {
           nombre: form.nombre.trim(),
-          telefono: form.telefono.trim(),
+          telefono: telefonoNuevo,
           email: form.email.trim() || cliente.email,
           cedula: form.cedula.trim() || null,
         };
         const fila = await sb.patch("usuarios", cliente.id, payload);
+        // El teléfono de un pedido/cotización es una COPIA de cuando se creó, no una
+        // referencia en vivo al cliente -- si se corrige aquí (ej. un error de dedo),
+        // hay que actualizarla también en sus pedidos y cotizaciones ya existentes,
+        // o se quedarían con el número viejo para siempre, incluso en la guía.
+        if (telefonoCambio && telefonoNuevo) {
+          try {
+            const telefonoViejo = (cliente.telefono || "").trim();
+            // Solo se corrigen los pedidos que TODAVÍA tienen el número viejo -- si
+            // algún pedido puntual ya tenía uno distinto a propósito (ej. compró para
+            // alguien más y puso otro contacto), ese no se toca.
+            const filtro = telefonoViejo
+              ? `usuario_id=eq.${cliente.id}&telefono=eq.${encodeURIComponent(telefonoViejo)}`
+              : `usuario_id=eq.${cliente.id}&or=(telefono.is.null,telefono.eq.)`;
+            await fetch(`${SUPABASE_URL}/rest/v1/pedidos?${filtro}`, {
+              method: "PATCH", headers: sb.dataHeaders(), body: JSON.stringify({ telefono: telefonoNuevo }),
+            });
+          } catch (e) { /* el cliente ya se guardó bien -- esto es un extra, no se bloquea si falla */ }
+        }
         onSaved({ ...cliente, ...(Array.isArray(fila) && fila[0] ? fila[0] : payload) });
-        showToast("Cliente actualizado");
+        showToast(telefonoCambio ? "Cliente actualizado — también en sus pedidos y cotizaciones" : "Cliente actualizado");
       } else {
         // Email opcional: si no ponen, generamos uno interno para identificarlo
         const email = form.email.trim() || `cliente_${Date.now()}@ofertodo.local`;
