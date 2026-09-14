@@ -2097,12 +2097,16 @@ export function ShippingLabelModal({ order, onClose }) {
     const direccionCompleta = [order.direccion, order.sucursal_nombre ? `Sucursal: ${order.sucursal_nombre}` : null].filter(Boolean).join(" — ");
     const contenido = `
       <div style="width:4in;height:6in;box-sizing:border-box;padding:0.35in;display:flex;flex-direction:column;font-family:Helvetica,Arial,sans-serif;">
-        <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:3px solid #111;padding-bottom:0.12in;margin-bottom:0.28in;">
+        <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:3px solid #111;padding-bottom:0.12in;margin-bottom:0.18in;">
           <div style="font-size:22pt;font-weight:900;color:#111;">Ofer<span style="background:#E31E24;color:#fff;padding:0 8px;border-radius:4px;">todo</span></div>
           <div style="text-align:right;">
             <div style="font-size:11pt;font-weight:700;color:#666;">${order.codigo}</div>
             <div style="font-size:9pt;color:#999;">${new Date(order.created_at || Date.now()).toLocaleDateString("es-PA")}</div>
           </div>
+        </div>
+        <div style="background:#111;color:#fff;padding:0.1in 0.14in;border-radius:6px;margin-bottom:0.22in;display:flex;justify-content:space-between;align-items:center;">
+          <span style="font-size:11pt;font-weight:700;letter-spacing:1px;opacity:0.8;">ENVIAR POR</span>
+          <span style="font-size:16pt;font-weight:900;">${order.empresa_envio_nombre || (order.retiro_local ? "RETIRO EN LOCAL" : "—")}</span>
         </div>
         <div style="font-size:12pt;font-weight:800;color:#999;letter-spacing:1px;margin-bottom:0.08in;">ENVIAR A:</div>
         <div style="font-size:30pt;font-weight:900;color:#111;line-height:1.15;margin-bottom:0.22in;word-break:break-word;">${order.nombre_cliente || "—"}</div>
