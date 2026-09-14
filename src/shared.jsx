@@ -876,6 +876,13 @@ export function CrearPedidoView() {
   const total = totalRedondeado;
 
   const addItem = (product) => {
+    // Aviso si el producto ya no tiene stock (según la última sincronización con
+    // Odoo) -- para no vender por accidente algo que ya no hay. No bloquea del
+    // todo, por si la sincronización está desactualizada y sí hay mercancía real.
+    if (product.stock_actualizado_at && Number(product.stock || 0) <= 0) {
+      const continuar = confirm(`⚠️ "${product.nombre}" muestra 0 en stock (según la última sincronización).\n\n¿Agregarlo de todas formas?`);
+      if (!continuar) return;
+    }
     // Siempre agrega una nueva línea — permite el mismo producto con distintas presentaciones
     // (ej: docena + 4 piezas de la misma referencia)
     setItems(prev => [...prev, { product, pres: "docena", count: 1 }]);
