@@ -3989,7 +3989,9 @@ function AdminView() {
        <div key={tab} className="oft-tab-anim" style={{ minWidth: 0 }}>
 
         {/* ═══════════ CREAR PEDIDO ═══════════ */}
-        {tab === "crear" && <CrearPedidoView />}
+        {tab === "crear" && (
+          <CrearPedidoView onCreado={(nuevo) => setOrders(prev => [{ ...nuevo, items: [] }, ...prev])} />
+        )}
 
         {/* ═══════════ DASHBOARD ═══════════ */}
         {tab === "dashboard" && (
