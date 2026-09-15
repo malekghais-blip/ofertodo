@@ -1444,7 +1444,11 @@ function AnalyticsPanel() {
 
   useEffect(() => { cargarDatos(); }, [desde, hasta]);
 
-  // Visitas en vivo: independiente del filtro de fecha, se refresca cada 30s por su cuenta
+  // Visitas en vivo: independiente del filtro de fecha, se refresca cada 30s por su cuenta.
+  // Los navegadores "frenan" los setInterval en pestañas que están de fondo (para ahorrar
+  // batería), así que el contador se quedaba atascado hasta refrescar la página a mano.
+  // Se agrega un refresco INMEDIATO justo al volver a esa pestaña, para que se sienta
+  // en vivo de verdad sin depender solo del temporizador.
   useEffect(() => {
     const cargarEnVivo = async () => {
       try {
@@ -1455,7 +1459,14 @@ function AnalyticsPanel() {
     };
     cargarEnVivo();
     const t = setInterval(cargarEnVivo, 30000);
-    return () => clearInterval(t);
+    const alVolverVisible = () => { if (document.visibilityState === "visible") cargarEnVivo(); };
+    document.addEventListener("visibilitychange", alVolverVisible);
+    window.addEventListener("focus", alVolverVisible);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener("visibilitychange", alVolverVisible);
+      window.removeEventListener("focus", alVolverVisible);
+    };
   }, []);
 
   // ── Cálculos derivados del periodo ACTUAL ──
