@@ -808,7 +808,7 @@ function ModalElegirPresentacion({ producto, onElegir, onCerrar }) {
   );
 }
 
-export function CrearPedidoView() {
+export function CrearPedidoView({ onCreado } = {}) {
   const { products, empresas, sucursales, localesRetiro, showToast, user } = useApp();
   const [items, setItems] = useState([]); // { product, pres, count }
   const [search, setSearch] = useState("");
@@ -1286,6 +1286,10 @@ export function CrearPedidoView() {
         items: invoiceItems,
         subtotal, descPct, descMonto, costoEnvio, total,
       });
+      // Avisa al panel que lo contiene (ej. el Dashboard) que se creó un pedido o
+      // cotización nuevo -- así aparece de una vez en su lista, sin tener que
+      // refrescar la página para que ese componente vuelva a pedir los datos.
+      if (onCreado && Array.isArray(pedido) && pedido[0]) onCreado(pedido[0]);
       showToast(tipo === "cotizacion" ? "Cotización creada" : "Pedido creado");
     } catch(e) { alert("Error al crear: " + e.message); }
     setSaving(false);
