@@ -9,7 +9,7 @@ import {
   TrendingUp, Wallet, ShoppingBag, Pencil as PencilIcon, Save,
   Building2, MapPin as MapPinIcon, Send, FilePlus, Download, FileText, Receipt,
   Calendar as CalendarIcon, Eye, EyeOff, Share2, AlertTriangle, ChevronRight,
-  ArrowUpRight, ArrowDownRight, MousePointerClick, Target
+  ArrowUpRight, ArrowDownRight, MousePointerClick, Target, Printer
 } from "lucide-react";
 import {
   BLACK, CategoryIcon, ChipAdder, ClienteFormModal, CrearPedidoView, SelectorColores,
@@ -1237,6 +1237,119 @@ function SelectorRangoAnalytics({ rangoTipo, setRangoTipo, rangoInicioP, setRang
 // la tabla de Analítica -- se guarda en la misma tabla de configuración general.
 // Correo donde llegan las alertas automáticas de "hay que reponer" (una vez al día,
 // solo si hay algo urgente), y un botón para probarlo al momento sin esperar al cron.
+// Panel para generar una guía/etiqueta suelta, SIN necesitar un pedido real de por
+// medio -- para cuando hay que enviarle algo a un cliente que no es una venta (una
+// devolución, un cambio, un regalo, etc.). Reutiliza el mismo ShippingLabelModal de
+// siempre, así la guía y la etiqueta de rollo salen idénticas a las de un pedido real.
+function CrearEtiquetaPanel({ empresas, sucursales, showToast }) {
+  const [nombre, setNombre] = useState("");
+  const [telefono, setTelefono] = useState("");
+  const [tipoEntrega, setTipoEntrega] = useState("sucursal"); // sucursal | puerta
+  const [empresaId, setEmpresaId] = useState("");
+  const [sucursalId, setSucursalId] = useState("");
+  const [direccion, setDireccion] = useState("");
+  const [contenido, setContenido] = useState("");
+  const [pagado, setPagado] = useState(false);
+  const [etiquetaGenerada, setEtiquetaGenerada] = useState(null);
+
+  const sucursalesDeEmpresa = sucursales.filter(s => s.empresa_id === Number(empresaId));
+
+  const limpiar = () => {
+    setNombre(""); setTelefono(""); setTipoEntrega("sucursal"); setEmpresaId(""); setSucursalId("");
+    setDireccion(""); setContenido(""); setPagado(false);
+  };
+
+  const generar = () => {
+    if (!nombre.trim()) { showToast("Escribe el nombre del destinatario"); return; }
+    if (tipoEntrega === "puerta" && !direccion.trim()) { showToast("Escribe la dirección de entrega"); return; }
+    if (tipoEntrega === "sucursal" && !sucursalId) { showToast("Elige la sucursal"); return; }
+    const empresa = empresas.find(e => e.id === Number(empresaId));
+    const sucursal = sucursalesDeEmpresa.find(s => s.id === Number(sucursalId));
+    // Cada línea del texto se vuelve un renglón del checklist, igual que los
+    // productos de un pedido real -- así se ve qué va en el paquete sin necesitar
+    // que sea inventario de verdad.
+    const items = contenido.split("\n").map(l => l.trim()).filter(Boolean).map((linea, i) => ({
+      id: `local-${i}`, nombre_producto: linea, cantidad: 1, producto_id: null,
+    }));
+    setEtiquetaGenerada({
+      id: null, codigo: `ETQ-${Date.now().toString().slice(-6)}`,
+      nombre_cliente: nombre.trim(), telefono: telefono.trim(),
+      direccion: tipoEntrega === "puerta" ? direccion.trim() : "",
+      sucursal_nombre: tipoEntrega === "sucursal" ? (sucursal?.nombre || "") : "",
+      empresa_envio_nombre: empresa?.nombre || "",
+      retiro_local: false, costo_envio: pagado ? 1 : 0,
+      created_at: new Date().toISOString(), items,
+    });
+  };
+
+  return (
+    <div style={{ padding: "32px 36px", maxWidth: 640 }}>
+      <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 8, display: "flex", alignItems: "center", gap: 10 }}><Printer size={24} color={RED} /> Crear Etiqueta</div>
+      <p style={{ fontSize: 13, color: GRAY3, marginBottom: 24 }}>
+        Para cuando hay que enviarle algo a un cliente que no es un pedido real del sistema
+        (una devolución, un cambio, un regalo, etc.) — genera la misma guía y etiqueta de
+        rollo de siempre, sin necesitar un pedido de por medio.
+      </p>
+
+      <label style={S.label}>Nombre del destinatario *</label>
+      <input style={S.input} placeholder="Nombre completo..." value={nombre} onChange={e => setNombre(e.target.value)} />
+
+      <label style={S.label}>Teléfono (opcional)</label>
+      <input style={S.input} placeholder="6000-0000" value={telefono} onChange={e => setTelefono(e.target.value)} />
+
+      <label style={S.label}>¿Cómo se entrega?</label>
+      <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+        <button type="button" onClick={() => setTipoEntrega("sucursal")} className="oft-btn-press"
+          style={{ flex: 1, padding: "10px", borderRadius: 10, border: `1.5px solid ${tipoEntrega === "sucursal" ? RED : GRAY2}`, background: tipoEntrega === "sucursal" ? "#FFF5F5" : WHITE, fontWeight: 700, fontSize: 13, cursor: "pointer", color: tipoEntrega === "sucursal" ? RED : BLACK }}>
+          Sucursal de envío
+        </button>
+        <button type="button" onClick={() => setTipoEntrega("puerta")} className="oft-btn-press"
+          style={{ flex: 1, padding: "10px", borderRadius: 10, border: `1.5px solid ${tipoEntrega === "puerta" ? RED : GRAY2}`, background: tipoEntrega === "puerta" ? "#FFF5F5" : WHITE, fontWeight: 700, fontSize: 13, cursor: "pointer", color: tipoEntrega === "puerta" ? RED : BLACK }}>
+          Puerta a puerta
+        </button>
+      </div>
+
+      <label style={S.label}>Empresa de envío</label>
+      <select style={S.input} value={empresaId} onChange={e => { setEmpresaId(e.target.value); setSucursalId(""); }}>
+        <option value="">Selecciona...</option>
+        {empresas.map(e => <option key={e.id} value={e.id}>{e.nombre}</option>)}
+      </select>
+
+      {tipoEntrega === "sucursal" ? (
+        <>
+          <label style={S.label}>Sucursal</label>
+          <select style={S.input} value={sucursalId} onChange={e => setSucursalId(e.target.value)} disabled={!empresaId}>
+            <option value="">{empresaId ? "Selecciona..." : "Primero elige la empresa"}</option>
+            {sucursalesDeEmpresa.map(s => <option key={s.id} value={s.id}>{s.nombre}</option>)}
+          </select>
+        </>
+      ) : (
+        <>
+          <label style={S.label}>Dirección de entrega</label>
+          <textarea style={{ ...S.input, resize: "vertical" }} rows={2} placeholder="Dirección completa..." value={direccion} onChange={e => setDireccion(e.target.value)} />
+        </>
+      )}
+
+      <label style={S.label}>¿Qué se envía? (opcional, una línea por artículo)</label>
+      <textarea style={{ ...S.input, resize: "vertical" }} rows={3} placeholder={"Ej: Camisa talla M (cambio)\n1 par de zapatos talla 38"} value={contenido} onChange={e => setContenido(e.target.value)} />
+
+      <div style={{ display: "flex", alignItems: "center", gap: 10, background: GRAY, borderRadius: 10, padding: "10px 14px", marginBottom: 18 }}>
+        <input type="checkbox" id="etiqueta_pagada" checked={pagado} onChange={e => setPagado(e.target.checked)} style={{ width: 18, height: 18 }} />
+        <label htmlFor="etiqueta_pagada" style={{ fontSize: 13, fontWeight: 700, cursor: "pointer" }}>El envío ya está pagado</label>
+      </div>
+
+      <button onClick={generar} className="oft-btn-press" style={{ ...S.btnRed, width: "100%", justifyContent: "center", padding: 14, fontSize: 15 }}>
+        <Printer size={17} /> Generar guía / etiqueta
+      </button>
+
+      {etiquetaGenerada && (
+        <ShippingLabelModal order={etiquetaGenerada} onClose={() => { setEtiquetaGenerada(null); limpiar(); }} />
+      )}
+    </div>
+  );
+}
+
+
 function EditorEmailAlertasReposicion({ showToast }) {
   const [valor, setValor] = useState("");
   const [cargando, setCargando] = useState(true);
@@ -3836,6 +3949,7 @@ function AdminView() {
     ["retirolocal", "Retiro en Local", Home],
     ["reporteventas", "Reporte de Ventas", FileText],
     ["shipping", "Envíos", Truck],
+    ["etiquetas", "Crear Etiqueta", Printer],
     ["users", "Clientes", Users],
     ["equipo", "Equipo", Lock],
     ["pixeles", "Píxeles", Zap],
@@ -6597,6 +6711,11 @@ function AdminView() {
               e.target.value = "";
             }} />
           </>
+        )}
+
+        {/* ═══════════ CREAR ETIQUETA (guía suelta, sin pedido) ═══════════ */}
+        {tab === "etiquetas" && esAdminCompleto && (
+          <CrearEtiquetaPanel empresas={empresas} sucursales={sucursales} showToast={showToast} />
         )}
 
         {/* ═══════════ CLIENTES ═══════════ */}
