@@ -875,14 +875,29 @@ export function CrearPedidoView() {
   const hayRedondeo = totalRedondeado !== totalReal;
   const total = totalRedondeado;
 
+  // Cuántas piezas de este producto ya están en el carrito (en otras líneas) -- para
+  // sumarlas antes de avisar, por si ya se agregó en más de una presentación.
+  const piezasYaEnCarrito = (productId, excluirIdx = -1) =>
+    items.reduce((s, it, i) => i === excluirIdx || it.product.id !== productId ? s : s + presToPiezas(it.pres, it.count), 0);
+
+  // Avisa (sin bloquear del todo, por si la sincronización está desactualizada) si
+  // lo que se está por agregar deja al producto vendido de más contra su stock real.
+  const avisarSiExcedeStock = (product, piezasNuevas, excluirIdx = -1) => {
+    if (!product.stock_actualizado_at) return true; // sin stock sincronizado, no hay con qué comparar
+    const stockDisponible = Number(product.stock || 0);
+    const yaEnCarrito = piezasYaEnCarrito(product.id, excluirIdx);
+    const totalConEsto = yaEnCarrito + piezasNuevas;
+    if (totalConEsto <= stockDisponible) return true;
+    const mensaje = stockDisponible <= 0
+      ? `⚠️ "${product.nombre}" muestra 0 en stock (según la última sincronización).\n\n¿Agregarlo de todas formas?`
+      : `⚠️ "${product.nombre}" tiene ${stockDisponible} en stock, pero ${yaEnCarrito > 0 ? `ya hay ${yaEnCarrito} en el pedido y ` : ""}esto lo dejaría en ${totalConEsto} piezas.\n\n¿Continuar de todas formas?`;
+    return confirm(mensaje);
+  };
+
   const addItem = (product) => {
-    // Aviso si el producto ya no tiene stock (según la última sincronización con
-    // Odoo) -- para no vender por accidente algo que ya no hay. No bloquea del
-    // todo, por si la sincronización está desactualizada y sí hay mercancía real.
-    if (product.stock_actualizado_at && Number(product.stock || 0) <= 0) {
-      const continuar = confirm(`⚠️ "${product.nombre}" muestra 0 en stock (según la última sincronización).\n\n¿Agregarlo de todas formas?`);
-      if (!continuar) return;
-    }
+    // Por defecto se agrega 1 docena (12 piezas) -- se revisa contra el stock real
+    // antes de agregarlo, no solo cuando el stock ya está en 0.
+    if (!avisarSiExcedeStock(product, presToPiezas("docena", 1))) return;
     // Siempre agrega una nueva línea — permite el mismo producto con distintas presentaciones
     // (ej: docena + 4 piezas de la misma referencia)
     setItems(prev => [...prev, { product, pres: "docena", count: 1 }]);
@@ -893,10 +908,15 @@ export function CrearPedidoView() {
       if (i !== idx) return it;
       // Si cambia la presentación, se borra el precio editado (era para la otra presentación)
       // y la distribución personalizada (el total objetivo -12, 6, o ninguno- cambió)
-      if (field === "pres") return { ...it, pres: val, precioOverride: undefined, distribucionPersonalizada: null };
+      if (field === "pres") {
+        if (!avisarSiExcedeStock(it.product, presToPiezas(val, it.count), idx)) return it;
+        return { ...it, pres: val, precioOverride: undefined, distribucionPersonalizada: null };
+      }
       if (field === "count") {
-        // Ajusta el arreglo de variantes (talla/color por pieza) al nuevo tamaño
         const nuevoCount = Math.max(1, val);
+        // Solo avisa si la cantidad SUBE (bajar cantidad nunca puede exceder el stock)
+        if (nuevoCount > it.count && !avisarSiExcedeStock(it.product, presToPiezas(it.pres, nuevoCount), idx)) return it;
+        // Ajusta el arreglo de variantes (talla/color por pieza) al nuevo tamaño
         const variantesActuales = it.variantes || [];
         let nuevasVariantes = variantesActuales.slice(0, nuevoCount);
         while (nuevasVariantes.length < nuevoCount) nuevasVariantes.push({ talla: "", color: "" });
