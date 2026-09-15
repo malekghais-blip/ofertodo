@@ -1222,7 +1222,12 @@ export function CrearPedidoView() {
                     {p.imagen_url ? <img src={imagenOptimizada(p.imagen_url, 150)} style={{ width: 36, height: 36, borderRadius: 6, objectFit: "cover" }} /> : <div style={{ width: 36, height: 36, borderRadius: 6, background: GRAY, display: "flex", alignItems: "center", justifyContent: "center" }}><Package size={16} color={GRAY3} /></div>}
                     <div style={{ flex: 1 }}>
                       <div style={{ fontWeight: 700, fontSize: 13 }}>{p.nombre}</div>
-                      <div style={{ fontSize: 11, color: GRAY3 }}>{p.referencia || "—"} · Docena ${p.precio_docena}</div>
+                      <div style={{ fontSize: 11, color: GRAY3 }}>
+                        {p.referencia || "—"} · Docena ${p.precio_docena}
+                        {p.stock_actualizado_at && (
+                          <span style={{ fontWeight: 800, color: Number(p.stock) <= 0 ? RED : Number(p.stock) <= 5 ? "#856404" : "#0F6E56" }}> · Stock: {p.stock}</span>
+                        )}
+                      </div>
                     </div>
                     <Plus size={18} color={RED} />
                   </div>
@@ -1248,7 +1253,12 @@ export function CrearPedidoView() {
                     {it.product.imagen_url ? <img src={it.product.imagen_url} style={{ width: 40, height: 40, borderRadius: 6, objectFit: "cover" }} /> : <div style={{ width: 40, height: 40, borderRadius: 6, background: GRAY, display: "flex", alignItems: "center", justifyContent: "center" }}><Package size={18} color={GRAY3} /></div>}
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontWeight: 700, fontSize: 13 }}>{it.product.nombre}</div>
-                      <div style={{ fontSize: 11, color: GRAY3 }}>{it.count} × {money(precioActual)} {presLabelPlural(it.pres, it.count)}</div>
+                      <div style={{ fontSize: 11, color: GRAY3 }}>
+                        {it.count} × {money(precioActual)} {presLabelPlural(it.pres, it.count)}
+                        {it.product.stock_actualizado_at && (
+                          <span style={{ fontWeight: 800, color: Number(it.product.stock) <= 0 ? RED : Number(it.product.stock) <= 5 ? "#856404" : "#0F6E56" }}> · Stock: {it.product.stock}</span>
+                        )}
+                      </div>
                     </div>
                     <div style={{ fontWeight: 800, color: RED }}>{money(itemTotal(it))}</div>
                     <button onClick={() => removeItem(idx)} style={{ background: "none", border: "none", color: RED, cursor: "pointer", display: "flex" }}><Trash2 size={16} /></button>
@@ -1560,7 +1570,12 @@ export function CrearPedidoView() {
                                 {p.imagen_url ? <img src={imagenOptimizada(p.imagen_url, 150)} style={{ width: 30, height: 30, borderRadius: 5, objectFit: "cover" }} /> : <div style={{ width: 30, height: 30, borderRadius: 5, background: GRAY, display: "flex", alignItems: "center", justifyContent: "center" }}><Package size={14} color={GRAY3} /></div>}
                                 <div style={{ flex: 1 }}>
                                   <div style={{ fontWeight: 700, fontSize: 12 }}>{p.nombre}</div>
-                                  <div style={{ fontSize: 10, color: GRAY3 }}>{p.referencia || "—"} · {money(flexUnitPrice(p, pack.modo))}/pza</div>
+                                  <div style={{ fontSize: 10, color: GRAY3 }}>
+                                    {p.referencia || "—"} · {money(flexUnitPrice(p, pack.modo))}/pza
+                                    {p.stock_actualizado_at && (
+                                      <span style={{ fontWeight: 800, color: Number(p.stock) <= 0 ? RED : Number(p.stock) <= 5 ? "#856404" : "#0F6E56" }}> · Stock: {p.stock}</span>
+                                    )}
+                                  </div>
                                 </div>
                                 <Plus size={16} color={RED} />
                               </div>
