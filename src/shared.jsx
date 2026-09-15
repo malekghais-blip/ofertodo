@@ -1366,7 +1366,12 @@ export function CrearPedidoView() {
 
                     const setQty = (v, qty) => {
                       const n = Math.max(0, Number(qty.replace(/[^0-9]/g, "")) || 0);
-                      updateItem(idx, "distribucionPersonalizada", { ...dist, [v]: n });
+                      // Lo que ya está puesto en las DEMÁS tallas -- lo máximo que se le puede
+                      // dejar poner a esta es lo que quede libre después de eso, para que
+                      // nunca se pueda pasar del total (ya no hace falta avisar "sobran X").
+                      const sumaOtras = variantesDisponibles.reduce((s, otra) => s + (otra === v ? 0 : (Number(dist[otra]) || 0)), 0);
+                      const maximoParaEsta = Math.max(0, totalObjetivo - sumaOtras);
+                      updateItem(idx, "distribucionPersonalizada", { ...dist, [v]: Math.min(n, maximoParaEsta) });
                     };
 
                     return (
@@ -1389,17 +1394,21 @@ export function CrearPedidoView() {
                         ) : (
                           <>
                             <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
-                              {variantesDisponibles.map(v => (
-                                <div key={v} style={{ display: "flex", alignItems: "center", gap: 5, background: WHITE, border: `1.5px solid ${GRAY2}`, borderRadius: 8, padding: "5px 8px" }}>
-                                  <span style={{ fontSize: 12, fontWeight: 700 }}>{v}</span>
-                                  <input type="number" min="0" inputMode="numeric" value={dist[v] || ""} placeholder="0"
-                                    onChange={e => setQty(v, e.target.value)}
-                                    style={{ width: 36, border: "none", borderBottom: `2px solid ${GRAY2}`, textAlign: "center", fontWeight: 800, fontSize: 13, outline: "none" }} />
-                                </div>
-                              ))}
+                              {variantesDisponibles.map(v => {
+                                const sumaOtras = variantesDisponibles.reduce((s, otra) => s + (otra === v ? 0 : (Number(dist[otra]) || 0)), 0);
+                                const maximoParaEsta = Math.max(0, totalObjetivo - sumaOtras);
+                                return (
+                                  <div key={v} style={{ display: "flex", alignItems: "center", gap: 5, background: WHITE, border: `1.5px solid ${GRAY2}`, borderRadius: 8, padding: "5px 8px" }}>
+                                    <span style={{ fontSize: 12, fontWeight: 700 }}>{v}</span>
+                                    <input type="number" min="0" max={maximoParaEsta} inputMode="numeric" value={dist[v] || ""} placeholder="0"
+                                      onChange={e => setQty(v, e.target.value)}
+                                      style={{ width: 36, border: "none", borderBottom: `2px solid ${GRAY2}`, textAlign: "center", fontWeight: 800, fontSize: 13, outline: "none" }} />
+                                  </div>
+                                );
+                              })}
                             </div>
                             <div style={{ fontSize: 11, fontWeight: 700, color: totalActual === totalObjetivo ? "#1FA64A" : RED }}>
-                              Total: {totalActual} / {totalObjetivo} {totalActual === totalObjetivo ? "✓ Completo" : totalActual < totalObjetivo ? `— faltan ${totalObjetivo - totalActual}` : `— sobran ${totalActual - totalObjetivo}`}
+                              Total: {totalActual} / {totalObjetivo} {totalActual === totalObjetivo ? "✓ Completo" : `— faltan ${totalObjetivo - totalActual}`}
                             </div>
                           </>
                         )}
