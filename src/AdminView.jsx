@@ -2261,10 +2261,16 @@ function AnalisisAdsPanel() {
     if (idsProducto.length === 0) { setIngresosPorProducto({}); return; }
     (async () => {
       try {
-        const items = await sb.get("pedido_items", `?producto_id=in.(${idsProducto.join(",")})&select=producto_id,subtotal,pedidos(created_at,pagado)`);
+        // Se trae "tipo" también -- las cotizaciones se guardan con pagado=true
+        // desde que se crean (es una decisión de diseño para otra parte del sistema,
+        // no porque sean ventas reales), así que sin excluirlas explícitamente aquí,
+        // cada cotización que incluya un producto con campaña inflaba las "ventas
+        // atribuidas" como si fuera una venta ya cerrada.
+        const items = await sb.get("pedido_items", `?producto_id=in.(${idsProducto.join(",")})&select=producto_id,subtotal,pedidos(created_at,pagado,tipo)`);
         const mapa = {};
         (items || []).forEach(it => {
           if (!it.pedidos?.pagado) return;
+          if (it.pedidos?.tipo === "cotizacion") return; // no es una venta real todavía
           if (!mapa[it.producto_id]) mapa[it.producto_id] = [];
           mapa[it.producto_id].push({ fecha: it.pedidos.created_at, monto: Number(it.subtotal) || 0 });
         });
