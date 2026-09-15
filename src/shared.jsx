@@ -1109,6 +1109,10 @@ export function CrearPedidoView({ onCreado } = {}) {
         pagado: tipo === "cotizacion" ? true : false,
       });
       const pedidoId = pedido[0].id;
+      // Se guarda cada línea creada aquí -- así, al avisarle al Dashboard que hay un
+      // pedido nuevo, se le puede mandar YA CON sus productos, sin que tenga que
+      // adivinarlos ni quedarse con la lista vacía hasta que alguien refresque.
+      const itemsCreados = [];
       // Productos normales — si es "pieza" y tiene variantes por pieza, se agrupan por combinación talla+color
       for (const it of items) {
         const tieneVariantesPorPieza = it.pres === "pieza" && it.variantes && it.variantes.length === it.count &&
@@ -1126,22 +1130,24 @@ export function CrearPedidoView({ onCreado } = {}) {
             const variante = [talla ? `Talla: ${talla}` : null, color ? `Color: ${color}` : null].filter(Boolean).join(" · ");
             const nombreConVariante = variante ? `${it.product.nombre} (${variante})` : it.product.nombre;
             const precioUnit = itemUnitPrice(it);
-            await sb.post("pedido_items", {
+            const creado = await sb.post("pedido_items", {
               pedido_id: pedidoId, producto_id: it.product.id, nombre_producto: nombreConVariante,
               cantidad: cantidadGrupo, precio_unitario: precioUnit,
               subtotal: precioUnit * cantidadGrupo, presentacion: "pieza",
             });
+            if (Array.isArray(creado) && creado[0]) itemsCreados.push(creado[0]);
           }
         } else {
           const eje = it.product.distribucion_eje || (it.product.tiene_tallas ? "talla" : "color");
           const variantesDisponibles = (eje === "talla" ? it.product.tallas : it.product.colores || "").split(",").map(s => s.trim()).filter(Boolean);
           const distribucionValida = it.distribucionPersonalizada && variantesDisponibles.some(v => Number(it.distribucionPersonalizada[v]) > 0);
-          await sb.post("pedido_items", {
+          const creado = await sb.post("pedido_items", {
             pedido_id: pedidoId, producto_id: it.product.id, nombre_producto: it.product.nombre,
             cantidad: presToPiezas(it.pres, it.count), precio_unitario: itemUnitPrice(it),
             subtotal: itemTotal(it), presentacion: it.pres,
             distribucion_tallas: distribucionValida ? JSON.stringify({ eje, cantidades: it.distribucionPersonalizada }) : null,
           });
+          if (Array.isArray(creado) && creado[0]) itemsCreados.push(creado[0]);
         }
       }
       // Líneas de FLEXPACK -- se agrupan las piezas de cada línea por su combinación
@@ -1163,20 +1169,22 @@ export function CrearPedidoView({ onCreado } = {}) {
               const cantidadGrupo = grupos[key];
               const variante = [talla ? `Talla: ${talla}` : null, color ? `Color: ${color}` : null].filter(Boolean).join(" · ");
               const nombreConVariante = variante ? `${l.product.nombre} (${variante}) (${etiqueta})` : `${l.product.nombre} (${etiqueta})`;
-              await sb.post("pedido_items", {
+              const creado = await sb.post("pedido_items", {
                 pedido_id: pedidoId, producto_id: l.product.id, nombre_producto: nombreConVariante,
                 cantidad: cantidadGrupo, precio_unitario: precioUnit,
                 subtotal: precioUnit * cantidadGrupo,
                 presentacion: pack.modo === "media" ? "flexpack_media" : "flexpack_docena",
               });
+              if (Array.isArray(creado) && creado[0]) itemsCreados.push(creado[0]);
             }
           } else {
-            await sb.post("pedido_items", {
+            const creado = await sb.post("pedido_items", {
               pedido_id: pedidoId, producto_id: l.product.id, nombre_producto: `${l.product.nombre} (${etiqueta})`,
               cantidad: l.piezas, precio_unitario: precioUnit,
               subtotal: precioUnit * l.piezas,
               presentacion: pack.modo === "media" ? "flexpack_media" : "flexpack_docena",
             });
+            if (Array.isArray(creado) && creado[0]) itemsCreados.push(creado[0]);
           }
         }
       }
@@ -1287,9 +1295,9 @@ export function CrearPedidoView({ onCreado } = {}) {
         subtotal, descPct, descMonto, costoEnvio, total,
       });
       // Avisa al panel que lo contiene (ej. el Dashboard) que se creó un pedido o
-      // cotización nuevo -- así aparece de una vez en su lista, sin tener que
-      // refrescar la página para que ese componente vuelva a pedir los datos.
-      if (onCreado && Array.isArray(pedido) && pedido[0]) onCreado(pedido[0]);
+      // cotización nuevo -- ya con sus productos reales (no una lista vacía), así
+      // aparece completo de una vez, sin tener que refrescar la página.
+      if (onCreado && Array.isArray(pedido) && pedido[0]) onCreado({ ...pedido[0], items: itemsCreados });
       showToast(tipo === "cotizacion" ? "Cotización creada" : "Pedido creado");
     } catch(e) { alert("Error al crear: " + e.message); }
     setSaving(false);
