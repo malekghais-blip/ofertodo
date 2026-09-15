@@ -2307,14 +2307,22 @@ function AnalisisAdsPanel() {
 
   const calcularIngresosCampana = (campana) => {
     const asignadosDeEsta = asignaciones.filter(a => a.campana_id === campana.id);
-    const desdeCampana = campana.fecha_inicio ? new Date(campana.fecha_inicio) : null;
-    const hastaCampana = campana.fecha_fin ? new Date(campana.fecha_fin + "T23:59:59") : null;
-    const desdeFiltro = new Date(desde + "T00:00:00");
-    const hastaFiltro = new Date(hasta + "T23:59:59");
+    // Panamá es UTC-5 todo el año (no tiene horario de verano) -- se especifica la
+    // zona explícitamente, para que este límite represente el mismo instante sin
+    // importar en qué zona horaria esté el navegador de quien lo esté viendo.
+    const desdeCampana = campana.fecha_inicio ? new Date(campana.fecha_inicio + "T00:00:00-05:00") : null;
+    const hastaCampana = campana.fecha_fin ? new Date(campana.fecha_fin + "T23:59:59-05:00") : null;
+    const desdeFiltro = new Date(desde + "T00:00:00-05:00");
+    const hastaFiltro = new Date(hasta + "T23:59:59-05:00");
     let ingresos = 0;
     asignadosDeEsta.forEach(a => {
       (ingresosPorProducto[a.producto_id] || []).forEach(v => {
-        const f = new Date(v.fecha);
+        // "created_at" se guarda en la base de datos como UTC, pero sin la "Z" al
+        // final -- sin decirle esto a JavaScript, lo interpreta con la hora local
+        // del navegador en vez de UTC, y una venta de la noche (hora Panamá) puede
+        // terminar contada en el día equivocado. Se le agrega "Z" si no la trae.
+        const fechaUTC = /[Z]|[+-]\d\d:\d\d$/.test(v.fecha) ? v.fecha : v.fecha + "Z";
+        const f = new Date(fechaUTC);
         if (desdeCampana && f < desdeCampana) return;
         if (hastaCampana && f > hastaCampana) return;
         if (f < desdeFiltro || f > hastaFiltro) return; // también dentro del rango de fecha elegido
@@ -3990,7 +3998,7 @@ function AdminView() {
 
         {/* ═══════════ CREAR PEDIDO ═══════════ */}
         {tab === "crear" && (
-          <CrearPedidoView onCreado={(nuevo) => setOrders(prev => [{ ...nuevo, items: [] }, ...prev])} />
+          <CrearPedidoView onCreado={(nuevo) => setOrders(prev => [{ ...nuevo, items: nuevo.items || [] }, ...prev])} />
         )}
 
         {/* ═══════════ DASHBOARD ═══════════ */}
