@@ -735,6 +735,39 @@ const colorToHex = (nombre) => {
 // nombre -- el círculo de color ya muestra el tono exacto, no hace falta repetirlo en texto.
 export const nombreColorLimpio = (nombre) => (nombre || "").replace(/\s*\(#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})\)\s*$/, "").trim() || nombre;
 
+// Aviso de stock insuficiente al armar un pedido manual -- reemplaza el confirm()
+// del navegador por algo consistente con el resto de la web, con su misma animación.
+function ModalAvisoStock({ aviso, onConfirmar, onCancelar }) {
+  useLockBodyScroll();
+  return createPortal(
+    <div className="oft-overlay" style={S.overlay} onClick={onCancelar}>
+      <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 16, maxWidth: 380, width: "92%", padding: 24, textAlign: "center" }} onClick={e => e.stopPropagation()}>
+        <div style={{ width: 56, height: 56, borderRadius: "50%", background: "#FFF3CD", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 14px" }}>
+          <AlertTriangle size={28} color="#856404" />
+        </div>
+        <div style={{ fontSize: 17, fontWeight: 900, marginBottom: 8 }}>Stock insuficiente</div>
+        <div style={{ fontSize: 13.5, color: GRAY3, lineHeight: 1.5, marginBottom: 20 }}>
+          {aviso.stockDisponible <= 0 ? (
+            <>"<strong style={{ color: BLACK }}>{aviso.producto}</strong>" muestra <strong style={{ color: BLACK }}>0</strong> en stock, según la última sincronización.</>
+          ) : (
+            <>"<strong style={{ color: BLACK }}>{aviso.producto}</strong>" tiene <strong style={{ color: BLACK }}>{aviso.stockDisponible}</strong> en stock
+            {aviso.yaEnCarrito > 0 && <> (ya hay {aviso.yaEnCarrito} en este pedido)</>}, y esto lo dejaría en <strong style={{ color: BLACK }}>{aviso.totalConEsto}</strong> piezas.</>
+          )}
+        </div>
+        <div style={{ display: "flex", gap: 10 }}>
+          <button onClick={onCancelar} className="oft-btn-press" style={{ flex: 1, padding: "11px", borderRadius: 10, border: `1.5px solid ${GRAY2}`, background: WHITE, fontWeight: 700, fontSize: 14, cursor: "pointer" }}>
+            Cancelar
+          </button>
+          <button onClick={onConfirmar} className="oft-btn-press" style={{ flex: 1, padding: "11px", borderRadius: 10, border: "none", background: "#856404", color: WHITE, fontWeight: 700, fontSize: 14, cursor: "pointer" }}>
+            Agregar igual
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
 export function CrearPedidoView() {
   const { products, empresas, sucursales, localesRetiro, showToast, user } = useApp();
   const [items, setItems] = useState([]); // { product, pres, count }
@@ -880,50 +913,62 @@ export function CrearPedidoView() {
   const piezasYaEnCarrito = (productId, excluirIdx = -1) =>
     items.reduce((s, it, i) => i === excluirIdx || it.product.id !== productId ? s : s + presToPiezas(it.pres, it.count), 0);
 
-  // Avisa (sin bloquear del todo, por si la sincronización está desactualizada) si
-  // lo que se está por agregar deja al producto vendido de más contra su stock real.
-  const avisarSiExcedeStock = (product, piezasNuevas, excluirIdx = -1) => {
-    if (!product.stock_actualizado_at) return true; // sin stock sincronizado, no hay con qué comparar
+  // Solo INFORMA si algo excede el stock -- ya no decide qué hacer (antes usaba
+  // confirm() del navegador, que bloquea todo; ahora se muestra un modal propio,
+  // así que la acción real se guarda en "avisoStock" y se ejecuta solo si se confirma).
+  const checarStock = (product, piezasNuevas, excluirIdx = -1) => {
+    if (!product.stock_actualizado_at) return { excede: false };
     const stockDisponible = Number(product.stock || 0);
     const yaEnCarrito = piezasYaEnCarrito(product.id, excluirIdx);
     const totalConEsto = yaEnCarrito + piezasNuevas;
-    if (totalConEsto <= stockDisponible) return true;
-    const mensaje = stockDisponible <= 0
-      ? `⚠️ "${product.nombre}" muestra 0 en stock (según la última sincronización).\n\n¿Agregarlo de todas formas?`
-      : `⚠️ "${product.nombre}" tiene ${stockDisponible} en stock, pero ${yaEnCarrito > 0 ? `ya hay ${yaEnCarrito} en el pedido y ` : ""}esto lo dejaría en ${totalConEsto} piezas.\n\n¿Continuar de todas formas?`;
-    return confirm(mensaje);
+    if (totalConEsto <= stockDisponible) return { excede: false };
+    return {
+      excede: true, producto: product.nombre, stockDisponible, yaEnCarrito, totalConEsto,
+    };
   };
 
+  const [avisoStock, setAvisoStock] = useState(null); // null | { ...datos del checarStock, onConfirmar }
+
   const addItem = (product) => {
+    const ejecutar = () => { setItems(prev => [...prev, { product, pres: "docena", count: 1 }]); setSearch(""); };
     // Por defecto se agrega 1 docena (12 piezas) -- se revisa contra el stock real
     // antes de agregarlo, no solo cuando el stock ya está en 0.
-    if (!avisarSiExcedeStock(product, presToPiezas("docena", 1))) return;
-    // Siempre agrega una nueva línea — permite el mismo producto con distintas presentaciones
-    // (ej: docena + 4 piezas de la misma referencia)
-    setItems(prev => [...prev, { product, pres: "docena", count: 1 }]);
-    setSearch("");
+    const chequeo = checarStock(product, presToPiezas("docena", 1));
+    if (chequeo.excede) { setAvisoStock({ ...chequeo, onConfirmar: ejecutar }); return; }
+    ejecutar();
   };
   const updateItem = (idx, field, val) => {
-    setItems(prev => prev.map((it, i) => {
-      if (i !== idx) return it;
-      // Si cambia la presentación, se borra el precio editado (era para la otra presentación)
-      // y la distribución personalizada (el total objetivo -12, 6, o ninguno- cambió)
-      if (field === "pres") {
-        if (!avisarSiExcedeStock(it.product, presToPiezas(val, it.count), idx)) return it;
-        return { ...it, pres: val, precioOverride: undefined, distribucionPersonalizada: null };
+    const it = items[idx];
+    const ejecutar = () => {
+      setItems(prev => prev.map((it2, i) => {
+        if (i !== idx) return it2;
+        // Si cambia la presentación, se borra el precio editado (era para la otra
+        // presentación) y la distribución personalizada (el total objetivo cambió)
+        if (field === "pres") return { ...it2, pres: val, precioOverride: undefined, distribucionPersonalizada: null };
+        if (field === "count") {
+          const nuevoCount = Math.max(1, val);
+          // Ajusta el arreglo de variantes (talla/color por pieza) al nuevo tamaño
+          const variantesActuales = it2.variantes || [];
+          let nuevasVariantes = variantesActuales.slice(0, nuevoCount);
+          while (nuevasVariantes.length < nuevoCount) nuevasVariantes.push({ talla: "", color: "" });
+          return { ...it2, count: nuevoCount, variantes: nuevasVariantes };
+        }
+        return { ...it2, [field]: val };
+      }));
+    };
+    if (field === "pres") {
+      const chequeo = checarStock(it.product, presToPiezas(val, it.count), idx);
+      if (chequeo.excede) { setAvisoStock({ ...chequeo, onConfirmar: ejecutar }); return; }
+    }
+    if (field === "count") {
+      const nuevoCount = Math.max(1, val);
+      // Solo avisa si la cantidad SUBE (bajar cantidad nunca puede exceder el stock)
+      if (nuevoCount > it.count) {
+        const chequeo = checarStock(it.product, presToPiezas(it.pres, nuevoCount), idx);
+        if (chequeo.excede) { setAvisoStock({ ...chequeo, onConfirmar: ejecutar }); return; }
       }
-      if (field === "count") {
-        const nuevoCount = Math.max(1, val);
-        // Solo avisa si la cantidad SUBE (bajar cantidad nunca puede exceder el stock)
-        if (nuevoCount > it.count && !avisarSiExcedeStock(it.product, presToPiezas(it.pres, nuevoCount), idx)) return it;
-        // Ajusta el arreglo de variantes (talla/color por pieza) al nuevo tamaño
-        const variantesActuales = it.variantes || [];
-        let nuevasVariantes = variantesActuales.slice(0, nuevoCount);
-        while (nuevasVariantes.length < nuevoCount) nuevasVariantes.push({ talla: "", color: "" });
-        return { ...it, count: nuevoCount, variantes: nuevasVariantes };
-      }
-      return { ...it, [field]: val };
-    }));
+    }
+    ejecutar();
   };
   // Actualiza la talla o color de UNA pieza específica dentro de un item
   const updateVariantePieza = (idx, piezaIdx, campo, val) => {
@@ -1822,6 +1867,14 @@ export function CrearPedidoView() {
 
       {/* MODAL DE FACTURA */}
       {invoice && <InvoiceModal invoice={invoice} onClose={() => { resetForm(); }} />}
+      {/* MODAL DE AVISO DE STOCK INSUFICIENTE */}
+      {avisoStock && (
+        <ModalAvisoStock
+          aviso={avisoStock}
+          onCancelar={() => setAvisoStock(null)}
+          onConfirmar={() => { avisoStock.onConfirmar(); setAvisoStock(null); }}
+        />
+      )}
     </>
   );
 }
