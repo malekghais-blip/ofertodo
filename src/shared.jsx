@@ -768,6 +768,46 @@ function ModalAvisoStock({ aviso, onConfirmar, onCancelar }) {
   );
 }
 
+// Popup para elegir con qué presentación se agrega un producto al pedido manual --
+// aparece justo al seleccionarlo en la búsqueda, en vez de agregarlo directo con
+// una presentación por defecto que luego hay que cambiar.
+function ModalElegirPresentacion({ producto, onElegir, onCerrar }) {
+  useLockBodyScroll();
+  const opciones = [
+    { pres: "pieza", etiqueta: "Pieza", precio: producto.precio_pieza, detalle: "1 unidad" },
+    { pres: "media", etiqueta: "Media Docena", precio: producto.precio_media_docena, detalle: "6 unidades" },
+    { pres: "docena", etiqueta: "Docena", precio: producto.precio_docena, detalle: "12 unidades" },
+  ];
+  return createPortal(
+    <div className="oft-overlay" style={S.overlay} onClick={onCerrar}>
+      <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 16, maxWidth: 380, width: "92%", padding: 22 }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 18 }}>
+          {producto.imagen_url ? <img src={producto.imagen_url} style={{ width: 44, height: 44, borderRadius: 8, objectFit: "cover" }} /> : <div style={{ width: 44, height: 44, borderRadius: 8, background: GRAY, display: "flex", alignItems: "center", justifyContent: "center" }}><Package size={20} color={GRAY3} /></div>}
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontWeight: 800, fontSize: 15, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{producto.nombre}</div>
+            <div style={{ fontSize: 12, color: GRAY3 }}>{producto.referencia || "—"}</div>
+          </div>
+          <button onClick={onCerrar} style={{ background: "none", border: "none", cursor: "pointer", display: "flex", padding: 4 }}><X size={20} /></button>
+        </div>
+        <div style={{ fontSize: 12, fontWeight: 800, color: GRAY3, marginBottom: 10, letterSpacing: 0.5 }}>¿CÓMO SE AGREGA?</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {opciones.map(op => (
+            <button key={op.pres} onClick={() => onElegir(op.pres)} className="oft-btn-press"
+              style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%", padding: "14px 16px", borderRadius: 12, border: `1.5px solid ${GRAY2}`, background: WHITE, cursor: "pointer", textAlign: "left" }}>
+              <div>
+                <div style={{ fontWeight: 800, fontSize: 14 }}>{op.etiqueta}</div>
+                <div style={{ fontSize: 11.5, color: GRAY3 }}>{op.detalle}</div>
+              </div>
+              <div style={{ fontWeight: 900, fontSize: 16, color: RED }}>${op.precio}</div>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
 export function CrearPedidoView() {
   const { products, empresas, sucursales, localesRetiro, showToast, user } = useApp();
   const [items, setItems] = useState([]); // { product, pres, count }
@@ -928,12 +968,12 @@ export function CrearPedidoView() {
   };
 
   const [avisoStock, setAvisoStock] = useState(null); // null | { ...datos del checarStock, onConfirmar }
+  const [productoParaElegir, setProductoParaElegir] = useState(null); // null | producto -- para el popup de Pieza/Media/Docena
 
-  const addItem = (product) => {
-    const ejecutar = () => { setItems(prev => [...prev, { product, pres: "docena", count: 1 }]); setSearch(""); };
-    // Por defecto se agrega 1 docena (12 piezas) -- se revisa contra el stock real
-    // antes de agregarlo, no solo cuando el stock ya está en 0.
-    const chequeo = checarStock(product, presToPiezas("docena", 1));
+  const addItem = (product, pres = "docena") => {
+    const ejecutar = () => { setItems(prev => [...prev, { product, pres, count: 1 }]); setSearch(""); };
+    // Se revisa contra el stock real antes de agregarlo, no solo cuando ya está en 0.
+    const chequeo = checarStock(product, presToPiezas(pres, 1));
     if (chequeo.excede) { setAvisoStock({ ...chequeo, onConfirmar: ejecutar }); return; }
     ejecutar();
   };
@@ -1283,7 +1323,7 @@ export function CrearPedidoView() {
             {filtered.length > 0 && (
               <div style={{ position: "absolute", top: "100%", left: 0, right: 0, background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 10, marginTop: 4, zIndex: 20, boxShadow: "0 8px 24px rgba(0,0,0,0.12)", overflow: "hidden" }}>
                 {filtered.map(p => (
-                  <div key={p.id} onClick={() => addItem(p)} className="oft-cat-chip" style={{ padding: 10, display: "flex", alignItems: "center", gap: 10, cursor: "pointer", borderBottom: `1px solid ${GRAY}` }}>
+                  <div key={p.id} onClick={() => setProductoParaElegir(p)} className="oft-cat-chip" style={{ padding: 10, display: "flex", alignItems: "center", gap: 10, cursor: "pointer", borderBottom: `1px solid ${GRAY}` }}>
                     {p.imagen_url ? <img src={imagenOptimizada(p.imagen_url, 150)} style={{ width: 36, height: 36, borderRadius: 6, objectFit: "cover" }} /> : <div style={{ width: 36, height: 36, borderRadius: 6, background: GRAY, display: "flex", alignItems: "center", justifyContent: "center" }}><Package size={16} color={GRAY3} /></div>}
                     <div style={{ flex: 1 }}>
                       <div style={{ fontWeight: 700, fontSize: 13 }}>{p.nombre}</div>
@@ -1867,6 +1907,14 @@ export function CrearPedidoView() {
 
       {/* MODAL DE FACTURA */}
       {invoice && <InvoiceModal invoice={invoice} onClose={() => { resetForm(); }} />}
+      {/* POPUP: elegir Pieza/Media/Docena al seleccionar un producto */}
+      {productoParaElegir && (
+        <ModalElegirPresentacion
+          producto={productoParaElegir}
+          onCerrar={() => setProductoParaElegir(null)}
+          onElegir={(pres) => { addItem(productoParaElegir, pres); setProductoParaElegir(null); }}
+        />
+      )}
       {/* MODAL DE AVISO DE STOCK INSUFICIENTE */}
       {avisoStock && (
         <ModalAvisoStock
