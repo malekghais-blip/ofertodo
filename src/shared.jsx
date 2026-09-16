@@ -2260,36 +2260,48 @@ export function ShippingLabelModal({ order, onClose }) {
   const printEtiquetaCliente = () => {
     const direccionCompleta = [order.direccion, order.sucursal_nombre ? `Sucursal: ${order.sucursal_nombre}` : null].filter(Boolean).join(" — ");
     const envioPagado = Number(order.costo_envio || 0) > 0;
+    // Ajusta el tamaño de letra según qué tan largo sea el texto -- así, un nombre o
+    // dirección muy largos no empujan el contenido a una segunda hoja; se van
+    // achicando solos en vez de desbordarse. "umbrales" va de menor a mayor: usa el
+    // primer tamaño cuyo límite alcance para ese texto.
+    const tamanoPor = (texto, umbrales) => {
+      const largo = (texto || "").length;
+      for (const [max, tam] of umbrales) if (largo <= max) return tam;
+      return umbrales[umbrales.length - 1][1];
+    };
+    const tamNombre = tamanoPor(order.nombre_cliente, [[16, 30], [26, 24], [38, 19], [55, 15], [999, 12]]);
+    const tamDireccion = tamanoPor(direccionCompleta, [[35, 18], [65, 15], [100, 13], [140, 11], [999, 9.5]]);
+    const tamEmpresa = tamanoPor(order.empresa_envio_nombre || (order.retiro_local ? "RETIRO EN LOCAL" : ""), [[14, 16], [22, 13], [999, 10.5]]);
     const contenido = `
-      <div style="width:4in;height:6in;box-sizing:border-box;padding:0.35in;display:flex;flex-direction:column;font-family:Helvetica,Arial,sans-serif;">
-        <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:3px solid #111;padding-bottom:0.12in;margin-bottom:0.16in;">
-          <div style="font-size:22pt;font-weight:900;color:#111;">Ofer<span style="background:#E31E24;color:#fff;padding:0 8px;border-radius:4px;">todo</span></div>
+      <div style="width:4in;height:6in;box-sizing:border-box;padding:0.32in;display:flex;flex-direction:column;font-family:Helvetica,Arial,sans-serif;overflow:hidden;">
+        <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:3px solid #111;padding-bottom:0.1in;margin-bottom:0.14in;flex-shrink:0;">
+          <div style="font-size:20pt;font-weight:900;color:#111;">Ofer<span style="background:#E31E24;color:#fff;padding:0 7px;border-radius:4px;">todo</span></div>
           <div style="text-align:right;">
-            <div style="font-size:11pt;font-weight:700;color:#666;">${order.codigo}</div>
-            <div style="font-size:9pt;color:#999;">${new Date(order.created_at || Date.now()).toLocaleDateString("es-PA")}</div>
+            <div style="font-size:10pt;font-weight:700;color:#666;">${order.codigo}</div>
+            <div style="font-size:8pt;color:#999;">${new Date(order.created_at || Date.now()).toLocaleDateString("es-PA")}</div>
           </div>
         </div>
-        <div style="background:#111;color:#fff;padding:0.1in 0.14in;border-radius:6px;margin-bottom:0.12in;display:flex;justify-content:space-between;align-items:center;">
-          <span style="font-size:11pt;font-weight:700;letter-spacing:1px;opacity:0.8;">ENVIAR POR</span>
-          <span style="font-size:16pt;font-weight:900;">${order.empresa_envio_nombre || (order.retiro_local ? "RETIRO EN LOCAL" : "—")}</span>
+        <div style="background:#111;color:#fff;padding:0.09in 0.13in;border-radius:6px;margin-bottom:0.1in;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-shrink:0;">
+          <span style="font-size:9.5pt;font-weight:700;letter-spacing:1px;opacity:0.8;flex-shrink:0;">ENVIAR POR</span>
+          <span style="font-size:${tamEmpresa}pt;font-weight:900;text-align:right;">${order.empresa_envio_nombre || (order.retiro_local ? "RETIRO EN LOCAL" : "—")}</span>
         </div>
         ${!order.retiro_local ? `
-        <div style="background:${envioPagado ? "#155724" : "#856404"};color:#fff;padding:0.08in 0.14in;border-radius:6px;margin-bottom:0.22in;text-align:center;">
-          <span style="font-size:13pt;font-weight:900;letter-spacing:0.5px;">${envioPagado ? "✓ ENVÍO PAGADO" : "⚠ COBRAR ENVÍO AL ENTREGAR"}</span>
-        </div>` : `<div style="margin-bottom:0.1in;"></div>`}
-        <div style="font-size:12pt;font-weight:800;color:#999;letter-spacing:1px;margin-bottom:0.08in;">ENVIAR A:</div>
-        <div style="font-size:30pt;font-weight:900;color:#111;line-height:1.15;margin-bottom:0.22in;word-break:break-word;">${order.nombre_cliente || "—"}</div>
-        <div style="font-size:12pt;font-weight:800;color:#999;letter-spacing:1px;margin-bottom:0.08in;">TELÉFONO:</div>
-        <div style="font-size:26pt;font-weight:900;color:#111;margin-bottom:0.22in;">${order.telefono || "—"}</div>
-        <div style="font-size:12pt;font-weight:800;color:#999;letter-spacing:1px;margin-bottom:0.08in;">DIRECCIÓN:</div>
-        <div style="font-size:18pt;font-weight:700;color:#111;line-height:1.35;flex:1;word-break:break-word;">${direccionCompleta || "Retiro en local"}</div>
-        <div style="border-top:2px solid #ccc;padding-top:0.12in;font-size:10pt;color:#999;text-align:center;">ofertodo.com.pa</div>
+        <div style="background:${envioPagado ? "#155724" : "#856404"};color:#fff;padding:0.07in 0.13in;border-radius:6px;margin-bottom:0.16in;text-align:center;flex-shrink:0;">
+          <span style="font-size:11.5pt;font-weight:900;letter-spacing:0.5px;">${envioPagado ? "✓ ENVÍO PAGADO" : "⚠ COBRAR ENVÍO AL ENTREGAR"}</span>
+        </div>` : `<div style="margin-bottom:0.08in;flex-shrink:0;"></div>`}
+        <div style="font-size:10.5pt;font-weight:800;color:#999;letter-spacing:1px;margin-bottom:0.06in;flex-shrink:0;">ENVIAR A:</div>
+        <div style="font-size:${tamNombre}pt;font-weight:900;color:#111;line-height:1.15;margin-bottom:0.18in;word-break:break-word;flex-shrink:0;">${order.nombre_cliente || "—"}</div>
+        <div style="font-size:10.5pt;font-weight:800;color:#999;letter-spacing:1px;margin-bottom:0.06in;flex-shrink:0;">TELÉFONO:</div>
+        <div style="font-size:22pt;font-weight:900;color:#111;margin-bottom:0.18in;flex-shrink:0;">${order.telefono || "—"}</div>
+        <div style="font-size:10.5pt;font-weight:800;color:#999;letter-spacing:1px;margin-bottom:0.06in;flex-shrink:0;">DIRECCIÓN:</div>
+        <div style="font-size:${tamDireccion}pt;font-weight:700;color:#111;line-height:1.32;flex:1;overflow:hidden;word-break:break-word;">${direccionCompleta || "Retiro en local"}</div>
+        <div style="border-top:2px solid #ccc;padding-top:0.1in;font-size:9pt;color:#999;text-align:center;flex-shrink:0;">ofertodo.com.pa</div>
       </div>`;
     const estilos = `
       <style>
         * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; box-sizing: border-box; }
         @page { size: 4in 6in; margin: 0; }
-        html, body { margin: 0; padding: 0; background: #ffffff; }
+        html, body { margin: 0; padding: 0; background: #ffffff; width: 4in; height: 6in; overflow: hidden; }
       </style>`;
     const iframe = document.createElement("iframe");
     iframe.style.position = "fixed"; iframe.style.right = "0"; iframe.style.bottom = "0";
