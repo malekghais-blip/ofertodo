@@ -739,7 +739,7 @@ function StockRankingModal({ tipo, items, itemsSinFiltroNiLimite, proveedores, p
   const listaReponerFiltrada = esReponer
     ? (proveedorFiltroModal === "todos" ? itemsSinFiltroNiLimite : itemsSinFiltroNiLimite.filter(f => f.prod?.proveedor_id === Number(proveedorFiltroModal)))
     : [];
-  const itemsAMostrar = esReponer ? listaReponerFiltrada.slice(0, 50) : items;
+  const itemsAMostrar = esReponer ? listaReponerFiltrada : items;
 
   const descargarCSV = () => {
     const filas = [
