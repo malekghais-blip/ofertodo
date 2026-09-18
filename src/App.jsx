@@ -1632,7 +1632,19 @@ function CartModal() {
               Finalizar Pedido →
             </button>
             <button style={{ ...S.btnWA, width: "100%", justifyContent: "center", padding: 12, marginTop: 10 }}
-              onClick={() => { registrarEvento("consulta_whatsapp", null, "Pedido desde el carrito"); const msg = cart.map(i => `${i.product.nombre} x${i.qty}`).join(", "); window.open(`https://wa.me/${WA_NUMBER}?text=Hola%20Ofertodo%2C%20quiero%20pedir:%20${encodeURIComponent(msg)}`, "_blank"); }}>
+              onClick={() => {
+                registrarEvento("consulta_whatsapp", null, "Pedido desde el carrito");
+                const lineas = cart.map((i, idx) => {
+                  let linea = `${idx + 1}. ${i.product.nombre}`;
+                  if (i.product.referencia) linea += ` (Ref: ${i.product.referencia})`;
+                  const etiquetaPres = i.pres === "docena" ? `${i.count} docena${i.count > 1 ? "s" : ""}`
+                    : i.pres === "media" ? `${i.count} media${i.count > 1 ? "s" : ""} docena`
+                    : `x${i.qty}`;
+                  return `${linea} — ${etiquetaPres}`;
+                });
+                const msg = `Hola Ofertodo, quiero pedir:\n\n${lineas.join("\n")}\n\nTotal: $${total.toFixed(2)}`;
+                window.open(`https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(msg)}`, "_blank");
+              }}>
               <MessageCircle size={16} /> Pedir por WhatsApp
             </button>
           </>
