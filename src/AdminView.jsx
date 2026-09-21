@@ -2645,6 +2645,7 @@ function AdminView() {
   // Filtro de ventas por periodo en el dashboard
   const [rangoVentas, setRangoVentas] = useState("todo"); // dia | semana | mes | anio | todo | personalizado | rango
   const [busquedaPedidos, setBusquedaPedidos] = useState(""); // busca por # de pedido o nombre de cliente, en la pestaña Pedidos
+  const [soloSinImprimir, setSoloSinImprimir] = useState(false); // filtro rápido: solo pedidos con la guía pendiente de imprimir
   const [fechaPersonalizada, setFechaPersonalizada] = useState(null); // Date seleccionada en el calendario
   const [mostrarCalendario, setMostrarCalendario] = useState(false);
   const [mesCalendario, setMesCalendario] = useState(new Date()); // mes que muestra el calendario
@@ -2710,6 +2711,7 @@ function AdminView() {
   // Filtra por # de pedido o nombre de cliente -- solo afecta la lista de la pestaña
   // "Pedidos", no los números del Dashboard ni del Reporte de Ventas
   const pedidosFiltrados = pedidosReales.filter(o => {
+    if (soloSinImprimir && o.guia_impresa) return false;
     const texto = busquedaPedidos.trim().toLowerCase();
     if (!texto) return true;
     return (o.codigo || "").toLowerCase().includes(texto) || (o.nombre_cliente || "").toLowerCase().includes(texto);
@@ -4472,14 +4474,20 @@ function AdminView() {
                 <div key={l} style={S.statCard}><Icon size={20} color={c} strokeWidth={1.8} /><div style={{ fontSize: 28, fontWeight: 900, color: c }}>{n}</div><div style={{ fontSize: 13, color: GRAY3 }}>{l}</div></div>
               ))}
             </div>
-            <div style={{ position: "relative", maxWidth: 360, marginBottom: 20 }}>
-              <Search size={16} color={GRAY3} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)" }} />
-              <input
-                value={busquedaPedidos}
-                onChange={e => setBusquedaPedidos(e.target.value)}
-                placeholder="Buscar por # de pedido o cliente..."
-                style={{ ...S.input, marginBottom: 0, paddingLeft: 36 }}
-              />
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: 20 }}>
+              <div style={{ position: "relative", maxWidth: 360, flex: 1, minWidth: 220 }}>
+                <Search size={16} color={GRAY3} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)" }} />
+                <input
+                  value={busquedaPedidos}
+                  onChange={e => setBusquedaPedidos(e.target.value)}
+                  placeholder="Buscar por # de pedido o cliente..."
+                  style={{ ...S.input, marginBottom: 0, paddingLeft: 36 }}
+                />
+              </div>
+              <button onClick={() => setSoloSinImprimir(v => !v)} className="oft-btn-press"
+                style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "10px 14px", borderRadius: 10, border: `1.5px solid ${soloSinImprimir ? "#856404" : GRAY2}`, background: soloSinImprimir ? "#FFF8E1" : WHITE, color: soloSinImprimir ? "#856404" : GRAY3, fontWeight: 700, fontSize: 13, cursor: "pointer", whiteSpace: "nowrap" }}>
+                <AlertTriangle size={15} /> Solo guías sin imprimir {soloSinImprimir ? `(${pedidosReales.filter(o => !o.guia_impresa).length})` : ""}
+              </button>
             </div>
             {loadingData ? <Spinner /> : (
               <>
@@ -4519,8 +4527,9 @@ function AdminView() {
                             <button onClick={() => notifyWhatsApp(o, o.estado)} title="Enviar notificación por WhatsApp" style={{ ...S.btnWA, padding: "6px 10px", fontSize: 12 }}>
                               <MessageCircle size={14} /> Avisar
                             </button>
-                            <button onClick={() => setShippingLabel(o)} title="Generar guía de envío" style={{ background: "none", border: `1.5px solid ${BLACK}`, color: BLACK, borderRadius: 6, padding: "6px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}>
-                              <Truck size={14} /> Guía
+                            <button onClick={() => setShippingLabel(o)} title={o.guia_impresa ? "Guía ya impresa — clic para ver de nuevo" : "Guía sin imprimir todavía"}
+                              style={{ background: o.guia_impresa ? "#E6F4EA" : "#FFF8E1", border: `1.5px solid ${o.guia_impresa ? "#155724" : "#856404"}`, color: o.guia_impresa ? "#155724" : "#856404", borderRadius: 6, padding: "6px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                              {o.guia_impresa ? <CheckCircle2 size={14} /> : <Truck size={14} />} Guía
                             </button>
                             <button onClick={() => setFacturaImagen(o)} title="Descargar imagen/PDF de la factura" style={{ background: "none", border: `1.5px solid ${RED}`, color: RED, borderRadius: 6, padding: "6px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}>
                               <ImageIcon size={14} /> Factura
@@ -4582,8 +4591,8 @@ function AdminView() {
                       <button onClick={() => notifyWhatsApp(o, o.estado)} style={{ ...S.btnWA, flex: 1, justifyContent: "center", padding: 12 }}>
                         <MessageCircle size={16} /> Avisar
                       </button>
-                      <button onClick={() => setShippingLabel(o)} style={{ background: BLACK, color: WHITE, border: "none", borderRadius: 10, padding: "12px 16px", fontSize: 14, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}>
-                        <Truck size={16} /> Guía
+                      <button onClick={() => setShippingLabel(o)} style={{ background: o.guia_impresa ? "#155724" : "#856404", color: WHITE, border: "none", borderRadius: 10, padding: "12px 16px", fontSize: 14, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}>
+                        {o.guia_impresa ? <CheckCircle2 size={16} /> : <Truck size={16} />} Guía
                       </button>
                       <button onClick={() => setFacturaImagen(o)} style={{ background: "none", color: RED, border: `1.5px solid ${RED}`, borderRadius: 10, padding: "12px 14px", fontSize: 14, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}>
                         <ImageIcon size={16} /> Factura
@@ -4598,7 +4607,13 @@ function AdminView() {
               </>
             )}
             {/* MODAL GUÍA DE ENVÍO */}
-            {shippingLabel && <ShippingLabelModal order={shippingLabel} onClose={() => setShippingLabel(null)} />}
+            {shippingLabel && (
+              <ShippingLabelModal
+                order={shippingLabel}
+                onClose={() => setShippingLabel(null)}
+                onGuiaImpresa={(id, valor) => setOrders(prev => prev.map(o => o.id === id ? { ...o, guia_impresa: valor } : o))}
+              />
+            )}
             {/* MODAL IMAGEN/PDF DE FACTURA */}
             {facturaImagen && <OrderImageModal order={facturaImagen} onClose={() => setFacturaImagen(null)} />}
             {/* MODAL CONFIRMAR ELIMINACIÓN */}
