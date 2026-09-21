@@ -2156,12 +2156,34 @@ function InvoiceModal({ invoice, onClose }) {
   , document.body);
 }
 
-export function ShippingLabelModal({ order, onClose }) {
+export function ShippingLabelModal({ order, onClose, onGuiaImpresa }) {
   useLockBodyScroll();
   const { products } = useApp();
   const ref = useRef(null);
   const [busy, setBusy] = useState(false);
+  const [impresa, setImpresa] = useState(!!order.guia_impresa);
   const fecha = order.created_at ? new Date(order.created_at) : new Date();
+
+  // Marca el pedido como "guía ya impresa" -- se llama sola al usar cualquiera de
+  // los botones de imprimir/descargar, para poder saber después cuáles quedaron
+  // pendientes sin tener que acordarse a mano. Si el pedido es local (una etiqueta
+  // suelta sin pedido real, id null), no hay nada que guardar en la base de datos.
+  const marcarComoImpresa = async () => {
+    if (impresa || !order.id) return;
+    setImpresa(true);
+    try {
+      await sb.patch("pedidos", order.id, { guia_impresa: true, guia_impresa_at: new Date().toISOString() });
+      onGuiaImpresa?.(order.id, true);
+    } catch (e) { /* no crítico -- el pedido ya se ve marcado en pantalla aunque falle el guardado */ }
+  };
+  const desmarcarImpresa = async () => {
+    if (!order.id) return;
+    setImpresa(false);
+    try {
+      await sb.patch("pedidos", order.id, { guia_impresa: false, guia_impresa_at: null });
+      onGuiaImpresa?.(order.id, false);
+    } catch (e) {}
+  };
   const totalPiezas = (order.items || []).reduce((s, it) => s + Number(it.cantidad || 0), 0);
   // Unifica líneas que son el mismo producto con la misma variante (ej. varios
   // FlexPacks que llevaron la misma referencia y talla) en una sola fila con la
@@ -2215,6 +2237,7 @@ export function ShippingLabelModal({ order, onClose }) {
       const imgW = 190, imgH = (canvas.height * imgW) / canvas.width;
       pdf.addImage(canvas.toDataURL("image/png"), "PNG", 10, 10, imgW, imgH);
       pdf.save(`GUIA-${order.codigo}.pdf`);
+      marcarComoImpresa();
     } catch(e) { alert("Error generando PDF: " + e.message); }
     setBusy(false);
   };
@@ -2246,6 +2269,7 @@ export function ShippingLabelModal({ order, onClose }) {
       try {
         iframe.contentWindow.focus();
         iframe.contentWindow.print();
+        marcarComoImpresa();
       } catch(e) { /* si falla, no hacemos nada */ }
       // Quitar el iframe después de imprimir
       setTimeout(() => { try { document.body.removeChild(iframe); } catch(e) {} }, 1000);
@@ -2312,7 +2336,7 @@ export function ShippingLabelModal({ order, onClose }) {
     doc.write(`<html><head><title>Etiqueta ${order.codigo}</title>${estilos}</head><body>${contenido}</body></html>`);
     doc.close();
     setTimeout(() => {
-      try { iframe.contentWindow.focus(); iframe.contentWindow.print(); } catch(e) {}
+      try { iframe.contentWindow.focus(); iframe.contentWindow.print(); marcarComoImpresa(); } catch(e) {}
       setTimeout(() => { try { document.body.removeChild(iframe); } catch(e) {} }, 1000);
     }, 400);
   };
@@ -2336,6 +2360,21 @@ export function ShippingLabelModal({ order, onClose }) {
             <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", display: "flex", padding: 4 }}><X size={22} /></button>
           </div>
         </div>
+
+        {/* ESTADO DE IMPRESIÓN -- para saber al final del día cuáles guías faltan */}
+        {order.id && (
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 16px", background: impresa ? "#E6F4EA" : "#FFF8E1", borderBottom: `1px solid ${GRAY2}` }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12.5, fontWeight: 700, color: impresa ? "#155724" : "#856404" }}>
+              {impresa ? <CheckCircle2 size={15} /> : <AlertTriangle size={15} />}
+              {impresa ? "Guía ya impresa" : "Guía sin imprimir todavía"}
+            </div>
+            {impresa && (
+              <button onClick={desmarcarImpresa} style={{ background: "none", border: "none", color: "#155724", fontSize: 11.5, fontWeight: 700, textDecoration: "underline", cursor: "pointer" }}>
+                Marcar como pendiente
+              </button>
+            )}
+          </div>
+        )}
 
         {/* GUÍA (lo que se exporta) */}
         <div style={{ padding: 20, maxHeight: "80vh", overflowY: "auto" }}>
