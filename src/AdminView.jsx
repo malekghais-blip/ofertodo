@@ -4505,6 +4505,11 @@ function AdminView() {
                           {o.codigo}
                           {o.pagado === false && <div style={{ marginTop: 3, display: "inline-block", background: "#FFF3CD", color: "#856404", fontSize: 10, fontWeight: 800, padding: "2px 6px", borderRadius: 6 }}>SIN PAGAR</div>}
                           {o.pagado === true && <div style={{ marginTop: 3, display: "inline-block", background: "#D4EDDA", color: "#155724", fontSize: 10, fontWeight: 800, padding: "2px 6px", borderRadius: 6 }}>PAGADO</div>}
+                          <div style={{ marginTop: 3 }}>
+                            {o.creado_por_admin
+                              ? <span style={{ display: "inline-block", background: GRAY, color: GRAY3, fontSize: 10, fontWeight: 800, padding: "2px 6px", borderRadius: 6 }}>MANUAL</span>
+                              : <span style={{ display: "inline-flex", alignItems: "center", gap: 3, background: "#DBEAFE", color: "#1D4ED8", fontSize: 10, fontWeight: 800, padding: "2px 6px", borderRadius: 6 }}><Zap size={10} /> WEB</span>}
+                          </div>
                         </td>
                         <td style={S.td}>{o.nombre_cliente}</td>
                         <td style={S.td}>{o.telefono}</td>
@@ -4559,6 +4564,10 @@ function AdminView() {
                         <div style={{ fontSize: 12, color: GRAY3 }}>{o.telefono}</div>
                         {o.pagado === false && <span style={{ display: "inline-block", marginTop: 4, background: "#FFF3CD", color: "#856404", fontSize: 10, fontWeight: 800, padding: "2px 7px", borderRadius: 6 }}>SIN PAGAR</span>}
                         {o.pagado === true && <span style={{ display: "inline-block", marginTop: 4, background: "#D4EDDA", color: "#155724", fontSize: 10, fontWeight: 800, padding: "2px 7px", borderRadius: 6 }}>PAGADO</span>}
+                        {" "}
+                        {o.creado_por_admin
+                          ? <span style={{ display: "inline-block", marginTop: 4, background: GRAY, color: GRAY3, fontSize: 10, fontWeight: 800, padding: "2px 7px", borderRadius: 6 }}>MANUAL</span>
+                          : <span style={{ display: "inline-flex", alignItems: "center", gap: 3, marginTop: 4, background: "#DBEAFE", color: "#1D4ED8", fontSize: 10, fontWeight: 800, padding: "2px 7px", borderRadius: 6 }}><Zap size={10} /> WEB</span>}
                       </div>
                       <div style={{ textAlign: "right" }}>
                         <div style={{ fontWeight: 900, fontSize: 18 }}>{money(o.total)}</div>
