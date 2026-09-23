@@ -945,7 +945,6 @@ function HomeView() {
 function QtySelector({ product, pres, setPres, count, setCount, size = "normal" }) {
   const [bump, setBump] = useState(false);
   const triggerBump = () => { setBump(true); setTimeout(() => setBump(false), 280); };
-  const change = (delta) => { setCount(prev => Math.max(1, prev + delta)); triggerBump(); };
 
   const big = size === "big";
   const btnSize = big ? 42 : 36;
@@ -958,6 +957,18 @@ function QtySelector({ product, pres, setPres, count, setCount, size = "normal" 
   const stockConocido = respetaStockQty ? Number(product.stock) : null;
   const docenaDeshabilitada = stockConocido !== null && stockConocido < 12;
   const mediaDeshabilitada = stockConocido !== null && stockConocido < 6;
+
+  // Cuántas unidades de la presentación ELEGIDA caben en el stock real -- así el
+  // botón "+" nunca deja seleccionar más de lo que hay, en vez de solo avisar
+  // después al agregarlo al carrito.
+  const piezasPorUnidadActual = pres === "docena" ? 12 : pres === "media" ? 6 : 1;
+  const maxUnidadesActual = stockConocido !== null ? Math.max(1, Math.floor(stockConocido / piezasPorUnidadActual)) : Infinity;
+  const enElMaximo = stockConocido !== null && count >= maxUnidadesActual;
+
+  const change = (delta) => {
+    setCount(prev => Math.min(Math.max(1, prev + delta), maxUnidadesActual));
+    triggerBump();
+  };
 
   const presentaciones = [
     { key: "pieza", label: "Pieza", precio: Number(product.precio_pieza), porPieza: Number(product.precio_pieza), disabled: false },
@@ -1026,10 +1037,16 @@ function QtySelector({ product, pres, setPres, count, setCount, size = "normal" 
         <button
           onClick={() => change(1)}
           className="oft-qty-btn oft-btn-press"
-          style={{ width: btnSize, height: btnSize, borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${RED}, ${RED_D})`, color: WHITE, fontSize: 20, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, lineHeight: 1, boxShadow: "0 2px 8px rgba(227,30,36,0.3)" }}
+          style={{ width: btnSize, height: btnSize, borderRadius: 10, border: "none", background: enElMaximo ? GRAY2 : `linear-gradient(135deg, ${RED}, ${RED_D})`, color: enElMaximo ? GRAY3 : WHITE, fontSize: 20, fontWeight: 700, cursor: enElMaximo ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, lineHeight: 1, boxShadow: enElMaximo ? "none" : "0 2px 8px rgba(227,30,36,0.3)" }}
+          disabled={enElMaximo}
           aria-label="Agregar uno"
         >+</button>
       </div>
+      {enElMaximo && (
+        <div style={{ fontSize: 11.5, color: "#92400E", fontWeight: 600, marginTop: 6, textAlign: "center" }}>
+          Es lo máximo disponible en stock por el momento
+        </div>
+      )}
     </div>
   );
 }
