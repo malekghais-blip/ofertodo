@@ -5,8 +5,9 @@ import {
   ArrowLeft, Zap, TrendingUp, Trophy, Target, DollarSign, ShoppingBag,
   Timer, AlertCircle, FileText, ExternalLink, Workflow, GitBranch, Plus,
   Trash2, Play, UserCheck, ToggleLeft, ToggleRight, StickyNote,
+  Megaphone, Image as ImageIcon, Instagram, Plug, CheckCircle2, Upload,
 } from "lucide-react";
-import { RED, BLACK, GRAY, GRAY2, GRAY3, WHITE, S, useApp, sb, Spinner } from "./shared.jsx";
+import { RED, BLACK, GRAY, GRAY2, GRAY3, WHITE, S, useApp, sb, Spinner, comprimirImagen } from "./shared.jsx";
 
 // ═══════════════════════════════════════════════════════════════
 //  CRM — bandeja de WhatsApp, etapas de cliente, equipo de agentes,
@@ -135,7 +136,7 @@ export default function CrmView() {
           )}
         </div>
         <div style={{ display: "flex", gap: 4, background: GRAY, borderRadius: 10, padding: 4, overflowX: "auto", maxWidth: esMobil ? "calc(100% - 44px)" : "none" }}>
-          {[["inbox", "Bandeja", InboxIcon], ["etapas", "Etapas", Tag], ["workflows", "Workflows", Workflow], ["agentes", "Agentes", Users], ["analitica", "Analítica", BarChart3]].map(([id, label, Icon]) => (
+          {[["inbox", "Bandeja", InboxIcon], ["etapas", "Etapas", Tag], ["workflows", "Workflows", Workflow], ["broadcasts", "Broadcasts", Megaphone], ["agentes", "Agentes", Users], ["analitica", "Analítica", BarChart3], ["integraciones", "Integraciones", Plug]].map(([id, label, Icon]) => (
             <button key={id} onClick={() => setTab(id)} className="oft-btn-press"
               style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: esMobil ? "8px 10px" : "8px 14px", borderRadius: 8, border: "none", fontWeight: 700, fontSize: esMobil ? 12 : 13, cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0, transition: "background 0.25s ease, color 0.25s ease", ...(tab === id ? ESTILO_TAB_ACTIVO : ESTILO_TAB) }}>
               <Icon size={15} /> {label}
@@ -163,11 +164,17 @@ export default function CrmView() {
           {tab === "workflows" && (
             <WorkflowsPanel etapas={etapas} agentes={agentes} />
           )}
+          {tab === "broadcasts" && (
+            <BroadcastsPanel etapas={etapas} conversaciones={conversaciones} user={user} />
+          )}
           {tab === "agentes" && (
             <AgentesPanel agentes={agentes} conversaciones={conversaciones} />
           )}
           {tab === "analitica" && (
             <AnaliticaPanel conversaciones={conversaciones} etapas={etapas} agentes={agentes} pedidos={pedidos} mensajes={mensajesTodos} />
+          )}
+          {tab === "integraciones" && (
+            <IntegracionesPanel />
           )}
         </div>
       )}
@@ -353,11 +360,14 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
                 <div style={{ textAlign: "center", color: GRAY3, fontSize: 13, marginTop: 40 }}>Sin mensajes en esta conversación</div>
               ) : mensajes.map(m => (
                 <div key={m.id} style={{ display: "flex", justifyContent: m.direccion === "saliente" ? "flex-end" : "flex-start" }}>
-                  <div style={{ maxWidth: esMobil ? "80%" : "62%", padding: "9px 13px", borderRadius: 14, background: m.direccion === "saliente" ? BLACK : WHITE, color: m.direccion === "saliente" ? WHITE : BLACK, border: m.direccion === "entrante" ? `1px solid ${GRAY2}` : "none", fontSize: 13.5, lineHeight: 1.45, whiteSpace: "pre-wrap" }}>
-                    {m.contenido}
-                    <div style={{ display: "flex", alignItems: "center", gap: 4, justifyContent: "flex-end", marginTop: 4, opacity: 0.6, fontSize: 10 }}>
-                      {formatoHora(m.created_at)}
-                      {m.direccion === "saliente" && (m.estado === "leido" ? <CheckCheck size={12} /> : m.estado === "entregado" ? <CheckCheck size={12} /> : <Check size={12} />)}
+                  <div style={{ maxWidth: esMobil ? "80%" : "62%", padding: m.media_url ? 6 : "9px 13px", borderRadius: 14, background: m.direccion === "saliente" ? BLACK : WHITE, color: m.direccion === "saliente" ? WHITE : BLACK, border: m.direccion === "entrante" ? `1px solid ${GRAY2}` : "none", fontSize: 13.5, lineHeight: 1.45, whiteSpace: "pre-wrap" }}>
+                    {m.media_url && <img src={m.media_url} style={{ width: "100%", borderRadius: 9, display: "block", marginBottom: m.contenido ? 6 : 0 }} />}
+                    <div style={{ padding: m.media_url ? "0 7px" : 0 }}>
+                      {m.contenido}
+                      <div style={{ display: "flex", alignItems: "center", gap: 4, justifyContent: "flex-end", marginTop: 4, marginBottom: m.media_url ? 4 : 0, opacity: 0.6, fontSize: 10 }}>
+                        {formatoHora(m.created_at)}
+                        {m.direccion === "saliente" && (m.estado === "leido" ? <CheckCheck size={12} /> : m.estado === "entregado" ? <CheckCheck size={12} /> : <Check size={12} />)}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1276,6 +1286,290 @@ function ModalElegirPaso({ onElegir, onCerrar }) {
               <div style={{ fontWeight: 700, fontSize: 13.5 }}>{meta.label}</div>
             </button>
           ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  BROADCASTS — mensajes masivos (con imagen opcional) a un grupo
+//  de clientes filtrado por etapa.
+// ═══════════════════════════════════════════════════════════════
+function BroadcastsPanel({ etapas, conversaciones, user }) {
+  const esMobil = useEsMobil();
+  const [broadcasts, setBroadcasts] = useState([]);
+  const [cargando, setCargando] = useState(true);
+  const [creando, setCreando] = useState(false);
+  const etapaPorId = Object.fromEntries(etapas.map(e => [e.id, e]));
+
+  const cargar = async () => {
+    setCargando(true);
+    try { setBroadcasts(await sb.get("crm_broadcasts", "?order=created_at.desc") || []); }
+    catch (e) { console.warn("Error cargando broadcasts:", e.message); }
+    setCargando(false);
+  };
+  useEffect(() => { cargar(); }, []);
+
+  if (creando) {
+    return <ComposerBroadcast etapas={etapas} conversaciones={conversaciones} user={user} esMobil={esMobil}
+      onCerrar={() => setCreando(false)} onEnviado={() => { setCreando(false); cargar(); }} />;
+  }
+
+  return (
+    <div style={{ flex: 1, padding: esMobil ? 14 : 24, overflowY: "auto" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6, flexWrap: "wrap", gap: 10 }}>
+        <div>
+          <div style={{ fontWeight: 900, fontSize: 17 }}>Broadcasts</div>
+          <div style={{ fontSize: 12.5, color: GRAY3 }}>Mensajes masivos (con imagen si quieres) a un grupo de clientes por etapa.</div>
+        </div>
+        <button onClick={() => setCreando(true)} className="oft-btn-press"
+          style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "10px 16px", borderRadius: 10, border: "none", background: RED, color: WHITE, fontWeight: 700, fontSize: 13.5, cursor: "pointer", flexShrink: 0 }}>
+          <Plus size={16} /> Crear broadcast
+        </button>
+      </div>
+
+      {cargando ? (
+        <div style={{ padding: 40, textAlign: "center" }}><Spinner /></div>
+      ) : broadcasts.length === 0 ? (
+        <div style={{ textAlign: "center", padding: "60px 20px", color: GRAY3 }}>
+          <Megaphone size={40} color={GRAY2} style={{ margin: "0 auto 12px" }} />
+          <div style={{ fontWeight: 700, fontSize: 14.5, marginBottom: 4, color: BLACK }}>Todavía no has enviado ningún broadcast</div>
+          <div style={{ fontSize: 13 }}>Créalo para promocionar algo a un grupo de clientes de una vez.</div>
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 18 }}>
+          {broadcasts.map((b, i) => (
+            <div key={b.id} className="oft-fade-in" style={{ animationDelay: `${i * 50}ms`, display: "flex", gap: 12, background: WHITE, borderRadius: 14, padding: 14, border: `1px solid ${GRAY2}` }}>
+              {b.imagen_url ? (
+                <img src={b.imagen_url} style={{ width: 56, height: 56, borderRadius: 10, objectFit: "cover", flexShrink: 0 }} />
+              ) : (
+                <div style={{ width: 56, height: 56, borderRadius: 10, background: GRAY, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                  <Megaphone size={20} color={GRAY3} />
+                </div>
+              )}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 3 }}>
+                  <div style={{ fontWeight: 800, fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{b.nombre}</div>
+                  <span style={{ fontSize: 10, fontWeight: 800, padding: "2px 8px", borderRadius: 6, background: b.estado === "enviado" ? "#D1FAE5" : "#FEF3C7", color: b.estado === "enviado" ? "#065F46" : "#92400E", flexShrink: 0 }}>
+                    {b.estado === "enviado" ? "Enviado" : b.estado === "enviando" ? "Enviando..." : "Borrador"}
+                  </span>
+                </div>
+                <div style={{ fontSize: 12, color: GRAY3, marginBottom: 6, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{b.mensaje_texto}</div>
+                <div style={{ display: "flex", gap: 10, fontSize: 11, color: GRAY3, flexWrap: "wrap" }}>
+                  <span>{b.total_enviados}/{b.total_destinatarios} enviados</span>
+                  {b.etapas_objetivo?.length > 0 ? (
+                    <span>{b.etapas_objetivo.map(id => etapaPorId[id]?.nombre).filter(Boolean).join(", ")}</span>
+                  ) : <span>Todas las etapas</span>}
+                  {b.enviado_at && <span>{new Date(b.enviado_at).toLocaleDateString("es-PA")}</span>}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ComposerBroadcast({ etapas, conversaciones, user, esMobil, onCerrar, onEnviado }) {
+  const [nombre, setNombre] = useState("");
+  const [mensajeTexto, setMensajeTexto] = useState("");
+  const [imagenFile, setImagenFile] = useState(null);
+  const [imagenPreview, setImagenPreview] = useState(null);
+  const [etapasSeleccionadas, setEtapasSeleccionadas] = useState([]); // [] = todas
+  const [enviando, setEnviando] = useState(false);
+  const [progreso, setProgreso] = useState(0);
+
+  const destinatarios = conversaciones.filter(c => etapasSeleccionadas.length === 0 || etapasSeleccionadas.includes(c.etapa_id));
+
+  const elegirImagen = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setImagenFile(file);
+    setImagenPreview(URL.createObjectURL(file));
+  };
+
+  const alternarEtapa = (etapaId) => {
+    setEtapasSeleccionadas(prev => prev.includes(etapaId) ? prev.filter(id => id !== etapaId) : [...prev, etapaId]);
+  };
+
+  const enviar = async () => {
+    if (!nombre.trim() || !mensajeTexto.trim()) { alert("Ponle un nombre interno y escribe el mensaje"); return; }
+    if (destinatarios.length === 0) { alert("No hay ningún cliente con ese filtro de etapa"); return; }
+    if (!confirm(`¿Enviar este broadcast a ${destinatarios.length} clientes? No se puede deshacer.`)) return;
+    setEnviando(true);
+    try {
+      let imagenUrl = null;
+      if (imagenFile) {
+        const comprimida = await comprimirImagen(imagenFile);
+        const nombreArchivo = `broadcasts/${Date.now()}_${imagenFile.name.replace(/[^a-zA-Z0-9.]/g, "_")}`;
+        await sb.upload("crm", nombreArchivo, comprimida);
+        imagenUrl = sb.publicUrl("crm", nombreArchivo);
+      }
+      const [broadcast] = await sb.post("crm_broadcasts", {
+        nombre: nombre.trim(), canal: "whatsapp", mensaje_texto: mensajeTexto.trim(), imagen_url: imagenUrl,
+        etapas_objetivo: etapasSeleccionadas, estado: "enviando", total_destinatarios: destinatarios.length,
+        enviado_por: user?.id || null,
+      });
+      let enviados = 0;
+      // NOTA: hoy se guarda como "enviado" en la base de datos -- falta conectar
+      // el envío real por WhatsApp (pendiente a que termine la revisión de Meta).
+      for (const conv of destinatarios) {
+        await sb.post("crm_mensajes", {
+          conversacion_id: conv.id, direccion: "saliente", tipo: imagenUrl ? "imagen" : "texto",
+          contenido: mensajeTexto.trim(), media_url: imagenUrl, agente_id: user?.id || null,
+          estado: "enviado", broadcast_id: broadcast.id, canal: "whatsapp",
+        });
+        await sb.patch("crm_conversaciones", conv.id, {
+          ultimo_mensaje_at: new Date().toISOString(),
+          ultimo_mensaje_preview: (imagenUrl ? "📷 " : "") + mensajeTexto.trim().slice(0, 55),
+        });
+        enviados++;
+        setProgreso(enviados);
+      }
+      await sb.patch("crm_broadcasts", broadcast.id, { estado: "enviado", total_enviados: enviados, enviado_at: new Date().toISOString() });
+      onEnviado();
+    } catch (e) { alert("Error enviando el broadcast: " + e.message); }
+    setEnviando(false);
+  };
+
+  return (
+    <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
+      <div style={{ background: WHITE, borderBottom: `1px solid ${GRAY2}`, padding: esMobil ? "10px 14px" : "14px 24px", display: "flex", alignItems: "center", gap: 12 }}>
+        <button onClick={onCerrar} disabled={enviando} className="oft-btn-press" style={{ background: "none", border: "none", padding: 4, cursor: "pointer", display: "flex" }}><ArrowLeft size={20} /></button>
+        <div style={{ fontWeight: 800, fontSize: 15 }}>Nuevo broadcast</div>
+      </div>
+
+      <div style={{ flex: 1, overflowY: "auto", padding: esMobil ? 16 : 24, maxWidth: 560, width: "100%", margin: "0 auto" }}>
+        <EtiquetaCampo>Nombre interno (solo para identificarlo tú)</EtiquetaCampo>
+        <input value={nombre} onChange={e => setNombre(e.target.value)} placeholder="Ej: Promo de fin de mes" style={{ ...S.input, fontSize: 13.5 }} disabled={enviando} />
+
+        <EtiquetaCampo>Mensaje</EtiquetaCampo>
+        <textarea value={mensajeTexto} onChange={e => setMensajeTexto(e.target.value)} rows={5} placeholder="Escribe el mensaje que van a recibir..." style={{ ...S.input, resize: "vertical", fontSize: 13.5 }} disabled={enviando} />
+
+        <EtiquetaCampo>Imagen (opcional)</EtiquetaCampo>
+        {imagenPreview ? (
+          <div style={{ position: "relative", width: 140, marginBottom: 14 }}>
+            <img src={imagenPreview} style={{ width: 140, height: 140, objectFit: "cover", borderRadius: 12, border: `1px solid ${GRAY2}` }} />
+            <button onClick={() => { setImagenFile(null); setImagenPreview(null); }} disabled={enviando} className="oft-btn-press"
+              style={{ position: "absolute", top: -8, right: -8, width: 24, height: 24, borderRadius: "50%", background: WHITE, border: `1.5px solid ${GRAY2}`, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <X size={13} />
+            </button>
+          </div>
+        ) : (
+          <label style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6, width: 140, height: 100, borderRadius: 12, border: `1.5px dashed ${GRAY2}`, cursor: "pointer", marginBottom: 14, color: GRAY3 }}>
+            <Upload size={18} />
+            <span style={{ fontSize: 11, fontWeight: 700 }}>Subir imagen</span>
+            <input type="file" accept="image/*" onChange={elegirImagen} style={{ display: "none" }} disabled={enviando} />
+          </label>
+        )}
+
+        <EtiquetaCampo>¿A quién? (por etapa)</EtiquetaCampo>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 6 }}>
+          <button onClick={() => setEtapasSeleccionadas([])} disabled={enviando} className="oft-btn-press"
+            style={{ fontSize: 12, fontWeight: 700, padding: "6px 12px", borderRadius: 8, border: `1.5px solid ${etapasSeleccionadas.length === 0 ? BLACK : GRAY2}`, background: etapasSeleccionadas.length === 0 ? BLACK : WHITE, color: etapasSeleccionadas.length === 0 ? WHITE : GRAY3, cursor: "pointer" }}>
+            Todas las etapas
+          </button>
+          {etapas.map(et => (
+            <button key={et.id} onClick={() => alternarEtapa(et.id)} disabled={enviando} className="oft-btn-press"
+              style={{ fontSize: 12, fontWeight: 700, padding: "6px 12px", borderRadius: 8, border: `1.5px solid ${etapasSeleccionadas.includes(et.id) ? et.color : GRAY2}`, background: etapasSeleccionadas.includes(et.id) ? et.color + "1A" : WHITE, color: etapasSeleccionadas.includes(et.id) ? et.color : GRAY3, cursor: "pointer" }}>
+              {et.nombre}
+            </button>
+          ))}
+        </div>
+        <div style={{ fontSize: 12.5, color: GRAY3, marginBottom: 24 }}>
+          Este broadcast va a llegarle a <strong style={{ color: BLACK }}>{destinatarios.length}</strong> cliente{destinatarios.length !== 1 ? "s" : ""}.
+        </div>
+
+        <button onClick={enviar} disabled={enviando} className="oft-btn-press"
+          style={{ width: "100%", padding: 14, borderRadius: 12, border: "none", background: RED, color: WHITE, fontWeight: 800, fontSize: 14.5, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, opacity: enviando ? 0.7 : 1 }}>
+          <Send size={16} /> {enviando ? `Enviando... ${progreso}/${destinatarios.length}` : `Enviar a ${destinatarios.length} clientes`}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  INTEGRACIONES — estado de conexión de WhatsApp e Instagram, en
+//  un solo lugar fácil de revisar.
+// ═══════════════════════════════════════════════════════════════
+function IntegracionesPanel() {
+  const esMobil = useEsMobil();
+  const [whatsapp, setWhatsapp] = useState({ cargando: true, numero: null });
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const filas = await sb.get("configuracion", "?clave=in.(whatsapp_phone_number,whatsapp_phone_number_id)");
+        const numero = filas?.find(f => f.clave === "whatsapp_phone_number")?.valor;
+        const phoneId = filas?.find(f => f.clave === "whatsapp_phone_number_id")?.valor;
+        setWhatsapp({ cargando: false, numero: numero ? JSON.parse(numero) : null, phoneId: phoneId ? JSON.parse(phoneId) : null });
+      } catch (e) { setWhatsapp({ cargando: false, numero: null }); }
+    })();
+  }, []);
+
+  return (
+    <div style={{ flex: 1, padding: esMobil ? 14 : 24, overflowY: "auto" }}>
+      <div style={{ marginBottom: 20 }}>
+        <div style={{ fontWeight: 900, fontSize: 17 }}>Integraciones</div>
+        <div style={{ fontSize: 12.5, color: GRAY3 }}>Los canales conectados a tu Bandeja, Workflows, y Broadcasts.</div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: esMobil ? "1fr" : "repeat(auto-fit, minmax(280px, 1fr))", gap: 14 }}>
+        {/* WHATSAPP */}
+        <div style={{ background: WHITE, borderRadius: 16, padding: 20, border: `1px solid ${GRAY2}` }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
+            <div style={{ width: 44, height: 44, borderRadius: 12, background: "#25D366", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <MessageCircle size={22} color={WHITE} />
+            </div>
+            <div>
+              <div style={{ fontWeight: 800, fontSize: 15 }}>WhatsApp Business</div>
+              <div style={{ fontSize: 11.5, color: GRAY3 }}>Bandeja, Workflows y Broadcasts</div>
+            </div>
+          </div>
+          {whatsapp.cargando ? (
+            <div style={{ fontSize: 12.5, color: GRAY3 }}>Revisando conexión...</div>
+          ) : whatsapp.numero ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 8, background: "#D1FAE5", borderRadius: 10, padding: "10px 12px" }}>
+              <CheckCircle2 size={17} color="#065F46" />
+              <div>
+                <div style={{ fontWeight: 800, fontSize: 13, color: "#065F46" }}>Conectado</div>
+                <div style={{ fontSize: 11.5, color: "#065F46" }}>{whatsapp.numero}</div>
+              </div>
+            </div>
+          ) : (
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 8, background: "#FEF3C7", borderRadius: 10, padding: "10px 12px" }}>
+              <AlertCircle size={17} color="#92400E" style={{ flexShrink: 0, marginTop: 1 }} />
+              <div>
+                <div style={{ fontWeight: 800, fontSize: 13, color: "#92400E" }}>Pendiente de aprobación de Meta</div>
+                <div style={{ fontSize: 11.5, color: "#92400E", lineHeight: 1.4 }}>El número ya está listo del lado de Ofertodo -- falta que Meta apruebe la app para poder enviar y recibir mensajes reales.</div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* INSTAGRAM */}
+        <div style={{ background: WHITE, borderRadius: 16, padding: 20, border: `1px solid ${GRAY2}` }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
+            <div style={{ width: 44, height: 44, borderRadius: 12, background: "linear-gradient(135deg, #F58529, #DD2A7B, #8134AF)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <Instagram size={22} color={WHITE} />
+            </div>
+            <div>
+              <div style={{ fontWeight: 800, fontSize: 15 }}>Instagram</div>
+              <div style={{ fontSize: 11.5, color: GRAY3 }}>Mensajes directos en la misma Bandeja</div>
+            </div>
+          </div>
+          <div style={{ display: "flex", alignItems: "flex-start", gap: 8, background: GRAY, borderRadius: 10, padding: "10px 12px", marginBottom: 12 }}>
+            <AlertCircle size={17} color={GRAY3} style={{ flexShrink: 0, marginTop: 1 }} />
+            <div style={{ fontSize: 11.5, color: GRAY3, lineHeight: 1.4 }}>
+              Todavía no conectado. Usa el mismo tipo de aprobación de Meta que WhatsApp -- una vez esa termine, conectar Instagram es más rápido porque ya tienes la App y el negocio verificados.
+            </div>
+          </div>
+          <button disabled className="oft-btn-press" style={{ width: "100%", padding: "10px 0", borderRadius: 9, border: `1.5px solid ${GRAY2}`, background: WHITE, color: GRAY3, fontWeight: 700, fontSize: 13, cursor: "not-allowed" }}>
+            Conectar Instagram (avísame cuando quieras empezar)
+          </button>
         </div>
       </div>
     </div>
