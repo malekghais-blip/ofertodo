@@ -73,8 +73,20 @@ function BarraAnimada({ porcentaje, color, alto = 8 }) {
   );
 }
 
+// Mismo punto de quiebre (768px) que usa el resto del sitio en App.jsx/AdminView.jsx.
+function useEsMobil() {
+  const [esMobil, setEsMobil] = useState(typeof window !== "undefined" ? window.innerWidth <= 768 : false);
+  useEffect(() => {
+    const onResize = () => setEsMobil(window.innerWidth <= 768);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+  return esMobil;
+}
+
 export default function CrmView() {
   const { user } = useApp();
+  const esMobil = useEsMobil();
   const [tab, setTab] = useState("inbox"); // inbox | etapas | agentes | analitica
   const [etapas, setEtapas] = useState([]);
   const [agentes, setAgentes] = useState([]);
@@ -109,20 +121,22 @@ export default function CrmView() {
   return (
     <div style={{ minHeight: "calc(100vh - 64px)", background: GRAY, display: "flex", flexDirection: "column" }}>
       {/* ENCABEZADO DEL CRM */}
-      <div style={{ background: WHITE, borderBottom: `1px solid ${GRAY2}`, padding: "14px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
+      <div style={{ background: WHITE, borderBottom: `1px solid ${GRAY2}`, padding: esMobil ? "10px 12px" : "14px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <div style={{ width: 34, height: 34, borderRadius: 9, background: BLACK, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div style={{ width: 34, height: 34, borderRadius: 9, background: BLACK, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
             <MessageCircle size={18} color={WHITE} />
           </div>
-          <div>
-            <div style={{ fontWeight: 900, fontSize: 17 }}>CRM Ofertodo</div>
-            <div style={{ fontSize: 11.5, color: GRAY3 }}>{user?.nombre || "Agente"}</div>
-          </div>
+          {!esMobil && (
+            <div>
+              <div style={{ fontWeight: 900, fontSize: 17 }}>CRM Ofertodo</div>
+              <div style={{ fontSize: 11.5, color: GRAY3 }}>{user?.nombre || "Agente"}</div>
+            </div>
+          )}
         </div>
-        <div style={{ display: "flex", gap: 4, background: GRAY, borderRadius: 10, padding: 4 }}>
+        <div style={{ display: "flex", gap: 4, background: GRAY, borderRadius: 10, padding: 4, overflowX: "auto", maxWidth: esMobil ? "calc(100% - 44px)" : "none" }}>
           {[["inbox", "Bandeja", InboxIcon], ["etapas", "Etapas", Tag], ["agentes", "Agentes", Users], ["analitica", "Analítica", BarChart3]].map(([id, label, Icon]) => (
             <button key={id} onClick={() => setTab(id)} className="oft-btn-press"
-              style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 8, border: "none", fontWeight: 700, fontSize: 13, cursor: "pointer", ...(tab === id ? ESTILO_TAB_ACTIVO : ESTILO_TAB) }}>
+              style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: esMobil ? "8px 10px" : "8px 14px", borderRadius: 8, border: "none", fontWeight: 700, fontSize: esMobil ? 12 : 13, cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0, ...(tab === id ? ESTILO_TAB_ACTIVO : ESTILO_TAB) }}>
               <Icon size={15} /> {label}
             </button>
           ))}
@@ -163,13 +177,21 @@ export default function CrmView() {
 //  cliente con un botón para reenviárselos por WhatsApp).
 // ─────────────────────────────────────────────────────────────
 function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, agentes, agentePorId, pedidos, user, recargar }) {
+  const esMobil = useEsMobil();
   const [seleccionada, setSeleccionada] = useState(null);
+  const [vistaMobil, setVistaMobil] = useState("hilo"); // hilo | contacto -- solo aplica en móvil cuando hay una conversación abierta
   const [busqueda, setBusqueda] = useState("");
   const [mensajes, setMensajes] = useState([]);
   const [texto, setTexto] = useState("");
   const [enviando, setEnviando] = useState(false);
   const [enviandoPedidoId, setEnviandoPedidoId] = useState(null);
   const hiloRef = useRef(null);
+
+  // En móvil solo se ve UNA pantalla a la vez: la lista, el chat, o el panel
+  // de contacto -- igual que WhatsApp. En escritorio las 3 conviven siempre.
+  const listaVisible = !esMobil || !seleccionada;
+  const hiloVisible = !esMobil || (!!seleccionada && vistaMobil !== "contacto");
+  const contactoVisible = esMobil ? (!!seleccionada && vistaMobil === "contacto") : !!seleccionada;
 
   const conversacionesFiltradas = conversaciones.filter(c => {
     const q = busqueda.trim().toLowerCase();
@@ -179,6 +201,7 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
 
   const cargarMensajes = async (conv) => {
     setSeleccionada(conv);
+    setVistaMobil("hilo");
     try {
       const data = await sb.get("crm_mensajes", `?conversacion_id=eq.${conv.id}&order=created_at.asc`);
       setMensajes(data || []);
@@ -244,7 +267,8 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
   return (
     <>
       {/* LISTA DE CONVERSACIONES */}
-      <div style={{ width: 340, minWidth: 340, background: WHITE, borderRight: `1px solid ${GRAY2}`, display: "flex", flexDirection: "column" }}>
+      {listaVisible && (
+      <div style={{ width: esMobil ? "100%" : 340, minWidth: esMobil ? "100%" : 340, background: WHITE, borderRight: esMobil ? "none" : `1px solid ${GRAY2}`, display: "flex", flexDirection: "column" }}>
         <div style={{ padding: 14, borderBottom: `1px solid ${GRAY2}` }}>
           <div style={{ position: "relative" }}>
             <Search size={15} color={GRAY3} style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)" }} />
@@ -289,9 +313,11 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
           })}
         </div>
       </div>
+      )}
 
       {/* HILO DE MENSAJES */}
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
+      {hiloVisible && (
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, width: esMobil ? "100%" : "auto" }}>
         {!seleccionada ? (
           <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", color: GRAY3 }}>
             <MessageCircle size={48} color={GRAY2} style={{ marginBottom: 12 }} />
@@ -299,21 +325,31 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
           </div>
         ) : (
           <>
-            <div style={{ padding: "13px 20px", background: WHITE, borderBottom: `1px solid ${GRAY2}`, display: "flex", alignItems: "center", gap: 10 }}>
-              <div style={{ width: 34, height: 34, borderRadius: "50%", background: GRAY2, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, color: GRAY3 }}>
+            <div style={{ padding: esMobil ? "10px 12px" : "13px 20px", background: WHITE, borderBottom: `1px solid ${GRAY2}`, display: "flex", alignItems: "center", gap: 10 }}>
+              {esMobil && (
+                <button onClick={() => setSeleccionada(null)} className="oft-btn-press" style={{ background: "none", border: "none", padding: 4, cursor: "pointer", display: "flex", flexShrink: 0 }}>
+                  <ArrowLeft size={20} />
+                </button>
+              )}
+              <div style={{ width: 34, height: 34, borderRadius: "50%", background: GRAY2, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, color: GRAY3, flexShrink: 0 }}>
                 {(seleccionada.nombre_contacto || seleccionada.telefono || "?").charAt(0).toUpperCase()}
               </div>
-              <div>
-                <div style={{ fontWeight: 800, fontSize: 14.5 }}>{seleccionada.nombre_contacto || seleccionada.telefono}</div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 800, fontSize: 14.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{seleccionada.nombre_contacto || seleccionada.telefono}</div>
                 <div style={{ fontSize: 11.5, color: GRAY3 }}>{seleccionada.telefono}</div>
               </div>
+              {esMobil && (
+                <button onClick={() => setVistaMobil("contacto")} className="oft-btn-press" style={{ background: GRAY, border: "none", borderRadius: 8, padding: "6px 10px", cursor: "pointer", display: "flex", alignItems: "center", gap: 5, fontSize: 11.5, fontWeight: 700, color: GRAY3, flexShrink: 0 }}>
+                  <Tag size={13} /> Info
+                </button>
+              )}
             </div>
-            <div ref={hiloRef} style={{ flex: 1, overflowY: "auto", padding: 20, display: "flex", flexDirection: "column", gap: 8 }}>
+            <div ref={hiloRef} style={{ flex: 1, overflowY: "auto", padding: esMobil ? 14 : 20, display: "flex", flexDirection: "column", gap: 8 }}>
               {mensajes.length === 0 ? (
                 <div style={{ textAlign: "center", color: GRAY3, fontSize: 13, marginTop: 40 }}>Sin mensajes en esta conversación</div>
               ) : mensajes.map(m => (
                 <div key={m.id} style={{ display: "flex", justifyContent: m.direccion === "saliente" ? "flex-end" : "flex-start" }}>
-                  <div style={{ maxWidth: "62%", padding: "9px 13px", borderRadius: 14, background: m.direccion === "saliente" ? BLACK : WHITE, color: m.direccion === "saliente" ? WHITE : BLACK, border: m.direccion === "entrante" ? `1px solid ${GRAY2}` : "none", fontSize: 13.5, lineHeight: 1.45, whiteSpace: "pre-wrap" }}>
+                  <div style={{ maxWidth: esMobil ? "80%" : "62%", padding: "9px 13px", borderRadius: 14, background: m.direccion === "saliente" ? BLACK : WHITE, color: m.direccion === "saliente" ? WHITE : BLACK, border: m.direccion === "entrante" ? `1px solid ${GRAY2}` : "none", fontSize: 13.5, lineHeight: 1.45, whiteSpace: "pre-wrap" }}>
                     {m.contenido}
                     <div style={{ display: "flex", alignItems: "center", gap: 4, justifyContent: "flex-end", marginTop: 4, opacity: 0.6, fontSize: 10 }}>
                       {formatoHora(m.created_at)}
@@ -335,10 +371,16 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
           </>
         )}
       </div>
+      )}
 
       {/* PANEL DE CONTACTO */}
-      {seleccionada && (
-        <div style={{ width: 290, minWidth: 290, background: WHITE, borderLeft: `1px solid ${GRAY2}`, padding: 20, overflowY: "auto" }}>
+      {contactoVisible && (
+        <div style={{ width: esMobil ? "100%" : 290, minWidth: esMobil ? "100%" : 290, background: WHITE, borderLeft: esMobil ? "none" : `1px solid ${GRAY2}`, padding: 20, overflowY: "auto" }}>
+          {esMobil && (
+            <button onClick={() => setVistaMobil("hilo")} className="oft-btn-press" style={{ background: "none", border: "none", padding: 4, marginBottom: 12, cursor: "pointer", display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 700, color: GRAY3 }}>
+              <ArrowLeft size={18} /> Volver al chat
+            </button>
+          )}
           <div style={{ textAlign: "center", marginBottom: 20 }}>
             <div style={{ width: 60, height: 60, borderRadius: "50%", background: GRAY2, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 22, color: GRAY3, margin: "0 auto 10px" }}>
               {(seleccionada.nombre_contacto || seleccionada.telefono || "?").charAt(0).toUpperCase()}
@@ -398,17 +440,18 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
 //  conversaciones que están ahí. Mover de etapa es con un clic.
 // ─────────────────────────────────────────────────────────────
 function EtapasPanel({ conversaciones, etapas, agentePorId, setConversaciones }) {
+  const esMobil = useEsMobil();
   const moverA = async (conv, etapaId) => {
     await sb.patch("crm_conversaciones", conv.id, { etapa_id: etapaId });
     setConversaciones(prev => prev.map(c => c.id === conv.id ? { ...c, etapa_id: etapaId } : c));
   };
 
   return (
-    <div style={{ flex: 1, overflowX: "auto", padding: 20, display: "flex", gap: 16 }}>
+    <div style={{ flex: 1, overflowX: "auto", padding: esMobil ? "14px 12px" : 20, display: "flex", gap: esMobil ? 12 : 16, WebkitOverflowScrolling: "touch" }}>
       {etapas.map(etapa => {
         const items = conversaciones.filter(c => c.etapa_id === etapa.id);
         return (
-          <div key={etapa.id} style={{ minWidth: 270, width: 270, display: "flex", flexDirection: "column" }}>
+          <div key={etapa.id} style={{ minWidth: esMobil ? 240 : 270, width: esMobil ? 240 : 270, display: "flex", flexDirection: "column" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, padding: "0 4px" }}>
               <div style={{ width: 9, height: 9, borderRadius: "50%", background: etapa.color }} />
               <div style={{ fontWeight: 800, fontSize: 13.5 }}>{etapa.nombre}</div>
@@ -444,12 +487,13 @@ function EtapasPanel({ conversaciones, etapas, agentePorId, setConversaciones })
 //  cada uno ahora mismo.
 // ─────────────────────────────────────────────────────────────
 function AgentesPanel({ agentes, conversaciones }) {
+  const esMobil = useEsMobil();
   return (
-    <div style={{ flex: 1, padding: 24, overflowY: "auto" }}>
+    <div style={{ flex: 1, padding: esMobil ? 14 : 24, overflowY: "auto" }}>
       <div style={{ fontSize: 13, color: GRAY3, marginBottom: 18, maxWidth: 560 }}>
         Los agentes son las mismas cuentas de operador del panel de administrador. Para agregar uno nuevo, promuévelo desde Admin → Equipo. El desempeño de cada uno está en la pestaña "Analítica".
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 14 }}>
+      <div style={{ display: "grid", gridTemplateColumns: esMobil ? "1fr" : "repeat(auto-fill, minmax(240px, 1fr))", gap: 14 }}>
         {agentes.map(a => {
           const asignadas = conversaciones.filter(c => c.agente_id === a.id).length;
           return (
@@ -521,6 +565,7 @@ function calcularMetricasAgentes(agentes, conversaciones, mensajes, pedidos) {
 //  de clientes por etapa.
 // ─────────────────────────────────────────────────────────────
 function AnaliticaPanel({ conversaciones, etapas, agentes, pedidos, mensajes }) {
+  const esMobil = useEsMobil();
   const metricas = calcularMetricasAgentes(agentes, conversaciones, mensajes, pedidos);
   const total = conversaciones.length;
   const porEtapa = etapas.map(e => ({ ...e, total: conversaciones.filter(c => c.etapa_id === e.id).length }));
@@ -538,18 +583,18 @@ function AnaliticaPanel({ conversaciones, etapas, agentes, pedidos, mensajes }) 
   const maxVentas = Math.max(...metricas.map(m => m.ventasTotal), 1);
 
   return (
-    <div style={{ flex: 1, padding: 24, overflowY: "auto" }}>
+    <div style={{ flex: 1, padding: esMobil ? 14 : 24, overflowY: "auto" }}>
       {/* KPIs GLOBALES */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 14, marginBottom: 28 }}>
-        <TarjetaMetrica icono={InboxIcon} valor={total} etiqueta="Conversaciones totales" />
-        <TarjetaMetrica icono={Timer} valor={tiempoRespuestaGlobal !== null ? Math.round(tiempoRespuestaGlobal) : 0} sufijo=" min" etiqueta="Tiempo de respuesta promedio" mostrarGuion={tiempoRespuestaGlobal === null} />
-        <TarjetaMetrica icono={Target} valor={Math.round(tasaConversionGlobal)} sufijo="%" etiqueta="Tasa de conversión" />
-        <TarjetaMetrica icono={DollarSign} valor={ventasTotalGlobal} prefijo="$" decimales={2} etiqueta="Ventas generadas por leads" />
-        <TarjetaMetrica icono={AlertCircle} valor={sinResponder} etiqueta="Leads esperando respuesta" alerta={sinResponder > 0} />
+      <div style={{ display: "grid", gridTemplateColumns: esMobil ? "repeat(2, 1fr)" : "repeat(auto-fit, minmax(200px, 1fr))", gap: esMobil ? 10 : 14, marginBottom: esMobil ? 20 : 28 }}>
+        <TarjetaMetrica icono={InboxIcon} valor={total} etiqueta="Conversaciones totales" esMobil={esMobil} />
+        <TarjetaMetrica icono={Timer} valor={tiempoRespuestaGlobal !== null ? Math.round(tiempoRespuestaGlobal) : 0} sufijo=" min" etiqueta="Tiempo de respuesta promedio" mostrarGuion={tiempoRespuestaGlobal === null} esMobil={esMobil} />
+        <TarjetaMetrica icono={Target} valor={Math.round(tasaConversionGlobal)} sufijo="%" etiqueta="Tasa de conversión" esMobil={esMobil} />
+        <TarjetaMetrica icono={DollarSign} valor={ventasTotalGlobal} prefijo="$" decimales={2} etiqueta="Ventas generadas por leads" esMobil={esMobil} />
+        <TarjetaMetrica icono={AlertCircle} valor={sinResponder} etiqueta="Leads esperando respuesta" alerta={sinResponder > 0} esMobil={esMobil} />
       </div>
 
       {/* LEADERBOARD */}
-      <div style={{ background: WHITE, borderRadius: 16, padding: 22, border: `1px solid ${GRAY2}`, marginBottom: 24 }}>
+      <div style={{ background: WHITE, borderRadius: 16, padding: esMobil ? 16 : 22, border: `1px solid ${GRAY2}`, marginBottom: esMobil ? 16 : 24 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
           <Trophy size={18} color="#D4AF37" />
           <div style={{ fontWeight: 900, fontSize: 15.5 }}>Ranking de agentes</div>
@@ -560,7 +605,30 @@ function AnaliticaPanel({ conversaciones, etapas, agentes, pedidos, mensajes }) 
           <div style={{ textAlign: "center", color: GRAY3, fontSize: 13, padding: "30px 0" }}>Sin agentes con conversaciones asignadas todavía.</div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {metricas.map((m, i) => (
+            {metricas.map((m, i) => esMobil ? (
+              // Fila apilada para móvil: nombre + ventas arriba, barra en medio,
+              // conversión y tiempo de respuesta abajo -- nada se corta.
+              <div key={m.agente.id} className="oft-fade-in" style={{ animationDelay: `${i * 60}ms`, padding: "12px 14px", borderRadius: 12, background: i < 3 ? `${COLORES_RANKING[i]}0D` : GRAY, border: i < 3 ? `1px solid ${COLORES_RANKING[i]}44` : `1px solid transparent` }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                  <div style={{ width: 26, height: 26, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 900, fontSize: 12, flexShrink: 0, background: i < 3 ? COLORES_RANKING[i] : GRAY2, color: i < 3 ? WHITE : GRAY3 }}>
+                    {i + 1}
+                  </div>
+                  <div style={{ width: 32, height: 32, borderRadius: "50%", background: BLACK, color: WHITE, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 13, flexShrink: 0 }}>
+                    {(m.agente.nombre || "?").charAt(0).toUpperCase()}
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 800, fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.agente.nombre}</div>
+                    <div style={{ fontSize: 10, color: GRAY3 }}>{m.asignadas} conversación{m.asignadas !== 1 ? "es" : ""}</div>
+                  </div>
+                  <div style={{ fontWeight: 900, fontSize: 15, color: RED, flexShrink: 0 }}>${m.ventasTotal.toFixed(0)}</div>
+                </div>
+                <BarraAnimada porcentaje={(m.ventasTotal / maxVentas) * 100} color={i < 3 ? COLORES_RANKING[i] : BLACK} />
+                <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6, fontSize: 10.5, color: GRAY3, fontWeight: 700 }}>
+                  <span>{m.tasaConversion.toFixed(0)}% conversión</span>
+                  <span>{formatoDuracion(m.tiempoRespuestaPromedio)} respuesta</span>
+                </div>
+              </div>
+            ) : (
               <div key={m.agente.id} className="oft-fade-in" style={{ animationDelay: `${i * 60}ms`, display: "flex", alignItems: "center", gap: 14, padding: "12px 14px", borderRadius: 12, background: i < 3 ? `${COLORES_RANKING[i]}0D` : GRAY, border: i < 3 ? `1px solid ${COLORES_RANKING[i]}44` : `1px solid transparent` }}>
                 <div style={{ width: 30, height: 30, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 900, fontSize: 13, flexShrink: 0, background: i < 3 ? COLORES_RANKING[i] : GRAY2, color: i < 3 ? WHITE : GRAY3 }}>
                   {i + 1}
@@ -589,13 +657,13 @@ function AnaliticaPanel({ conversaciones, etapas, agentes, pedidos, mensajes }) 
         )}
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: 16 }}>
+      <div style={{ display: "grid", gridTemplateColumns: esMobil ? "1fr" : "1.2fr 1fr", gap: esMobil ? 12 : 16 }}>
         {/* DISTRIBUCIÓN POR ETAPA */}
-        <div style={{ background: WHITE, borderRadius: 16, padding: 20, border: `1px solid ${GRAY2}` }}>
+        <div style={{ background: WHITE, borderRadius: 16, padding: esMobil ? 16 : 20, border: `1px solid ${GRAY2}` }}>
           <div style={{ fontWeight: 800, fontSize: 14.5, marginBottom: 16 }}>Clientes por etapa</div>
           {porEtapa.map(e => (
             <div key={e.id} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
-              <div style={{ width: 110, fontSize: 12.5, fontWeight: 700, color: GRAY3, flexShrink: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{e.nombre}</div>
+              <div style={{ width: esMobil ? 90 : 110, fontSize: 12.5, fontWeight: 700, color: GRAY3, flexShrink: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{e.nombre}</div>
               <BarraAnimada porcentaje={total > 0 ? (e.total / total) * 100 : 0} color={e.color} />
               <div style={{ width: 24, fontSize: 12.5, fontWeight: 800, textAlign: "right" }}>{e.total}</div>
             </div>
@@ -603,7 +671,7 @@ function AnaliticaPanel({ conversaciones, etapas, agentes, pedidos, mensajes }) 
         </div>
 
         {/* PRODUCTIVIDAD POR AGENTE */}
-        <div style={{ background: WHITE, borderRadius: 16, padding: 20, border: `1px solid ${GRAY2}` }}>
+        <div style={{ background: WHITE, borderRadius: 16, padding: esMobil ? 16 : 20, border: `1px solid ${GRAY2}` }}>
           <div style={{ fontWeight: 800, fontSize: 14.5, marginBottom: 4 }}>Mensajes respondidos</div>
           <div style={{ fontSize: 11.5, color: GRAY3, marginBottom: 16 }}>Volumen de respuestas enviadas por cada agente</div>
           {metricas.filter(m => m.mensajesEnviados > 0).length === 0 ? (
@@ -613,7 +681,7 @@ function AnaliticaPanel({ conversaciones, etapas, agentes, pedidos, mensajes }) 
               const maxMsj = Math.max(...metricas.map(x => x.mensajesEnviados), 1);
               return (
                 <div key={m.agente.id} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
-                  <div style={{ width: 90, fontSize: 12.5, fontWeight: 700, color: GRAY3, flexShrink: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.agente.nombre}</div>
+                  <div style={{ width: esMobil ? 80 : 90, fontSize: 12.5, fontWeight: 700, color: GRAY3, flexShrink: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.agente.nombre}</div>
                   <BarraAnimada porcentaje={(m.mensajesEnviados / maxMsj) * 100} color={BLACK} />
                   <div style={{ width: 24, fontSize: 12.5, fontWeight: 800, textAlign: "right" }}>{m.mensajesEnviados}</div>
                 </div>
@@ -630,12 +698,12 @@ function AnaliticaPanel({ conversaciones, etapas, agentes, pedidos, mensajes }) 
   );
 }
 
-function TarjetaMetrica({ icono: Icono, valor, prefijo = "", sufijo = "", decimales = 0, etiqueta, alerta = false, mostrarGuion = false }) {
+function TarjetaMetrica({ icono: Icono, valor, prefijo = "", sufijo = "", decimales = 0, etiqueta, alerta = false, mostrarGuion = false, esMobil = false }) {
   return (
-    <div className="oft-fade-in" style={{ background: WHITE, borderRadius: 14, padding: 18, border: `1px solid ${alerta ? "#FCA5A5" : GRAY2}` }}>
-      <Icono size={18} color={alerta ? RED : RED} style={{ marginBottom: 8 }} />
-      <div style={{ fontSize: 26, fontWeight: 900 }}>{mostrarGuion ? "—" : <NumeroAnimado valor={valor} prefijo={prefijo} sufijo={sufijo} decimales={decimales} />}</div>
-      <div style={{ fontSize: 12, color: GRAY3, fontWeight: 600 }}>{etiqueta}</div>
+    <div className="oft-fade-in" style={{ background: WHITE, borderRadius: 14, padding: esMobil ? 12 : 18, border: `1px solid ${alerta ? "#FCA5A5" : GRAY2}` }}>
+      <Icono size={esMobil ? 15 : 18} color={alerta ? RED : RED} style={{ marginBottom: esMobil ? 5 : 8 }} />
+      <div style={{ fontSize: esMobil ? 19 : 26, fontWeight: 900 }}>{mostrarGuion ? "—" : <NumeroAnimado valor={valor} prefijo={prefijo} sufijo={sufijo} decimales={decimales} />}</div>
+      <div style={{ fontSize: esMobil ? 10.5 : 12, color: GRAY3, fontWeight: 600, lineHeight: 1.3 }}>{etiqueta}</div>
     </div>
   );
 }
