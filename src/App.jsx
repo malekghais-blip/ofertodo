@@ -1260,7 +1260,10 @@ function ProductCard({ product }) {
         <div style={{ marginBottom: 10 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
             <span style={{ fontSize: 13, fontWeight: 700 }}>Elige como comprar</span>
-            <span style={{ fontSize: 18, color: RED, fontWeight: 900 }}>${Number(total).toFixed(2)}</span>
+            <div style={{ textAlign: "right" }}>
+              <div style={{ fontSize: 9, fontWeight: 700, color: GRAY3, letterSpacing: 0.5 }}>TOTAL</div>
+              <span style={{ fontSize: 18, color: RED, fontWeight: 900, lineHeight: 1 }}>${Number(total).toFixed(2)}</span>
+            </div>
           </div>
           <QtySelector product={product} pres={pres} setPres={setPres} count={count} setCount={setCount} />
           {/* DESGLOSE o VARIANTES (si eligió Por pieza y tiene tallas/colores) */}
@@ -1537,7 +1540,10 @@ function ProductModal() {
           <div style={{ background: GRAY, borderRadius: 12, padding: 16, margin: "8px 0 16px" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
               <span style={{ fontSize: 15, fontWeight: 700 }}>Elige como comprar</span>
-              <span style={{ fontSize: 24, color: RED, fontWeight: 900 }}>${Number(total).toFixed(2)}</span>
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: GRAY3, letterSpacing: 0.5 }}>TOTAL</div>
+                <span style={{ fontSize: 24, color: RED, fontWeight: 900, lineHeight: 1 }}>${Number(total).toFixed(2)}</span>
+              </div>
             </div>
             <QtySelector product={product} pres={pres} setPres={setPres} count={count} setCount={setCount} size="big" />
             {modoConsulta ? (
