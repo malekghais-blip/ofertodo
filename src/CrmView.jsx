@@ -2,19 +2,20 @@ import { useState, useEffect, useRef } from "react";
 import {
   MessageCircle, Search, Send, User, Users, BarChart3, Inbox as InboxIcon,
   ChevronRight, Circle, CheckCheck, Check, Clock, RefreshCw, X, Tag,
-  ArrowLeft, Zap, TrendingUp,
+  ArrowLeft, Zap, TrendingUp, Trophy, Target, DollarSign, ShoppingBag,
+  Timer, AlertCircle, FileText, ExternalLink,
 } from "lucide-react";
 import { RED, BLACK, GRAY, GRAY2, GRAY3, WHITE, S, useApp, sb, Spinner } from "./shared.jsx";
 
 // ═══════════════════════════════════════════════════════════════
-//  CRM — bandeja de WhatsApp, etapas de cliente, y equipo de
-//  agentes. Vive como su propia sección grande del sitio (no una
-//  pestaña dentro del admin), accesible desde el link "CRM" del
-//  encabezado para admins y operadores.
+//  CRM — bandeja de WhatsApp, etapas de cliente, equipo de agentes,
+//  y analítica de desempeño. Vive como su propia sección grande del
+//  sitio, accesible desde el link "CRM" del encabezado.
 // ═══════════════════════════════════════════════════════════════
 
 const ESTILO_TAB_ACTIVO = { color: WHITE, background: BLACK };
 const ESTILO_TAB = { color: GRAY3, background: "transparent" };
+const COLORES_RANKING = ["#D4AF37", "#A8A8A8", "#B08D57"]; // oro, plata, bronce
 
 function formatoHora(fecha) {
   if (!fecha) return "";
@@ -25,24 +26,77 @@ function formatoHora(fecha) {
   return d.toLocaleDateString("es-PA", { day: "numeric", month: "short" });
 }
 
+function formatoDuracion(minutos) {
+  if (minutos === null || minutos === undefined) return "—";
+  if (minutos < 1) return "<1 min";
+  if (minutos < 60) return `${Math.round(minutos)} min`;
+  if (minutos < 60 * 24) return `${(minutos / 60).toFixed(1)} h`;
+  return `${(minutos / 60 / 24).toFixed(1)} d`;
+}
+
+// Cuenta de 0 hasta el valor final con una curva suave -- usado en todas las
+// tarjetas de KPI para que los números "lleguen" en vez de aparecer de golpe.
+function useNumeroAnimado(valorFinal, duracionMs = 900) {
+  const [valor, setValor] = useState(0);
+  useEffect(() => {
+    let inicio = null;
+    const destino = Number(valorFinal) || 0;
+    let frame;
+    const paso = (t) => {
+      if (!inicio) inicio = t;
+      const progreso = Math.min((t - inicio) / duracionMs, 1);
+      const suavizado = 1 - Math.pow(1 - progreso, 3); // ease-out cúbico
+      setValor(destino * suavizado);
+      if (progreso < 1) frame = requestAnimationFrame(paso);
+    };
+    frame = requestAnimationFrame(paso);
+    return () => cancelAnimationFrame(frame);
+  }, [valorFinal, duracionMs]);
+  return valor;
+}
+
+function NumeroAnimado({ valor, prefijo = "", sufijo = "", decimales = 0 }) {
+  const animado = useNumeroAnimado(valor);
+  return <>{prefijo}{animado.toLocaleString("es-PA", { minimumFractionDigits: decimales, maximumFractionDigits: decimales })}{sufijo}</>;
+}
+
+// Barra horizontal que crece de 0% a su ancho real justo después de montarse
+// (en vez de aparecer ya llena) -- se usa en la distribución por etapa y en
+// las mini-barras del leaderboard.
+function BarraAnimada({ porcentaje, color, alto = 8 }) {
+  const [ancho, setAncho] = useState(0);
+  useEffect(() => { const t = setTimeout(() => setAncho(porcentaje), 80); return () => clearTimeout(t); }, [porcentaje]);
+  return (
+    <div style={{ flex: 1, height: alto, background: GRAY, borderRadius: alto / 2, overflow: "hidden" }}>
+      <div style={{ height: "100%", width: `${ancho}%`, background: color, borderRadius: alto / 2, transition: "width 1s cubic-bezier(0.16, 1, 0.3, 1)" }} />
+    </div>
+  );
+}
+
 export default function CrmView() {
   const { user } = useApp();
   const [tab, setTab] = useState("inbox"); // inbox | etapas | agentes | analitica
   const [etapas, setEtapas] = useState([]);
   const [agentes, setAgentes] = useState([]);
   const [conversaciones, setConversaciones] = useState([]);
+  const [pedidos, setPedidos] = useState([]);
+  const [mensajesTodos, setMensajesTodos] = useState([]);
   const [cargando, setCargando] = useState(true);
 
   const cargarTodo = async () => {
     try {
-      const [etapasData, agentesData, conversacionesData] = await Promise.all([
+      const [etapasData, agentesData, conversacionesData, pedidosData, mensajesData] = await Promise.all([
         sb.get("crm_etapas", "?order=orden.asc"),
         sb.get("usuarios", "?rol=in.(operador,admin)&select=id,nombre,email,rol"),
         sb.get("crm_conversaciones", "?order=ultimo_mensaje_at.desc.nullslast,created_at.desc"),
+        sb.get("pedidos", "?select=id,codigo,nombre_cliente,telefono,total,tipo,pagado,created_at,creado_por_usuario_id&order=created_at.desc"),
+        sb.get("crm_mensajes", "?select=id,conversacion_id,direccion,agente_id,created_at&order=created_at.asc"),
       ]);
       setEtapas(etapasData || []);
       setAgentes(agentesData || []);
       setConversaciones(conversacionesData || []);
+      setPedidos(pedidosData || []);
+      setMensajesTodos(mensajesData || []);
     } catch (e) { console.warn("Error cargando CRM:", e.message); }
     setCargando(false);
   };
@@ -84,6 +138,7 @@ export default function CrmView() {
               conversaciones={conversaciones} setConversaciones={setConversaciones}
               etapas={etapas} etapaPorId={etapaPorId}
               agentes={agentes} agentePorId={agentePorId}
+              pedidos={pedidos}
               user={user} recargar={cargarTodo}
             />
           )}
@@ -94,7 +149,7 @@ export default function CrmView() {
             <AgentesPanel agentes={agentes} conversaciones={conversaciones} />
           )}
           {tab === "analitica" && (
-            <AnaliticaPanel conversaciones={conversaciones} etapas={etapas} agentes={agentes} />
+            <AnaliticaPanel conversaciones={conversaciones} etapas={etapas} agentes={agentes} pedidos={pedidos} mensajes={mensajesTodos} />
           )}
         </div>
       )}
@@ -103,15 +158,17 @@ export default function CrmView() {
 }
 
 // ─────────────────────────────────────────────────────────────
-//  BANDEJA: lista de conversaciones + hilo de mensajes + panel
-//  de contacto (etapa, agente asignado).
+//  BANDEJA: lista de conversaciones + hilo de mensajes + panel de
+//  contacto (etapa, agente asignado, pedidos/cotizaciones de ese
+//  cliente con un botón para reenviárselos por WhatsApp).
 // ─────────────────────────────────────────────────────────────
-function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, agentes, agentePorId, user, recargar }) {
+function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, agentes, agentePorId, pedidos, user, recargar }) {
   const [seleccionada, setSeleccionada] = useState(null);
   const [busqueda, setBusqueda] = useState("");
   const [mensajes, setMensajes] = useState([]);
   const [texto, setTexto] = useState("");
   const [enviando, setEnviando] = useState(false);
+  const [enviandoPedidoId, setEnviandoPedidoId] = useState(null);
   const hiloRef = useRef(null);
 
   const conversacionesFiltradas = conversaciones.filter(c => {
@@ -145,27 +202,44 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
     setSeleccionada(prev => ({ ...prev, agente_id: agenteId || null }));
   };
 
+  const registrarMensajeSaliente = async (contenido, actualizarPreview = true) => {
+    const creado = await sb.post("crm_mensajes", {
+      conversacion_id: seleccionada.id, direccion: "saliente", tipo: "texto",
+      contenido, agente_id: user?.id || null, estado: "enviado",
+    });
+    if (Array.isArray(creado) && creado[0]) setMensajes(prev => [...prev, creado[0]]);
+    if (actualizarPreview) {
+      const preview = contenido.length > 60 ? contenido.slice(0, 60) + "…" : contenido;
+      await sb.patch("crm_conversaciones", seleccionada.id, { ultimo_mensaje_at: new Date().toISOString(), ultimo_mensaje_preview: preview });
+      setConversaciones(prev => prev.map(c => c.id === seleccionada.id ? { ...c, ultimo_mensaje_at: new Date().toISOString(), ultimo_mensaje_preview: preview } : c));
+    }
+  };
+
   // NOTA: por ahora esto solo GUARDA el mensaje en la base de datos como
   // "saliente" -- falta conectar el envío real por WhatsApp (pendiente a que
-  // termine la revisión de Meta). Una vez esté lista la API, este mismo botón
-  // se conecta a la función que manda el mensaje de verdad.
+  // termine la revisión de Meta). Una vez esté lista la API, esto mismo se
+  // conecta a la función que manda el mensaje de verdad.
   const enviarMensaje = async () => {
     if (!texto.trim() || !seleccionada) return;
     setEnviando(true);
-    try {
-      const creado = await sb.post("crm_mensajes", {
-        conversacion_id: seleccionada.id, direccion: "saliente", tipo: "texto",
-        contenido: texto.trim(), agente_id: user?.id || null, estado: "enviado",
-      });
-      if (Array.isArray(creado) && creado[0]) setMensajes(prev => [...prev, creado[0]]);
-      await sb.patch("crm_conversaciones", seleccionada.id, {
-        ultimo_mensaje_at: new Date().toISOString(), ultimo_mensaje_preview: texto.trim(),
-      });
-      setConversaciones(prev => prev.map(c => c.id === seleccionada.id ? { ...c, ultimo_mensaje_at: new Date().toISOString(), ultimo_mensaje_preview: texto.trim() } : c));
-      setTexto("");
-    } catch (e) { alert("Error enviando: " + e.message); }
+    try { await registrarMensajeSaliente(texto.trim()); setTexto(""); }
+    catch (e) { alert("Error enviando: " + e.message); }
     setEnviando(false);
   };
+
+  const enviarPedidoPorWhatsApp = async (pedido) => {
+    setEnviandoPedidoId(pedido.id);
+    try {
+      const items = await sb.get("pedido_items", `?pedido_id=eq.${pedido.id}&select=nombre_producto,cantidad,precio_unitario,subtotal`);
+      const lineas = (items || []).map((it, i) => `${i + 1}. ${it.nombre_producto} — $${Number(it.subtotal).toFixed(2)}`);
+      const esCot = pedido.tipo === "cotizacion";
+      const texto = `${esCot ? "Aquí tienes tu cotización" : "Aquí tienes el resumen de tu pedido"} *${pedido.codigo}*:\n\n${lineas.join("\n")}\n\nTotal: $${Number(pedido.total).toFixed(2)}${esCot ? "\n\n¿Confirmamos el pedido?" : ""}`;
+      await registrarMensajeSaliente(texto);
+    } catch (e) { alert("Error preparando el envío: " + e.message); }
+    setEnviandoPedidoId(null);
+  };
+
+  const pedidosDelContacto = seleccionada ? pedidos.filter(p => p.telefono === seleccionada.telefono) : [];
 
   return (
     <>
@@ -239,7 +313,7 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
                 <div style={{ textAlign: "center", color: GRAY3, fontSize: 13, marginTop: 40 }}>Sin mensajes en esta conversación</div>
               ) : mensajes.map(m => (
                 <div key={m.id} style={{ display: "flex", justifyContent: m.direccion === "saliente" ? "flex-end" : "flex-start" }}>
-                  <div style={{ maxWidth: "62%", padding: "9px 13px", borderRadius: 14, background: m.direccion === "saliente" ? BLACK : WHITE, color: m.direccion === "saliente" ? WHITE : BLACK, border: m.direccion === "entrante" ? `1px solid ${GRAY2}` : "none", fontSize: 13.5, lineHeight: 1.45 }}>
+                  <div style={{ maxWidth: "62%", padding: "9px 13px", borderRadius: 14, background: m.direccion === "saliente" ? BLACK : WHITE, color: m.direccion === "saliente" ? WHITE : BLACK, border: m.direccion === "entrante" ? `1px solid ${GRAY2}` : "none", fontSize: 13.5, lineHeight: 1.45, whiteSpace: "pre-wrap" }}>
                     {m.contenido}
                     <div style={{ display: "flex", alignItems: "center", gap: 4, justifyContent: "flex-end", marginTop: 4, opacity: 0.6, fontSize: 10 }}>
                       {formatoHora(m.created_at)}
@@ -264,7 +338,7 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
 
       {/* PANEL DE CONTACTO */}
       {seleccionada && (
-        <div style={{ width: 280, minWidth: 280, background: WHITE, borderLeft: `1px solid ${GRAY2}`, padding: 20, overflowY: "auto" }}>
+        <div style={{ width: 290, minWidth: 290, background: WHITE, borderLeft: `1px solid ${GRAY2}`, padding: 20, overflowY: "auto" }}>
           <div style={{ textAlign: "center", marginBottom: 20 }}>
             <div style={{ width: 60, height: 60, borderRadius: "50%", background: GRAY2, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 22, color: GRAY3, margin: "0 auto 10px" }}>
               {(seleccionada.nombre_contacto || seleccionada.telefono || "?").charAt(0).toUpperCase()}
@@ -284,10 +358,35 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
           </div>
 
           <div style={{ fontSize: 11, fontWeight: 800, color: GRAY3, letterSpacing: 0.5, marginBottom: 8 }}>AGENTE ASIGNADO</div>
-          <select value={seleccionada.agente_id || ""} onChange={e => cambiarAgente(e.target.value)} style={{ ...S.input, marginBottom: 0, fontSize: 13 }}>
+          <select value={seleccionada.agente_id || ""} onChange={e => cambiarAgente(e.target.value)} style={{ ...S.input, marginBottom: 20, fontSize: 13 }}>
             <option value="">Sin asignar</option>
             {agentes.map(a => <option key={a.id} value={a.id}>{a.nombre}</option>)}
           </select>
+
+          <div style={{ fontSize: 11, fontWeight: 800, color: GRAY3, letterSpacing: 0.5, marginBottom: 8 }}>PEDIDOS Y COTIZACIONES</div>
+          {pedidosDelContacto.length === 0 ? (
+            <div style={{ fontSize: 12, color: GRAY3, background: GRAY, borderRadius: 10, padding: 12, textAlign: "center" }}>
+              Sin pedidos ni cotizaciones para este número todavía.
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {pedidosDelContacto.map(p => (
+                <div key={p.id} style={{ border: `1px solid ${GRAY2}`, borderRadius: 10, padding: 10 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 3 }}>
+                    <div style={{ fontWeight: 800, fontSize: 12.5 }}>{p.codigo}</div>
+                    <span style={{ fontSize: 9.5, fontWeight: 800, padding: "2px 6px", borderRadius: 5, background: p.tipo === "cotizacion" ? "#FEF3C7" : p.pagado ? "#D1FAE5" : "#FEE2E2", color: p.tipo === "cotizacion" ? "#92400E" : p.pagado ? "#065F46" : "#991B1B" }}>
+                      {p.tipo === "cotizacion" ? "Cotización" : p.pagado ? "Pagado" : "Sin pagar"}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: RED, marginBottom: 8 }}>${Number(p.total).toFixed(2)}</div>
+                  <button onClick={() => enviarPedidoPorWhatsApp(p)} disabled={enviandoPedidoId === p.id} className="oft-btn-press"
+                    style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 5, padding: "6px 0", borderRadius: 7, border: "none", background: BLACK, color: WHITE, fontWeight: 700, fontSize: 11.5, cursor: "pointer", opacity: enviandoPedidoId === p.id ? 0.6 : 1 }}>
+                    <Send size={12} /> {enviandoPedidoId === p.id ? "Enviando..." : "Enviar por WhatsApp"}
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </>
@@ -348,7 +447,7 @@ function AgentesPanel({ agentes, conversaciones }) {
   return (
     <div style={{ flex: 1, padding: 24, overflowY: "auto" }}>
       <div style={{ fontSize: 13, color: GRAY3, marginBottom: 18, maxWidth: 560 }}>
-        Los agentes son las mismas cuentas de operador del panel de administrador. Para agregar uno nuevo, promuévelo desde Admin → Equipo.
+        Los agentes son las mismas cuentas de operador del panel de administrador. Para agregar uno nuevo, promuévelo desde Admin → Equipo. El desempeño de cada uno está en la pestaña "Analítica".
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 14 }}>
         {agentes.map(a => {
@@ -369,46 +468,173 @@ function AgentesPanel({ agentes, conversaciones }) {
   );
 }
 
+// Calcula, para cada agente, tiempo de respuesta promedio, tasa de
+// conversión, ventas generadas y volumen de mensajes -- todo derivado de
+// las conversaciones, los mensajes, y los pedidos reales (cruzados por
+// número de teléfono).
+function calcularMetricasAgentes(agentes, conversaciones, mensajes, pedidos) {
+  const porAgente = {};
+  agentes.forEach(a => { porAgente[a.id] = { agente: a, asignadas: 0, tiemposRespuesta: [], mensajesEnviados: 0, convertidas: 0, ventasTotal: 0 }; });
+
+  conversaciones.forEach(c => { if (c.agente_id && porAgente[c.agente_id]) porAgente[c.agente_id].asignadas++; });
+
+  const mensajesPorConv = {};
+  mensajes.forEach(m => { (mensajesPorConv[m.conversacion_id] ||= []).push(m); });
+
+  Object.values(mensajesPorConv).forEach(lista => {
+    let esperandoDesde = null;
+    for (const m of lista) {
+      if (m.direccion === "entrante") {
+        if (esperandoDesde === null) esperandoDesde = m.created_at;
+      } else if (m.direccion === "saliente" && m.agente_id && porAgente[m.agente_id]) {
+        porAgente[m.agente_id].mensajesEnviados++;
+        if (esperandoDesde) {
+          porAgente[m.agente_id].tiemposRespuesta.push((new Date(m.created_at) - new Date(esperandoDesde)) / 60000);
+          esperandoDesde = null;
+        }
+      }
+    }
+  });
+
+  const ventasPorTelefono = {};
+  pedidos.forEach(p => {
+    if (p.pagado && p.tipo !== "cotizacion") ventasPorTelefono[p.telefono] = (ventasPorTelefono[p.telefono] || 0) + Number(p.total || 0);
+  });
+
+  conversaciones.forEach(c => {
+    if (c.agente_id && porAgente[c.agente_id] && ventasPorTelefono[c.telefono]) {
+      porAgente[c.agente_id].convertidas++;
+      porAgente[c.agente_id].ventasTotal += ventasPorTelefono[c.telefono];
+    }
+  });
+
+  return Object.values(porAgente).map(p => ({
+    ...p,
+    tiempoRespuestaPromedio: p.tiemposRespuesta.length ? p.tiemposRespuesta.reduce((a, b) => a + b, 0) / p.tiemposRespuesta.length : null,
+    tasaConversion: p.asignadas > 0 ? (p.convertidas / p.asignadas) * 100 : 0,
+  })).sort((a, b) => b.ventasTotal - a.ventasTotal || b.tasaConversion - a.tasaConversion);
+}
+
 // ─────────────────────────────────────────────────────────────
-//  ANALÍTICA: métricas generales -- se va a llenar de verdad en
-//  cuanto haya mensajes reales fluyendo.
+//  ANALÍTICA: KPIs generales, leaderboard de agentes (tiempo de
+//  respuesta, tasa de conversión, ventas generadas), y distribución
+//  de clientes por etapa.
 // ─────────────────────────────────────────────────────────────
-function AnaliticaPanel({ conversaciones, etapas, agentes }) {
+function AnaliticaPanel({ conversaciones, etapas, agentes, pedidos, mensajes }) {
+  const metricas = calcularMetricasAgentes(agentes, conversaciones, mensajes, pedidos);
   const total = conversaciones.length;
   const porEtapa = etapas.map(e => ({ ...e, total: conversaciones.filter(c => c.etapa_id === e.id).length }));
-  const sinAsignar = conversaciones.filter(c => !c.agente_id).length;
+  const sinResponder = conversaciones.filter(c => c.no_leidos > 0).length;
+
+  const tiempoRespuestaGlobal = (() => {
+    const todos = metricas.flatMap(m => m.tiemposRespuesta);
+    return todos.length ? todos.reduce((a, b) => a + b, 0) / todos.length : null;
+  })();
+  const ventasTotalGlobal = metricas.reduce((s, m) => s + m.ventasTotal, 0);
+  const asignadasTotal = metricas.reduce((s, m) => s + m.asignadas, 0);
+  const convertidasTotal = metricas.reduce((s, m) => s + m.convertidas, 0);
+  const tasaConversionGlobal = asignadasTotal > 0 ? (convertidasTotal / asignadasTotal) * 100 : 0;
+
+  const maxVentas = Math.max(...metricas.map(m => m.ventasTotal), 1);
 
   return (
     <div style={{ flex: 1, padding: 24, overflowY: "auto" }}>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 14, marginBottom: 24 }}>
+      {/* KPIs GLOBALES */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 14, marginBottom: 28 }}>
         <TarjetaMetrica icono={InboxIcon} valor={total} etiqueta="Conversaciones totales" />
-        <TarjetaMetrica icono={Users} valor={agentes.length} etiqueta="Agentes activos" />
-        <TarjetaMetrica icono={Clock} valor={sinAsignar} etiqueta="Sin asignar" />
+        <TarjetaMetrica icono={Timer} valor={tiempoRespuestaGlobal !== null ? Math.round(tiempoRespuestaGlobal) : 0} sufijo=" min" etiqueta="Tiempo de respuesta promedio" mostrarGuion={tiempoRespuestaGlobal === null} />
+        <TarjetaMetrica icono={Target} valor={Math.round(tasaConversionGlobal)} sufijo="%" etiqueta="Tasa de conversión" />
+        <TarjetaMetrica icono={DollarSign} valor={ventasTotalGlobal} prefijo="$" decimales={2} etiqueta="Ventas generadas por leads" />
+        <TarjetaMetrica icono={AlertCircle} valor={sinResponder} etiqueta="Leads esperando respuesta" alerta={sinResponder > 0} />
       </div>
-      <div style={{ background: WHITE, borderRadius: 14, padding: 20, border: `1px solid ${GRAY2}` }}>
-        <div style={{ fontWeight: 800, fontSize: 14.5, marginBottom: 14 }}>Clientes por etapa</div>
-        {porEtapa.map(e => (
-          <div key={e.id} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
-            <div style={{ width: 110, fontSize: 12.5, fontWeight: 700, color: GRAY3, flexShrink: 0 }}>{e.nombre}</div>
-            <div style={{ flex: 1, height: 8, background: GRAY, borderRadius: 4, overflow: "hidden" }}>
-              <div style={{ height: "100%", width: total > 0 ? `${(e.total / total) * 100}%` : "0%", background: e.color, borderRadius: 4 }} />
-            </div>
-            <div style={{ width: 24, fontSize: 12.5, fontWeight: 800, textAlign: "right" }}>{e.total}</div>
+
+      {/* LEADERBOARD */}
+      <div style={{ background: WHITE, borderRadius: 16, padding: 22, border: `1px solid ${GRAY2}`, marginBottom: 24 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+          <Trophy size={18} color="#D4AF37" />
+          <div style={{ fontWeight: 900, fontSize: 15.5 }}>Ranking de agentes</div>
+        </div>
+        <div style={{ fontSize: 12, color: GRAY3, marginBottom: 18 }}>Ordenado por ventas generadas, incluyendo admins con conversaciones asignadas.</div>
+
+        {metricas.length === 0 ? (
+          <div style={{ textAlign: "center", color: GRAY3, fontSize: 13, padding: "30px 0" }}>Sin agentes con conversaciones asignadas todavía.</div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {metricas.map((m, i) => (
+              <div key={m.agente.id} className="oft-fade-in" style={{ animationDelay: `${i * 60}ms`, display: "flex", alignItems: "center", gap: 14, padding: "12px 14px", borderRadius: 12, background: i < 3 ? `${COLORES_RANKING[i]}0D` : GRAY, border: i < 3 ? `1px solid ${COLORES_RANKING[i]}44` : `1px solid transparent` }}>
+                <div style={{ width: 30, height: 30, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 900, fontSize: 13, flexShrink: 0, background: i < 3 ? COLORES_RANKING[i] : GRAY2, color: i < 3 ? WHITE : GRAY3 }}>
+                  {i + 1}
+                </div>
+                <div style={{ width: 36, height: 36, borderRadius: "50%", background: BLACK, color: WHITE, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 14, flexShrink: 0 }}>
+                  {(m.agente.nombre || "?").charAt(0).toUpperCase()}
+                </div>
+                <div style={{ width: 130, flexShrink: 0 }}>
+                  <div style={{ fontWeight: 800, fontSize: 13.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.agente.nombre}</div>
+                  <div style={{ fontSize: 10.5, color: GRAY3 }}>{m.asignadas} conversación{m.asignadas !== 1 ? "es" : ""}</div>
+                </div>
+                <div style={{ flex: 1, minWidth: 100 }}>
+                  <BarraAnimada porcentaje={(m.ventasTotal / maxVentas) * 100} color={i < 3 ? COLORES_RANKING[i] : BLACK} />
+                </div>
+                <div style={{ width: 84, textAlign: "right", flexShrink: 0 }}>
+                  <div style={{ fontWeight: 900, fontSize: 14, color: RED }}>${m.ventasTotal.toFixed(0)}</div>
+                  <div style={{ fontSize: 10, color: GRAY3 }}>{m.tasaConversion.toFixed(0)}% conversión</div>
+                </div>
+                <div style={{ width: 74, textAlign: "right", flexShrink: 0 }}>
+                  <div style={{ fontWeight: 700, fontSize: 12 }}>{formatoDuracion(m.tiempoRespuestaPromedio)}</div>
+                  <div style={{ fontSize: 10, color: GRAY3 }}>respuesta</div>
+                </div>
+              </div>
+            ))}
           </div>
-        ))}
+        )}
       </div>
-      <div style={{ marginTop: 16, fontSize: 12, color: GRAY3, textAlign: "center" }}>
-        Tiempo de respuesta y ranking de agentes aparecen aquí en cuanto haya mensajes reales entrando.
+
+      <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: 16 }}>
+        {/* DISTRIBUCIÓN POR ETAPA */}
+        <div style={{ background: WHITE, borderRadius: 16, padding: 20, border: `1px solid ${GRAY2}` }}>
+          <div style={{ fontWeight: 800, fontSize: 14.5, marginBottom: 16 }}>Clientes por etapa</div>
+          {porEtapa.map(e => (
+            <div key={e.id} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+              <div style={{ width: 110, fontSize: 12.5, fontWeight: 700, color: GRAY3, flexShrink: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{e.nombre}</div>
+              <BarraAnimada porcentaje={total > 0 ? (e.total / total) * 100 : 0} color={e.color} />
+              <div style={{ width: 24, fontSize: 12.5, fontWeight: 800, textAlign: "right" }}>{e.total}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* PRODUCTIVIDAD POR AGENTE */}
+        <div style={{ background: WHITE, borderRadius: 16, padding: 20, border: `1px solid ${GRAY2}` }}>
+          <div style={{ fontWeight: 800, fontSize: 14.5, marginBottom: 4 }}>Mensajes respondidos</div>
+          <div style={{ fontSize: 11.5, color: GRAY3, marginBottom: 16 }}>Volumen de respuestas enviadas por cada agente</div>
+          {metricas.filter(m => m.mensajesEnviados > 0).length === 0 ? (
+            <div style={{ textAlign: "center", color: GRAY3, fontSize: 12.5, padding: "20px 0" }}>Sin mensajes enviados todavía.</div>
+          ) : (
+            [...metricas].sort((a, b) => b.mensajesEnviados - a.mensajesEnviados).map(m => {
+              const maxMsj = Math.max(...metricas.map(x => x.mensajesEnviados), 1);
+              return (
+                <div key={m.agente.id} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+                  <div style={{ width: 90, fontSize: 12.5, fontWeight: 700, color: GRAY3, flexShrink: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.agente.nombre}</div>
+                  <BarraAnimada porcentaje={(m.mensajesEnviados / maxMsj) * 100} color={BLACK} />
+                  <div style={{ width: 24, fontSize: 12.5, fontWeight: 800, textAlign: "right" }}>{m.mensajesEnviados}</div>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
+
+      <div style={{ marginTop: 16, fontSize: 11.5, color: GRAY3, textAlign: "center" }}>
+        Tiempo de respuesta: promedio entre que un cliente escribe y un agente responde. Conversión: % de conversaciones asignadas con al menos una venta pagada.
       </div>
     </div>
   );
 }
 
-function TarjetaMetrica({ icono: Icono, valor, etiqueta }) {
+function TarjetaMetrica({ icono: Icono, valor, prefijo = "", sufijo = "", decimales = 0, etiqueta, alerta = false, mostrarGuion = false }) {
   return (
-    <div style={{ background: WHITE, borderRadius: 14, padding: 18, border: `1px solid ${GRAY2}` }}>
-      <Icono size={18} color={RED} style={{ marginBottom: 8 }} />
-      <div style={{ fontSize: 26, fontWeight: 900 }}>{valor}</div>
+    <div className="oft-fade-in" style={{ background: WHITE, borderRadius: 14, padding: 18, border: `1px solid ${alerta ? "#FCA5A5" : GRAY2}` }}>
+      <Icono size={18} color={alerta ? RED : RED} style={{ marginBottom: 8 }} />
+      <div style={{ fontSize: 26, fontWeight: 900 }}>{mostrarGuion ? "—" : <NumeroAnimado valor={valor} prefijo={prefijo} sufijo={sufijo} decimales={decimales} />}</div>
       <div style={{ fontSize: 12, color: GRAY3, fontWeight: 600 }}>{etiqueta}</div>
     </div>
   );
