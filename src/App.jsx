@@ -26,6 +26,7 @@ import {
 // alguien entra de verdad a /admin — así un cliente normal nunca tiene que bajar
 // ese código de más (es casi el 40% de todo el sitio).
 const AdminView = lazy(() => import("./AdminView.jsx"));
+const CrmView = lazy(() => import("./CrmView.jsx"));
 
 // ════════════════════════════════════════════════════════════════
 //  🔧 CONFIGURACIÓN SUPABASE — Pega tus datos aquí
@@ -374,6 +375,7 @@ function NavBar() {
         ))}
         {user && <span onClick={() => setView("dashboard")} style={{ fontWeight: 600, fontSize: 14, cursor: "pointer", color: view === "dashboard" ? RED : BLACK, whiteSpace: "nowrap" }}>Mi Cuenta</span>}
         {user?.es_admin && <span onClick={() => setView("admin")} style={{ fontWeight: 600, fontSize: 14, cursor: "pointer", color: view === "admin" ? RED : BLACK }}>Admin</span>}
+        {(user?.es_admin || user?.rol === "operador") && <span onClick={() => setView("crm")} style={{ fontWeight: 600, fontSize: 14, cursor: "pointer", color: view === "crm" ? RED : BLACK }}>CRM</span>}
       </div>
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
         <button className={bounce ? "oft-cart-bounce oft-btn-press" : "oft-btn-press"} style={{ ...S.btnOutline, position: "relative", display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 12px" }} onClick={() => setShowCart(true)}>
@@ -3866,6 +3868,22 @@ export default function App() {
           <div style={{ ...S.section, textAlign: "center" }}>
             <div style={{ display: "flex", justifyContent: "center", marginBottom: 12 }}><Lock size={48} color={GRAY3} strokeWidth={1.5} /></div>
             <p>Acceso restringido. <span style={{ color: RED, cursor: "pointer" }} onClick={() => setShowLogin(true)}>Iniciar sesión como admin</span></p>
+          </div>
+        )}
+        {view === "crm" && (user?.es_admin || user?.rol === "operador") && (
+          <Suspense fallback={
+            <div style={{ ...S.section, textAlign: "center", padding: "80px 24px" }}>
+              <RefreshCw size={32} color={GRAY3} className="spin" style={{ margin: "0 auto 12px" }} />
+              <p style={{ color: GRAY3 }}>Cargando CRM...</p>
+            </div>
+          }>
+            <CrmView />
+          </Suspense>
+        )}
+        {view === "crm" && !(user?.es_admin || user?.rol === "operador") && (
+          <div style={{ ...S.section, textAlign: "center" }}>
+            <div style={{ display: "flex", justifyContent: "center", marginBottom: 12 }}><Lock size={48} color={GRAY3} strokeWidth={1.5} /></div>
+            <p>Acceso restringido. <span style={{ color: RED, cursor: "pointer" }} onClick={() => setShowLogin(true)}>Iniciar sesión</span></p>
           </div>
         )}
         {showCart && <CartModal />}
