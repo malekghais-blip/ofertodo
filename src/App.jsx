@@ -943,6 +943,7 @@ function HomeView() {
 //  SELECTOR DE PRESENTACIÓN + CANTIDAD ANIMADO
 // ═══════════════════════════════════════════════════════════════
 function QtySelector({ product, pres, setPres, count, setCount, size = "normal" }) {
+  const { showToast } = useApp();
   const [bump, setBump] = useState(false);
   const triggerBump = () => { setBump(true); setTimeout(() => setBump(false), 280); };
 
@@ -966,7 +967,17 @@ function QtySelector({ product, pres, setPres, count, setCount, size = "normal" 
   const enElMaximo = stockConocido !== null && count >= maxUnidadesActual;
 
   const change = (delta) => {
-    setCount(prev => Math.min(Math.max(1, prev + delta), maxUnidadesActual));
+    setCount(prev => {
+      const siguiente = Math.max(1, prev + delta);
+      // Justo al topar con el límite (no en cada clic después, ya que el botón
+      // queda deshabilitado) -- se avisa arriba, en el mismo cuadro negro que
+      // usa "agregado al pedido", no como texto aparte debajo del contador.
+      if (siguiente > maxUnidadesActual) {
+        showToast(`Es lo máximo disponible en stock (${maxUnidadesActual})`);
+        return maxUnidadesActual;
+      }
+      return siguiente;
+    });
     triggerBump();
   };
 
@@ -1042,11 +1053,6 @@ function QtySelector({ product, pres, setPres, count, setCount, size = "normal" 
           aria-label="Agregar uno"
         >+</button>
       </div>
-      {enElMaximo && (
-        <div style={{ fontSize: 11.5, color: "#92400E", fontWeight: 600, marginTop: 6, textAlign: "center" }}>
-          Es lo máximo disponible en stock por el momento
-        </div>
-      )}
     </div>
   );
 }
