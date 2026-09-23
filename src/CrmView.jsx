@@ -3,7 +3,8 @@ import {
   MessageCircle, Search, Send, User, Users, BarChart3, Inbox as InboxIcon,
   ChevronRight, Circle, CheckCheck, Check, Clock, RefreshCw, X, Tag,
   ArrowLeft, Zap, TrendingUp, Trophy, Target, DollarSign, ShoppingBag,
-  Timer, AlertCircle, FileText, ExternalLink,
+  Timer, AlertCircle, FileText, ExternalLink, Workflow, GitBranch, Plus,
+  Trash2, Play, UserCheck, ToggleLeft, ToggleRight, StickyNote,
 } from "lucide-react";
 import { RED, BLACK, GRAY, GRAY2, GRAY3, WHITE, S, useApp, sb, Spinner } from "./shared.jsx";
 
@@ -134,7 +135,7 @@ export default function CrmView() {
           )}
         </div>
         <div style={{ display: "flex", gap: 4, background: GRAY, borderRadius: 10, padding: 4, overflowX: "auto", maxWidth: esMobil ? "calc(100% - 44px)" : "none" }}>
-          {[["inbox", "Bandeja", InboxIcon], ["etapas", "Etapas", Tag], ["agentes", "Agentes", Users], ["analitica", "Analítica", BarChart3]].map(([id, label, Icon]) => (
+          {[["inbox", "Bandeja", InboxIcon], ["etapas", "Etapas", Tag], ["workflows", "Workflows", Workflow], ["agentes", "Agentes", Users], ["analitica", "Analítica", BarChart3]].map(([id, label, Icon]) => (
             <button key={id} onClick={() => setTab(id)} className="oft-btn-press"
               style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: esMobil ? "8px 10px" : "8px 14px", borderRadius: 8, border: "none", fontWeight: 700, fontSize: esMobil ? 12 : 13, cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0, transition: "background 0.25s ease, color 0.25s ease", ...(tab === id ? ESTILO_TAB_ACTIVO : ESTILO_TAB) }}>
               <Icon size={15} /> {label}
@@ -158,6 +159,9 @@ export default function CrmView() {
           )}
           {tab === "etapas" && (
             <EtapasPanel conversaciones={conversaciones} etapas={etapas} agentePorId={agentePorId} setConversaciones={setConversaciones} />
+          )}
+          {tab === "workflows" && (
+            <WorkflowsPanel etapas={etapas} agentes={agentes} />
           )}
           {tab === "agentes" && (
             <AgentesPanel agentes={agentes} conversaciones={conversaciones} />
@@ -750,6 +754,526 @@ function TarjetaMetrica({ icono: Icono, valor, prefijo = "", sufijo = "", decima
       <Icono size={esMobil ? 15 : 18} color={alerta ? RED : RED} style={{ marginBottom: esMobil ? 5 : 8 }} />
       <div style={{ fontSize: esMobil ? 19 : 26, fontWeight: 900 }}>{mostrarGuion ? "—" : <NumeroAnimado valor={valor} prefijo={prefijo} sufijo={sufijo} decimales={decimales} />}</div>
       <div style={{ fontSize: esMobil ? 10.5 : 12, color: GRAY3, fontWeight: 600, lineHeight: 1.3 }}>{etiqueta}</div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  WORKFLOWS — automatizaciones con un disparador y una cadena de
+//  pasos (que se puede ramificar), inspirado en cómo lo arma
+//  respond.io, pero enfocado a lo que Ofertodo necesita.
+// ═══════════════════════════════════════════════════════════════
+
+const TIPOS_TRIGGER = {
+  conversacion_nueva: { icono: Play, label: "Conversación nueva", descripcion: "Cuando un cliente escribe por primera vez" },
+  etapa_cambiada: { icono: Tag, label: "Etapa cambiada", descripcion: "Cuando un cliente entra a una etapa específica" },
+  sin_responder: { icono: Timer, label: "Sin responder", descripcion: "Cuando un cliente lleva tiempo esperando respuesta" },
+  agente_asignado: { icono: UserCheck, label: "Agente asignado", descripcion: "Cuando se le asigna un agente a la conversación" },
+};
+
+const TIPOS_PASO = {
+  enviar_mensaje: { icono: Send, label: "Enviar mensaje", color: "#3B82F6" },
+  esperar: { icono: Clock, label: "Esperar", color: "#F59E0B" },
+  cambiar_etapa: { icono: Tag, label: "Cambiar etapa", color: RED },
+  asignar_agente: { icono: Users, label: "Asignar agente", color: "#8B5CF6" },
+  agregar_nota: { icono: StickyNote, label: "Agregar nota interna", color: "#6B7280" },
+  bifurcacion: { icono: GitBranch, label: "Condición (Sí / No)", color: BLACK },
+};
+
+function generarIdPaso() { return `p${Date.now()}${Math.floor(Math.random() * 10000)}`; }
+
+// ─────────────────────────────────────────────────────────────
+//  LISTA: todos los workflows, con su estado y cu\u00e1ntas veces se
+//  han activado. Desde aqu\u00ed se crea uno nuevo o se abre a editar.
+// ─────────────────────────────────────────────────────────────
+function WorkflowsPanel({ etapas, agentes }) {
+  const esMobil = useEsMobil();
+  const [workflows, setWorkflows] = useState([]);
+  const [cargando, setCargando] = useState(true);
+  const [editando, setEditando] = useState(null); // null | "nuevo" | objeto workflow
+
+  const cargar = async () => {
+    setCargando(true);
+    try { setWorkflows(await sb.get("crm_workflows", "?order=created_at.desc") || []); }
+    catch (e) { console.warn("Error cargando workflows:", e.message); }
+    setCargando(false);
+  };
+  useEffect(() => { cargar(); }, []);
+
+  const alternarActivo = async (wf) => {
+    await sb.patch("crm_workflows", wf.id, { activo: !wf.activo });
+    setWorkflows(prev => prev.map(w => w.id === wf.id ? { ...w, activo: !w.activo } : w));
+  };
+
+  const eliminar = async (wf) => {
+    if (!confirm(`¿Eliminar el workflow "${wf.nombre}"? Esto no se puede deshacer.`)) return;
+    await sb.delete("crm_workflows", wf.id);
+    setWorkflows(prev => prev.filter(w => w.id !== wf.id));
+  };
+
+  if (editando) {
+    return (
+      <WorkflowEditor
+        workflow={editando === "nuevo" ? null : editando}
+        etapas={etapas} agentes={agentes}
+        onCerrar={() => setEditando(null)}
+        onGuardado={() => { setEditando(null); cargar(); }}
+      />
+    );
+  }
+
+  return (
+    <div style={{ flex: 1, padding: esMobil ? 14 : 24, overflowY: "auto" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6, flexWrap: "wrap", gap: 10 }}>
+        <div>
+          <div style={{ fontWeight: 900, fontSize: 17 }}>Workflows</div>
+          <div style={{ fontSize: 12.5, color: GRAY3 }}>Automatiza mensajes, cambios de etapa, y asignaciones sin tener que hacerlo a mano.</div>
+        </div>
+        <button onClick={() => setEditando("nuevo")} className="oft-btn-press"
+          style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "10px 16px", borderRadius: 10, border: "none", background: RED, color: WHITE, fontWeight: 700, fontSize: 13.5, cursor: "pointer", flexShrink: 0 }}>
+          <Plus size={16} /> Crear workflow
+        </button>
+      </div>
+
+      {cargando ? (
+        <div style={{ padding: 40, textAlign: "center" }}><Spinner /></div>
+      ) : workflows.length === 0 ? (
+        <div style={{ textAlign: "center", padding: "60px 20px", color: GRAY3 }}>
+          <Workflow size={40} color={GRAY2} style={{ margin: "0 auto 12px" }} />
+          <div style={{ fontWeight: 700, fontSize: 14.5, marginBottom: 4, color: BLACK }}>Todavía no tienes workflows</div>
+          <div style={{ fontSize: 13 }}>Crea el primero para automatizar tu bandeja.</div>
+        </div>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: esMobil ? "1fr" : "repeat(auto-fill, minmax(280px, 1fr))", gap: 12, marginTop: 18 }}>
+          {workflows.map((wf, i) => {
+            const trig = TIPOS_TRIGGER[wf.trigger_tipo];
+            return (
+              <div key={wf.id} className="oft-fade-in" style={{ animationDelay: `${i * 50}ms`, background: WHITE, borderRadius: 14, padding: 16, border: `1px solid ${GRAY2}`, cursor: "pointer" }} onClick={() => setEditando(wf)}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
+                  <div style={{ fontWeight: 800, fontSize: 14.5, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{wf.nombre}</div>
+                  <button onClick={e => { e.stopPropagation(); alternarActivo(wf); }} className="oft-btn-press" style={{ background: "none", border: "none", cursor: "pointer", padding: 2, flexShrink: 0, marginLeft: 8 }}>
+                    {wf.activo ? <ToggleRight size={26} color="#10B981" /> : <ToggleLeft size={26} color={GRAY3} />}
+                  </button>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: GRAY3, marginBottom: 12 }}>
+                  {trig && <trig.icono size={13} />} {trig?.label}
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ fontSize: 10.5, fontWeight: 800, padding: "3px 8px", borderRadius: 6, background: wf.activo ? "#D1FAE5" : GRAY, color: wf.activo ? "#065F46" : GRAY3 }}>
+                    {wf.activo ? "Publicado" : "Borrador"}
+                  </span>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <span style={{ fontSize: 11, color: GRAY3, fontWeight: 700 }}>{wf.veces_activado || 0} activaciones</span>
+                    <button onClick={e => { e.stopPropagation(); eliminar(wf); }} className="oft-btn-press" style={{ background: "none", border: "none", cursor: "pointer", padding: 2, display: "flex" }}>
+                      <Trash2 size={14} color={GRAY3} />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+//  EDITOR: arma el disparador y la cadena de pasos de un workflow.
+//  Los pasos se guardan como una lista plana con punteros
+//  ("siguiente", o "siguiente_si"/"siguiente_no" en una bifurcación)
+//  -- así se pueden insertar, ramificar, y borrar sin reacomodar
+//  todo un árbol.
+// ─────────────────────────────────────────────────────────────
+function WorkflowEditor({ workflow, etapas, agentes, onCerrar, onGuardado }) {
+  const esMobil = useEsMobil();
+  const [nombre, setNombre] = useState(workflow?.nombre || "");
+  const [triggerTipo, setTriggerTipo] = useState(workflow?.trigger_tipo || "conversacion_nueva");
+  const [triggerConfig, setTriggerConfig] = useState(workflow?.trigger_config || {});
+  const [pasos, setPasos] = useState(workflow?.pasos || []);
+  const [primerPasoId, setPrimerPasoId] = useState(workflow?.primer_paso_id || null);
+  const [insertandoEn, setInsertandoEn] = useState(null); // punto {pasoId, rama} | null (null = va a ser el primer paso)
+  const [editandoPasoId, setEditandoPasoId] = useState(null);
+  const [guardando, setGuardando] = useState(false);
+
+  const pasosDict = Object.fromEntries(pasos.map(p => [p.id, p]));
+  const pasoEditando = editandoPasoId ? pasosDict[editandoPasoId] : null;
+
+  const insertarPaso = (punto, tipo) => {
+    const nuevoId = generarIdPaso();
+    const nuevoPaso = { id: nuevoId, tipo, config: {}, siguiente: null, ...(tipo === "bifurcacion" ? { siguiente_si: null, siguiente_no: null } : {}) };
+    setPasos(prev => {
+      const copia = prev.map(p => ({ ...p }));
+      if (!punto) {
+        nuevoPaso.siguiente = primerPasoId;
+      } else {
+        const anterior = copia.find(p => p.id === punto.pasoId);
+        if (anterior) { nuevoPaso.siguiente = anterior[punto.rama] || null; anterior[punto.rama] = nuevoId; }
+      }
+      return [...copia, nuevoPaso];
+    });
+    if (!punto) setPrimerPasoId(nuevoId);
+    setInsertandoEn(null);
+    setEditandoPasoId(nuevoId);
+  };
+
+  const eliminarPaso = (pasoId) => {
+    const paso = pasosDict[pasoId];
+    if (!paso) return;
+    if (paso.tipo === "bifurcacion" && (paso.siguiente_si || paso.siguiente_no) && !confirm("Esta condición tiene pasos después de ella (en Sí y/o No). Al borrarla se pierden también. ¿Continuar?")) return;
+    setPasos(prev => {
+      const restantes = prev.filter(p => p.id !== pasoId).map(p => ({ ...p }));
+      restantes.forEach(p => {
+        if (p.siguiente === pasoId) p.siguiente = paso.siguiente || null;
+        if (p.siguiente_si === pasoId) p.siguiente_si = paso.siguiente || null;
+        if (p.siguiente_no === pasoId) p.siguiente_no = paso.siguiente || null;
+      });
+      return restantes;
+    });
+    if (primerPasoId === pasoId) setPrimerPasoId(paso.siguiente || null);
+    if (editandoPasoId === pasoId) setEditandoPasoId(null);
+  };
+
+  const actualizarConfig = (pasoId, config) => {
+    setPasos(prev => prev.map(p => p.id === pasoId ? { ...p, config } : p));
+  };
+
+  const guardar = async (publicar) => {
+    if (!nombre.trim()) { alert("Ponle un nombre al workflow"); return; }
+    setGuardando(true);
+    const datos = { nombre: nombre.trim(), activo: publicar, trigger_tipo: triggerTipo, trigger_config: triggerConfig, pasos, primer_paso_id: primerPasoId };
+    try {
+      if (workflow?.id) await sb.patch("crm_workflows", workflow.id, datos);
+      else await sb.post("crm_workflows", datos);
+      onGuardado();
+    } catch (e) { alert("Error guardando: " + e.message); setGuardando(false); }
+  };
+
+  return (
+    <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
+      {/* ENCABEZADO DEL EDITOR */}
+      <div style={{ background: WHITE, borderBottom: `1px solid ${GRAY2}`, padding: esMobil ? "10px 14px" : "14px 24px", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <button onClick={onCerrar} className="oft-btn-press" style={{ background: "none", border: "none", padding: 4, cursor: "pointer", display: "flex" }}><ArrowLeft size={20} /></button>
+        <input value={nombre} onChange={e => setNombre(e.target.value)} placeholder="Nombre del workflow..."
+          style={{ ...S.input, marginBottom: 0, flex: 1, minWidth: 160, fontWeight: 700, fontSize: 14.5, border: "none", background: GRAY, borderRadius: 8 }} />
+        <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+          <button onClick={() => guardar(false)} disabled={guardando} className="oft-btn-press"
+            style={{ padding: "9px 14px", borderRadius: 9, border: `1.5px solid ${GRAY2}`, background: WHITE, color: GRAY3, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+            Guardar borrador
+          </button>
+          <button onClick={() => guardar(true)} disabled={guardando} className="oft-btn-press"
+            style={{ padding: "9px 16px", borderRadius: 9, border: "none", background: BLACK, color: WHITE, fontWeight: 700, fontSize: 13, cursor: "pointer", opacity: guardando ? 0.6 : 1 }}>
+            {guardando ? "Guardando..." : "Publicar"}
+          </button>
+        </div>
+      </div>
+
+      <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
+        {/* LIENZO DE LA CADENA */}
+        <div style={{ flex: 1, overflow: "auto", padding: esMobil ? "24px 14px" : "32px 24px", display: "flex", justifyContent: "center" }}>
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", minWidth: esMobil ? "100%" : 320 }}>
+            {/* BLOQUE DE DISPARADOR */}
+            <div onClick={() => setEditandoPasoId("__trigger__")} className="oft-btn-press"
+              style={{ width: esMobil ? "100%" : 300, background: BLACK, color: WHITE, borderRadius: 14, padding: 16, cursor: "pointer", textAlign: "center" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginBottom: 3 }}>
+                {(() => { const T = TIPOS_TRIGGER[triggerTipo]?.icono; return T ? <T size={16} /> : null; })()}
+                <span style={{ fontSize: 11, fontWeight: 800, opacity: 0.7 }}>DISPARADOR</span>
+              </div>
+              <div style={{ fontWeight: 800, fontSize: 14.5 }}>{TIPOS_TRIGGER[triggerTipo]?.label}</div>
+            </div>
+            <LineaConector />
+            <CadenaPasos desdeId={primerPasoId} pasosDict={pasosDict} esMobil={esMobil}
+              onInsertar={setInsertandoEn} onEditar={setEditandoPasoId} onEliminar={eliminarPaso}
+              punto={{ pasoId: null, rama: null }} />
+          </div>
+        </div>
+
+        {/* PANEL DE CONFIGURACIÓN (disparador o paso seleccionado) */}
+        {editandoPasoId === "__trigger__" && (
+          <PanelConfigTrigger triggerTipo={triggerTipo} setTriggerTipo={setTriggerTipo} triggerConfig={triggerConfig} setTriggerConfig={setTriggerConfig} etapas={etapas} agentes={agentes} esMobil={esMobil} onCerrar={() => setEditandoPasoId(null)} />
+        )}
+        {pasoEditando && (
+          <PanelConfigPaso paso={pasoEditando} onActualizar={config => actualizarConfig(pasoEditando.id, config)} etapas={etapas} agentes={agentes} esMobil={esMobil} onCerrar={() => setEditandoPasoId(null)} />
+        )}
+      </div>
+
+      {/* MODAL: elegir tipo de paso a insertar */}
+      {insertandoEn !== null && insertandoEn !== undefined && (
+        <ModalElegirPaso onElegir={tipo => insertarPaso(insertandoEn, tipo)} onCerrar={() => setInsertandoEn(null)} />
+      )}
+    </div>
+  );
+}
+
+function LineaConector() {
+  return <div style={{ width: 2, height: 22, background: GRAY2 }} />;
+}
+
+function BotonInsertar({ onClick }) {
+  return (
+    <button onClick={onClick} className="oft-btn-press"
+      style={{ width: 30, height: 30, borderRadius: "50%", border: `1.5px dashed ${GRAY2}`, background: WHITE, color: GRAY3, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 4 }}>
+      <Plus size={15} />
+    </button>
+  );
+}
+
+// Dibuja la cadena de pasos empezando en "desdeId", siguiendo los punteros. Si
+// se topa con una bifurcación, se dibuja a sí misma dos veces en paralelo
+// (rama Sí / rama No) -- así se arman árboles de cualquier profundidad sin
+// necesitar una estructura de árbol de verdad guardada.
+function CadenaPasos({ desdeId, pasosDict, esMobil, onInsertar, onEditar, onEliminar, punto }) {
+  const paso = desdeId ? pasosDict[desdeId] : null;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+      <BotonInsertar onClick={() => onInsertar(punto)} />
+      {paso && (
+        <>
+          <LineaConector />
+          <BloquePaso paso={paso} esMobil={esMobil} onClick={() => onEditar(paso.id)} onEliminar={() => onEliminar(paso.id)} />
+          {paso.tipo === "bifurcacion" ? (
+            <div style={{ display: "flex", gap: esMobil ? 14 : 28, marginTop: 4, alignItems: "flex-start" }}>
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+                <EtiquetaRama color="#10B981">SÍ</EtiquetaRama>
+                <CadenaPasos desdeId={paso.siguiente_si} pasosDict={pasosDict} esMobil={esMobil} onInsertar={onInsertar} onEditar={onEditar} onEliminar={onEliminar} punto={{ pasoId: paso.id, rama: "siguiente_si" }} />
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+                <EtiquetaRama color={GRAY3}>NO</EtiquetaRama>
+                <CadenaPasos desdeId={paso.siguiente_no} pasosDict={pasosDict} esMobil={esMobil} onInsertar={onInsertar} onEditar={onEditar} onEliminar={onEliminar} punto={{ pasoId: paso.id, rama: "siguiente_no" }} />
+              </div>
+            </div>
+          ) : (
+            <CadenaPasos desdeId={paso.siguiente} pasosDict={pasosDict} esMobil={esMobil} onInsertar={onInsertar} onEditar={onEditar} onEliminar={onEliminar} punto={{ pasoId: paso.id, rama: "siguiente" }} />
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function EtiquetaRama({ children, color }) {
+  return <div style={{ fontSize: 10.5, fontWeight: 800, color, marginBottom: 4, letterSpacing: 0.5 }}>{children}</div>;
+}
+
+function BloquePaso({ paso, esMobil, onClick, onEliminar }) {
+  const meta = TIPOS_PASO[paso.tipo];
+  const resumen = resumenPaso(paso);
+  return (
+    <div className="oft-fade-in" style={{ position: "relative", width: esMobil ? 220 : 260 }}>
+      <div onClick={onClick} className="oft-btn-press"
+        style={{ background: WHITE, border: `1.5px solid ${GRAY2}`, borderLeft: `4px solid ${meta.color}`, borderRadius: 12, padding: "11px 14px", cursor: "pointer" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: resumen ? 4 : 0 }}>
+          <meta.icono size={15} color={meta.color} />
+          <div style={{ fontWeight: 800, fontSize: 12.5 }}>{meta.label}</div>
+        </div>
+        {resumen && <div style={{ fontSize: 11, color: GRAY3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{resumen}</div>}
+      </div>
+      <button onClick={e => { e.stopPropagation(); onEliminar(); }} className="oft-btn-press"
+        style={{ position: "absolute", top: -8, right: -8, width: 22, height: 22, borderRadius: "50%", background: WHITE, border: `1.5px solid ${GRAY2}`, color: GRAY3, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <X size={12} />
+      </button>
+    </div>
+  );
+}
+
+function resumenPaso(paso) {
+  const c = paso.config || {};
+  if (paso.tipo === "enviar_mensaje") return c.texto ? `"${c.texto.slice(0, 40)}${c.texto.length > 40 ? "…" : ""}"` : "Sin texto todavía";
+  if (paso.tipo === "esperar") return c.minutos ? `${c.minutos} minutos` : "Sin definir";
+  if (paso.tipo === "cambiar_etapa") return c.etapa_id ? "Etapa elegida" : "Sin elegir etapa";
+  if (paso.tipo === "asignar_agente") return c.modo === "menos_conversaciones" ? "Al que tenga menos chats" : c.agente_id ? "Agente elegido" : "Sin elegir agente";
+  if (paso.tipo === "agregar_nota") return c.texto ? `"${c.texto.slice(0, 40)}${c.texto.length > 40 ? "…" : ""}"` : "Sin texto todavía";
+  if (paso.tipo === "bifurcacion") return c.campo ? `Si ${c.campo} ${c.operador || "es"} ...` : "Sin condición todavía";
+  return "";
+}
+
+// ─────────────────────────────────────────────────────────────
+//  PANEL: configuración del disparador (el único, va al inicio).
+// ─────────────────────────────────────────────────────────────
+function PanelConfigTrigger({ triggerTipo, setTriggerTipo, triggerConfig, setTriggerConfig, etapas, agentes, esMobil, onCerrar }) {
+  return (
+    <PanelLateral titulo="Disparador" esMobil={esMobil} onCerrar={onCerrar}>
+      <EtiquetaCampo>¿Cuándo arranca este workflow?</EtiquetaCampo>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 20 }}>
+        {Object.entries(TIPOS_TRIGGER).map(([tipo, meta]) => (
+          <button key={tipo} onClick={() => { setTriggerTipo(tipo); setTriggerConfig({}); }} className="oft-btn-press"
+            style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: 12, borderRadius: 10, border: `1.5px solid ${triggerTipo === tipo ? RED : GRAY2}`, background: triggerTipo === tipo ? "#FFF5F5" : WHITE, cursor: "pointer", textAlign: "left" }}>
+            <meta.icono size={17} color={triggerTipo === tipo ? RED : GRAY3} style={{ marginTop: 1, flexShrink: 0 }} />
+            <div>
+              <div style={{ fontWeight: 700, fontSize: 13, color: triggerTipo === tipo ? RED : BLACK }}>{meta.label}</div>
+              <div style={{ fontSize: 11.5, color: GRAY3 }}>{meta.descripcion}</div>
+            </div>
+          </button>
+        ))}
+      </div>
+
+      {triggerTipo === "etapa_cambiada" && (
+        <>
+          <EtiquetaCampo>¿A cuál etapa? (opcional)</EtiquetaCampo>
+          <select value={triggerConfig.etapa_id || ""} onChange={e => setTriggerConfig({ ...triggerConfig, etapa_id: e.target.value || null })} style={{ ...S.input, fontSize: 13 }}>
+            <option value="">Cualquier etapa</option>
+            {etapas.map(et => <option key={et.id} value={et.id}>{et.nombre}</option>)}
+          </select>
+        </>
+      )}
+      {triggerTipo === "sin_responder" && (
+        <>
+          <EtiquetaCampo>¿Después de cuántos minutos sin responder?</EtiquetaCampo>
+          <input type="number" min="1" value={triggerConfig.minutos || ""} onChange={e => setTriggerConfig({ ...triggerConfig, minutos: Number(e.target.value) })} placeholder="Ej: 30" style={{ ...S.input, fontSize: 13 }} />
+          <div style={{ fontSize: 11.5, color: GRAY3, marginTop: -10 }}>Se revisa cada 5 minutos, así que puede tardar un poco más en dispararse.</div>
+        </>
+      )}
+      {triggerTipo === "agente_asignado" && (
+        <>
+          <EtiquetaCampo>¿A cuál agente? (opcional)</EtiquetaCampo>
+          <select value={triggerConfig.agente_id || ""} onChange={e => setTriggerConfig({ ...triggerConfig, agente_id: e.target.value || null })} style={{ ...S.input, fontSize: 13 }}>
+            <option value="">Cualquier agente</option>
+            {agentes.map(a => <option key={a.id} value={a.id}>{a.nombre}</option>)}
+          </select>
+        </>
+      )}
+    </PanelLateral>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+//  PANEL: configuración de un paso, cambia según su tipo.
+// ─────────────────────────────────────────────────────────────
+function PanelConfigPaso({ paso, onActualizar, etapas, agentes, esMobil, onCerrar }) {
+  const c = paso.config || {};
+  const set = (cambios) => onActualizar({ ...c, ...cambios });
+  const meta = TIPOS_PASO[paso.tipo];
+
+  return (
+    <PanelLateral titulo={meta.label} icono={meta.icono} color={meta.color} esMobil={esMobil} onCerrar={onCerrar}>
+      {paso.tipo === "enviar_mensaje" && (
+        <>
+          <EtiquetaCampo>Mensaje a enviar</EtiquetaCampo>
+          <textarea value={c.texto || ""} onChange={e => set({ texto: e.target.value })} rows={5} placeholder="Escribe el mensaje... usa {nombre} para el nombre del cliente" style={{ ...S.input, resize: "vertical", fontSize: 13 }} />
+          <div style={{ fontSize: 11.5, color: GRAY3, marginTop: -10 }}>Ejemplo: "Hola {"{nombre}"}, ¿todavía te interesa el pedido?"</div>
+        </>
+      )}
+      {paso.tipo === "esperar" && (
+        <>
+          <EtiquetaCampo>¿Cuánto tiempo esperar?</EtiquetaCampo>
+          <input type="number" min="1" value={c.minutos || ""} onChange={e => set({ minutos: Number(e.target.value) })} placeholder="Minutos" style={{ ...S.input, fontSize: 13, marginBottom: 10 }} />
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {[["15 min", 15], ["1 hora", 60], ["1 día", 1440], ["3 días", 4320]].map(([label, min]) => (
+              <button key={min} onClick={() => set({ minutos: min })} className="oft-btn-press" style={{ fontSize: 11.5, fontWeight: 700, padding: "5px 10px", borderRadius: 7, border: `1px solid ${GRAY2}`, background: c.minutos === min ? GRAY : WHITE, color: GRAY3, cursor: "pointer" }}>{label}</button>
+            ))}
+          </div>
+        </>
+      )}
+      {paso.tipo === "cambiar_etapa" && (
+        <>
+          <EtiquetaCampo>Nueva etapa</EtiquetaCampo>
+          <select value={c.etapa_id || ""} onChange={e => set({ etapa_id: e.target.value })} style={{ ...S.input, fontSize: 13 }}>
+            <option value="">Selecciona...</option>
+            {etapas.map(et => <option key={et.id} value={et.id}>{et.nombre}</option>)}
+          </select>
+        </>
+      )}
+      {paso.tipo === "asignar_agente" && (
+        <>
+          <EtiquetaCampo>¿A quién asignar?</EtiquetaCampo>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+              <input type="radio" checked={c.modo !== "menos_conversaciones"} onChange={() => set({ modo: "especifico" })} /> Un agente específico
+            </label>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+              <input type="radio" checked={c.modo === "menos_conversaciones"} onChange={() => set({ modo: "menos_conversaciones" })} /> Al que tenga menos conversaciones
+            </label>
+          </div>
+          {c.modo !== "menos_conversaciones" && (
+            <select value={c.agente_id || ""} onChange={e => set({ agente_id: e.target.value })} style={{ ...S.input, fontSize: 13 }}>
+              <option value="">Selecciona...</option>
+              {agentes.map(a => <option key={a.id} value={a.id}>{a.nombre}</option>)}
+            </select>
+          )}
+        </>
+      )}
+      {paso.tipo === "agregar_nota" && (
+        <>
+          <EtiquetaCampo>Nota interna (no la ve el cliente)</EtiquetaCampo>
+          <textarea value={c.texto || ""} onChange={e => set({ texto: e.target.value })} rows={4} placeholder="Ej: Cliente frío, revisar en una semana" style={{ ...S.input, resize: "vertical", fontSize: 13 }} />
+        </>
+      )}
+      {paso.tipo === "bifurcacion" && (
+        <>
+          <EtiquetaCampo>Si...</EtiquetaCampo>
+          <select value={c.campo || ""} onChange={e => set({ campo: e.target.value })} style={{ ...S.input, fontSize: 13 }}>
+            <option value="">Elige un campo...</option>
+            <option value="etapa_id">La etapa del cliente</option>
+            <option value="agente_id">El agente asignado</option>
+          </select>
+          {c.campo && (
+            <>
+              <EtiquetaCampo>Condición</EtiquetaCampo>
+              <select value={c.operador || "es"} onChange={e => set({ operador: e.target.value })} style={{ ...S.input, fontSize: 13 }}>
+                <option value="es">Es igual a</option>
+                <option value="no_es">Es distinto de</option>
+                <option value="existe">Tiene un valor</option>
+                <option value="no_existe">No tiene valor (vacío)</option>
+              </select>
+            </>
+          )}
+          {c.campo && (c.operador === "es" || c.operador === "no_es" || !c.operador) && (
+            <>
+              <EtiquetaCampo>Valor</EtiquetaCampo>
+              <select value={c.valor || ""} onChange={e => set({ valor: e.target.value })} style={{ ...S.input, fontSize: 13 }}>
+                <option value="">Selecciona...</option>
+                {c.campo === "etapa_id" && etapas.map(et => <option key={et.id} value={et.id}>{et.nombre}</option>)}
+                {c.campo === "agente_id" && agentes.map(a => <option key={a.id} value={a.id}>{a.nombre}</option>)}
+              </select>
+            </>
+          )}
+        </>
+      )}
+    </PanelLateral>
+  );
+}
+
+function PanelLateral({ titulo, icono: Icono, color, esMobil, onCerrar, children }) {
+  return (
+    <div className={esMobil ? "oft-fade-in" : undefined} style={{ width: esMobil ? "100%" : 300, minWidth: esMobil ? "100%" : 300, position: esMobil ? "fixed" : "static", inset: esMobil ? 0 : "auto", top: esMobil ? 0 : "auto", zIndex: esMobil ? 50 : "auto", background: WHITE, borderLeft: esMobil ? "none" : `1px solid ${GRAY2}`, padding: 20, overflowY: "auto" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 18 }}>
+        {esMobil && <button onClick={onCerrar} className="oft-btn-press" style={{ background: "none", border: "none", padding: 2, cursor: "pointer", display: "flex" }}><ArrowLeft size={18} /></button>}
+        {Icono && <Icono size={17} color={color || BLACK} />}
+        <div style={{ fontWeight: 800, fontSize: 15, flex: 1 }}>{titulo}</div>
+        {!esMobil && <button onClick={onCerrar} className="oft-btn-press" style={{ background: "none", border: "none", padding: 2, cursor: "pointer", display: "flex" }}><X size={17} color={GRAY3} /></button>}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function EtiquetaCampo({ children }) {
+  return <div style={{ fontSize: 11, fontWeight: 800, color: GRAY3, letterSpacing: 0.5, marginBottom: 7, marginTop: 14 }}>{children}</div>;
+}
+
+// ─────────────────────────────────────────────────────────────
+//  MODAL: elegir qué tipo de paso agregar en un punto de la cadena.
+// ─────────────────────────────────────────────────────────────
+function ModalElegirPaso({ onElegir, onCerrar }) {
+  useEffect(() => {
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = ""; };
+  }, []);
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={onCerrar}>
+      <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 16, maxWidth: 380, width: "100%", padding: 20 }} onClick={e => e.stopPropagation()}>
+        <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 4 }}>Agregar paso</div>
+        <div style={{ fontSize: 12, color: GRAY3, marginBottom: 16 }}>¿Qué debe pasar en este punto del workflow?</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {Object.entries(TIPOS_PASO).map(([tipo, meta]) => (
+            <button key={tipo} onClick={() => onElegir(tipo)} className="oft-btn-press"
+              style={{ display: "flex", alignItems: "center", gap: 10, padding: 12, borderRadius: 10, border: `1.5px solid ${GRAY2}`, background: WHITE, cursor: "pointer", textAlign: "left" }}>
+              <meta.icono size={17} color={meta.color} />
+              <div style={{ fontWeight: 700, fontSize: 13.5 }}>{meta.label}</div>
+            </button>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
