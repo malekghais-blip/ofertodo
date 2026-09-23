@@ -3650,6 +3650,8 @@ export default function App() {
         .oft-toast-in { animation: toastIn 0.3s ease both; }
         @keyframes qvPop { 0% { opacity: 0; transform: scale(0.88); } 100% { opacity: 1; transform: scale(1); } }
         .oft-qv-pop { animation: qvPop 0.28s cubic-bezier(0.34,1.4,0.5,1) both; }
+        @keyframes fadeInUp { 0% { opacity: 0; transform: translateY(8px); } 100% { opacity: 1; transform: translateY(0); } }
+        .oft-fade-in { animation: fadeInUp 0.4s cubic-bezier(0.16,1,0.3,1) both; }
         @keyframes sheetSlideUp { 0% { opacity: 0; transform: translateY(40px); } 100% { opacity: 1; transform: translateY(0); } }
         .oft-sheet-slide { animation: sheetSlideUp 0.32s cubic-bezier(0.16,1,0.3,1) both; }
         @keyframes catChipPop { 0% { opacity: 0; transform: scale(0.85) translateY(6px); } 100% { opacity: 1; transform: scale(1) translateY(0); } }
