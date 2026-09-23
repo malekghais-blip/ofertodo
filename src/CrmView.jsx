@@ -136,7 +136,7 @@ export default function CrmView() {
         <div style={{ display: "flex", gap: 4, background: GRAY, borderRadius: 10, padding: 4, overflowX: "auto", maxWidth: esMobil ? "calc(100% - 44px)" : "none" }}>
           {[["inbox", "Bandeja", InboxIcon], ["etapas", "Etapas", Tag], ["agentes", "Agentes", Users], ["analitica", "Analítica", BarChart3]].map(([id, label, Icon]) => (
             <button key={id} onClick={() => setTab(id)} className="oft-btn-press"
-              style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: esMobil ? "8px 10px" : "8px 14px", borderRadius: 8, border: "none", fontWeight: 700, fontSize: esMobil ? 12 : 13, cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0, ...(tab === id ? ESTILO_TAB_ACTIVO : ESTILO_TAB) }}>
+              style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: esMobil ? "8px 10px" : "8px 14px", borderRadius: 8, border: "none", fontWeight: 700, fontSize: esMobil ? 12 : 13, cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0, transition: "background 0.25s ease, color 0.25s ease", ...(tab === id ? ESTILO_TAB_ACTIVO : ESTILO_TAB) }}>
               <Icon size={15} /> {label}
             </button>
           ))}
@@ -146,7 +146,7 @@ export default function CrmView() {
       {cargando ? (
         <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: 60 }}><Spinner /></div>
       ) : (
-        <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
+        <div key={tab} className="oft-fade-in" style={{ flex: 1, display: "flex", minHeight: 0 }}>
           {tab === "inbox" && (
             <InboxPanel
               conversaciones={conversaciones} setConversaciones={setConversaciones}
@@ -268,7 +268,7 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
     <>
       {/* LISTA DE CONVERSACIONES */}
       {listaVisible && (
-      <div style={{ width: esMobil ? "100%" : 340, minWidth: esMobil ? "100%" : 340, background: WHITE, borderRight: esMobil ? "none" : `1px solid ${GRAY2}`, display: "flex", flexDirection: "column" }}>
+      <div className={esMobil ? "oft-fade-in" : undefined} style={{ width: esMobil ? "100%" : 340, minWidth: esMobil ? "100%" : 340, background: WHITE, borderRight: esMobil ? "none" : `1px solid ${GRAY2}`, display: "flex", flexDirection: "column" }}>
         <div style={{ padding: 14, borderBottom: `1px solid ${GRAY2}` }}>
           <div style={{ position: "relative" }}>
             <Search size={15} color={GRAY3} style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)" }} />
@@ -317,7 +317,7 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
 
       {/* HILO DE MENSAJES */}
       {hiloVisible && (
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, width: esMobil ? "100%" : "auto" }}>
+      <div key={esMobil ? (seleccionada?.id || "vacio") : "hilo"} className={esMobil ? "oft-fade-in" : undefined} style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, width: esMobil ? "100%" : "auto" }}>
         {!seleccionada ? (
           <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", color: GRAY3 }}>
             <MessageCircle size={48} color={GRAY2} style={{ marginBottom: 12 }} />
@@ -375,7 +375,7 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
 
       {/* PANEL DE CONTACTO */}
       {contactoVisible && (
-        <div style={{ width: esMobil ? "100%" : 290, minWidth: esMobil ? "100%" : 290, background: WHITE, borderLeft: esMobil ? "none" : `1px solid ${GRAY2}`, padding: 20, overflowY: "auto" }}>
+        <div className={esMobil ? "oft-fade-in" : undefined} style={{ width: esMobil ? "100%" : 290, minWidth: esMobil ? "100%" : 290, background: WHITE, borderLeft: esMobil ? "none" : `1px solid ${GRAY2}`, padding: 20, overflowY: "auto" }}>
           {esMobil && (
             <button onClick={() => setVistaMobil("hilo")} className="oft-btn-press" style={{ background: "none", border: "none", padding: 4, marginBottom: 12, cursor: "pointer", display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 700, color: GRAY3 }}>
               <ArrowLeft size={18} /> Volver al chat
@@ -441,17 +441,63 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
 // ─────────────────────────────────────────────────────────────
 function EtapasPanel({ conversaciones, etapas, agentePorId, setConversaciones }) {
   const esMobil = useEsMobil();
+  const [etapaMobil, setEtapaMobil] = useState(null); // etapa elegida en el selector de píldoras, en móvil
+
+  useEffect(() => { if (esMobil && etapas.length > 0 && !etapaMobil) setEtapaMobil(etapas[0].id); }, [esMobil, etapas]);
+
   const moverA = async (conv, etapaId) => {
     await sb.patch("crm_conversaciones", conv.id, { etapa_id: etapaId });
     setConversaciones(prev => prev.map(c => c.id === conv.id ? { ...c, etapa_id: etapaId } : c));
   };
 
+  // En móvil, el tablero horizontal de columnas obligaba a deslizar de lado
+  // para ver las etapas siguientes. Aquí se elige UNA etapa a la vez con
+  // píldoras arriba, y abajo su lista completa a lo ancho de la pantalla.
+  if (esMobil) {
+    const items = conversaciones.filter(c => c.etapa_id === etapaMobil);
+    return (
+      <div key="etapas-mobil" className="oft-fade-in" style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
+        <div style={{ display: "flex", gap: 8, padding: "12px", overflowX: "auto", WebkitOverflowScrolling: "touch", flexShrink: 0 }}>
+          {etapas.map(etapa => {
+            const cantidad = conversaciones.filter(c => c.etapa_id === etapa.id).length;
+            const activa = etapaMobil === etapa.id;
+            return (
+              <button key={etapa.id} onClick={() => setEtapaMobil(etapa.id)} className="oft-btn-press"
+                style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 13px", borderRadius: 20, border: `1.5px solid ${activa ? etapa.color : GRAY2}`, background: activa ? etapa.color : WHITE, color: activa ? WHITE : GRAY3, fontWeight: 700, fontSize: 12.5, cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0, transition: "background 0.2s, border-color 0.2s, color 0.2s" }}>
+                {etapa.nombre}
+                <span style={{ background: activa ? "rgba(255,255,255,0.3)" : GRAY, color: activa ? WHITE : GRAY3, borderRadius: 10, padding: "1px 6px", fontSize: 10.5, fontWeight: 800 }}>{cantidad}</span>
+              </button>
+            );
+          })}
+        </div>
+        <div key={etapaMobil} className="oft-fade-in" style={{ flex: 1, overflowY: "auto", padding: "0 12px 16px", display: "flex", flexDirection: "column", gap: 8 }}>
+          {items.length === 0 ? (
+            <div style={{ textAlign: "center", color: GRAY3, fontSize: 12.5, padding: "40px 12px" }}>Sin clientes en esta etapa</div>
+          ) : items.map(c => (
+            <div key={c.id} style={{ background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 12, padding: 13 }}>
+              <div style={{ fontWeight: 700, fontSize: 13.5, marginBottom: 3 }}>{c.nombre_contacto || c.telefono}</div>
+              <div style={{ fontSize: 12, color: GRAY3, marginBottom: 10, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.ultimo_mensaje_preview || "Sin mensajes"}</div>
+              <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+                {etapas.filter(e => e.id !== etapaMobil).map(e => (
+                  <button key={e.id} onClick={() => moverA(c, e.id)} className="oft-btn-press"
+                    style={{ fontSize: 10.5, fontWeight: 700, padding: "5px 9px", borderRadius: 6, border: `1px solid ${e.color}55`, background: `${e.color}14`, color: e.color, cursor: "pointer" }}>
+                    → {e.nombre}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div style={{ flex: 1, overflowX: "auto", padding: esMobil ? "14px 12px" : 20, display: "flex", gap: esMobil ? 12 : 16, WebkitOverflowScrolling: "touch" }}>
+    <div style={{ flex: 1, overflowX: "auto", padding: 20, display: "flex", gap: 16 }}>
       {etapas.map(etapa => {
         const items = conversaciones.filter(c => c.etapa_id === etapa.id);
         return (
-          <div key={etapa.id} style={{ minWidth: esMobil ? 240 : 270, width: esMobil ? 240 : 270, display: "flex", flexDirection: "column" }}>
+          <div key={etapa.id} style={{ minWidth: 270, width: 270, display: "flex", flexDirection: "column" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, padding: "0 4px" }}>
               <div style={{ width: 9, height: 9, borderRadius: "50%", background: etapa.color }} />
               <div style={{ fontWeight: 800, fontSize: 13.5 }}>{etapa.nombre}</div>
