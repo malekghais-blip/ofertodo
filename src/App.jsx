@@ -3357,15 +3357,39 @@ export default function App() {
 
   const [cartPulse, setCartPulse] = useState(0);
   const addToCart = (product, qty, pres = "pieza", count = qty) => {
+    let qtyFinal = qty, countFinal = count;
+    // No dejar agregar más de lo que hay en stock real (cuando el stock está
+    // sincronizado con Odoo) -- se suma lo que ya tiene el carrito de este
+    // MISMO producto, sin importar en qué presentación, ya que el stock se
+    // comparte entre pieza/media/docena de la misma referencia. Se ajusta
+    // siempre a un número completo de la unidad elegida (no medias docenas
+    // sueltas por quedar cortos de stock).
+    if (product.stock_actualizado_at) {
+      const stockDisponible = Number(product.stock || 0);
+      const yaEnCarrito = cart.filter(i => i.product.id === product.id).reduce((s, i) => s + i.qty, 0);
+      const disponibleParaAgregar = Math.max(0, stockDisponible - yaEnCarrito);
+      const piezasPorUnidad = pres === "docena" ? 12 : pres === "media" ? 6 : 1;
+      const unidadesQueCaben = Math.floor(disponibleParaAgregar / piezasPorUnidad);
+      if (unidadesQueCaben <= 0) {
+        showToast(`Ya no queda stock disponible de "${product.nombre}" (${stockDisponible} en total, ya está todo en tu carrito)`);
+        return;
+      }
+      if (count > unidadesQueCaben) {
+        countFinal = unidadesQueCaben;
+        qtyFinal = unidadesQueCaben * piezasPorUnidad;
+        const etiquetaUnidad = pres === "docena" ? `docena${unidadesQueCaben !== 1 ? "s" : ""}` : pres === "media" ? `media${unidadesQueCaben !== 1 ? "s" : ""} docena` : `pieza${unidadesQueCaben !== 1 ? "s" : ""}`;
+        showToast(`Solo hay stock para ${unidadesQueCaben} ${etiquetaUnidad} de "${product.nombre}" -- se ajustó la cantidad`);
+      }
+    }
     setCart(prev => {
       // mismo producto Y misma presentación = se suman; si no, entrada nueva
       const existing = prev.find(i => i.product.id === product.id && i.pres === pres);
-      if (existing) return prev.map(i => (i.product.id === product.id && i.pres === pres) ? { ...i, qty: i.qty + qty, count: (i.count || 0) + count } : i);
-      return [...prev, { product, qty, pres, count }];
+      if (existing) return prev.map(i => (i.product.id === product.id && i.pres === pres) ? { ...i, qty: i.qty + qtyFinal, count: (i.count || 0) + countFinal } : i);
+      return [...prev, { product, qty: qtyFinal, pres, count: countFinal }];
     });
     setCartPulse(p => p + 1); // dispara animación del carrito
     registrarEvento("agregar_carrito", product.id, product.nombre, user?.id);
-    trackAgregarCarrito({ id: product.id, nombre: product.nombre, precio: product.precio_pieza, cantidad: qty });
+    trackAgregarCarrito({ id: product.id, nombre: product.nombre, precio: product.precio_pieza, cantidad: qtyFinal });
   };
 
   // Cargar datos de Supabase al iniciar
