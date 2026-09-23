@@ -902,9 +902,13 @@ function WorkflowEditor({ workflow, etapas, agentes, onCerrar, onGuardado }) {
   const insertarPaso = (punto, tipo) => {
     const nuevoId = generarIdPaso();
     const nuevoPaso = { id: nuevoId, tipo, config: {}, siguiente: null, ...(tipo === "bifurcacion" ? { siguiente_si: null, siguiente_no: null } : {}) };
+    // "punto" siempre es un objeto (incluso para el primerísimo paso, donde
+    // llega como {pasoId: null, rama: null}) -- lo que hay que revisar es si
+    // pasoId viene vacío, no si "punto" en sí es verdadero (eso SIEMPRE lo es).
+    const esElPrimerPaso = !punto?.pasoId;
     setPasos(prev => {
       const copia = prev.map(p => ({ ...p }));
-      if (!punto) {
+      if (esElPrimerPaso) {
         nuevoPaso.siguiente = primerPasoId;
       } else {
         const anterior = copia.find(p => p.id === punto.pasoId);
@@ -912,7 +916,7 @@ function WorkflowEditor({ workflow, etapas, agentes, onCerrar, onGuardado }) {
       }
       return [...copia, nuevoPaso];
     });
-    if (!punto) setPrimerPasoId(nuevoId);
+    if (esElPrimerPaso) setPrimerPasoId(nuevoId);
     setInsertandoEn(null);
     setEditandoPasoId(nuevoId);
   };
