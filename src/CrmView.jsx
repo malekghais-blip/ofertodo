@@ -252,7 +252,11 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
     if (!seleccionada) return;
     const canal = supabaseRealtime
       .channel(`crm_mensajes_de_${seleccionada.id}`)
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "crm_mensajes", filter: `conversacion_id=eq.${seleccionada.id}` }, (payload) => {
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "crm_mensajes" }, (payload) => {
+        console.log("[CRM Realtime] mensaje recibido:", payload.new);
+        // Filtrando aquí en vez de con "filter" en la suscripción -- por si el
+        // filtro del lado del servidor estaba fallando en silencio.
+        if (payload.new.conversacion_id !== seleccionada.id) return;
         setMensajes(prev => prev.some(m => m.id === payload.new.id) ? prev : [...prev, payload.new]);
       })
       .subscribe((estado, error) => {
