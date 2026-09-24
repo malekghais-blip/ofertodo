@@ -97,28 +97,13 @@ export default function CrmView() {
   const [mensajesTodos, setMensajesTodos] = useState([]);
   const [cargando, setCargando] = useState(true);
 
-  // "sb" (el envoltorio casero de siempre) SÍ guarda la sesión real de quien
-  // inició sesión, pero "supabaseRealtime" (el cliente oficial, necesario para
-  // Realtime) es una conexión APARTE que por defecto entra como visitante
-  // anónimo. Las tablas del CRM exigen estar identificado como personal de
-  // Ofertodo (is_staff()) para poder recibir cambios en vivo -- así que aquí
-  // se le pasa el access_token real, solo para autorizar la conexión de
-  // Realtime (nunca el refresh_token -- ese lo sigue manejando "sb" solo, para
-  // que no haya dos relojes renovando la misma sesión y pisándose uno al otro).
-  const [authListoParaRealtime, setAuthListoParaRealtime] = useState(false);
-  useEffect(() => {
-    if (sb.session?.access_token) {
-      supabaseRealtime.realtime.setAuth(sb.session.access_token);
-    }
-    setAuthListoParaRealtime(true); // aunque no hubiera sesión, se deja pasar -- Realtime simplemente no recibirá nada si is_staff() no se cumple, mejor que dejar los canales esperando para siempre
-
-    // Cada vez que "sb" renueve su access_token (algo que ya hace solo, cada
-    // rato), se le avisa a Realtime del token nuevo -- si no, la conexión
-    // sigue autorizada con un token viejo y deja de recibir eventos apenas
-    // ese token vence, sin ningún aviso visible de que dejó de funcionar.
-    sb.onTokenActualizado = (nuevoToken) => { supabaseRealtime.realtime.setAuth(nuevoToken); };
-    return () => { sb.onTokenActualizado = null; };
-  }, []);
+  // "supabaseRealtime" (el cliente oficial, necesario para Realtime) está
+  // configurado en shared.jsx con la opción "accessToken", que jala el token
+  // vigente de "sb" cada vez que Realtime lo necesita (al conectar, y en cada
+  // reconexión) -- no hace falta empujarle el token a mano ni escuchar cuándo
+  // se renueva. Solo hace falta esperar a que exista una sesión antes de armar
+  // los canales.
+  const sesionLista = !!sb.session;
 
   const cargarTodo = async () => {
     try {
@@ -144,7 +129,7 @@ export default function CrmView() {
   // (nuevo mensaje, cambio de etapa, etc.), se actualiza la lista sola, sin
   // que nadie tenga que refrescar la página.
   useEffect(() => {
-    if (!authListoParaRealtime) return;
+    if (!sesionLista) return;
     const canal = supabaseRealtime
       .channel("crm_conversaciones_en_vivo")
       .on("postgres_changes", { event: "*", schema: "public", table: "crm_conversaciones" }, (payload) => {
@@ -158,7 +143,7 @@ export default function CrmView() {
       })
       .subscribe();
     return () => { supabaseRealtime.removeChannel(canal); };
-  }, [authListoParaRealtime]);
+  }, [sesionLista]);
 
   const etapaPorId = Object.fromEntries(etapas.map(e => [e.id, e]));
   const agentePorId = Object.fromEntries(agentes.map(a => [a.id, a]));
@@ -199,7 +184,7 @@ export default function CrmView() {
               agentes={agentes} agentePorId={agentePorId}
               pedidos={pedidos}
               user={user} recargar={cargarTodo}
-              authListoParaRealtime={authListoParaRealtime}
+              sesionLista={sesionLista}
             />
           )}
           {tab === "etapas" && (
@@ -231,7 +216,7 @@ export default function CrmView() {
 //  contacto (etapa, agente asignado, pedidos/cotizaciones de ese
 //  cliente con un botón para reenviárselos por WhatsApp).
 // ─────────────────────────────────────────────────────────────
-function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, agentes, agentePorId, pedidos, user, recargar, authListoParaRealtime }) {
+function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, agentes, agentePorId, pedidos, user, recargar, sesionLista }) {
   const esMobil = useEsMobil();
   const [seleccionada, setSeleccionada] = useState(null);
   const [vistaMobil, setVistaMobil] = useState("hilo"); // hilo | contacto -- solo aplica en móvil cuando hay una conversación abierta
@@ -272,7 +257,7 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
   // En vivo: mientras una conversación está abierta, los mensajes nuevos
   // (del cliente, o de un workflow/broadcast) entran solos al hilo.
   useEffect(() => {
-    if (!seleccionada || !authListoParaRealtime) return;
+    if (!seleccionada || !sesionLista) return;
     const canal = supabaseRealtime
       .channel(`crm_mensajes_de_${seleccionada.id}`)
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "crm_mensajes" }, (payload) => {
@@ -284,7 +269,7 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
       })
       .subscribe();
     return () => { supabaseRealtime.removeChannel(canal); };
-  }, [seleccionada?.id, authListoParaRealtime]);
+  }, [seleccionada?.id, sesionLista]);
 
   const cambiarEtapa = async (etapaId) => {
     await sb.patch("crm_conversaciones", seleccionada.id, { etapa_id: etapaId });
