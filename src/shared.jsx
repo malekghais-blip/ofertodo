@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useContext, createContext, Fragment } from "react";
 import { createPortal } from "react-dom";
+import { createClient } from "@supabase/supabase-js";
 import {
   ShoppingCart, Search, Trash2, MessageCircle, X, Package, CheckCircle2,
   MapPin, CreditCard, LayoutGrid, FolderOpen, Tag, Truck, Headphones,
@@ -26,6 +27,13 @@ export const SUPABASE_URL = "https://esezhctdiucwovbvxmou.supabase.co";  // ← 
 export const RECAPTCHA_SITE_KEY = "6Lc3L4YtAAAAAH6ljusZwZJ9itAforC5p-RAYii3";
 
 const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVzZXpoY3RkaXVjd292YnZ4bW91Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODExMDY0NjgsImV4cCI6MjA5NjY4MjQ2OH0.5u--RCUEWH6hBrH0EFnmW1hZhuVjzqMbJax1qQh7zNo";                  // ← Cambia esto
+
+// Cliente OFICIAL de Supabase (a diferencia de "sb" de arriba, que es un
+// envoltorio casero solo para pedidos normales) -- este SÍ soporta Realtime,
+// necesario para que los mensajes del CRM entren solos a la pantalla sin
+// tener que refrescar. Se usa solo para eso, "sb" sigue siendo el de siempre
+// para todo lo demás.
+export const supabaseRealtime = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 export const sb = {
   // Sesión del usuario logueado (se llena con setSession al iniciar sesión o al restaurar
