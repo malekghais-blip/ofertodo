@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import {
   MessageCircle, Search, Send, User, Users, BarChart3, Inbox as InboxIcon,
   ChevronRight, Circle, CheckCheck, Check, Clock, RefreshCw, X, Tag,
@@ -254,6 +255,43 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
 
   useEffect(() => { if (hiloRef.current) hiloRef.current.scrollTop = hiloRef.current.scrollHeight; }, [mensajes]);
 
+  // URLs firmadas para los archivos del bucket privado "crm-media" -- guardadas
+  // en memoria por ruta, para no volver a pedirlas cada vez que se re-dibuja el
+  // chat. Cuando llega un mensaje nuevo (por Realtime), este mismo efecto lo
+  // agarra solo, porque "mensajes" cambia y se vuelve a correr.
+  const [urlsFirmadas, setUrlsFirmadas] = useState({}); // ruta -> url firmada
+  const [imagenAmpliada, setImagenAmpliada] = useState(null);
+
+  useEffect(() => {
+    const rutasPorFirmar = [...new Set(
+      mensajes
+        .map(m => m.media_url)
+        .filter(u => u && !u.startsWith("http") && !u.startsWith("wa-media:") && !urlsFirmadas[u])
+    )];
+    if (rutasPorFirmar.length === 0) return;
+    (async () => {
+      try {
+        const { data, error } = await supabaseRealtime.storage.from("crm-media").createSignedUrls(rutasPorFirmar, 3600);
+        if (error) { console.warn("Error generando enlaces de archivos:", error.message); return; }
+        const nuevas = {};
+        (data || []).forEach(d => { if (d?.signedUrl && d?.path) nuevas[d.path] = d.signedUrl; });
+        if (Object.keys(nuevas).length > 0) setUrlsFirmadas(prev => ({ ...prev, ...nuevas }));
+      } catch (e) { console.warn("Error generando enlaces de archivos:", e.message); }
+    })();
+  }, [mensajes]);
+
+  // A partir de lo guardado en el mensaje, dice qué mostrar: la URL usable ya
+  // sea directa (fotos viejas de broadcasts, guardadas como URL pública) o
+  // recién firmada, "cargando" mientras se pide la firma, o que el archivo
+  // todavía no se pudo bajar de WhatsApp ("wa-media:" sin resolver).
+  const resolverMedia = (mediaUrl) => {
+    if (!mediaUrl) return { estado: "sin_media" };
+    if (mediaUrl.startsWith("wa-media:")) return { estado: "no_disponible" };
+    if (mediaUrl.startsWith("http")) return { estado: "lista", url: mediaUrl };
+    const firmada = urlsFirmadas[mediaUrl];
+    return firmada ? { estado: "lista", url: firmada } : { estado: "cargando" };
+  };
+
   // En vivo: mientras una conversación está abierta, los mensajes nuevos
   // (del cliente, o de un workflow/broadcast) entran solos al hilo.
   useEffect(() => {
@@ -404,21 +442,78 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
             <div ref={hiloRef} style={{ flex: 1, overflowY: "auto", padding: esMobil ? 14 : 20, display: "flex", flexDirection: "column", gap: 8 }}>
               {mensajes.length === 0 ? (
                 <div style={{ textAlign: "center", color: GRAY3, fontSize: 13, marginTop: 40 }}>Sin mensajes en esta conversación</div>
-              ) : mensajes.map(m => (
-                <div key={m.id} style={{ display: "flex", justifyContent: m.direccion === "saliente" ? "flex-end" : "flex-start" }}>
-                  <div style={{ maxWidth: esMobil ? "80%" : "62%", padding: m.media_url ? 6 : "9px 13px", borderRadius: 14, background: m.direccion === "saliente" ? BLACK : WHITE, color: m.direccion === "saliente" ? WHITE : BLACK, border: m.direccion === "entrante" ? `1px solid ${GRAY2}` : "none", fontSize: 13.5, lineHeight: 1.45, whiteSpace: "pre-wrap" }}>
-                    {m.media_url && <img src={m.media_url} style={{ width: "100%", borderRadius: 9, display: "block", marginBottom: m.contenido ? 6 : 0 }} />}
-                    <div style={{ padding: m.media_url ? "0 7px" : 0 }}>
-                      {m.contenido}
-                      <div style={{ display: "flex", alignItems: "center", gap: 4, justifyContent: "flex-end", marginTop: 4, marginBottom: m.media_url ? 4 : 0, opacity: 0.6, fontSize: 10 }}>
-                        {formatoHora(m.created_at)}
-                        {m.direccion === "saliente" && (m.estado === "leido" ? <CheckCheck size={12} /> : m.estado === "entregado" ? <CheckCheck size={12} /> : <Check size={12} />)}
+              ) : mensajes.map(m => {
+                const media = resolverMedia(m.media_url);
+                const tieneMedia = m.tipo === "imagen" || m.tipo === "video" || m.tipo === "audio" || m.tipo === "documento";
+                const colorSecundario = m.direccion === "saliente" ? "rgba(255,255,255,0.65)" : GRAY3;
+                return (
+                  <div key={m.id} style={{ display: "flex", justifyContent: m.direccion === "saliente" ? "flex-end" : "flex-start" }}>
+                    <div style={{ maxWidth: esMobil ? "80%" : "62%", padding: tieneMedia ? 6 : "9px 13px", borderRadius: 14, background: m.direccion === "saliente" ? BLACK : WHITE, color: m.direccion === "saliente" ? WHITE : BLACK, border: m.direccion === "entrante" ? `1px solid ${GRAY2}` : "none", fontSize: 13.5, lineHeight: 1.45, whiteSpace: "pre-wrap" }}>
+
+                      {m.tipo === "imagen" && (
+                        media.estado === "lista" ? (
+                          <img src={media.url} onClick={() => setImagenAmpliada(media.url)}
+                            style={{ width: "100%", maxHeight: 260, objectFit: "cover", borderRadius: 9, display: "block", marginBottom: m.contenido ? 6 : 0, cursor: "zoom-in" }} />
+                        ) : (
+                          <div style={{ width: 220, height: 150, borderRadius: 9, background: m.direccion === "saliente" ? "rgba(255,255,255,0.08)" : GRAY, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: m.contenido ? 6 : 0 }}>
+                            {media.estado === "cargando" ? <Spinner /> : <span style={{ fontSize: 12, color: colorSecundario, fontStyle: "italic" }}>Archivo no disponible</span>}
+                          </div>
+                        )
+                      )}
+
+                      {m.tipo === "video" && (
+                        media.estado === "lista" ? (
+                          <video controls src={media.url} style={{ width: "100%", maxHeight: 260, borderRadius: 9, display: "block", marginBottom: m.contenido ? 6 : 0 }} />
+                        ) : (
+                          <div style={{ width: 220, height: 150, borderRadius: 9, background: m.direccion === "saliente" ? "rgba(255,255,255,0.08)" : GRAY, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: m.contenido ? 6 : 0 }}>
+                            {media.estado === "cargando" ? <Spinner /> : <span style={{ fontSize: 12, color: colorSecundario, fontStyle: "italic" }}>Archivo no disponible</span>}
+                          </div>
+                        )
+                      )}
+
+                      {m.tipo === "audio" && (
+                        media.estado === "lista" ? (
+                          <audio controls src={media.url} style={{ width: 230, display: "block", marginBottom: m.contenido ? 6 : 2 }} />
+                        ) : (
+                          <div style={{ fontSize: 12, color: colorSecundario, fontStyle: "italic", padding: "4px 2px" }}>
+                            {media.estado === "cargando" ? "Cargando audio..." : "Archivo no disponible"}
+                          </div>
+                        )
+                      )}
+
+                      {m.tipo === "documento" && (
+                        media.estado === "lista" ? (
+                          <a href={media.url} download={m.contenido || "documento"} target="_blank" rel="noreferrer"
+                            style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 10px", borderRadius: 9, background: m.direccion === "saliente" ? "rgba(255,255,255,0.1)" : GRAY, color: "inherit", textDecoration: "none" }}>
+                            <FileText size={18} style={{ flexShrink: 0 }} />
+                            <span style={{ fontSize: 12.5, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.contenido || "Documento"}</span>
+                          </a>
+                        ) : (
+                          <div style={{ fontSize: 12, color: colorSecundario, fontStyle: "italic", padding: "4px 2px" }}>
+                            {media.estado === "cargando" ? "Cargando documento..." : "Archivo no disponible"}
+                          </div>
+                        )
+                      )}
+
+                      <div style={{ padding: tieneMedia ? "0 7px" : 0 }}>
+                        {/* Para documentos, "contenido" ya se usó arriba como nombre del archivo -- no se repite */}
+                        {m.tipo !== "documento" && m.contenido}
+                        <div style={{ display: "flex", alignItems: "center", gap: 4, justifyContent: "flex-end", marginTop: 4, marginBottom: tieneMedia ? 4 : 0, opacity: 0.6, fontSize: 10 }}>
+                          {formatoHora(m.created_at)}
+                          {m.direccion === "saliente" && (m.estado === "leido" ? <CheckCheck size={12} /> : m.estado === "entregado" ? <CheckCheck size={12} /> : <Check size={12} />)}
+                        </div>
                       </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
+            {imagenAmpliada && createPortal(
+              <div onClick={() => setImagenAmpliada(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.9)", zIndex: 300, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, cursor: "zoom-out" }}>
+                <img src={imagenAmpliada} style={{ maxWidth: "100%", maxHeight: "100%", borderRadius: 8 }} onClick={e => e.stopPropagation()} />
+              </div>,
+              document.body
+            )}
             <div style={{ padding: 14, background: WHITE, borderTop: `1px solid ${GRAY2}`, display: "flex", gap: 8 }}>
               <input value={texto} onChange={e => setTexto(e.target.value)} placeholder="Escribe un mensaje..."
                 onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); enviarMensaje(); } }}
