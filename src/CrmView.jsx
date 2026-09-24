@@ -7,7 +7,7 @@ import {
   Trash2, Play, UserCheck, ToggleLeft, ToggleRight, StickyNote,
   Megaphone, Image as ImageIcon, Instagram, Plug, CheckCircle2, Upload,
 } from "lucide-react";
-import { RED, BLACK, GRAY, GRAY2, GRAY3, WHITE, S, useApp, sb, Spinner, comprimirImagen } from "./shared.jsx";
+import { RED, BLACK, GRAY, GRAY2, GRAY3, WHITE, S, useApp, sb, Spinner, comprimirImagen, supabaseRealtime } from "./shared.jsx";
 
 // ═══════════════════════════════════════════════════════════════
 //  CRM — bandeja de WhatsApp, etapas de cliente, equipo de agentes,
@@ -117,6 +117,25 @@ export default function CrmView() {
 
   useEffect(() => { cargarTodo(); }, []);
 
+  // En vivo: cuando llega una conversación nueva o cambia una existente
+  // (nuevo mensaje, cambio de etapa, etc.), se actualiza la lista sola, sin
+  // que nadie tenga que refrescar la página.
+  useEffect(() => {
+    const canal = supabaseRealtime
+      .channel("crm_conversaciones_en_vivo")
+      .on("postgres_changes", { event: "*", schema: "public", table: "crm_conversaciones" }, (payload) => {
+        if (payload.eventType === "INSERT") {
+          setConversaciones(prev => prev.some(c => c.id === payload.new.id) ? prev : [payload.new, ...prev]);
+        } else if (payload.eventType === "UPDATE") {
+          setConversaciones(prev => prev.map(c => c.id === payload.new.id ? payload.new : c));
+        } else if (payload.eventType === "DELETE") {
+          setConversaciones(prev => prev.filter(c => c.id !== payload.old.id));
+        }
+      })
+      .subscribe();
+    return () => { supabaseRealtime.removeChannel(canal); };
+  }, []);
+
   const etapaPorId = Object.fromEntries(etapas.map(e => [e.id, e]));
   const agentePorId = Object.fromEntries(agentes.map(a => [a.id, a]));
 
@@ -224,6 +243,19 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
   };
 
   useEffect(() => { if (hiloRef.current) hiloRef.current.scrollTop = hiloRef.current.scrollHeight; }, [mensajes]);
+
+  // En vivo: mientras una conversación está abierta, los mensajes nuevos
+  // (del cliente, o de un workflow/broadcast) entran solos al hilo.
+  useEffect(() => {
+    if (!seleccionada) return;
+    const canal = supabaseRealtime
+      .channel(`crm_mensajes_de_${seleccionada.id}`)
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "crm_mensajes", filter: `conversacion_id=eq.${seleccionada.id}` }, (payload) => {
+        setMensajes(prev => prev.some(m => m.id === payload.new.id) ? prev : [...prev, payload.new]);
+      })
+      .subscribe();
+    return () => { supabaseRealtime.removeChannel(canal); };
+  }, [seleccionada?.id]);
 
   const cambiarEtapa = async (etapaId) => {
     await sb.patch("crm_conversaciones", seleccionada.id, { etapa_id: etapaId });
