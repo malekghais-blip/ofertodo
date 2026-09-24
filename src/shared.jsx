@@ -33,25 +33,20 @@ const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZ
 // necesario para que los mensajes del CRM entren solos a la pantalla sin
 // tener que refrescar. Se usa solo para eso, "sb" sigue siendo el de siempre
 // para todo lo demás.
-// autoRefreshToken/persistSession en false: este cliente NUNCA maneja su propia
-// sesión ni renueva tokens solo -- "sb" (arriba) es el único dueño de eso. Si
-// los dos manejaran el mismo refresh_token por su cuenta, el que lo renueve
-// primero invalida el que tenía el otro, y Supabase puede cerrar la sesión del
-// admin pensando que alguien robó el token (detección de reuso).
+// La opción "accessToken" es el patrón oficial de Supabase para "trae tu
+// propia autenticación": con esto, supabase-js apaga su propio módulo de auth
+// por completo (nunca intenta manejar una sesión ni renovar nada solo), y en
+// cada conexión o reconexión de Realtime, le PREGUNTA a esta función cuál es
+// el token vigente -- siempre agarra el más nuevo de "sb", sin que haya que
+// estarle avisando a mano cada vez que se renueva.
 export const supabaseRealtime = createClient(SUPABASE_URL, SUPABASE_KEY, {
-  auth: { autoRefreshToken: false, persistSession: false },
+  accessToken: async () => sb.session?.access_token ?? null,
 });
 
 export const sb = {
   // Sesión del usuario logueado (se llena con setSession al iniciar sesión o al restaurar
   // desde localStorage). Mientras no haya sesión, se usa la llave pública (anon) normal.
   session: null,
-
-  // Si algo (como CrmView) necesita enterarse cada vez que el token cambia --
-  // por ejemplo, para avisarle a la conexión de Realtime, que maneja su propio
-  // token aparte -- se registra aquí. Nunca se comparte el refresh_token con
-  // nadie, solo el access_token vigente.
-  onTokenActualizado: null,
 
   setSession(s) {
     if (!s || !s.access_token) { this.session = null; return; }
@@ -61,7 +56,6 @@ export const sb = {
       // expires_at viene en segundos-epoch desde Supabase; si solo viene expires_in, lo calculamos
       expires_at: s.expires_at || (s.expires_in ? Math.floor(Date.now() / 1000) + Number(s.expires_in) : null),
     };
-    try { this.onTokenActualizado?.(this.session.access_token); } catch (e) {}
   },
   clearSession() { this.session = null; },
 
