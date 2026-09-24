@@ -97,6 +97,26 @@ export default function CrmView() {
   const [mensajesTodos, setMensajesTodos] = useState([]);
   const [cargando, setCargando] = useState(true);
 
+  // "sb" (el envoltorio casero de siempre) SÍ guarda la sesión real de quien
+  // inició sesión, pero "supabaseRealtime" (el cliente oficial, necesario para
+  // Realtime) es una conexión APARTE que por defecto entra como visitante
+  // anónimo. Las tablas del CRM exigen estar identificado como personal de
+  // Ofertodo (is_staff()) para poder recibir cambios en vivo -- así que aquí
+  // se le pasa la MISMA sesión real, para que Realtime también cuente como
+  // una persona autenticada de verdad, no como un visitante cualquiera.
+  const [authListoParaRealtime, setAuthListoParaRealtime] = useState(false);
+  useEffect(() => {
+    (async () => {
+      if (sb.session?.access_token && sb.session?.refresh_token) {
+        await supabaseRealtime.auth.setSession({
+          access_token: sb.session.access_token,
+          refresh_token: sb.session.refresh_token,
+        });
+      }
+      setAuthListoParaRealtime(true); // aunque no hubiera sesión que sincronizar, se deja pasar -- Realtime simplemente no recibirá nada si is_staff() no se cumple, mejor que dejar los canales esperando para siempre
+    })();
+  }, []);
+
   const cargarTodo = async () => {
     try {
       const [etapasData, agentesData, conversacionesData, pedidosData, mensajesData] = await Promise.all([
@@ -121,6 +141,7 @@ export default function CrmView() {
   // (nuevo mensaje, cambio de etapa, etc.), se actualiza la lista sola, sin
   // que nadie tenga que refrescar la página.
   useEffect(() => {
+    if (!authListoParaRealtime) return;
     const canal = supabaseRealtime
       .channel("crm_conversaciones_en_vivo")
       .on("postgres_changes", { event: "*", schema: "public", table: "crm_conversaciones" }, (payload) => {
@@ -136,7 +157,7 @@ export default function CrmView() {
         console.log("[CRM Realtime] conversaciones:", estado, error || "");
       });
     return () => { supabaseRealtime.removeChannel(canal); };
-  }, []);
+  }, [authListoParaRealtime]);
 
   const etapaPorId = Object.fromEntries(etapas.map(e => [e.id, e]));
   const agentePorId = Object.fromEntries(agentes.map(a => [a.id, a]));
@@ -177,6 +198,7 @@ export default function CrmView() {
               agentes={agentes} agentePorId={agentePorId}
               pedidos={pedidos}
               user={user} recargar={cargarTodo}
+              authListoParaRealtime={authListoParaRealtime}
             />
           )}
           {tab === "etapas" && (
@@ -208,7 +230,7 @@ export default function CrmView() {
 //  contacto (etapa, agente asignado, pedidos/cotizaciones de ese
 //  cliente con un botón para reenviárselos por WhatsApp).
 // ─────────────────────────────────────────────────────────────
-function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, agentes, agentePorId, pedidos, user, recargar }) {
+function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, agentes, agentePorId, pedidos, user, recargar, authListoParaRealtime }) {
   const esMobil = useEsMobil();
   const [seleccionada, setSeleccionada] = useState(null);
   const [vistaMobil, setVistaMobil] = useState("hilo"); // hilo | contacto -- solo aplica en móvil cuando hay una conversación abierta
@@ -249,7 +271,7 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
   // En vivo: mientras una conversación está abierta, los mensajes nuevos
   // (del cliente, o de un workflow/broadcast) entran solos al hilo.
   useEffect(() => {
-    if (!seleccionada) return;
+    if (!seleccionada || !authListoParaRealtime) return;
     const canal = supabaseRealtime
       .channel(`crm_mensajes_de_${seleccionada.id}`)
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "crm_mensajes" }, (payload) => {
@@ -263,7 +285,7 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
         console.log("[CRM Realtime] mensajes:", estado, error || "");
       });
     return () => { supabaseRealtime.removeChannel(canal); };
-  }, [seleccionada?.id]);
+  }, [seleccionada?.id, authListoParaRealtime]);
 
   const cambiarEtapa = async (etapaId) => {
     await sb.patch("crm_conversaciones", seleccionada.id, { etapa_id: etapaId });
