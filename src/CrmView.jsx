@@ -102,19 +102,22 @@ export default function CrmView() {
   // Realtime) es una conexión APARTE que por defecto entra como visitante
   // anónimo. Las tablas del CRM exigen estar identificado como personal de
   // Ofertodo (is_staff()) para poder recibir cambios en vivo -- así que aquí
-  // se le pasa la MISMA sesión real, para que Realtime también cuente como
-  // una persona autenticada de verdad, no como un visitante cualquiera.
+  // se le pasa el access_token real, solo para autorizar la conexión de
+  // Realtime (nunca el refresh_token -- ese lo sigue manejando "sb" solo, para
+  // que no haya dos relojes renovando la misma sesión y pisándose uno al otro).
   const [authListoParaRealtime, setAuthListoParaRealtime] = useState(false);
   useEffect(() => {
-    (async () => {
-      if (sb.session?.access_token && sb.session?.refresh_token) {
-        await supabaseRealtime.auth.setSession({
-          access_token: sb.session.access_token,
-          refresh_token: sb.session.refresh_token,
-        });
-      }
-      setAuthListoParaRealtime(true); // aunque no hubiera sesión que sincronizar, se deja pasar -- Realtime simplemente no recibirá nada si is_staff() no se cumple, mejor que dejar los canales esperando para siempre
-    })();
+    if (sb.session?.access_token) {
+      supabaseRealtime.realtime.setAuth(sb.session.access_token);
+    }
+    setAuthListoParaRealtime(true); // aunque no hubiera sesión, se deja pasar -- Realtime simplemente no recibirá nada si is_staff() no se cumple, mejor que dejar los canales esperando para siempre
+
+    // Cada vez que "sb" renueve su access_token (algo que ya hace solo, cada
+    // rato), se le avisa a Realtime del token nuevo -- si no, la conexión
+    // sigue autorizada con un token viejo y deja de recibir eventos apenas
+    // ese token vence, sin ningún aviso visible de que dejó de funcionar.
+    sb.onTokenActualizado = (nuevoToken) => { supabaseRealtime.realtime.setAuth(nuevoToken); };
+    return () => { sb.onTokenActualizado = null; };
   }, []);
 
   const cargarTodo = async () => {
