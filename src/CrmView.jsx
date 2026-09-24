@@ -153,9 +153,7 @@ export default function CrmView() {
           setConversaciones(prev => prev.filter(c => c.id !== payload.old.id));
         }
       })
-      .subscribe((estado, error) => {
-        console.log("[CRM Realtime] conversaciones:", estado, error || "");
-      });
+      .subscribe();
     return () => { supabaseRealtime.removeChannel(canal); };
   }, [authListoParaRealtime]);
 
@@ -275,15 +273,13 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
     const canal = supabaseRealtime
       .channel(`crm_mensajes_de_${seleccionada.id}`)
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "crm_mensajes" }, (payload) => {
-        console.log("[CRM Realtime] mensaje recibido:", payload.new);
-        // Filtrando aquí en vez de con "filter" en la suscripción -- por si el
-        // filtro del lado del servidor estaba fallando en silencio.
+        // Filtrando aquí en vez de con "filter" en la suscripción, ya que el
+        // filtro del lado del servidor puede fallar en silencio con algunos
+        // tipos de columna -- filtrar en el navegador es más confiable.
         if (payload.new.conversacion_id !== seleccionada.id) return;
         setMensajes(prev => prev.some(m => m.id === payload.new.id) ? prev : [...prev, payload.new]);
       })
-      .subscribe((estado, error) => {
-        console.log("[CRM Realtime] mensajes:", estado, error || "");
-      });
+      .subscribe();
     return () => { supabaseRealtime.removeChannel(canal); };
   }, [seleccionada?.id, authListoParaRealtime]);
 
