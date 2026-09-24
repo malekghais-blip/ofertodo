@@ -132,7 +132,9 @@ export default function CrmView() {
           setConversaciones(prev => prev.filter(c => c.id !== payload.old.id));
         }
       })
-      .subscribe();
+      .subscribe((estado, error) => {
+        console.log("[CRM Realtime] conversaciones:", estado, error || "");
+      });
     return () => { supabaseRealtime.removeChannel(canal); };
   }, []);
 
@@ -253,7 +255,9 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "crm_mensajes", filter: `conversacion_id=eq.${seleccionada.id}` }, (payload) => {
         setMensajes(prev => prev.some(m => m.id === payload.new.id) ? prev : [...prev, payload.new]);
       })
-      .subscribe();
+      .subscribe((estado, error) => {
+        console.log("[CRM Realtime] mensajes:", estado, error || "");
+      });
     return () => { supabaseRealtime.removeChannel(canal); };
   }, [seleccionada?.id]);
 
