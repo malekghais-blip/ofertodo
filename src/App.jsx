@@ -34,6 +34,7 @@ const CrmView = lazy(() => import("./CrmView.jsx"));
 //  2. Copia "Project URL" y "anon public key"
 // ════════════════════════════════════════════════════════════════
 const WA_NUMBER   = "50767200474";                        // ← Tu número WhatsApp
+const FLEXPACK_ICON_URL = "https://esezhctdiucwovbvxmou.supabase.co/storage/v1/object/public/brand/flex-pack/flex-pack-icon.png";
 const YAPPY_DIRECTORIO = "@ofertodopanama";               // ← Tu usuario en el Directorio de Yappy, para que el cliente te pague
 const YAPPY_FN_CREAR = SUPABASE_URL + "/functions/v1/crear-orden-yappy"; // Edge Function que crea la orden de pago en Yappy
 
@@ -318,10 +319,12 @@ function presBreakdown(pres, count, product) {
 
 // Precio total de un item del carrito (soporta presentación o cantidad libre)
 function cartItemTotal(item) {
+  if (item.esFlexPack) return Number(item.precioTotal) || 0;
   if (item.pres) return presTotal(item.product, item.pres, item.count || 1);
   return calcPrice(item.product, item.qty); // compatibilidad con items viejos
 }
 function cartItemLabel(item) {
+  if (item.esFlexPack) return `Flex Pack · ${item.totalPiezas} piezas`;
   if (item.pres) return `${item.count} ${presLabelPlural(item.pres, item.count, item.product)} · ${item.qty} pzs`;
   return `${item.qty} pzs`;
 }
@@ -1068,6 +1071,150 @@ function QtySelector({ product, pres, setPres, count, setCount, size = "normal" 
 }
 
 // ═══════════════════════════════════════════════════════════════
+//  FLEX PACK — insignia + panel para armar un paquete mezclado de
+//  varios productos del mismo grupo, a precio compartido x3/x6.
+// ═══════════════════════════════════════════════════════════════
+function FlexPackBadge({ onAbrir, tamano = "normal" }) {
+  const chico = tamano === "chico";
+  return (
+    <button onClick={onAbrir} className="oft-btn-press oft-flexpack-badge"
+      style={{ display: "inline-flex", alignItems: "center", gap: chico ? 5 : 7, padding: chico ? "5px 10px" : "7px 14px", borderRadius: 999, border: "none", background: "linear-gradient(135deg, #1a1a1a, #3a3a3a)", color: WHITE, fontWeight: 800, fontSize: chico ? 11 : 12.5, cursor: "pointer" }}>
+      <img src={FLEXPACK_ICON_URL} alt="" style={{ width: chico ? 14 : 17, height: chico ? 14 : 17, objectFit: "contain" }} />
+      Crear Flex Pack
+    </button>
+  );
+}
+
+function FilaProductoFlexPack({ producto, cantidad, onCambiar, espacioDisponibleGlobal }) {
+  const stockConocido = producto.stock_actualizado_at ? Number(producto.stock) : null;
+  const maxPorStock = stockConocido !== null ? stockConocido : Infinity;
+  const maxAquí = Math.min(maxPorStock, cantidad + espacioDisponibleGlobal);
+  const sinStock = stockConocido !== null && stockConocido <= 0;
+  const enElTope = cantidad >= maxAquí;
+
+  return (
+    <div className="oft-fade-in" style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 4px", borderBottom: `1px solid ${GRAY}`, opacity: sinStock ? 0.5 : 1 }}>
+      {producto.imagen_url ? (
+        <img src={producto.imagen_url} style={{ width: 52, height: 52, borderRadius: 10, objectFit: "cover", flexShrink: 0 }} />
+      ) : (
+        <div style={{ width: 52, height: 52, borderRadius: 10, background: GRAY, flexShrink: 0 }} />
+      )}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontWeight: 700, fontSize: 13.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{producto.nombre}</div>
+        <div style={{ fontSize: 11.5, color: GRAY3 }}>
+          {sinStock ? "Sin stock por ahora" : stockConocido !== null ? `${stockConocido} disponibles` : "Disponible"}
+        </div>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
+        <button onClick={() => onCambiar(-1)} disabled={cantidad <= 0} className="oft-btn-press"
+          style={{ width: 28, height: 28, borderRadius: 8, border: `1.5px solid ${GRAY2}`, background: WHITE, color: cantidad <= 0 ? GRAY2 : BLACK, fontSize: 16, fontWeight: 700, cursor: cantidad <= 0 ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>−</button>
+        <span style={{ fontWeight: 900, fontSize: 15, minWidth: 16, textAlign: "center" }}>{cantidad}</span>
+        <button onClick={() => onCambiar(1)} disabled={enElTope || sinStock} className="oft-btn-press"
+          style={{ width: 28, height: 28, borderRadius: 8, border: "none", background: (enElTope || sinStock) ? GRAY2 : RED, color: (enElTope || sinStock) ? GRAY3 : WHITE, fontSize: 16, fontWeight: 700, cursor: (enElTope || sinStock) ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>+</button>
+      </div>
+    </div>
+  );
+}
+
+function PanelFlexPack({ grupo, onClose }) {
+  const { products, agregarFlexPackAlCarrito, showToast } = useApp();
+  const isMobile = useIsMobile();
+  const [mostrandoIntro, setMostrandoIntro] = useState(true);
+  const [cantidades, setCantidades] = useState({}); // { productoId: cantidad }
+
+  useEffect(() => {
+    const t = setTimeout(() => setMostrandoIntro(false), 900);
+    return () => clearTimeout(t);
+  }, []);
+
+  const productosDelGrupo = products.filter(p => p.flexpack_grupo_id === grupo.id && p.activo);
+  const totalPiezas = Object.values(cantidades).reduce((s, c) => s + c, 0);
+  const completo = totalPiezas === 3 || totalPiezas === 6;
+  const meta = totalPiezas < 3 ? 3 : 6;
+  const precioActual = totalPiezas === 3 ? Number(grupo.precio_x3) : totalPiezas === 6 ? Number(grupo.precio_x6) : null;
+  const espacioDisponibleGlobal = 6 - totalPiezas;
+
+  const cambiarCantidad = (productoId, delta) => {
+    setCantidades(prev => {
+      const actual = prev[productoId] || 0;
+      const nueva = Math.max(0, actual + delta);
+      if (delta > 0 && totalPiezas >= 6) return prev; // ya está al tope global
+      return { ...prev, [productoId]: nueva };
+    });
+  };
+
+  const confirmar = () => {
+    if (!completo) return;
+    agregarFlexPackAlCarrito(grupo, cantidades, productosDelGrupo);
+    onClose();
+  };
+
+  return createPortal(
+    <div className="oft-overlay" style={S.overlay} onClick={onClose}>
+      <div className={isMobile ? "oft-sheet-slide" : "oft-qv-pop"} style={{ ...S.modal, maxWidth: 480, padding: 0, overflow: "hidden", display: "flex", flexDirection: "column", maxHeight: "88vh" }} onClick={e => e.stopPropagation()}>
+
+        {mostrandoIntro ? (
+          <div style={{ padding: "60px 24px", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 14, minHeight: 260 }}>
+            <img src={FLEXPACK_ICON_URL} alt="Flex Pack" className="oft-flexpack-logo-intro" style={{ width: 76, height: 76, objectFit: "contain" }} />
+            <div style={{ fontWeight: 900, fontSize: 16, letterSpacing: 0.3 }}>Flex Pack</div>
+            <div style={{ fontSize: 12.5, color: GRAY3 }}>Arma tu paquete como quieras</div>
+          </div>
+        ) : (
+          <>
+            <div style={{ padding: "18px 20px 14px", borderBottom: `1px solid ${GRAY2}`, display: "flex", alignItems: "center", gap: 10 }}>
+              <img src={FLEXPACK_ICON_URL} style={{ width: 26, height: 26, objectFit: "contain", flexShrink: 0 }} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 900, fontSize: 15.5 }}>Arma tu Flex Pack</div>
+                <div style={{ fontSize: 11.5, color: GRAY3 }}>{grupo.nombre} · mezcla lo que quieras</div>
+              </div>
+              <button onClick={onClose} className="oft-btn-press" style={{ background: GRAY, border: "none", borderRadius: "50%", width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}><X size={15} /></button>
+            </div>
+
+            <div style={{ flex: 1, overflowY: "auto", padding: "4px 20px" }}>
+              {productosDelGrupo.length === 0 ? (
+                <div style={{ padding: "30px 0", textAlign: "center", color: GRAY3, fontSize: 13 }}>Este grupo todavía no tiene productos disponibles.</div>
+              ) : productosDelGrupo.map(p => (
+                <FilaProductoFlexPack key={p.id} producto={p} cantidad={cantidades[p.id] || 0}
+                  espacioDisponibleGlobal={espacioDisponibleGlobal}
+                  onCambiar={(delta) => cambiarCantidad(p.id, delta)} />
+              ))}
+            </div>
+
+            <div style={{ padding: "16px 20px 20px", borderTop: `1px solid ${GRAY2}`, background: GRAY }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                <span style={{ fontSize: 12.5, fontWeight: 700, color: completo ? "#0A9D4F" : GRAY3, display: "flex", alignItems: "center", gap: 5 }}>
+                  {completo && <CheckCircle2Icon />} {completo ? "Flex Pack completo" : `${totalPiezas} de ${meta} piezas`}
+                </span>
+                {completo && precioActual != null && <span style={{ fontWeight: 900, fontSize: 17, color: RED }}>${precioActual.toFixed(2)}</span>}
+              </div>
+              <div style={{ height: 8, borderRadius: 5, background: GRAY2, overflow: "hidden", position: "relative" }}>
+                <div className={completo ? "oft-flexpack-bar-completo" : ""} style={{ height: "100%", width: `${Math.min(100, (totalPiezas / meta) * 100)}%`, background: completo ? "#0A9D4F" : RED, borderRadius: 5, transition: "width 0.35s cubic-bezier(0.16,1,0.3,1)" }} />
+                {meta === 6 && <div style={{ position: "absolute", left: "50%", top: -2, bottom: -2, width: 2, background: WHITE }} />}
+              </div>
+              {!completo && totalPiezas > 0 && totalPiezas < 3 && (
+                <div style={{ fontSize: 11.5, color: GRAY3, marginTop: 6 }}>Agrega {3 - totalPiezas} más para completar tu primer Flex Pack (x3)</div>
+              )}
+              {!completo && totalPiezas > 3 && (
+                <div style={{ fontSize: 11.5, color: GRAY3, marginTop: 6 }}>Agrega {6 - totalPiezas} más para llegar al Flex Pack x6</div>
+              )}
+              {totalPiezas === 3 && (
+                <div style={{ fontSize: 11.5, color: GRAY3, marginTop: 6 }}>Puedes seguir agregando hasta 6 para el siguiente precio</div>
+              )}
+              <button onClick={confirmar} disabled={!completo} className="oft-btn-press"
+                style={{ width: "100%", marginTop: 12, padding: 14, borderRadius: 12, border: "none", background: completo ? RED : GRAY2, color: completo ? WHITE : GRAY3, fontWeight: 800, fontSize: 14.5, cursor: completo ? "pointer" : "not-allowed", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+                Agregar Flex Pack al carrito
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>,
+    document.body
+  );
+}
+function CheckCircle2Icon() { return <CheckCircle2 size={14} color="#0A9D4F" />; }
+
+// ═══════════════════════════════════════════════════════════════
 //  SELECTOR DE TALLA Y COLOR (animado) — solo "Por pieza"
 // ═══════════════════════════════════════════════════════════════
 // Mapa de colores comunes en español → hex (para el puntito de color)
@@ -1167,12 +1314,14 @@ function DistribucionInfo({ product, pres, count }) {
 //  PRODUCT CARD
 // ═══════════════════════════════════════════════════════════════
 function ProductCard({ product }) {
-  const { addToCart, showToast, setQuickView } = useApp();
+  const { addToCart, showToast, setQuickView, flexpackGrupos } = useApp();
   const [pres, setPres] = useState("docena"); // siempre abre en Docena por defecto, incluso si "venta_por_unidad" está activo
   const [count, setCount] = useState(1);
   const [added, setAdded] = useState(false);
   const [talla, setTalla] = useState("");
   const [color, setColor] = useState("");
+  const [mostrarFlexPack, setMostrarFlexPack] = useState(false);
+  const grupoFlexPack = product.flexpack_grupo_id ? flexpackGrupos.find(g => g.id === product.flexpack_grupo_id) : null;
   const total = presTotal(product, pres, count);
   const imgUrl = product.imagen_url ? imagenOptimizada(product.imagen_url, 400) : null;
   const coloresDisponibles = product.tiene_colores ? (product.colores || "").split(",").map(s => s.trim()).filter(Boolean) : [];
@@ -1234,6 +1383,7 @@ function ProductCard({ product }) {
   };
 
   return (
+    <>
     <div data-prod-card className="oft-card-hover" style={S.prodCard}>
       <div data-prod-img onClick={() => setQuickView(product)} title="Ver detalle" style={{ background: GRAY, aspectRatio: "1 / 1", width: "100%", display: "flex", alignItems: "center", justifyContent: "center", position: "relative", overflow: "hidden", cursor: "pointer" }}>
         {imgUrl
@@ -1276,6 +1426,9 @@ function ProductCard({ product }) {
             </div>
           </div>
           <QtySelector product={product} pres={pres} setPres={setPres} count={count} setCount={setCount} />
+          {grupoFlexPack && (
+            <div style={{ marginTop: 8 }}><FlexPackBadge tamano="chico" onAbrir={() => setMostrarFlexPack(true)} /></div>
+          )}
           {/* DESGLOSE o VARIANTES (si eligió Por pieza y tiene tallas/colores) */}
           {modoConsulta ? (
             <div style={{ background: GRAY, borderRadius: 8, padding: "10px 12px", marginTop: 8 }}>
@@ -1305,6 +1458,8 @@ function ProductCard({ product }) {
         )}
       </div>
     </div>
+    {mostrarFlexPack && grupoFlexPack && <PanelFlexPack grupo={grupoFlexPack} onClose={() => setMostrarFlexPack(false)} />}
+    </>
   );
 }
 
@@ -1428,13 +1583,15 @@ function CatalogoView() {
 //  MODAL DE DETALLE DEL PRODUCTO (Quick View)
 // ═══════════════════════════════════════════════════════════════
 function ProductModal() {
-  const { quickView: product, setQuickView, addToCart, showToast } = useApp();
+  const { quickView: product, setQuickView, addToCart, showToast, flexpackGrupos } = useApp();
   const [pres, setPres] = useState("docena"); // siempre abre en Docena por defecto, incluso si "venta_por_unidad" está activo
   const [count, setCount] = useState(1);
   const [added, setAdded] = useState(false);
   const [talla, setTalla] = useState("");
   const [color, setColor] = useState("");
+  const [mostrarFlexPack, setMostrarFlexPack] = useState(false);
   const coloresDisponibles = product?.tiene_colores ? (product.colores || "").split(",").map(s => s.trim()).filter(Boolean) : [];
+  const grupoFlexPack = product?.flexpack_grupo_id ? flexpackGrupos.find(g => g.id === product.flexpack_grupo_id) : null;
 
   useEffect(() => { setPres("docena"); setCount(1); setAdded(false); setTalla(""); setColor(""); }, [product]);
 
@@ -1487,6 +1644,7 @@ function ProductModal() {
   };
 
   return (
+    <>
     <div className="oft-overlay" style={S.overlay} onClick={() => setQuickView(null)}>
       <div className="oft-modal-sheet oft-qv-pop" style={{ ...S.modal, maxWidth: 560, padding: 0, overflow: "hidden" }} onClick={e => e.stopPropagation()}>
         {/* BOTÓN CERRAR */}
@@ -1556,6 +1714,9 @@ function ProductModal() {
               </div>
             </div>
             <QtySelector product={product} pres={pres} setPres={setPres} count={count} setCount={setCount} size="big" />
+            {grupoFlexPack && (
+              <div style={{ marginTop: 10 }}><FlexPackBadge onAbrir={() => setMostrarFlexPack(true)} /></div>
+            )}
             {modoConsulta ? (
               <div style={{ background: WHITE, borderRadius: 8, padding: "12px", marginTop: 12 }}>
                 <VariantPicker product={product} talla={talla} setTalla={setTalla} color={color} setColor={setColor} />
@@ -1585,6 +1746,8 @@ function ProductModal() {
         </div>
       </div>
     </div>
+    {mostrarFlexPack && grupoFlexPack && <PanelFlexPack grupo={grupoFlexPack} onClose={() => setMostrarFlexPack(false)} />}
+    </>
   );
 }
 
@@ -1653,6 +1816,21 @@ function CartModal() {
           ? <div style={{ textAlign: "center", padding: "40px 0", color: GRAY3 }}><ShoppingCart size={48} strokeWidth={1.3} style={{ margin: "0 auto 12px" }} /><p>Tu pedido está vacío</p></div>
           : <>
             {cart.map((item, idx) => (
+              item.esFlexPack ? (
+                <div key={idx} style={{ display: "flex", gap: 12, alignItems: "flex-start", padding: "12px 0", borderBottom: `1px solid ${GRAY2}` }}>
+                  <div style={{ width: 36, height: 36, borderRadius: 6, background: BLACK, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                    <img src={FLEXPACK_ICON_URL} style={{ width: 20, height: 20, objectFit: "contain" }} />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 700, fontSize: 14 }}>Flex Pack · {item.grupoNombre}</div>
+                    <div style={{ fontSize: 11.5, color: GRAY3, lineHeight: 1.5 }}>
+                      {item.items.map((it, i) => <span key={i}>{it.cantidad}× {it.nombre}{i < item.items.length - 1 ? ", " : ""}</span>)}
+                    </div>
+                    <div style={{ fontSize: 12, color: GRAY3, marginTop: 2 }}>{cartItemLabel(item)} · ${cartItemTotal(item).toFixed(2)}</div>
+                  </div>
+                  <button onClick={() => setCart(cart.filter((_, i) => i !== idx))} style={{ background: "none", border: "none", color: RED, cursor: "pointer", display: "flex", flexShrink: 0 }}><Trash2 size={18} /></button>
+                </div>
+              ) : (
               <div key={idx} style={{ display: "flex", gap: 12, alignItems: "center", padding: "12px 0", borderBottom: `1px solid ${GRAY2}` }}>
                 {item.product.imagen_url
                   ? <img src={item.product.imagen_url} style={{ width: 36, height: 36, borderRadius: 6, objectFit: "cover" }} />
@@ -1664,6 +1842,7 @@ function CartModal() {
                 </div>
                 <button onClick={() => setCart(cart.filter((_, i) => i !== idx))} style={{ background: "none", border: "none", color: RED, cursor: "pointer", display: "flex" }}><Trash2 size={18} /></button>
               </div>
+              )
             ))}
             <div style={{ display: "flex", justifyContent: "space-between", padding: "16px 0", fontWeight: 900, fontSize: 18 }}>
               <span>Total</span><span style={{ color: RED }}>${total.toFixed(2)}</span>
@@ -1676,6 +1855,10 @@ function CartModal() {
               onClick={() => {
                 registrarEvento("consulta_whatsapp", null, "Pedido desde el carrito");
                 const lineas = cart.map((i, idx) => {
+                  if (i.esFlexPack) {
+                    const detalle = i.items.map(it => `${it.cantidad}x ${it.nombre}`).join(", ");
+                    return `${idx + 1}. Flex Pack (${i.grupoNombre}): ${detalle} — ${i.totalPiezas} piezas por $${Number(i.precioTotal).toFixed(2)}`;
+                  }
                   let linea = `${idx + 1}. ${i.product.nombre}`;
                   if (i.product.referencia) linea += ` (Ref: ${i.product.referencia})`;
                   const etiquetaPres = i.pres ? `${i.count} ${presLabelPlural(i.pres, i.count, i.product)}` : `x${i.qty}`;
@@ -2245,7 +2428,7 @@ function CheckoutView() {
     if (cart.length > 0) {
       trackIniciarCheckout({
         total: cart.reduce((s, i) => s + cartItemTotal(i), 0),
-        items: cart.map(i => ({ id: i.product.id, nombre: i.product.nombre, precio: i.product.precio_pieza, cantidad: i.qty })),
+        items: cart.filter(i => !i.esFlexPack).map(i => ({ id: i.product.id, nombre: i.product.nombre, precio: i.product.precio_pieza, cantidad: i.qty })),
       });
     }
   }, []);
@@ -2265,7 +2448,7 @@ function CheckoutView() {
     }
     // Solo sobre los productos incluidos en el descuento
     const ids = descuentoAplicado.productos_ids || [];
-    const baseAplicable = cart.reduce((s, i) => ids.includes(i.product.id) ? s + cartItemTotal(i) : s, 0);
+    const baseAplicable = cart.reduce((s, i) => (i.product && ids.includes(i.product.id)) ? s + cartItemTotal(i) : s, 0);
     return baseAplicable * pct;
   })();
   const total = Math.max(subtotalBruto - montoDescuento, 0);
@@ -2287,7 +2470,7 @@ function CheckoutView() {
         // Si es por productos, verifica que el carrito tenga al menos uno incluido
         if (d.tipo_aplicacion === "productos") {
           const ids = d.productos_ids || [];
-          const hayAlguno = cart.some(i => ids.includes(i.product.id));
+          const hayAlguno = cart.some(i => i.product && ids.includes(i.product.id));
           if (!hayAlguno) {
             setErrorCodigo("Este código aplica a productos que no están en tu carrito");
             setDescuentoAplicado(null);
@@ -2380,11 +2563,24 @@ function CheckoutView() {
     try {
       if (metodoPago === "tarjeta") {
         // El pedido se crea DENTRO de la función (junto con el inicio del pago en Powertranz)
-        const itemsPayload = cart.map(item => ({
-          producto_id: item.product.id, nombre_producto: item.product.nombre,
-          cantidad: item.qty, precio_unitario: item.product.precio_pieza, subtotal: cartItemTotal(item),
-          presentacion: item.pres || "pieza",
-        }));
+        const itemsPayload = cart.flatMap(item => {
+          if (item.esFlexPack) {
+            // Una línea de Flex Pack se reparte en varias filas (una por producto elegido),
+            // prorrateando el precio del paquete por pieza -- tiene un precio ÚNICO para
+            // todo el conjunto, no por producto.
+            const precioPorPieza = item.precioTotal / item.totalPiezas;
+            return item.items.map(it => ({
+              producto_id: it.productId, nombre_producto: `${it.nombre} (Flex Pack ${item.grupoNombre})`,
+              cantidad: it.cantidad, precio_unitario: Number(precioPorPieza.toFixed(4)),
+              subtotal: Number((precioPorPieza * it.cantidad).toFixed(2)), presentacion: "pieza",
+            }));
+          }
+          return [{
+            producto_id: item.product.id, nombre_producto: item.product.nombre,
+            cantidad: item.qty, precio_unitario: item.product.precio_pieza, subtotal: cartItemTotal(item),
+            presentacion: item.pres || "pieza",
+          }];
+        });
         const resp = await fetch(`${SUPABASE_URL}/functions/v1/crear-pago-tarjeta`, {
           method: "POST", headers: sb.functionHeaders(),
           body: JSON.stringify({
@@ -2420,7 +2616,21 @@ function CheckoutView() {
         });
         const pedidoId = pedido[0].id;
         for (const item of cart) {
-          await sb.post("pedido_items", { pedido_id: pedidoId, producto_id: item.product.id, nombre_producto: item.product.nombre, cantidad: item.qty, precio_unitario: item.product.precio_pieza, subtotal: cartItemTotal(item), presentacion: item.pres || "pieza" });
+          if (item.esFlexPack) {
+            // Una línea de Flex Pack se reparte en varias filas de pedido_items (una por
+            // producto elegido), prorrateando el precio del paquete por pieza -- ya que el
+            // Flex Pack tiene un precio ÚNICO para todo el conjunto, no por producto.
+            const precioPorPieza = item.precioTotal / item.totalPiezas;
+            for (const it of item.items) {
+              await sb.post("pedido_items", {
+                pedido_id: pedidoId, producto_id: it.productId, nombre_producto: `${it.nombre} (Flex Pack ${item.grupoNombre})`,
+                cantidad: it.cantidad, precio_unitario: Number(precioPorPieza.toFixed(4)),
+                subtotal: Number((precioPorPieza * it.cantidad).toFixed(2)), presentacion: "pieza",
+              });
+            }
+          } else {
+            await sb.post("pedido_items", { pedido_id: pedidoId, producto_id: item.product.id, nombre_producto: item.product.nombre, cantidad: item.qty, precio_unitario: item.product.precio_pieza, subtotal: cartItemTotal(item), presentacion: item.pres || "pieza" });
+          }
         }
         // Guarda el pedido pendiente y muestra el botón de Yappy (el pago va primero)
         setPedidoPendiente({ id: pedidoId, codigo, yappyOrderId, total: totalConEnvio, telefono: telefonoYappy });
@@ -2463,7 +2673,7 @@ function CheckoutView() {
     setPlaced(pedidoPendiente.codigo);
     trackCompra({
       codigo: pedidoPendiente.codigo, total: pedidoPendiente.total,
-      items: cart.map(i => ({ id: i.product.id, nombre: i.product.nombre, precio: i.product.precio_pieza, cantidad: i.qty })),
+      items: cart.filter(i => !i.esFlexPack).map(i => ({ id: i.product.id, nombre: i.product.nombre, precio: i.product.precio_pieza, cantidad: i.qty })),
     });
     setCart([]);
     setPedidoPendiente(null);
@@ -2511,7 +2721,7 @@ function CheckoutView() {
         <div style={{ fontWeight: 800, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}><Package size={18} /> Resumen</div>
         {cart.map((item, idx) => (
           <div key={idx} style={{ display: "flex", justifyContent: "space-between", fontSize: 14, padding: "6px 0", borderBottom: `1px solid ${GRAY2}` }}>
-            <span>{item.product.nombre} <span style={{ color: GRAY3, fontSize: 12 }}>({cartItemLabel(item)})</span></span>
+            <span>{item.esFlexPack ? `Flex Pack (${item.grupoNombre})` : item.product.nombre} <span style={{ color: GRAY3, fontSize: 12 }}>({cartItemLabel(item)})</span></span>
             <span style={{ fontWeight: 700 }}>${cartItemTotal(item).toFixed(2)}</span>
           </div>
         ))}
@@ -3368,6 +3578,7 @@ export default function App() {
   const [pendingCheckout, setPendingCheckout] = useState(false); // el cliente quería pagar y tuvo que loguearse
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]);
+  const [flexpackGrupos, setFlexpackGrupos] = useState([]);
   const [gruposCategorias, setGruposCategorias] = useState([]); // grupos generales (ej. "Ropa de Dama"), cada uno con su propio ícono
   const [banners, setBanners] = useState([]); // banners promocionales del carrusel del inicio
   const [popups, setPopups] = useState([]); // pop-ups promocionales (descuentos, eventos, anuncios)
@@ -3403,7 +3614,7 @@ export default function App() {
     // sueltas por quedar cortos de stock).
     if (product.stock_actualizado_at) {
       const stockDisponible = Number(product.stock || 0);
-      const yaEnCarrito = cart.filter(i => i.product.id === product.id).reduce((s, i) => s + i.qty, 0);
+      const yaEnCarrito = cart.filter(i => !i.esFlexPack && i.product.id === product.id).reduce((s, i) => s + i.qty, 0);
       const disponibleParaAgregar = Math.max(0, stockDisponible - yaEnCarrito);
       const esPerfumeria = product.modalidad_presentacion === "perfumeria";
       const piezasPorUnidad = pres === "docena" ? (esPerfumeria ? 6 : 12) : pres === "media" ? (esPerfumeria ? 3 : 6) : 1;
@@ -3421,13 +3632,38 @@ export default function App() {
     }
     setCart(prev => {
       // mismo producto Y misma presentación = se suman; si no, entrada nueva
-      const existing = prev.find(i => i.product.id === product.id && i.pres === pres);
-      if (existing) return prev.map(i => (i.product.id === product.id && i.pres === pres) ? { ...i, qty: i.qty + qtyFinal, count: (i.count || 0) + countFinal } : i);
+      const existing = prev.find(i => !i.esFlexPack && i.product.id === product.id && i.pres === pres);
+      if (existing) return prev.map(i => (!i.esFlexPack && i.product.id === product.id && i.pres === pres) ? { ...i, qty: i.qty + qtyFinal, count: (i.count || 0) + countFinal } : i);
       return [...prev, { product, qty: qtyFinal, pres, count: countFinal }];
     });
     setCartPulse(p => p + 1); // dispara animación del carrito
     registrarEvento("agregar_carrito", product.id, product.nombre, user?.id);
     trackAgregarCarrito({ id: product.id, nombre: product.nombre, precio: product.precio_pieza, cantidad: qtyFinal });
+  };
+
+  // Un Flex Pack es una línea de carrito DISTINTA a un producto normal -- mezcla
+  // varios productos del mismo grupo a un precio compartido (x3 o x6 piezas en
+  // total, sin importar cómo se repartan entre los productos elegidos).
+  const agregarFlexPackAlCarrito = (grupo, cantidades, productosDelGrupo) => {
+    const totalPiezas = Object.values(cantidades).reduce((s, c) => s + c, 0);
+    if (totalPiezas !== 3 && totalPiezas !== 6) return; // solo se completa en 3 o en 6 exactas
+    const precioTotal = totalPiezas === 3 ? Number(grupo.precio_x3) : Number(grupo.precio_x6);
+    const items = Object.entries(cantidades)
+      .filter(([, cantidad]) => cantidad > 0)
+      .map(([productId, cantidad]) => {
+        const prod = productosDelGrupo.find(p => p.id === Number(productId));
+        return { productId: Number(productId), nombre: prod?.nombre || "Producto", imagen_url: prod?.imagen_url || "", referencia: prod?.referencia || "", cantidad };
+      });
+    setCart(prev => [...prev, {
+      esFlexPack: true,
+      flexpackLineId: `fp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      grupoId: grupo.id, grupoNombre: grupo.nombre,
+      totalPiezas, precioTotal, items,
+      qty: totalPiezas, // para que el contador del carrito (que suma "qty" de cada línea) cuente bien
+    }]);
+    setCartPulse(p => p + 1);
+    registrarEvento("agregar_carrito", null, `Flex Pack ${grupo.nombre}`, user?.id);
+    showToast(`Flex Pack de ${grupo.nombre} agregado al pedido`);
   };
 
   // Cargar datos de Supabase al iniciar
@@ -3559,6 +3795,7 @@ export default function App() {
         ]);
         setCategories(cats);
         setProducts(prods);
+        sb.get("flexpack_grupos", "?activo=eq.true").then(d => setFlexpackGrupos(d || [])).catch(() => {});
 
         // Link directo a un producto — reconoce tanto el formato nuevo y limpio
         // (/producto/ID, el que ahora genera el botón de Compartir) como el formato
@@ -3670,7 +3907,7 @@ export default function App() {
   }, []);
 
   const isAdmin = view === "admin";
-  const ctx = { view, setView, cart, setCart, addToCart, cartPulse, user, setUser, showLogin, setShowLogin, showRegister, setShowRegister, showCart, setShowCart, quickView, setQuickView, pagoResultado, setPagoResultado, catalogCat, setCatalogCat, completeProfile, setCompleteProfile, googleMfaPaso, setGoogleMfaPaso, recuperacionToken, setRecuperacionToken, pendingCheckout, setPendingCheckout, products, setProducts, categories, setCategories, gruposCategorias, setGruposCategorias, banners, setBanners, popups, setPopups, empresas, setEmpresas, sucursales, setSucursales, localesRetiro, setLocalesRetiro, retiroLocalHabilitado, setRetiroLocalHabilitado, loading, showToast };
+  const ctx = { view, setView, cart, setCart, addToCart, agregarFlexPackAlCarrito, cartPulse, user, setUser, showLogin, setShowLogin, showRegister, setShowRegister, showCart, setShowCart, quickView, setQuickView, pagoResultado, setPagoResultado, catalogCat, setCatalogCat, completeProfile, setCompleteProfile, googleMfaPaso, setGoogleMfaPaso, recuperacionToken, setRecuperacionToken, pendingCheckout, setPendingCheckout, products, setProducts, categories, setCategories, gruposCategorias, setGruposCategorias, banners, setBanners, popups, setPopups, empresas, setEmpresas, sucursales, setSucursales, localesRetiro, setLocalesRetiro, retiroLocalHabilitado, setRetiroLocalHabilitado, flexpackGrupos, loading, showToast };
 
   return (
     <AppCtx.Provider value={ctx}>
@@ -3716,6 +3953,12 @@ export default function App() {
         .oft-fade-in { animation: fadeInUp 0.4s cubic-bezier(0.16,1,0.3,1) both; }
         @keyframes sheetSlideUp { 0% { opacity: 0; transform: translateY(40px); } 100% { opacity: 1; transform: translateY(0); } }
         .oft-sheet-slide { animation: sheetSlideUp 0.32s cubic-bezier(0.16,1,0.3,1) both; }
+        @keyframes flexpackLogoIn { 0% { opacity: 0; transform: scale(0.5) rotate(-8deg); } 60% { opacity: 1; transform: scale(1.08) rotate(3deg); } 100% { opacity: 1; transform: scale(1) rotate(0deg); } }
+        .oft-flexpack-logo-intro { animation: flexpackLogoIn 0.7s cubic-bezier(0.34,1.4,0.5,1) both; }
+        @keyframes flexpackBarGlow { 0%,100% { box-shadow: 0 0 0 0 rgba(10,157,79,0.35); } 50% { box-shadow: 0 0 0 5px rgba(10,157,79,0); } }
+        .oft-flexpack-bar-completo { animation: flexpackBarGlow 1.1s ease-out 1; }
+        .oft-flexpack-badge { transition: transform 0.15s ease, box-shadow 0.15s ease; }
+        .oft-flexpack-badge:hover { transform: translateY(-1px); box-shadow: 0 4px 14px rgba(0,0,0,0.25); }
         @keyframes catChipPop { 0% { opacity: 0; transform: scale(0.85) translateY(6px); } 100% { opacity: 1; transform: scale(1) translateY(0); } }
         .oft-cat-sheet-chip { animation: catChipPop 0.26s cubic-bezier(0.34,1.4,0.5,1) both; transition: border-color 0.15s, background 0.15s; }
         .oft-cat-trigger { transition: border-color 0.15s, box-shadow 0.15s; }
