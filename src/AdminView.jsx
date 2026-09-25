@@ -17,6 +17,7 @@ import {
   RED, RED_D, S, SUPABASE_URL, ShippingLabelModal, NOTAS_FRAGANCIA,
   Spinner, StatusBadge, WHITE, comprimirImagen, estadosDe,
   imagenOptimizada, resolverAreaVenta, sb, useApp, useLockBodyScroll,
+  agregarCanvasComoPaginasPdf,
 } from "./shared.jsx";
 
 // "YYYY-MM-DD" según la hora de PANAMÁ (America/Panama, UTC-5), sin importar la
@@ -112,22 +113,9 @@ function OrderImageModal({ order, onClose }) {
     setBusy(true);
     try {
       const canvas = await renderCanvas();
-      const imgData = canvas.toDataURL("image/png");
       const { jsPDF } = window.jspdf;
       const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
-      const pageW = 210, pageH = 297, margin = 10;
-      const imgW = pageW - margin * 2;
-      const imgH = (canvas.height * imgW) / canvas.width;
-      let heightLeft = imgH;
-      let position = margin;
-      pdf.addImage(imgData, "PNG", margin, position, imgW, imgH);
-      heightLeft -= (pageH - margin * 2);
-      while (heightLeft > 0) {
-        pdf.addPage();
-        position = margin - (imgH - heightLeft);
-        pdf.addImage(imgData, "PNG", margin, position, imgW, imgH);
-        heightLeft -= (pageH - margin * 2);
-      }
+      agregarCanvasComoPaginasPdf(pdf, canvas);
       pdf.save(`${order.codigo}.pdf`);
     } catch(e) { alert("Error generando PDF: " + e.message); }
     setBusy(false);
@@ -3860,22 +3848,9 @@ function AdminView() {
       } finally {
         document.body.removeChild(holder);
       }
-      const imgData = canvas.toDataURL("image/png");
       const { jsPDF } = window.jspdf;
       const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
-      const pageW = 210, pageH = 297, margin = 10;
-      const imgW = pageW - margin * 2;
-      const imgH = (canvas.height * imgW) / canvas.width;
-      let heightLeft = imgH;
-      let position = margin;
-      pdf.addImage(imgData, "PNG", margin, position, imgW, imgH);
-      heightLeft -= (pageH - margin * 2);
-      while (heightLeft > 0) {
-        pdf.addPage();
-        position = margin - (imgH - heightLeft);
-        pdf.addImage(imgData, "PNG", margin, position, imgW, imgH);
-        heightLeft -= (pageH - margin * 2);
-      }
+      agregarCanvasComoPaginasPdf(pdf, canvas);
       pdf.save(`reporte-ventas-${reporteDesde}-a-${reporteHasta}.pdf`);
     } catch(e) { alert("Error generando PDF: " + e.message); }
     setReporteBusy(false);
@@ -3904,22 +3879,9 @@ function AdminView() {
       } finally {
         document.body.removeChild(holder);
       }
-      const imgData = canvas.toDataURL("image/png");
       const { jsPDF } = window.jspdf;
       const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
-      const pageW = 210, pageH = 297, margin = 10;
-      const imgW = pageW - margin * 2;
-      const imgH = (canvas.height * imgW) / canvas.width;
-      let heightLeft = imgH;
-      let position = margin;
-      pdf.addImage(imgData, "PNG", margin, position, imgW, imgH);
-      heightLeft -= (pageH - margin * 2);
-      while (heightLeft > 0) {
-        pdf.addPage();
-        position = margin - (imgH - heightLeft);
-        pdf.addImage(imgData, "PNG", margin, position, imgW, imgH);
-        heightLeft -= (pageH - margin * 2);
-      }
+      agregarCanvasComoPaginasPdf(pdf, canvas);
       pdf.save(`ventas-por-vendedor-${reporteDesde}-a-${reporteHasta}.pdf`);
     } catch(e) { alert("Error generando PDF: " + e.message); }
     setReporteOperadorBusy(false);
