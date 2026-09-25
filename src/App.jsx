@@ -306,15 +306,14 @@ function presTotal(product, pres, count) {
 }
 // Texto descriptivo del desglose (incluye precio por pieza)
 function presBreakdown(pres, count, product) {
-  const piezas = presToPiezas(pres, count);
+  const piezas = presToPiezas(pres, count, product);
   let porPieza = "";
   if (product) {
-    const unit = pres === "pieza" ? Number(product.precio_pieza)
-      : pres === "media" ? Number(product.precio_media_docena) / 6
-      : Number(product.precio_docena) / 12;
+    const piezasPorUnidad = presToPiezas(pres, 1, product);
+    const unit = presUnitPrice(product, pres) / piezasPorUnidad;
     porPieza = ` · $${unit.toFixed(2)} por pieza`;
   }
-  return `${count} ${presLabelPlural(pres, count)} = ${piezas} pieza${piezas > 1 ? "s" : ""}${porPieza}`;
+  return `${count} ${presLabelPlural(pres, count, product)} = ${piezas} pieza${piezas > 1 ? "s" : ""}${porPieza}`;
 }
 
 // Precio total de un item del carrito (soporta presentación o cantidad libre)
@@ -323,7 +322,7 @@ function cartItemTotal(item) {
   return calcPrice(item.product, item.qty); // compatibilidad con items viejos
 }
 function cartItemLabel(item) {
-  if (item.pres) return `${item.count} ${presLabelPlural(item.pres, item.count)} · ${item.qty} pzs`;
+  if (item.pres) return `${item.count} ${presLabelPlural(item.pres, item.count, item.product)} · ${item.qty} pzs`;
   return `${item.qty} pzs`;
 }
 
@@ -951,18 +950,29 @@ function QtySelector({ product, pres, setPres, count, setCount, size = "normal" 
   const btnSize = big ? 42 : 36;
   const numFont = big ? 24 : 20;
 
+  // Modalidad de venta del producto -- 'estandar' (Pieza/Media Docena/Docena =
+  // 1/6/12) o 'perfumeria' (Pieza/3 Piezas/6 Piezas = 1/3/6), para productos
+  // costosos que se venden distinto. Los campos de precio y las claves internas
+  // ("pieza"/"media"/"docena") son las mismas -- solo cambia cuánto representa
+  // cada una y cómo se le llama en pantalla.
+  const esPerfumeria = product.modalidad_presentacion === "perfumeria";
+  const piezasMedia = esPerfumeria ? 3 : 6;
+  const piezasDocena = esPerfumeria ? 6 : 12;
+  const etiquetaMedia = esPerfumeria ? "3 Piezas" : "½ Doc";
+  const etiquetaDocena = esPerfumeria ? "6 Piezas" : "Docena";
+
   // El stock por docena/media docena solo aplica a productos PROPIOS con stock sincronizado
   // de Odoo — los de proveedor (bajo pedido) nunca se restringen por este motivo.
   // Aplica reglas de stock si es producto propio, O si es de proveedor pero ya lo tenemos en stock físico
   const respetaStockQty = (!product.proveedor_id || product.tiene_stock_fisico) && product.stock_actualizado_at;
   const stockConocido = respetaStockQty ? Number(product.stock) : null;
-  const docenaDeshabilitada = stockConocido !== null && stockConocido < 12;
-  const mediaDeshabilitada = stockConocido !== null && stockConocido < 6;
+  const docenaDeshabilitada = stockConocido !== null && stockConocido < piezasDocena;
+  const mediaDeshabilitada = stockConocido !== null && stockConocido < piezasMedia;
 
   // Cuántas unidades de la presentación ELEGIDA caben en el stock real -- así el
   // botón "+" nunca deja seleccionar más de lo que hay, en vez de solo avisar
   // después al agregarlo al carrito.
-  const piezasPorUnidadActual = pres === "docena" ? 12 : pres === "media" ? 6 : 1;
+  const piezasPorUnidadActual = pres === "docena" ? piezasDocena : pres === "media" ? piezasMedia : 1;
   const maxUnidadesActual = stockConocido !== null ? Math.max(1, Math.floor(stockConocido / piezasPorUnidadActual)) : Infinity;
   const enElMaximo = stockConocido !== null && count >= maxUnidadesActual;
 
@@ -983,8 +993,8 @@ function QtySelector({ product, pres, setPres, count, setCount, size = "normal" 
 
   const presentaciones = [
     { key: "pieza", label: "Pieza", precio: Number(product.precio_pieza), porPieza: Number(product.precio_pieza), disabled: false },
-    { key: "media", label: "½ Doc", precio: Number(product.precio_media_docena), porPieza: Number(product.precio_media_docena) / 6, disabled: mediaDeshabilitada },
-    { key: "docena", label: "Docena", precio: Number(product.precio_docena), porPieza: Number(product.precio_docena) / 12, disabled: docenaDeshabilitada },
+    { key: "media", label: etiquetaMedia, precio: Number(product.precio_media_docena), porPieza: Number(product.precio_media_docena) / piezasMedia, disabled: mediaDeshabilitada },
+    { key: "docena", label: etiquetaDocena, precio: Number(product.precio_docena), porPieza: Number(product.precio_docena) / piezasDocena, disabled: docenaDeshabilitada },
   ];
 
   // Si la opción seleccionada deja de estar disponible (por stock bajo), cambia sola a
@@ -1042,7 +1052,7 @@ function QtySelector({ product, pres, setPres, count, setCount, size = "normal" 
 
         <div style={{ flex: 1, textAlign: "center", minWidth: 0 }}>
           <div className={bump ? "oft-qty-bump" : ""} style={{ fontSize: numFont, fontWeight: 900, color: BLACK, lineHeight: 1 }}>{count}</div>
-          <div style={{ fontSize: 10, color: GRAY3, fontWeight: 600, marginTop: 2 }}>{presLabelPlural(pres, count)}</div>
+          <div style={{ fontSize: 10, color: GRAY3, fontWeight: 600, marginTop: 2 }}>{presLabelPlural(pres, count, product)}</div>
         </div>
 
         <button
@@ -1194,7 +1204,7 @@ function ProductCard({ product }) {
   };
 
   const handleAdd = (e) => {
-    const piezas = presToPiezas(pres, count);
+    const piezas = presToPiezas(pres, count, product);
     addToCart(product, piezas, pres, count);
     showToast(`${product.nombre} agregado al pedido`);
     // feedback visual en el botón
@@ -1470,7 +1480,7 @@ function ProductModal() {
   };
 
   const handleAdd = () => {
-    addToCart(product, presToPiezas(pres, count), pres, count);
+    addToCart(product, presToPiezas(pres, count, product), pres, count);
     showToast(`${product.nombre} agregado al pedido`);
     setAdded(true);
     setTimeout(() => setAdded(false), 1100);
@@ -1668,9 +1678,7 @@ function CartModal() {
                 const lineas = cart.map((i, idx) => {
                   let linea = `${idx + 1}. ${i.product.nombre}`;
                   if (i.product.referencia) linea += ` (Ref: ${i.product.referencia})`;
-                  const etiquetaPres = i.pres === "docena" ? `${i.count} docena${i.count > 1 ? "s" : ""}`
-                    : i.pres === "media" ? `${i.count} media${i.count > 1 ? "s" : ""} docena`
-                    : `x${i.qty}`;
+                  const etiquetaPres = i.pres ? `${i.count} ${presLabelPlural(i.pres, i.count, i.product)}` : `x${i.qty}`;
                   return `${linea} — ${etiquetaPres}`;
                 });
                 const msg = `Hola Ofertodo, quiero pedir:\n\n${lineas.join("\n")}\n\nTotal: $${total.toFixed(2)}`;
@@ -3397,7 +3405,8 @@ export default function App() {
       const stockDisponible = Number(product.stock || 0);
       const yaEnCarrito = cart.filter(i => i.product.id === product.id).reduce((s, i) => s + i.qty, 0);
       const disponibleParaAgregar = Math.max(0, stockDisponible - yaEnCarrito);
-      const piezasPorUnidad = pres === "docena" ? 12 : pres === "media" ? 6 : 1;
+      const esPerfumeria = product.modalidad_presentacion === "perfumeria";
+      const piezasPorUnidad = pres === "docena" ? (esPerfumeria ? 6 : 12) : pres === "media" ? (esPerfumeria ? 3 : 6) : 1;
       const unidadesQueCaben = Math.floor(disponibleParaAgregar / piezasPorUnidad);
       if (unidadesQueCaben <= 0) {
         showToast(`Ya no queda stock disponible de "${product.nombre}" (${stockDisponible} en total, ya está todo en tu carrito)`);
@@ -3406,7 +3415,7 @@ export default function App() {
       if (count > unidadesQueCaben) {
         countFinal = unidadesQueCaben;
         qtyFinal = unidadesQueCaben * piezasPorUnidad;
-        const etiquetaUnidad = pres === "docena" ? `docena${unidadesQueCaben !== 1 ? "s" : ""}` : pres === "media" ? `media${unidadesQueCaben !== 1 ? "s" : ""} docena` : `pieza${unidadesQueCaben !== 1 ? "s" : ""}`;
+        const etiquetaUnidad = pres === "docena" ? (esPerfumeria ? "6 piezas" : `docena${unidadesQueCaben !== 1 ? "s" : ""}`) : pres === "media" ? (esPerfumeria ? "3 piezas" : `media${unidadesQueCaben !== 1 ? "s" : ""} docena`) : `pieza${unidadesQueCaben !== 1 ? "s" : ""}`;
         showToast(`Solo hay stock para ${unidadesQueCaben} ${etiquetaUnidad} de "${product.nombre}" -- se ajustó la cantidad`);
       }
     }
