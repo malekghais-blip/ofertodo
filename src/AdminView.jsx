@@ -327,8 +327,7 @@ function FlexPackGrupoFormModal({ grupo, onClose, onSaved, showToast }) {
   useLockBodyScroll();
   const esEdicion = !!grupo?.id;
   const [form, setForm] = useState({
-    nombre: grupo?.nombre || "", precio_x3: grupo?.precio_x3 ?? "", precio_x6: grupo?.precio_x6 ?? "",
-    activo: grupo?.activo ?? true,
+    nombre: grupo?.nombre || "", activo: grupo?.activo ?? true,
   });
   const [guardando, setGuardando] = useState(false);
 
@@ -336,12 +335,7 @@ function FlexPackGrupoFormModal({ grupo, onClose, onSaved, showToast }) {
     if (!form.nombre.trim()) { showToast("Escribe el nombre del grupo"); return; }
     setGuardando(true);
     try {
-      const datos = {
-        nombre: form.nombre.trim(),
-        precio_x3: form.precio_x3 === "" ? null : Number(form.precio_x3),
-        precio_x6: form.precio_x6 === "" ? null : Number(form.precio_x6),
-        activo: form.activo,
-      };
+      const datos = { nombre: form.nombre.trim(), activo: form.activo };
       if (esEdicion) {
         const fila = await sb.patch("flexpack_grupos", grupo.id, datos);
         onSaved({ ...grupo, ...(Array.isArray(fila) && fila[0] ? fila[0] : datos) });
@@ -367,18 +361,9 @@ function FlexPackGrupoFormModal({ grupo, onClose, onSaved, showToast }) {
         </div>
         <label style={S.label}>Nombre *</label>
         <input style={S.input} placeholder="Ej: Perfumes Premium" value={form.nombre} onChange={e => setForm({ ...form, nombre: e.target.value })} autoFocus />
-        <label style={S.label}>Precio por 3 piezas (mezcladas, del mismo grupo)</label>
-        <div style={{ position: "relative" }}>
-          <span style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: GRAY3, fontWeight: 700, fontSize: 15, pointerEvents: "none" }}>$</span>
-          <input style={{ ...S.input, paddingLeft: 22 }} type="number" inputMode="decimal" min="0" step="0.01" placeholder="0.00"
-            value={form.precio_x3} onChange={e => setForm({ ...form, precio_x3: e.target.value.replace(/[^0-9.]/g, "") })} />
-        </div>
-        <label style={S.label}>Precio por 6 piezas (mezcladas, del mismo grupo)</label>
-        <div style={{ position: "relative" }}>
-          <span style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: GRAY3, fontWeight: 700, fontSize: 15, pointerEvents: "none" }}>$</span>
-          <input style={{ ...S.input, paddingLeft: 22 }} type="number" inputMode="decimal" min="0" step="0.01" placeholder="0.00"
-            value={form.precio_x6} onChange={e => setForm({ ...form, precio_x6: e.target.value.replace(/[^0-9.]/g, "") })} />
-        </div>
+        <p style={{ fontSize: 12, color: GRAY3, marginTop: 4, lineHeight: 1.4 }}>
+          No hace falta poner precio aquí — cuando el cliente arme un Flex Pack, se usa automáticamente el precio de 3/6 piezas (o media docena/docena) que ya tiene cada producto que asignes a este grupo.
+        </p>
         <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 14, cursor: "pointer" }}>
           <input type="checkbox" checked={form.activo} onChange={e => setForm({ ...form, activo: e.target.checked })} />
           <span style={{ fontSize: 13, fontWeight: 600 }}>Grupo activo (visible para clientes)</span>
@@ -2656,7 +2641,7 @@ function AdminView() {
   const [bulkEditLoading, setBulkEditLoading] = useState(false);
   const [showBulkDelete, setShowBulkDelete] = useState(false);
   const [bulkDeleteLoading, setBulkDeleteLoading] = useState(false);
-  const emptyBulkEdit = { nombre: "", categoria_id: "", precio_pieza: "", precio_media_docena: "", precio_docena: "", badge: "", descripcion: "", activo: "", destacado: "", tiene_tallas: "", tallas: "", tiene_colores: "", colores: "", distribucion_docena: "", distribucion_eje: "", proveedor_id: "", tiene_stock_fisico: "" };
+  const emptyBulkEdit = { nombre: "", categoria_id: "", precio_pieza: "", precio_media_docena: "", precio_docena: "", badge: "", descripcion: "", activo: "", destacado: "", tiene_tallas: "", tallas: "", tiene_colores: "", colores: "", distribucion_docena: "", distribucion_eje: "", proveedor_id: "", tiene_stock_fisico: "", flexpack_grupo_id: "" };
   const [bulkEdit, setBulkEdit] = useState(emptyBulkEdit);
   const [shippingLabel, setShippingLabel] = useState(null); // pedido para la guía de envío
   const [pedidoAEliminar, setPedidoAEliminar] = useState(null); // pedido pendiente de eliminar (confirmación)
@@ -3439,6 +3424,9 @@ function AdminView() {
     // Proveedor: "" = no tocar; "__ninguno__" = quitarlo (pasa a ser producto propio); si no, el id elegido
     if (bulkEdit.proveedor_id === "__ninguno__") { patch.proveedor_id = null; }
     else if (bulkEdit.proveedor_id !== "") { patch.proveedor_id = Number(bulkEdit.proveedor_id); }
+    // Grupo Flex Pack: "" = no tocar; "__ninguno__" = quitarlo del Flex Pack; si no, el id elegido
+    if (bulkEdit.flexpack_grupo_id === "__ninguno__") { patch.flexpack_grupo_id = null; }
+    else if (bulkEdit.flexpack_grupo_id !== "") { patch.flexpack_grupo_id = Number(bulkEdit.flexpack_grupo_id); }
     // Tengo stock físico (solo aplica de verdad a productos con proveedor, pero no hace daño si se aplica a todos)
     if (bulkEdit.tiene_stock_fisico !== "") patch.tiene_stock_fisico = bulkEdit.tiene_stock_fisico === "1";
     if (Object.keys(patch).length === 0) { alert("Llena al menos un campo para aplicar."); return; }
@@ -5426,6 +5414,12 @@ function AdminView() {
                     <option value="__ninguno__">Quitar proveedor asignado</option>
                     {proveedores.map(pv => <option key={pv.id} value={pv.id}>{pv.nombre}</option>)}
                   </select>
+                  <label style={S.label}>Grupo Flex Pack</label>
+                  <select style={S.input} value={bulkEdit.flexpack_grupo_id} onChange={e => setBulkEdit({...bulkEdit, flexpack_grupo_id: e.target.value})}>
+                    <option value="">No cambiar</option>
+                    <option value="__ninguno__">Quitar de Flex Pack</option>
+                    {flexpackGrupos.map(g => <option key={g.id} value={g.id}>{g.nombre}</option>)}
+                  </select>
                   <label style={S.label}>Tengo stock físico</label>
                   <select style={S.input} value={bulkEdit.tiene_stock_fisico} onChange={e => setBulkEdit({...bulkEdit, tiene_stock_fisico: e.target.value})}>
                     <option value="">No cambiar</option>
@@ -6462,9 +6456,10 @@ function AdminView() {
               </button>
             </div>
             <p style={{ fontSize: 13, color: GRAY3, marginBottom: 24, maxWidth: 640 }}>
-              Un grupo define un precio compartido por 3 y por 6 piezas entre varios productos (ej. perfumes) —
-              el cliente puede mezclar cuáles productos del grupo elige para completar el paquete. Asigna cada
-              producto a su grupo desde el formulario del producto, en "Grupo Flex Pack".
+              Un grupo dice qué productos se pueden mezclar entre sí — el cliente arma su combinación, y el
+              precio se calcula solo, usando el precio de 3/6 piezas (o media docena/docena) que ya tiene cada
+              producto. No hay que poner un precio aparte para el grupo. Asigna cada producto a su grupo desde
+              el formulario del producto, en "Grupo Flex Pack" (o desde "Editar varios" para asignar varios a la vez).
             </p>
             {flexpackGrupos.length === 0 ? (
               <div style={{ background: WHITE, borderRadius: 16, padding: "40px 24px", border: `2px dashed ${GRAY2}`, textAlign: "center" }}>
@@ -6478,6 +6473,7 @@ function AdminView() {
               <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
                 {flexpackGrupos.map(g => {
                   const numProductos = products.filter(p => p.flexpack_grupo_id === g.id).length;
+                  const productosDelGrupo = products.filter(p => p.flexpack_grupo_id === g.id);
                   return (
                     <div key={g.id} style={{ background: WHITE, borderRadius: 14, border: `1px solid ${GRAY2}`, padding: 20 }}>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12 }}>
@@ -6497,16 +6493,13 @@ function AdminView() {
                           </button>
                         </div>
                       </div>
-                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 10, marginTop: 16, paddingTop: 16, borderTop: `1px solid ${GRAY2}` }}>
-                        <div>
-                          <div style={{ fontSize: 20, fontWeight: 900, color: RED }}>{g.precio_x3 != null ? money(g.precio_x3) : "—"}</div>
-                          <div style={{ fontSize: 11, color: GRAY3 }}>Precio x 3 piezas</div>
+                      {numProductos > 0 && (
+                        <div style={{ marginTop: 14, paddingTop: 14, borderTop: `1px solid ${GRAY2}`, display: "flex", flexWrap: "wrap", gap: 6 }}>
+                          {productosDelGrupo.map(p => (
+                            <span key={p.id} style={{ fontSize: 11.5, fontWeight: 600, background: GRAY, borderRadius: 8, padding: "4px 10px" }}>{p.nombre}</span>
+                          ))}
                         </div>
-                        <div>
-                          <div style={{ fontSize: 20, fontWeight: 900, color: RED }}>{g.precio_x6 != null ? money(g.precio_x6) : "—"}</div>
-                          <div style={{ fontSize: 11, color: GRAY3 }}>Precio x 6 piezas</div>
-                        </div>
-                      </div>
+                      )}
                     </div>
                   );
                 })}
