@@ -1120,7 +1120,7 @@ function PanelFlexPack({ grupo, onClose }) {
   const { products, agregarFlexPackAlCarrito, showToast } = useApp();
   const isMobile = useIsMobile();
   const [mostrandoIntro, setMostrandoIntro] = useState(true);
-  const [trackElegido, setTrackElegido] = useState(null); // null | "estandar" | "perfumeria"
+  const [targetElegido, setTargetElegido] = useState(null); // null | { modalidad, pres, piezas, etiqueta, detalle }
   const [cantidades, setCantidades] = useState({}); // { productoId: cantidad }
 
   useEffect(() => {
@@ -1132,51 +1132,54 @@ function PanelFlexPack({ grupo, onClose }) {
   const tieneEstandar = todosLosProductosDelGrupo.some(p => p.modalidad_presentacion !== "perfumeria");
   const tienePerfumeria = todosLosProductosDelGrupo.some(p => p.modalidad_presentacion === "perfumeria");
 
-  // Si el grupo solo tiene una modalidad, no hay nada que elegir -- se salta
-  // directo a armar el paquete, sin mostrar una pantalla con una sola opción.
-  useEffect(() => {
-    if (mostrandoIntro || trackElegido) return;
-    if (tieneEstandar && !tienePerfumeria) setTrackElegido("estandar");
-    else if (tienePerfumeria && !tieneEstandar) setTrackElegido("perfumeria");
-  }, [mostrandoIntro, tieneEstandar, tienePerfumeria]);
+  // Siempre se elige primero la meta exacta (Media Docena, Docena, 3 Piezas o 6
+  // Piezas) -- así el cliente sabe desde el principio qué está armando, sin que
+  // la meta cambie a medio camino ni haya que adivinar.
+  const opciones = [
+    ...(tieneEstandar ? [
+      { modalidad: "estandar", pres: "media", piezas: 6, etiqueta: "Media Docena", detalle: "6 piezas mezcladas como quieras" },
+      { modalidad: "estandar", pres: "docena", piezas: 12, etiqueta: "Docena", detalle: "12 piezas mezcladas como quieras" },
+    ] : []),
+    ...(tienePerfumeria ? [
+      { modalidad: "perfumeria", pres: "media", piezas: 3, etiqueta: "3 Piezas", detalle: "3 piezas mezcladas como quieras" },
+      { modalidad: "perfumeria", pres: "docena", piezas: 6, etiqueta: "6 Piezas", detalle: "6 piezas mezcladas como quieras" },
+    ] : []),
+  ];
 
-  const productosDelGrupo = todosLosProductosDelGrupo.filter(p =>
-    trackElegido === "perfumeria" ? p.modalidad_presentacion === "perfumeria" : p.modalidad_presentacion !== "perfumeria"
-  );
-  // Las metas (3/6 o media docena/docena=6/12) salen de la modalidad elegida --
-  // no hay que configurar nada aparte por grupo.
-  const esPerfumeria = trackElegido === "perfumeria";
-  const metaTier1 = esPerfumeria ? 3 : 6;   // "media" -- 3 piezas, o media docena
-  const metaTier2 = esPerfumeria ? 6 : 12;  // "docena" -- 6 piezas, o docena
+  const productosDelGrupo = targetElegido ? todosLosProductosDelGrupo.filter(p =>
+    targetElegido.modalidad === "perfumeria" ? p.modalidad_presentacion === "perfumeria" : p.modalidad_presentacion !== "perfumeria"
+  ) : [];
+
   const totalPiezas = Object.values(cantidades).reduce((s, c) => s + c, 0);
-  const completo = totalPiezas === metaTier1 || totalPiezas === metaTier2;
-  const meta = totalPiezas < metaTier1 ? metaTier1 : metaTier2;
-  const tierActual = totalPiezas === metaTier1 ? "media" : totalPiezas === metaTier2 ? "docena" : null;
+  const completo = targetElegido ? totalPiezas === targetElegido.piezas : false;
 
-  // El precio del Flex Pack no es un número fijo del grupo -- se suma, producto
-  // por producto, el precio que YA tiene cada uno para esa presentación (media
-  // docena o docena), dividido entre sus piezas, multiplicado por cuántas se
-  // eligieron de ese producto. Así, si un perfume cuesta distinto que otro, el
-  // total simplemente refleja lo que corresponde a cada uno.
-  const precioActual = tierActual ? Object.entries(cantidades).reduce((suma, [productId, cantidad]) => {
+  // El precio no es un número fijo -- se suma, producto por producto, el precio
+  // que YA tiene cada uno para esa presentación (media docena o docena),
+  // dividido entre sus piezas, multiplicado por cuántas se eligieron de ese
+  // producto. Así, si un perfume cuesta distinto que otro, el total simplemente
+  // refleja lo que corresponde a cada uno.
+  const precioActual = targetElegido ? Object.entries(cantidades).reduce((suma, [productId, cantidad]) => {
     if (cantidad <= 0) return suma;
     const prod = productosDelGrupo.find(p => p.id === Number(productId));
     if (!prod) return suma;
-    const piezasPorUnidad = presToPiezas(tierActual, 1, prod);
-    const precioPorPieza = presUnitPrice(prod, tierActual) / piezasPorUnidad;
+    const piezasPorUnidad = presToPiezas(targetElegido.pres, 1, prod);
+    const precioPorPieza = presUnitPrice(prod, targetElegido.pres) / piezasPorUnidad;
     return suma + precioPorPieza * cantidad;
   }, 0) : null;
 
-  const espacioDisponibleGlobal = metaTier2 - totalPiezas;
+  const espacioDisponibleGlobal = targetElegido ? targetElegido.piezas - totalPiezas : 0;
 
   const cambiarCantidad = (productoId, delta) => {
     setCantidades(prev => {
       const actual = prev[productoId] || 0;
       const nueva = Math.max(0, actual + delta);
-      if (delta > 0 && totalPiezas >= metaTier2) return prev; // ya está al tope global
+      if (delta > 0 && totalPiezas >= targetElegido.piezas) return prev; // ya está al tope de la meta elegida
       return { ...prev, [productoId]: nueva };
     });
   };
+
+  const elegirTarget = (opcion) => { setCantidades({}); setTargetElegido(opcion); };
+  const volverAElegir = () => { setTargetElegido(null); setCantidades({}); };
 
   const confirmar = () => {
     if (!completo) return;
@@ -1194,49 +1197,37 @@ function PanelFlexPack({ grupo, onClose }) {
             <div style={{ fontWeight: 900, fontSize: 16, letterSpacing: 0.3 }}>Flex Pack</div>
             <div style={{ fontSize: 12.5, color: GRAY3 }}>Arma tu paquete como quieras</div>
           </div>
-        ) : !trackElegido ? (
+        ) : !targetElegido ? (
           <div style={{ padding: "26px 20px 24px" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}>
               <img src={FLEXPACK_ICON_URL} style={{ width: 24, height: 24, objectFit: "contain", flexShrink: 0 }} />
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontWeight: 900, fontSize: 15.5 }}>¿Qué tipo de Flex Pack?</div>
+                <div style={{ fontWeight: 900, fontSize: 15.5 }}>¿Cuánto quieres armar?</div>
                 <div style={{ fontSize: 11.5, color: GRAY3 }}>{grupo.nombre}</div>
               </div>
               <button onClick={onClose} className="oft-btn-press" style={{ background: GRAY, border: "none", borderRadius: "50%", width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}><X size={15} /></button>
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              {tieneEstandar && (
-                <button onClick={() => setTrackElegido("estandar")} className="oft-btn-press oft-flexpack-track-card" style={{ animationDelay: "0.05s" }}>
-                  <div className="oft-flexpack-track-num">6<span>/</span>12</div>
+              {opciones.map((op, i) => (
+                <button key={op.etiqueta} onClick={() => elegirTarget(op)} className="oft-btn-press oft-flexpack-track-card" style={{ animationDelay: `${0.05 + i * 0.05}s` }}>
+                  <div className="oft-flexpack-track-num">{op.piezas}</div>
                   <div style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
-                    <div style={{ fontWeight: 800, fontSize: 14.5 }}>Media Docena / Docena</div>
-                    <div style={{ fontSize: 11.5, color: GRAY3 }}>Mezcla piezas hasta completar 6 o 12</div>
+                    <div style={{ fontWeight: 800, fontSize: 14.5 }}>{op.etiqueta}</div>
+                    <div style={{ fontSize: 11.5, color: GRAY3 }}>{op.detalle}</div>
                   </div>
                   <ChevronRight size={16} color={GRAY3} style={{ flexShrink: 0 }} />
                 </button>
-              )}
-              {tienePerfumeria && (
-                <button onClick={() => setTrackElegido("perfumeria")} className="oft-btn-press oft-flexpack-track-card" style={{ animationDelay: "0.1s" }}>
-                  <div className="oft-flexpack-track-num">3<span>/</span>6</div>
-                  <div style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
-                    <div style={{ fontWeight: 800, fontSize: 14.5 }}>3 Piezas / 6 Piezas</div>
-                    <div style={{ fontSize: 11.5, color: GRAY3 }}>Mezcla piezas hasta completar 3 o 6</div>
-                  </div>
-                  <ChevronRight size={16} color={GRAY3} style={{ flexShrink: 0 }} />
-                </button>
-              )}
+              ))}
             </div>
           </div>
         ) : (
           <>
             <div style={{ padding: "18px 20px 14px", borderBottom: `1px solid ${GRAY2}`, display: "flex", alignItems: "center", gap: 10 }}>
-              {tieneEstandar && tienePerfumeria && (
-                <button onClick={() => { setTrackElegido(null); setCantidades({}); }} className="oft-btn-press" style={{ background: GRAY, border: "none", borderRadius: "50%", width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}><ArrowLeft size={15} /></button>
-              )}
+              <button onClick={volverAElegir} className="oft-btn-press" style={{ background: GRAY, border: "none", borderRadius: "50%", width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}><ArrowLeft size={15} /></button>
               <img src={FLEXPACK_ICON_URL} style={{ width: 26, height: 26, objectFit: "contain", flexShrink: 0 }} />
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontWeight: 900, fontSize: 15.5 }}>Arma tu Flex Pack</div>
-                <div style={{ fontSize: 11.5, color: GRAY3 }}>{grupo.nombre} · {esPerfumeria ? "3/6 piezas" : "media docena/docena"}</div>
+                <div style={{ fontWeight: 900, fontSize: 15.5 }}>Flex Pack · {targetElegido.etiqueta}</div>
+                <div style={{ fontSize: 11.5, color: GRAY3 }}>{grupo.nombre} · mezcla como quieras</div>
               </div>
               <button onClick={onClose} className="oft-btn-press" style={{ background: GRAY, border: "none", borderRadius: "50%", width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}><X size={15} /></button>
             </div>
@@ -1254,22 +1245,15 @@ function PanelFlexPack({ grupo, onClose }) {
             <div style={{ padding: "16px 20px 20px", borderTop: `1px solid ${GRAY2}`, background: GRAY }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
                 <span style={{ fontSize: 12.5, fontWeight: 700, color: completo ? "#0A9D4F" : GRAY3, display: "flex", alignItems: "center", gap: 5 }}>
-                  {completo && <CheckCircle2Icon />} {completo ? "Flex Pack completo" : `${totalPiezas} de ${meta} piezas`}
+                  {completo && <CheckCircle2Icon />} {completo ? "Flex Pack completo" : `${totalPiezas} de ${targetElegido.piezas} piezas`}
                 </span>
                 {completo && precioActual != null && <span style={{ fontWeight: 900, fontSize: 17, color: RED }}>${precioActual.toFixed(2)}</span>}
               </div>
-              <div style={{ height: 8, borderRadius: 5, background: GRAY2, overflow: "hidden", position: "relative" }}>
-                <div className={completo ? "oft-flexpack-bar-completo" : ""} style={{ height: "100%", width: `${Math.min(100, (totalPiezas / meta) * 100)}%`, background: completo ? "#0A9D4F" : RED, borderRadius: 5, transition: "width 0.35s cubic-bezier(0.16,1,0.3,1)" }} />
-                {meta === metaTier2 && <div style={{ position: "absolute", left: "50%", top: -2, bottom: -2, width: 2, background: WHITE }} />}
+              <div style={{ height: 8, borderRadius: 5, background: GRAY2, overflow: "hidden" }}>
+                <div className={completo ? "oft-flexpack-bar-completo" : ""} style={{ height: "100%", width: `${Math.min(100, (totalPiezas / targetElegido.piezas) * 100)}%`, background: completo ? "#0A9D4F" : RED, borderRadius: 5, transition: "width 0.35s cubic-bezier(0.16,1,0.3,1)" }} />
               </div>
-              {!completo && totalPiezas > 0 && totalPiezas < metaTier1 && (
-                <div style={{ fontSize: 11.5, color: GRAY3, marginTop: 6 }}>Agrega {metaTier1 - totalPiezas} más para completar tu primer Flex Pack (x{metaTier1})</div>
-              )}
-              {!completo && totalPiezas > metaTier1 && (
-                <div style={{ fontSize: 11.5, color: GRAY3, marginTop: 6 }}>Agrega {metaTier2 - totalPiezas} más para llegar al Flex Pack x{metaTier2}</div>
-              )}
-              {totalPiezas === metaTier1 && (
-                <div style={{ fontSize: 11.5, color: GRAY3, marginTop: 6 }}>Puedes seguir agregando hasta {metaTier2} para el siguiente precio</div>
+              {!completo && (
+                <div style={{ fontSize: 11.5, color: GRAY3, marginTop: 6 }}>Agrega {targetElegido.piezas - totalPiezas} más para completar tu {targetElegido.etiqueta}</div>
               )}
               <button onClick={confirmar} disabled={!completo} className="oft-btn-press"
                 style={{ width: "100%", marginTop: 12, padding: 14, borderRadius: 12, border: "none", background: completo ? RED : GRAY2, color: completo ? WHITE : GRAY3, fontWeight: 800, fontSize: 14.5, cursor: completo ? "pointer" : "not-allowed", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
