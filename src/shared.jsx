@@ -439,8 +439,17 @@ export function StatusBadge({ index, retiro = false }) {
 }
 
 const PRES_PIEZAS = { pieza: 1, media: 6, docena: 12 };
+// Modalidad nueva para productos costosos que se venden distinto (perfumes,
+// por ejemplo): en vez de Media Docena/Docena (6/12), usa 3 Piezas/6 Piezas.
+// Los productos existentes no se tocan -- siguen en 'estandar' por defecto.
+const PRES_PIEZAS_PERFUMERIA = { pieza: 1, media: 3, docena: 6 };
 
-function presLabelPlural(pres, count) {
+function presLabelPlural(pres, count, producto = null) {
+  if (producto?.modalidad_presentacion === "perfumeria") {
+    if (pres === "pieza") return count === 1 ? "pieza" : "piezas";
+    if (pres === "media") return "3 piezas";
+    return "6 piezas";
+  }
   if (pres === "pieza") return count === 1 ? "pieza" : "piezas";
   if (pres === "media") return count === 1 ? "½ docena" : "½ docenas";
   return count === 1 ? "docena" : "docenas";
@@ -682,8 +691,14 @@ export function comprimirImagen(file, maxDimension = 1400, calidad = 0.82, forza
   });
 }
 
-function presToPiezas(pres, count) {
-  return (PRES_PIEZAS[pres] || 1) * count;
+// "producto" es opcional -- si no se pasa, o si su modalidad es la de siempre,
+// se comporta exactamente igual que antes (docena=12, media=6 piezas). Si el
+// producto está marcado como 'perfumeria', docena/media pasan a valer 6 y 3
+// piezas -- son los mismos nombres de campo por dentro, solo cambia cuántas
+// piezas representa cada uno para ESE producto en particular.
+function presToPiezas(pres, count, producto = null) {
+  const tabla = producto?.modalidad_presentacion === "perfumeria" ? PRES_PIEZAS_PERFUMERIA : PRES_PIEZAS;
+  return (tabla[pres] || 1) * count;
 }
 
 function parseDistribucion(json) {
@@ -820,10 +835,11 @@ function ModalAvisoStock({ aviso, onConfirmar, onCancelar }) {
 // una presentación por defecto que luego hay que cambiar.
 function ModalElegirPresentacion({ producto, onElegir, onCerrar }) {
   useLockBodyScroll();
+  const esPerfumeria = producto.modalidad_presentacion === "perfumeria";
   const opciones = [
     { pres: "pieza", etiqueta: "Pieza", precio: producto.precio_pieza, detalle: "1 unidad" },
-    { pres: "media", etiqueta: "Media Docena", precio: producto.precio_media_docena, detalle: "6 unidades" },
-    { pres: "docena", etiqueta: "Docena", precio: producto.precio_docena, detalle: "12 unidades" },
+    { pres: "media", etiqueta: esPerfumeria ? "3 Piezas" : "Media Docena", precio: producto.precio_media_docena, detalle: esPerfumeria ? "3 unidades" : "6 unidades" },
+    { pres: "docena", etiqueta: esPerfumeria ? "6 Piezas" : "Docena", precio: producto.precio_docena, detalle: esPerfumeria ? "6 unidades" : "12 unidades" },
   ];
   return createPortal(
     <div className="oft-overlay" style={S.overlay} onClick={onCerrar}>
@@ -998,7 +1014,7 @@ export function CrearPedidoView({ onCreado } = {}) {
   // Cuántas piezas de este producto ya están en el carrito (en otras líneas) -- para
   // sumarlas antes de avisar, por si ya se agregó en más de una presentación.
   const piezasYaEnCarrito = (productId, excluirIdx = -1) =>
-    items.reduce((s, it, i) => i === excluirIdx || it.product.id !== productId ? s : s + presToPiezas(it.pres, it.count), 0);
+    items.reduce((s, it, i) => i === excluirIdx || it.product.id !== productId ? s : s + presToPiezas(it.pres, it.count, it.product), 0);
 
   // Solo INFORMA si algo excede el stock -- ya no decide qué hacer (antes usaba
   // confirm() del navegador, que bloquea todo; ahora se muestra un modal propio,
@@ -1020,7 +1036,7 @@ export function CrearPedidoView({ onCreado } = {}) {
   const addItem = (product, pres = "docena") => {
     const ejecutar = () => { setItems(prev => [...prev, { product, pres, count: 1 }]); setSearch(""); };
     // Se revisa contra el stock real antes de agregarlo, no solo cuando ya está en 0.
-    const chequeo = checarStock(product, presToPiezas(pres, 1));
+    const chequeo = checarStock(product, presToPiezas(pres, 1, product));
     if (chequeo.excede) { setAvisoStock({ ...chequeo, onConfirmar: ejecutar }); return; }
     ejecutar();
   };
@@ -1044,14 +1060,14 @@ export function CrearPedidoView({ onCreado } = {}) {
       }));
     };
     if (field === "pres") {
-      const chequeo = checarStock(it.product, presToPiezas(val, it.count), idx);
+      const chequeo = checarStock(it.product, presToPiezas(val, it.count, it.product), idx);
       if (chequeo.excede) { setAvisoStock({ ...chequeo, onConfirmar: ejecutar }); return; }
     }
     if (field === "count") {
       const nuevoCount = Math.max(1, val);
       // Solo avisa si la cantidad SUBE (bajar cantidad nunca puede exceder el stock)
       if (nuevoCount > it.count) {
-        const chequeo = checarStock(it.product, presToPiezas(it.pres, nuevoCount), idx);
+        const chequeo = checarStock(it.product, presToPiezas(it.pres, nuevoCount, it.product), idx);
         if (chequeo.excede) { setAvisoStock({ ...chequeo, onConfirmar: ejecutar }); return; }
       }
     }
@@ -1190,7 +1206,7 @@ export function CrearPedidoView({ onCreado } = {}) {
           const distribucionValida = it.distribucionPersonalizada && variantesDisponibles.some(v => Number(it.distribucionPersonalizada[v]) > 0);
           const creado = await sb.post("pedido_items", {
             pedido_id: pedidoId, producto_id: it.product.id, nombre_producto: it.product.nombre,
-            cantidad: presToPiezas(it.pres, it.count), precio_unitario: itemUnitPrice(it),
+            cantidad: presToPiezas(it.pres, it.count, it.product), precio_unitario: itemUnitPrice(it),
             subtotal: itemTotal(it), presentacion: it.pres,
             distribucion_tallas: distribucionValida ? JSON.stringify({ eje, cantidades: it.distribucionPersonalizada }) : null,
           });
@@ -1262,8 +1278,8 @@ export function CrearPedidoView({ onCreado } = {}) {
           }
           return [{
             nombre: it.product.nombre, referencia: it.product.referencia,
-            presentacion: `${it.count} ${presLabelPlural(it.pres, it.count)}`,
-            piezas: presToPiezas(it.pres, it.count),
+            presentacion: `${it.count} ${presLabelPlural(it.pres, it.count, it.product)}`,
+            piezas: presToPiezas(it.pres, it.count, it.product),
             precioUnit: itemUnitPrice(it),
             subtotal: itemTotal(it),
           }];
@@ -1418,7 +1434,7 @@ export function CrearPedidoView({ onCreado } = {}) {
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontWeight: 700, fontSize: 13 }}>{it.product.nombre}</div>
                       <div style={{ fontSize: 11, color: GRAY3 }}>
-                        {it.count} × {money(precioActual)} {presLabelPlural(it.pres, it.count)}
+                        {it.count} × {money(precioActual)} {presLabelPlural(it.pres, it.count, it.product)}
                         {it.product.stock_actualizado_at && (
                           <span style={{ fontWeight: 800, color: Number(it.product.stock) <= 0 ? RED : Number(it.product.stock) <= 5 ? "#856404" : "#0F6E56" }}> · Stock: {it.product.stock}</span>
                         )}
@@ -1430,8 +1446,8 @@ export function CrearPedidoView({ onCreado } = {}) {
                   <div style={{ display: "flex", gap: 8 }}>
                     <select value={it.pres} onChange={e => updateItem(idx, "pres", e.target.value)} style={{ flex: 1, border: `1.5px solid ${GRAY2}`, borderRadius: 8, padding: "6px 8px", fontSize: 13, fontFamily: "inherit" }}>
                       <option value="pieza">Pieza (${it.product.precio_pieza})</option>
-                      <option value="media">½ Docena (${it.product.precio_media_docena})</option>
-                      <option value="docena">Docena (${it.product.precio_docena})</option>
+                      <option value="media">{it.product.modalidad_presentacion === "perfumeria" ? "3 Piezas" : "½ Docena"} (${it.product.precio_media_docena})</option>
+                      <option value="docena">{it.product.modalidad_presentacion === "perfumeria" ? "6 Piezas" : "Docena"} (${it.product.precio_docena})</option>
                     </select>
                     <div style={{ display: "flex", alignItems: "center", gap: 6, border: `1.5px solid ${GRAY2}`, borderRadius: 8, padding: "2px 6px" }}>
                       <button onClick={() => updateItem(idx, "count", Math.max(1, it.count - 1))} style={{ border: "none", background: "none", fontSize: 18, cursor: "pointer", color: it.count <= 1 ? GRAY3 : BLACK, width: 24 }}>−</button>
