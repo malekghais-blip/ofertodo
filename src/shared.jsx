@@ -612,6 +612,37 @@ export function imagenOptimizada(url, tamano = 400, calidad = 75) {
 // para casos como los banners del carrusel, donde un "SVG" puede en realidad ser una
 // composición de diseño pesada (con una foto incrustada adentro) de varios MB, y
 // Supabase no sabe comprimir SVGs para servirlos más livianos como sí hace con fotos.
+// Agrega un canvas alto (una factura, guía, etc. ya dibujada completa) a un PDF,
+// partiéndolo en páginas de verdad -- cada página recibe SU PROPIO recorte del
+// canvas original, en vez de dibujar la imagen completa una y otra vez corrida
+// hacia arriba (que es como estaba antes). Esa técnica anterior depende de que
+// el visor de PDF recorte bien la parte que no cabe en cada página, y algunos
+// visores de PDF en celular no lo hacen perfecto -- se ve como que la última
+// línea (ej. un precio) se repite al inicio de la siguiente página. Recortando
+// el canvas de antemano, cada página es una imagen aparte y no hay nada que
+// un visor pueda "dejar pasar" de una página a la otra.
+export function agregarCanvasComoPaginasPdf(pdf, canvas, { pageW = 210, pageH = 297, margin = 10 } = {}) {
+  const imgW = pageW - margin * 2;
+  const pxPorMm = canvas.width / imgW; // cuántos píxeles del canvas equivalen a 1mm en el PDF
+  const altoUtilPxPorPagina = (pageH - margin * 2) * pxPorMm;
+
+  let procesadoPx = 0;
+  let primeraPagina = true;
+  while (procesadoPx < canvas.height) {
+    const altoEstaPaginaPx = Math.min(altoUtilPxPorPagina, canvas.height - procesadoPx);
+    const recorte = document.createElement("canvas");
+    recorte.width = canvas.width;
+    recorte.height = altoEstaPaginaPx;
+    recorte.getContext("2d").drawImage(canvas, 0, procesadoPx, canvas.width, altoEstaPaginaPx, 0, 0, canvas.width, altoEstaPaginaPx);
+
+    if (!primeraPagina) pdf.addPage();
+    pdf.addImage(recorte.toDataURL("image/png"), "PNG", margin, margin, imgW, altoEstaPaginaPx / pxPorMm);
+
+    procesadoPx += altoEstaPaginaPx;
+    primeraPagina = false;
+  }
+}
+
 export function comprimirImagen(file, maxDimension = 1400, calidad = 0.82, forzarRaster = false) {
   return new Promise((resolve) => {
     const esSvg = file.type === "image/svg+xml";
@@ -2019,23 +2050,9 @@ function InvoiceModal({ invoice, onClose }) {
     setBusy(true);
     try {
       const canvas = await renderCanvas();
-      const imgData = canvas.toDataURL("image/png");
       const { jsPDF } = window.jspdf;
       const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
-      const pageW = 210, pageH = 297, margin = 10;
-      const imgW = pageW - margin * 2;
-      const imgH = (canvas.height * imgW) / canvas.width;
-      // Si la factura es más alta que una página, la parte en varias páginas
-      let heightLeft = imgH;
-      let position = margin;
-      pdf.addImage(imgData, "PNG", margin, position, imgW, imgH);
-      heightLeft -= (pageH - margin * 2);
-      while (heightLeft > 0) {
-        pdf.addPage();
-        position = margin - (imgH - heightLeft);
-        pdf.addImage(imgData, "PNG", margin, position, imgW, imgH);
-        heightLeft -= (pageH - margin * 2);
-      }
+      agregarCanvasComoPaginasPdf(pdf, canvas);
       pdf.save(`${invoice.codigo}.pdf`);
     } catch(e) { alert("Error generando PDF: " + e.message); }
     setBusy(false);
@@ -2250,8 +2267,7 @@ export function ShippingLabelModal({ order, onClose, onGuiaImpresa }) {
       const canvas = await renderCanvas();
       const { jsPDF } = window.jspdf;
       const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
-      const imgW = 190, imgH = (canvas.height * imgW) / canvas.width;
-      pdf.addImage(canvas.toDataURL("image/png"), "PNG", 10, 10, imgW, imgH);
+      agregarCanvasComoPaginasPdf(pdf, canvas);
       pdf.save(`GUIA-${order.codigo}.pdf`);
       marcarComoImpresa();
     } catch(e) { alert("Error generando PDF: " + e.message); }
