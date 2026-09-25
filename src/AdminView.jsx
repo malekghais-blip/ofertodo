@@ -2559,7 +2559,7 @@ function AdminView() {
   const [bulkLoading, setBulkLoading] = useState(false);
   const [newCatName, setNewCatName] = useState("");
   const [catUploading, setCatUploading] = useState(null); // id de categoría subiendo icono
-  const emptyProd = { referencia: "", nombre: "", descripcion: "", categoria_id: categories[0]?.id || 1, precio_pieza: "", precio_media_docena: "", precio_docena: "", badge: "", activo: true, destacado: false, imagen_url: "", tiene_tallas: false, tiene_colores: false, tallas: "", colores: "", distribucion_docena: "", distribucion_eje: "", proveedor_id: null, venta_por_unidad: false, tiene_stock_fisico: false, notas_fragancia: "" };
+  const emptyProd = { referencia: "", nombre: "", descripcion: "", categoria_id: categories[0]?.id || 1, precio_pieza: "", precio_media_docena: "", precio_docena: "", badge: "", activo: true, destacado: false, imagen_url: "", tiene_tallas: false, tiene_colores: false, tallas: "", colores: "", distribucion_docena: "", distribucion_eje: "", proveedor_id: null, venta_por_unidad: false, tiene_stock_fisico: false, notas_fragancia: "", modalidad_presentacion: "estandar" };
   const [prodForm, setProdForm] = useState(emptyProd);
   const fileInputRef = useRef(null);
   const catFileRef = useRef(null);
@@ -3148,7 +3148,7 @@ function AdminView() {
   // ── GUARDAR / EDITAR PRODUCTO ──────────────────────────────────
   const openNewProduct = () => { setProdForm(emptyProd); setEditingId(null); setShowProdForm(true); setShowBulk(false); };
   const openEditProduct = (p) => {
-    setProdForm({ referencia: p.referencia || "", nombre: p.nombre || "", descripcion: p.descripcion || "", categoria_id: p.categoria_id || categories[0]?.id || 1, precio_pieza: p.precio_pieza, precio_media_docena: p.precio_media_docena, precio_docena: p.precio_docena, badge: p.badge || "", activo: p.activo, destacado: p.destacado || false, imagen_url: p.imagen_url || "", tiene_tallas: p.tiene_tallas || false, tiene_colores: p.tiene_colores || false, tallas: p.tallas || "", colores: p.colores || "", distribucion_docena: p.distribucion_docena || "", distribucion_eje: p.distribucion_eje || "", proveedor_id: p.proveedor_id || null, venta_por_unidad: p.venta_por_unidad || false, tiene_stock_fisico: p.tiene_stock_fisico || false, notas_fragancia: p.notas_fragancia || "" });
+    setProdForm({ referencia: p.referencia || "", nombre: p.nombre || "", descripcion: p.descripcion || "", categoria_id: p.categoria_id || categories[0]?.id || 1, precio_pieza: p.precio_pieza, precio_media_docena: p.precio_media_docena, precio_docena: p.precio_docena, badge: p.badge || "", activo: p.activo, destacado: p.destacado || false, imagen_url: p.imagen_url || "", tiene_tallas: p.tiene_tallas || false, tiene_colores: p.tiene_colores || false, tallas: p.tallas || "", colores: p.colores || "", distribucion_docena: p.distribucion_docena || "", distribucion_eje: p.distribucion_eje || "", proveedor_id: p.proveedor_id || null, venta_por_unidad: p.venta_por_unidad || false, tiene_stock_fisico: p.tiene_stock_fisico || false, notas_fragancia: p.notas_fragancia || "", modalidad_presentacion: p.modalidad_presentacion || "estandar" });
     setEditingId(p.id);
     setShowProdForm(true);
     setShowBulk(false);
@@ -4961,8 +4961,21 @@ function AdminView() {
                   {[["referencia","Referencia"],["nombre","Nombre del producto"],["badge","Badge (NUEVO, OFERTA, etc)"]].map(([k,l]) => (
                     <div key={k}><label style={S.label}>{l}</label><input style={S.input} value={prodForm[k]} onChange={e => setProdForm({...prodForm,[k]:e.target.value})} /></div>
                   ))}
+                  <div style={{ gridColumn: "1 / -1" }}>
+                    <label style={S.label}>Modalidad de venta</label>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button type="button" onClick={() => setProdForm({ ...prodForm, modalidad_presentacion: "estandar" })} className="oft-btn-press"
+                        style={{ flex: 1, padding: "10px 12px", borderRadius: 10, border: `1.5px solid ${prodForm.modalidad_presentacion !== "perfumeria" ? RED : GRAY2}`, background: prodForm.modalidad_presentacion !== "perfumeria" ? "#FDECEC" : WHITE, color: prodForm.modalidad_presentacion !== "perfumeria" ? RED : GRAY3, fontWeight: 700, fontSize: 13, cursor: "pointer", textAlign: "left" }}>
+                        Estándar<div style={{ fontSize: 11, fontWeight: 500, marginTop: 2 }}>Pieza / Media Docena / Docena</div>
+                      </button>
+                      <button type="button" onClick={() => setProdForm({ ...prodForm, modalidad_presentacion: "perfumeria" })} className="oft-btn-press"
+                        style={{ flex: 1, padding: "10px 12px", borderRadius: 10, border: `1.5px solid ${prodForm.modalidad_presentacion === "perfumeria" ? RED : GRAY2}`, background: prodForm.modalidad_presentacion === "perfumeria" ? "#FDECEC" : WHITE, color: prodForm.modalidad_presentacion === "perfumeria" ? RED : GRAY3, fontWeight: 700, fontSize: 13, cursor: "pointer", textAlign: "left" }}>
+                        Perfumería<div style={{ fontSize: 11, fontWeight: 500, marginTop: 2 }}>Pieza / 3 Piezas / 6 Piezas</div>
+                      </button>
+                    </div>
+                  </div>
                   {/* Campos de precio: solo números y punto decimal */}
-                  {[["precio_pieza","Precio x pieza"],["precio_media_docena","Precio x media docena"],["precio_docena","Precio x docena"]].map(([k,l]) => (
+                  {[["precio_pieza","Precio x pieza"],["precio_media_docena", prodForm.modalidad_presentacion === "perfumeria" ? "Precio x 3 piezas" : "Precio x media docena"],["precio_docena", prodForm.modalidad_presentacion === "perfumeria" ? "Precio x 6 piezas" : "Precio x docena"]].map(([k,l]) => (
                     <div key={k}>
                       <label style={S.label}>{l}</label>
                       <div style={{ position: "relative" }}>
