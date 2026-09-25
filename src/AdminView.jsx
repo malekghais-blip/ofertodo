@@ -9,7 +9,7 @@ import {
   TrendingUp, Wallet, ShoppingBag, Pencil as PencilIcon, Save,
   Building2, MapPin as MapPinIcon, Send, FilePlus, Download, FileText, Receipt,
   Calendar as CalendarIcon, Eye, EyeOff, Share2, AlertTriangle, ChevronRight,
-  ArrowUpRight, ArrowDownRight, MousePointerClick, Target, Printer
+  ArrowUpRight, ArrowDownRight, MousePointerClick, Target, Printer, Boxes
 } from "lucide-react";
 import {
   BLACK, CategoryIcon, ChipAdder, ClienteFormModal, CrearPedidoView, SelectorColores,
@@ -313,6 +313,80 @@ function ProveedorFormModal({ proveedor, onClose, onSaved, showToast }) {
           <button onClick={() => !guardando && onClose()} disabled={guardando} className="oft-btn-press" style={{ ...S.btnOutline, flex: 1, justifyContent: "center" }}>Cancelar</button>
           <button onClick={guardar} disabled={guardando} className="oft-btn-press" style={{ ...S.btnRed, flex: 1, justifyContent: "center", opacity: guardando ? 0.7 : 1 }}>
             {guardando ? "Guardando..." : esEdicion ? "Guardar cambios" : "Crear proveedor"}
+          </button>
+        </div>
+      </div>
+    </div>
+  , document.body);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  CREAR / EDITAR GRUPO FLEX PACK
+// ═══════════════════════════════════════════════════════════════
+function FlexPackGrupoFormModal({ grupo, onClose, onSaved, showToast }) {
+  useLockBodyScroll();
+  const esEdicion = !!grupo?.id;
+  const [form, setForm] = useState({
+    nombre: grupo?.nombre || "", precio_x3: grupo?.precio_x3 ?? "", precio_x6: grupo?.precio_x6 ?? "",
+    activo: grupo?.activo ?? true,
+  });
+  const [guardando, setGuardando] = useState(false);
+
+  const guardar = async () => {
+    if (!form.nombre.trim()) { showToast("Escribe el nombre del grupo"); return; }
+    setGuardando(true);
+    try {
+      const datos = {
+        nombre: form.nombre.trim(),
+        precio_x3: form.precio_x3 === "" ? null : Number(form.precio_x3),
+        precio_x6: form.precio_x6 === "" ? null : Number(form.precio_x6),
+        activo: form.activo,
+      };
+      if (esEdicion) {
+        const fila = await sb.patch("flexpack_grupos", grupo.id, datos);
+        onSaved({ ...grupo, ...(Array.isArray(fila) && fila[0] ? fila[0] : datos) });
+        showToast("Grupo actualizado");
+      } else {
+        const fila = await sb.post("flexpack_grupos", datos);
+        onSaved(Array.isArray(fila) && fila[0] ? fila[0] : fila);
+        showToast("Grupo creado");
+      }
+      onClose();
+    } catch(e) {
+      showToast("Error: " + (e.message || "no se pudo guardar"));
+    }
+    setGuardando(false);
+  };
+
+  return createPortal(
+    <div className="oft-overlay" style={S.overlay} onClick={() => !guardando && onClose()}>
+      <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 16, maxWidth: 420, width: "92%", padding: 24 }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+          <div style={{ fontWeight: 800, fontSize: 18 }}>{esEdicion ? "Editar grupo Flex Pack" : "Nuevo grupo Flex Pack"}</div>
+          <button onClick={() => !guardando && onClose()} style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}><X size={22} /></button>
+        </div>
+        <label style={S.label}>Nombre *</label>
+        <input style={S.input} placeholder="Ej: Perfumes Premium" value={form.nombre} onChange={e => setForm({ ...form, nombre: e.target.value })} autoFocus />
+        <label style={S.label}>Precio por 3 piezas (mezcladas, del mismo grupo)</label>
+        <div style={{ position: "relative" }}>
+          <span style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: GRAY3, fontWeight: 700, fontSize: 15, pointerEvents: "none" }}>$</span>
+          <input style={{ ...S.input, paddingLeft: 22 }} type="number" inputMode="decimal" min="0" step="0.01" placeholder="0.00"
+            value={form.precio_x3} onChange={e => setForm({ ...form, precio_x3: e.target.value.replace(/[^0-9.]/g, "") })} />
+        </div>
+        <label style={S.label}>Precio por 6 piezas (mezcladas, del mismo grupo)</label>
+        <div style={{ position: "relative" }}>
+          <span style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: GRAY3, fontWeight: 700, fontSize: 15, pointerEvents: "none" }}>$</span>
+          <input style={{ ...S.input, paddingLeft: 22 }} type="number" inputMode="decimal" min="0" step="0.01" placeholder="0.00"
+            value={form.precio_x6} onChange={e => setForm({ ...form, precio_x6: e.target.value.replace(/[^0-9.]/g, "") })} />
+        </div>
+        <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 14, cursor: "pointer" }}>
+          <input type="checkbox" checked={form.activo} onChange={e => setForm({ ...form, activo: e.target.checked })} />
+          <span style={{ fontSize: 13, fontWeight: 600 }}>Grupo activo (visible para clientes)</span>
+        </label>
+        <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
+          <button onClick={() => !guardando && onClose()} disabled={guardando} className="oft-btn-press" style={{ ...S.btnOutline, flex: 1, justifyContent: "center" }}>Cancelar</button>
+          <button onClick={guardar} disabled={guardando} className="oft-btn-press" style={{ ...S.btnRed, flex: 1, justifyContent: "center", opacity: guardando ? 0.7 : 1 }}>
+            {guardando ? "Guardando..." : esEdicion ? "Guardar cambios" : "Crear grupo"}
           </button>
         </div>
       </div>
@@ -2559,7 +2633,7 @@ function AdminView() {
   const [bulkLoading, setBulkLoading] = useState(false);
   const [newCatName, setNewCatName] = useState("");
   const [catUploading, setCatUploading] = useState(null); // id de categoría subiendo icono
-  const emptyProd = { referencia: "", nombre: "", descripcion: "", categoria_id: categories[0]?.id || 1, precio_pieza: "", precio_media_docena: "", precio_docena: "", badge: "", activo: true, destacado: false, imagen_url: "", tiene_tallas: false, tiene_colores: false, tallas: "", colores: "", distribucion_docena: "", distribucion_eje: "", proveedor_id: null, venta_por_unidad: false, tiene_stock_fisico: false, notas_fragancia: "", modalidad_presentacion: "estandar" };
+  const emptyProd = { referencia: "", nombre: "", descripcion: "", categoria_id: categories[0]?.id || 1, precio_pieza: "", precio_media_docena: "", precio_docena: "", badge: "", activo: true, destacado: false, imagen_url: "", tiene_tallas: false, tiene_colores: false, tallas: "", colores: "", distribucion_docena: "", distribucion_eje: "", proveedor_id: null, venta_por_unidad: false, tiene_stock_fisico: false, notas_fragancia: "", modalidad_presentacion: "estandar", flexpack_grupo_id: null };
   const [prodForm, setProdForm] = useState(emptyProd);
   const fileInputRef = useRef(null);
   const catFileRef = useRef(null);
@@ -2626,6 +2700,9 @@ function AdminView() {
   // ── RETORNOS ──
   const [retornos, setRetornos] = useState([]);
   const [proveedores, setProveedores] = useState([]); // proveedores externos (productos que no son propios)
+  const [flexpackGrupos, setFlexpackGrupos] = useState([]); // grupos de Flex Pack (precio compartido x3/x6)
+  const [grupoFlexpackForm, setGrupoFlexpackForm] = useState(null); // null | {} (crear) | {id,...} (editar)
+  const [grupoFlexpackAEliminar, setGrupoFlexpackAEliminar] = useState(null); // grupo a eliminar (confirmación)
   const [retornoForm, setRetornoForm] = useState(null); // null | objeto del formulario
   const [guardandoRetorno, setGuardandoRetorno] = useState(false);
   const [busquedaRetorno, setBusquedaRetorno] = useState("");
@@ -2656,6 +2733,8 @@ function AdminView() {
         sb.get("retornos", "?order=created_at.desc").then(d => setRetornos(d || [])).catch(() => {});
         // Cargar proveedores
         sb.get("proveedores", "?order=nombre.asc").then(d => setProveedores(d || [])).catch(() => {});
+        // Cargar grupos de Flex Pack
+        sb.get("flexpack_grupos", "?order=nombre.asc").then(d => setFlexpackGrupos(d || [])).catch(() => {});
         // Cargar items de cada pedido para estadísticas de mejores productos
         const ordersWithItems = await Promise.all(ordersData.map(async o => {
           const items = await sb.get("pedido_items", `?pedido_id=eq.${o.id}`).catch(() => []);
@@ -3148,7 +3227,7 @@ function AdminView() {
   // ── GUARDAR / EDITAR PRODUCTO ──────────────────────────────────
   const openNewProduct = () => { setProdForm(emptyProd); setEditingId(null); setShowProdForm(true); setShowBulk(false); };
   const openEditProduct = (p) => {
-    setProdForm({ referencia: p.referencia || "", nombre: p.nombre || "", descripcion: p.descripcion || "", categoria_id: p.categoria_id || categories[0]?.id || 1, precio_pieza: p.precio_pieza, precio_media_docena: p.precio_media_docena, precio_docena: p.precio_docena, badge: p.badge || "", activo: p.activo, destacado: p.destacado || false, imagen_url: p.imagen_url || "", tiene_tallas: p.tiene_tallas || false, tiene_colores: p.tiene_colores || false, tallas: p.tallas || "", colores: p.colores || "", distribucion_docena: p.distribucion_docena || "", distribucion_eje: p.distribucion_eje || "", proveedor_id: p.proveedor_id || null, venta_por_unidad: p.venta_por_unidad || false, tiene_stock_fisico: p.tiene_stock_fisico || false, notas_fragancia: p.notas_fragancia || "", modalidad_presentacion: p.modalidad_presentacion || "estandar" });
+    setProdForm({ referencia: p.referencia || "", nombre: p.nombre || "", descripcion: p.descripcion || "", categoria_id: p.categoria_id || categories[0]?.id || 1, precio_pieza: p.precio_pieza, precio_media_docena: p.precio_media_docena, precio_docena: p.precio_docena, badge: p.badge || "", activo: p.activo, destacado: p.destacado || false, imagen_url: p.imagen_url || "", tiene_tallas: p.tiene_tallas || false, tiene_colores: p.tiene_colores || false, tallas: p.tallas || "", colores: p.colores || "", distribucion_docena: p.distribucion_docena || "", distribucion_eje: p.distribucion_eje || "", proveedor_id: p.proveedor_id || null, venta_por_unidad: p.venta_por_unidad || false, tiene_stock_fisico: p.tiene_stock_fisico || false, notas_fragancia: p.notas_fragancia || "", modalidad_presentacion: p.modalidad_presentacion || "estandar", flexpack_grupo_id: p.flexpack_grupo_id || null });
     setEditingId(p.id);
     setShowProdForm(true);
     setShowBulk(false);
@@ -3924,6 +4003,7 @@ function AdminView() {
     ["retornos", "Retornos", RefreshCw],
     ["analisis", "Análisis Stock", TrendingUp],
     ["proveedores", "Proveedores", Building2],
+    ["flexpack", "Flex Pack", Boxes],
     ["retirolocal", "Retiro en Local", Home],
     ["reporteventas", "Reporte de Ventas", FileText],
     ["shipping", "Envíos", Truck],
@@ -5006,6 +5086,12 @@ function AdminView() {
                     <select style={{ ...S.input }} value={prodForm.proveedor_id || ""} onChange={e => setProdForm({...prodForm, proveedor_id: e.target.value ? Number(e.target.value) : null})}>
                       <option value="">Sin proveedor asignado</option>
                       {proveedores.map(pv => <option key={pv.id} value={pv.id}>{pv.nombre}</option>)}
+                    </select>
+                  </div>
+                  <div><label style={S.label}>Grupo Flex Pack (opcional — deja mezclar este producto con otros del mismo grupo)</label>
+                    <select style={{ ...S.input }} value={prodForm.flexpack_grupo_id || ""} onChange={e => setProdForm({...prodForm, flexpack_grupo_id: e.target.value ? Number(e.target.value) : null})}>
+                      <option value="">No participa en Flex Pack</option>
+                      {flexpackGrupos.map(g => <option key={g.id} value={g.id}>{g.nombre}</option>)}
                     </select>
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: 10, background: WHITE, border: `1.5px solid ${GRAY2}`, borderRadius: 10, padding: "10px 14px" }}>
@@ -6366,6 +6452,108 @@ function AdminView() {
         )}
 
         {/* ═══════════ RETIRO EN LOCAL ═══════════ */}
+        {/* ═══════════ GRUPOS FLEX PACK ═══════════ */}
+        {tab === "flexpack" && esAdminCompleto && (
+          <>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12, marginBottom: 8 }}>
+              <div style={{ fontSize: 22, fontWeight: 900, display: "flex", alignItems: "center", gap: 10 }}><Boxes size={24} color={RED} /> Grupos Flex Pack</div>
+              <button onClick={() => setGrupoFlexpackForm({})} className="oft-btn-press" style={{ ...S.btnRed, padding: "10px 18px", fontSize: 14 }}>
+                <Plus size={16} /> Nuevo grupo
+              </button>
+            </div>
+            <p style={{ fontSize: 13, color: GRAY3, marginBottom: 24, maxWidth: 640 }}>
+              Un grupo define un precio compartido por 3 y por 6 piezas entre varios productos (ej. perfumes) —
+              el cliente puede mezclar cuáles productos del grupo elige para completar el paquete. Asigna cada
+              producto a su grupo desde el formulario del producto, en "Grupo Flex Pack".
+            </p>
+            {flexpackGrupos.length === 0 ? (
+              <div style={{ background: WHITE, borderRadius: 16, padding: "40px 24px", border: `2px dashed ${GRAY2}`, textAlign: "center" }}>
+                <div style={{ width: 64, height: 64, borderRadius: "50%", background: GRAY, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
+                  <Boxes size={30} color={GRAY3} strokeWidth={1.5} />
+                </div>
+                <div style={{ fontWeight: 800, fontSize: 17, marginBottom: 6 }}>Aún no tienes grupos Flex Pack</div>
+                <p style={{ fontSize: 14, color: GRAY3 }}>Créalos aquí, y luego asigna tus perfumes (u otros productos) a cada uno.</p>
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                {flexpackGrupos.map(g => {
+                  const numProductos = products.filter(p => p.flexpack_grupo_id === g.id).length;
+                  return (
+                    <div key={g.id} style={{ background: WHITE, borderRadius: 14, border: `1px solid ${GRAY2}`, padding: 20 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12 }}>
+                        <div>
+                          <div style={{ fontWeight: 800, fontSize: 17, display: "flex", alignItems: "center", gap: 8 }}>
+                            {g.nombre}
+                            {!g.activo && <span style={{ fontSize: 10, fontWeight: 800, background: GRAY, color: GRAY3, padding: "2px 8px", borderRadius: 10 }}>INACTIVO</span>}
+                          </div>
+                          <div style={{ fontSize: 13, color: GRAY3, marginTop: 2 }}>{numProductos} producto{numProductos !== 1 ? "s" : ""} en este grupo</div>
+                        </div>
+                        <div style={{ display: "flex", gap: 8 }}>
+                          <button onClick={() => setGrupoFlexpackForm(g)} className="oft-btn-press" style={{ background: "none", border: `1.5px solid ${BLACK}`, color: BLACK, borderRadius: 8, padding: "8px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                            <PencilIcon size={13} /> Editar
+                          </button>
+                          <button onClick={() => setGrupoFlexpackAEliminar(g)} className="oft-btn-press" style={{ background: "none", border: `1.5px solid ${RED}`, color: RED, borderRadius: 8, padding: "8px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 10, marginTop: 16, paddingTop: 16, borderTop: `1px solid ${GRAY2}` }}>
+                        <div>
+                          <div style={{ fontSize: 20, fontWeight: 900, color: RED }}>{g.precio_x3 != null ? money(g.precio_x3) : "—"}</div>
+                          <div style={{ fontSize: 11, color: GRAY3 }}>Precio x 3 piezas</div>
+                        </div>
+                        <div>
+                          <div style={{ fontSize: 20, fontWeight: 900, color: RED }}>{g.precio_x6 != null ? money(g.precio_x6) : "—"}</div>
+                          <div style={{ fontSize: 11, color: GRAY3 }}>Precio x 6 piezas</div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </>
+        )}
+
+        {grupoFlexpackForm && (
+          <FlexPackGrupoFormModal
+            grupo={grupoFlexpackForm}
+            showToast={showToast}
+            onClose={() => setGrupoFlexpackForm(null)}
+            onSaved={(saved) => setFlexpackGrupos(prev => grupoFlexpackForm.id ? prev.map(g => g.id === saved.id ? saved : g) : [saved, ...prev])}
+          />
+        )}
+
+        {grupoFlexpackAEliminar && createPortal(
+          <div className="oft-overlay" style={S.overlay} onClick={() => setGrupoFlexpackAEliminar(null)}>
+            <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 16, maxWidth: 380, width: "92%", padding: 24, textAlign: "center" }} onClick={e => e.stopPropagation()}>
+              <div style={{ fontWeight: 800, fontSize: 17, marginBottom: 8 }}>¿Eliminar el grupo "{grupoFlexpackAEliminar.nombre}"?</div>
+              <p style={{ fontSize: 13, color: GRAY3, marginBottom: 20 }}>
+                Los productos que ya tenías asignados a este grupo NO se borran, solo quedan sin grupo Flex Pack (dejan de participar en Flex Pack hasta que los asignes a otro).
+              </p>
+              <div style={{ display: "flex", gap: 10 }}>
+                <button onClick={() => setGrupoFlexpackAEliminar(null)} className="oft-btn-press" style={{ ...S.btnOutline, flex: 1, justifyContent: "center" }}>Cancelar</button>
+                <button
+                  onClick={async () => {
+                    try {
+                      await sb.delete("flexpack_grupos", grupoFlexpackAEliminar.id);
+                      setFlexpackGrupos(prev => prev.filter(g => g.id !== grupoFlexpackAEliminar.id));
+                      setProducts(prev => prev.map(p => p.flexpack_grupo_id === grupoFlexpackAEliminar.id ? { ...p, flexpack_grupo_id: null } : p));
+                      showToast("Grupo eliminado");
+                    } catch(e) {
+                      showToast("Error: " + (e.message || "no se pudo eliminar"));
+                    }
+                    setGrupoFlexpackAEliminar(null);
+                  }}
+                  className="oft-btn-press" style={{ ...S.btnRed, flex: 1, justifyContent: "center" }}
+                >
+                  Sí, eliminar
+                </button>
+              </div>
+            </div>
+          </div>
+        , document.body)}
+
         {/* ═══════════ PÍXELES DE MARKETING ═══════════ */}
         {tab === "pixeles" && esAdminCompleto && <PixelesPanel />}
 
