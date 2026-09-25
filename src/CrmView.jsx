@@ -292,6 +292,19 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
     return firmada ? { estado: "lista", url: firmada } : { estado: "cargando" };
   };
 
+  // Para poder mostrar la cita de "a qué mensaje responde" sin tener que
+  // buscarlo uno por uno cada vez que se dibuja el hilo.
+  const mensajesPorId = Object.fromEntries(mensajes.map(m => [m.id, m]));
+  const previsualizarCita = (m) => {
+    if (!m) return "Mensaje";
+    if (m.contenido) return m.contenido.length > 60 ? m.contenido.slice(0, 60) + "…" : m.contenido;
+    if (m.tipo === "imagen") return "📷 Foto";
+    if (m.tipo === "video") return "🎥 Video";
+    if (m.tipo === "audio") return "🎤 Audio";
+    if (m.tipo === "documento") return "📄 Documento";
+    return "Mensaje";
+  };
+
   // En vivo: mientras una conversación está abierta, los mensajes nuevos
   // (del cliente, o de un workflow/broadcast) entran solos al hilo.
   useEffect(() => {
@@ -320,10 +333,13 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
     setSeleccionada(prev => ({ ...prev, agente_id: agenteId || null }));
   };
 
-  const registrarMensajeSaliente = async (contenido, actualizarPreview = true) => {
+  const [respondiendoA, setRespondiendoA] = useState(null); // mensaje al que se le está por responder, o null
+
+  const registrarMensajeSaliente = async (contenido, actualizarPreview = true, respondeAId = null) => {
     const creado = await sb.post("crm_mensajes", {
       conversacion_id: seleccionada.id, direccion: "saliente", tipo: "texto",
       contenido, agente_id: user?.id || null, estado: "enviado",
+      responde_a_id: respondeAId,
     });
     if (Array.isArray(creado) && creado[0]) setMensajes(prev => [...prev, creado[0]]);
     if (actualizarPreview) {
@@ -336,11 +352,18 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
   // NOTA: por ahora esto solo GUARDA el mensaje en la base de datos como
   // "saliente" -- falta conectar el envío real por WhatsApp (pendiente a que
   // termine la revisión de Meta). Una vez esté lista la API, esto mismo se
-  // conecta a la función que manda el mensaje de verdad.
+  // conecta a la función que manda el mensaje de verdad -- ahí mismo se le
+  // pasaría el "whatsapp_message_id" del mensaje original como "context" de
+  // WhatsApp, para que la respuesta cite el mensaje también del lado del
+  // cliente, no solo aquí dentro del CRM.
   const enviarMensaje = async () => {
     if (!texto.trim() || !seleccionada) return;
     setEnviando(true);
-    try { await registrarMensajeSaliente(texto.trim()); setTexto(""); }
+    try {
+      await registrarMensajeSaliente(texto.trim(), true, respondiendoA?.id || null);
+      setTexto("");
+      setRespondiendoA(null);
+    }
     catch (e) { alert("Error enviando: " + e.message); }
     setEnviando(false);
   };
@@ -446,9 +469,22 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
                 const media = resolverMedia(m.media_url);
                 const tieneMedia = m.tipo === "imagen" || m.tipo === "video" || m.tipo === "audio" || m.tipo === "documento";
                 const colorSecundario = m.direccion === "saliente" ? "rgba(255,255,255,0.65)" : GRAY3;
+                const mensajeCitado = m.responde_a_id ? mensajesPorId[m.responde_a_id] : null;
                 return (
-                  <div key={m.id} style={{ display: "flex", justifyContent: m.direccion === "saliente" ? "flex-end" : "flex-start" }}>
+                  <div key={m.id} style={{ display: "flex", alignItems: "flex-end", gap: 4, justifyContent: m.direccion === "saliente" ? "flex-end" : "flex-start" }}>
+                    {m.direccion === "saliente" && (
+                      <button onClick={() => setRespondiendoA(m)} className="oft-btn-press" title="Responder"
+                        style={{ background: "none", border: "none", cursor: "pointer", padding: 4, display: "flex", color: GRAY3, flexShrink: 0 }}>
+                        <ArrowLeft size={13} style={{ transform: "scaleX(-1)" }} />
+                      </button>
+                    )}
                     <div style={{ maxWidth: esMobil ? "80%" : "62%", padding: tieneMedia ? 6 : "9px 13px", borderRadius: 14, background: m.direccion === "saliente" ? BLACK : WHITE, color: m.direccion === "saliente" ? WHITE : BLACK, border: m.direccion === "entrante" ? `1px solid ${GRAY2}` : "none", fontSize: 13.5, lineHeight: 1.45, whiteSpace: "pre-wrap" }}>
+
+                      {mensajeCitado && (
+                        <div style={{ borderLeft: `3px solid ${m.direccion === "saliente" ? "rgba(255,255,255,0.4)" : RED}`, background: m.direccion === "saliente" ? "rgba(255,255,255,0.08)" : GRAY, borderRadius: 6, padding: "5px 8px", marginBottom: 6, fontSize: 12, color: colorSecundario, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {previsualizarCita(mensajeCitado)}
+                        </div>
+                      )}
 
                       {m.tipo === "imagen" && (
                         media.estado === "lista" ? (
@@ -504,6 +540,12 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
                         </div>
                       </div>
                     </div>
+                    {m.direccion === "entrante" && (
+                      <button onClick={() => setRespondiendoA(m)} className="oft-btn-press" title="Responder"
+                        style={{ background: "none", border: "none", cursor: "pointer", padding: 4, display: "flex", color: GRAY3, flexShrink: 0 }}>
+                        <ArrowLeft size={13} />
+                      </button>
+                    )}
                   </div>
                 );
               })}
@@ -514,14 +556,28 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
               </div>,
               document.body
             )}
-            <div style={{ padding: 14, background: WHITE, borderTop: `1px solid ${GRAY2}`, display: "flex", gap: 8 }}>
-              <input value={texto} onChange={e => setTexto(e.target.value)} placeholder="Escribe un mensaje..."
-                onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); enviarMensaje(); } }}
-                style={{ ...S.input, marginBottom: 0, flex: 1 }} />
-              <button onClick={enviarMensaje} disabled={enviando || !texto.trim()} className="oft-btn-press"
-                style={{ background: BLACK, color: WHITE, border: "none", borderRadius: 10, width: 44, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", opacity: enviando || !texto.trim() ? 0.5 : 1 }}>
-                <Send size={17} />
-              </button>
+            <div style={{ background: WHITE, borderTop: `1px solid ${GRAY2}` }}>
+              {respondiendoA && (
+                <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", borderBottom: `1px solid ${GRAY2}`, background: GRAY }}>
+                  <div style={{ width: 3, alignSelf: "stretch", background: RED, borderRadius: 2, flexShrink: 0 }} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 11, fontWeight: 800, color: RED }}>Respondiendo a {respondiendoA.direccion === "saliente" ? "tu mensaje" : (seleccionada.nombre_contacto || "cliente")}</div>
+                    <div style={{ fontSize: 12, color: GRAY3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{previsualizarCita(respondiendoA)}</div>
+                  </div>
+                  <button onClick={() => setRespondiendoA(null)} className="oft-btn-press" style={{ background: "none", border: "none", cursor: "pointer", padding: 4, display: "flex", flexShrink: 0 }}>
+                    <X size={16} color={GRAY3} />
+                  </button>
+                </div>
+              )}
+              <div style={{ padding: 14, display: "flex", gap: 8 }}>
+                <input value={texto} onChange={e => setTexto(e.target.value)} placeholder="Escribe un mensaje..."
+                  onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); enviarMensaje(); } }}
+                  style={{ ...S.input, marginBottom: 0, flex: 1 }} />
+                <button onClick={enviarMensaje} disabled={enviando || !texto.trim()} className="oft-btn-press"
+                  style={{ background: BLACK, color: WHITE, border: "none", borderRadius: 10, width: 44, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", opacity: enviando || !texto.trim() ? 0.5 : 1 }}>
+                  <Send size={17} />
+                </button>
+              </div>
             </div>
           </>
         )}
