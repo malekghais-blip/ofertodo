@@ -8,7 +8,7 @@ import {
   FileSpreadsheet, FolderPlus, Zap, Lock, Users, BarChart3, DollarSign,
   TrendingUp, Wallet, ShoppingBag, Pencil as PencilIcon, Save,
   Building2, MapPin as MapPinIcon, Send, FilePlus, Download, FileText, Receipt,
-  Calendar as CalendarIcon, Eye, EyeOff, Share2, AlertTriangle, ChevronRight
+  Calendar as CalendarIcon, Eye, EyeOff, Share2, AlertTriangle, ChevronRight, ArrowLeft
 } from "lucide-react";
 
 import {
@@ -1120,6 +1120,7 @@ function PanelFlexPack({ grupo, onClose }) {
   const { products, agregarFlexPackAlCarrito, showToast } = useApp();
   const isMobile = useIsMobile();
   const [mostrandoIntro, setMostrandoIntro] = useState(true);
+  const [trackElegido, setTrackElegido] = useState(null); // null | "estandar" | "perfumeria"
   const [cantidades, setCantidades] = useState({}); // { productoId: cantidad }
 
   useEffect(() => {
@@ -1127,10 +1128,24 @@ function PanelFlexPack({ grupo, onClose }) {
     return () => clearTimeout(t);
   }, []);
 
-  const productosDelGrupo = products.filter(p => p.flexpack_grupo_id === grupo.id && p.activo);
-  // Las metas (3/6 o media docena/docena=6/12) salen de la modalidad de los
-  // productos del grupo -- no hay que configurar nada aparte por grupo.
-  const esPerfumeria = productosDelGrupo[0]?.modalidad_presentacion === "perfumeria";
+  const todosLosProductosDelGrupo = products.filter(p => p.flexpack_grupo_id === grupo.id && p.activo);
+  const tieneEstandar = todosLosProductosDelGrupo.some(p => p.modalidad_presentacion !== "perfumeria");
+  const tienePerfumeria = todosLosProductosDelGrupo.some(p => p.modalidad_presentacion === "perfumeria");
+
+  // Si el grupo solo tiene una modalidad, no hay nada que elegir -- se salta
+  // directo a armar el paquete, sin mostrar una pantalla con una sola opción.
+  useEffect(() => {
+    if (mostrandoIntro || trackElegido) return;
+    if (tieneEstandar && !tienePerfumeria) setTrackElegido("estandar");
+    else if (tienePerfumeria && !tieneEstandar) setTrackElegido("perfumeria");
+  }, [mostrandoIntro, tieneEstandar, tienePerfumeria]);
+
+  const productosDelGrupo = todosLosProductosDelGrupo.filter(p =>
+    trackElegido === "perfumeria" ? p.modalidad_presentacion === "perfumeria" : p.modalidad_presentacion !== "perfumeria"
+  );
+  // Las metas (3/6 o media docena/docena=6/12) salen de la modalidad elegida --
+  // no hay que configurar nada aparte por grupo.
+  const esPerfumeria = trackElegido === "perfumeria";
   const metaTier1 = esPerfumeria ? 3 : 6;   // "media" -- 3 piezas, o media docena
   const metaTier2 = esPerfumeria ? 6 : 12;  // "docena" -- 6 piezas, o docena
   const totalPiezas = Object.values(cantidades).reduce((s, c) => s + c, 0);
@@ -1179,13 +1194,49 @@ function PanelFlexPack({ grupo, onClose }) {
             <div style={{ fontWeight: 900, fontSize: 16, letterSpacing: 0.3 }}>Flex Pack</div>
             <div style={{ fontSize: 12.5, color: GRAY3 }}>Arma tu paquete como quieras</div>
           </div>
+        ) : !trackElegido ? (
+          <div style={{ padding: "26px 20px 24px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}>
+              <img src={FLEXPACK_ICON_URL} style={{ width: 24, height: 24, objectFit: "contain", flexShrink: 0 }} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 900, fontSize: 15.5 }}>¿Qué tipo de Flex Pack?</div>
+                <div style={{ fontSize: 11.5, color: GRAY3 }}>{grupo.nombre}</div>
+              </div>
+              <button onClick={onClose} className="oft-btn-press" style={{ background: GRAY, border: "none", borderRadius: "50%", width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}><X size={15} /></button>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              {tieneEstandar && (
+                <button onClick={() => setTrackElegido("estandar")} className="oft-btn-press oft-flexpack-track-card" style={{ animationDelay: "0.05s" }}>
+                  <div className="oft-flexpack-track-num">6<span>/</span>12</div>
+                  <div style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
+                    <div style={{ fontWeight: 800, fontSize: 14.5 }}>Media Docena / Docena</div>
+                    <div style={{ fontSize: 11.5, color: GRAY3 }}>Mezcla piezas hasta completar 6 o 12</div>
+                  </div>
+                  <ChevronRight size={16} color={GRAY3} style={{ flexShrink: 0 }} />
+                </button>
+              )}
+              {tienePerfumeria && (
+                <button onClick={() => setTrackElegido("perfumeria")} className="oft-btn-press oft-flexpack-track-card" style={{ animationDelay: "0.1s" }}>
+                  <div className="oft-flexpack-track-num">3<span>/</span>6</div>
+                  <div style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
+                    <div style={{ fontWeight: 800, fontSize: 14.5 }}>3 Piezas / 6 Piezas</div>
+                    <div style={{ fontSize: 11.5, color: GRAY3 }}>Mezcla piezas hasta completar 3 o 6</div>
+                  </div>
+                  <ChevronRight size={16} color={GRAY3} style={{ flexShrink: 0 }} />
+                </button>
+              )}
+            </div>
+          </div>
         ) : (
           <>
             <div style={{ padding: "18px 20px 14px", borderBottom: `1px solid ${GRAY2}`, display: "flex", alignItems: "center", gap: 10 }}>
+              {tieneEstandar && tienePerfumeria && (
+                <button onClick={() => { setTrackElegido(null); setCantidades({}); }} className="oft-btn-press" style={{ background: GRAY, border: "none", borderRadius: "50%", width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}><ArrowLeft size={15} /></button>
+              )}
               <img src={FLEXPACK_ICON_URL} style={{ width: 26, height: 26, objectFit: "contain", flexShrink: 0 }} />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontWeight: 900, fontSize: 15.5 }}>Arma tu Flex Pack</div>
-                <div style={{ fontSize: 11.5, color: GRAY3 }}>{grupo.nombre} · mezcla lo que quieras</div>
+                <div style={{ fontSize: 11.5, color: GRAY3 }}>{grupo.nombre} · {esPerfumeria ? "3/6 piezas" : "media docena/docena"}</div>
               </div>
               <button onClick={onClose} className="oft-btn-press" style={{ background: GRAY, border: "none", borderRadius: "50%", width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}><X size={15} /></button>
             </div>
@@ -3978,6 +4029,19 @@ export default function App() {
         .oft-flexpack-bar-completo { animation: flexpackBarGlow 1.1s ease-out 1; }
         .oft-flexpack-badge { transition: transform 0.15s ease, box-shadow 0.15s ease; }
         .oft-flexpack-badge:hover { transform: translateY(-1px); box-shadow: 0 4px 14px rgba(0,0,0,0.25); }
+        @keyframes flexpackTrackIn { 0% { opacity: 0; transform: translateY(10px) scale(0.97); } 100% { opacity: 1; transform: translateY(0) scale(1); } }
+        .oft-flexpack-track-card {
+          display: flex; align-items: center; gap: 14px; width: 100%; padding: 16px; border-radius: 16px;
+          border: 1.5px solid ${GRAY2}; background: ${WHITE}; cursor: pointer; text-align: left;
+          animation: flexpackTrackIn 0.4s cubic-bezier(0.16,1,0.3,1) both;
+          transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+        }
+        .oft-flexpack-track-card:hover { border-color: ${BLACK}; box-shadow: 0 8px 20px rgba(0,0,0,0.1); transform: translateY(-2px); }
+        .oft-flexpack-track-num {
+          flex-shrink: 0; width: 56px; height: 56px; border-radius: 14px; background: linear-gradient(135deg, #1a1a1a, #3a3a3a);
+          color: ${WHITE}; display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 15px; letter-spacing: -0.5px;
+        }
+        .oft-flexpack-track-num span { opacity: 0.5; margin: 0 1px; font-weight: 500; }
         @keyframes catChipPop { 0% { opacity: 0; transform: scale(0.85) translateY(6px); } 100% { opacity: 1; transform: scale(1) translateY(0); } }
         .oft-cat-sheet-chip { animation: catChipPop 0.26s cubic-bezier(0.34,1.4,0.5,1) both; transition: border-color 0.15s, background 0.15s; }
         .oft-cat-trigger { transition: border-color 0.15s, box-shadow 0.15s; }
