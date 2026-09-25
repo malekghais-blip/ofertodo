@@ -1128,24 +1128,44 @@ function PanelFlexPack({ grupo, onClose }) {
   }, []);
 
   const productosDelGrupo = products.filter(p => p.flexpack_grupo_id === grupo.id && p.activo);
+  // Las metas (3/6 o media docena/docena=6/12) salen de la modalidad de los
+  // productos del grupo -- no hay que configurar nada aparte por grupo.
+  const esPerfumeria = productosDelGrupo[0]?.modalidad_presentacion === "perfumeria";
+  const metaTier1 = esPerfumeria ? 3 : 6;   // "media" -- 3 piezas, o media docena
+  const metaTier2 = esPerfumeria ? 6 : 12;  // "docena" -- 6 piezas, o docena
   const totalPiezas = Object.values(cantidades).reduce((s, c) => s + c, 0);
-  const completo = totalPiezas === 3 || totalPiezas === 6;
-  const meta = totalPiezas < 3 ? 3 : 6;
-  const precioActual = totalPiezas === 3 ? Number(grupo.precio_x3) : totalPiezas === 6 ? Number(grupo.precio_x6) : null;
-  const espacioDisponibleGlobal = 6 - totalPiezas;
+  const completo = totalPiezas === metaTier1 || totalPiezas === metaTier2;
+  const meta = totalPiezas < metaTier1 ? metaTier1 : metaTier2;
+  const tierActual = totalPiezas === metaTier1 ? "media" : totalPiezas === metaTier2 ? "docena" : null;
+
+  // El precio del Flex Pack no es un número fijo del grupo -- se suma, producto
+  // por producto, el precio que YA tiene cada uno para esa presentación (media
+  // docena o docena), dividido entre sus piezas, multiplicado por cuántas se
+  // eligieron de ese producto. Así, si un perfume cuesta distinto que otro, el
+  // total simplemente refleja lo que corresponde a cada uno.
+  const precioActual = tierActual ? Object.entries(cantidades).reduce((suma, [productId, cantidad]) => {
+    if (cantidad <= 0) return suma;
+    const prod = productosDelGrupo.find(p => p.id === Number(productId));
+    if (!prod) return suma;
+    const piezasPorUnidad = presToPiezas(tierActual, 1, prod);
+    const precioPorPieza = presUnitPrice(prod, tierActual) / piezasPorUnidad;
+    return suma + precioPorPieza * cantidad;
+  }, 0) : null;
+
+  const espacioDisponibleGlobal = metaTier2 - totalPiezas;
 
   const cambiarCantidad = (productoId, delta) => {
     setCantidades(prev => {
       const actual = prev[productoId] || 0;
       const nueva = Math.max(0, actual + delta);
-      if (delta > 0 && totalPiezas >= 6) return prev; // ya está al tope global
+      if (delta > 0 && totalPiezas >= metaTier2) return prev; // ya está al tope global
       return { ...prev, [productoId]: nueva };
     });
   };
 
   const confirmar = () => {
     if (!completo) return;
-    agregarFlexPackAlCarrito(grupo, cantidades, productosDelGrupo);
+    agregarFlexPackAlCarrito(grupo, cantidades, productosDelGrupo, precioActual, totalPiezas);
     onClose();
   };
 
@@ -1189,16 +1209,16 @@ function PanelFlexPack({ grupo, onClose }) {
               </div>
               <div style={{ height: 8, borderRadius: 5, background: GRAY2, overflow: "hidden", position: "relative" }}>
                 <div className={completo ? "oft-flexpack-bar-completo" : ""} style={{ height: "100%", width: `${Math.min(100, (totalPiezas / meta) * 100)}%`, background: completo ? "#0A9D4F" : RED, borderRadius: 5, transition: "width 0.35s cubic-bezier(0.16,1,0.3,1)" }} />
-                {meta === 6 && <div style={{ position: "absolute", left: "50%", top: -2, bottom: -2, width: 2, background: WHITE }} />}
+                {meta === metaTier2 && <div style={{ position: "absolute", left: "50%", top: -2, bottom: -2, width: 2, background: WHITE }} />}
               </div>
-              {!completo && totalPiezas > 0 && totalPiezas < 3 && (
-                <div style={{ fontSize: 11.5, color: GRAY3, marginTop: 6 }}>Agrega {3 - totalPiezas} más para completar tu primer Flex Pack (x3)</div>
+              {!completo && totalPiezas > 0 && totalPiezas < metaTier1 && (
+                <div style={{ fontSize: 11.5, color: GRAY3, marginTop: 6 }}>Agrega {metaTier1 - totalPiezas} más para completar tu primer Flex Pack (x{metaTier1})</div>
               )}
-              {!completo && totalPiezas > 3 && (
-                <div style={{ fontSize: 11.5, color: GRAY3, marginTop: 6 }}>Agrega {6 - totalPiezas} más para llegar al Flex Pack x6</div>
+              {!completo && totalPiezas > metaTier1 && (
+                <div style={{ fontSize: 11.5, color: GRAY3, marginTop: 6 }}>Agrega {metaTier2 - totalPiezas} más para llegar al Flex Pack x{metaTier2}</div>
               )}
-              {totalPiezas === 3 && (
-                <div style={{ fontSize: 11.5, color: GRAY3, marginTop: 6 }}>Puedes seguir agregando hasta 6 para el siguiente precio</div>
+              {totalPiezas === metaTier1 && (
+                <div style={{ fontSize: 11.5, color: GRAY3, marginTop: 6 }}>Puedes seguir agregando hasta {metaTier2} para el siguiente precio</div>
               )}
               <button onClick={confirmar} disabled={!completo} className="oft-btn-press"
                 style={{ width: "100%", marginTop: 12, padding: 14, borderRadius: 12, border: "none", background: completo ? RED : GRAY2, color: completo ? WHITE : GRAY3, fontWeight: 800, fontSize: 14.5, cursor: completo ? "pointer" : "not-allowed", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
@@ -3642,12 +3662,11 @@ export default function App() {
   };
 
   // Un Flex Pack es una línea de carrito DISTINTA a un producto normal -- mezcla
-  // varios productos del mismo grupo a un precio compartido (x3 o x6 piezas en
-  // total, sin importar cómo se repartan entre los productos elegidos).
-  const agregarFlexPackAlCarrito = (grupo, cantidades, productosDelGrupo) => {
-    const totalPiezas = Object.values(cantidades).reduce((s, c) => s + c, 0);
-    if (totalPiezas !== 3 && totalPiezas !== 6) return; // solo se completa en 3 o en 6 exactas
-    const precioTotal = totalPiezas === 3 ? Number(grupo.precio_x3) : Number(grupo.precio_x6);
+  // varios productos del mismo grupo, y el precio se calculó ya (en el panel)
+  // sumando lo que corresponde a cada producto según su propio precio de media
+  // docena/docena -- no hay un precio fijo de grupo.
+  const agregarFlexPackAlCarrito = (grupo, cantidades, productosDelGrupo, precioTotal, totalPiezas) => {
+    if (precioTotal == null || !totalPiezas) return;
     const items = Object.entries(cantidades)
       .filter(([, cantidad]) => cantidad > 0)
       .map(([productId, cantidad]) => {
