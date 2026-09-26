@@ -1078,7 +1078,7 @@ function FlexPackBadge({ onAbrir, tamano = "normal" }) {
   const chico = tamano === "chico";
   return (
     <button onClick={onAbrir} className="oft-btn-press oft-flexpack-badge"
-      style={{ display: "inline-flex", alignItems: "center", gap: chico ? 5 : 7, padding: chico ? "5px 10px" : "7px 14px", borderRadius: 999, border: "none", background: "linear-gradient(135deg, #1a1a1a, #3a3a3a)", color: WHITE, fontWeight: 800, fontSize: chico ? 11 : 12.5, cursor: "pointer" }}>
+      style={{ display: "inline-flex", alignItems: "center", gap: chico ? 5 : 7, padding: chico ? "5px 10px" : "7px 14px", borderRadius: 999, border: `1.5px solid ${RED}`, background: WHITE, color: RED, fontWeight: 800, fontSize: chico ? 11 : 12.5, cursor: "pointer" }}>
       <img src={FLEXPACK_ICON_URL} alt="" style={{ width: chico ? 14 : 17, height: chico ? 14 : 17, objectFit: "contain" }} />
       Crear Flex Pack
     </button>
@@ -1873,7 +1873,7 @@ function CartModal() {
             {cart.map((item, idx) => (
               item.esFlexPack ? (
                 <div key={idx} style={{ display: "flex", gap: 12, alignItems: "flex-start", padding: "12px 0", borderBottom: `1px solid ${GRAY2}` }}>
-                  <div style={{ width: 36, height: 36, borderRadius: 6, background: BLACK, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                  <div style={{ width: 36, height: 36, borderRadius: 6, background: GRAY, border: `1px solid ${GRAY2}`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                     <img src={FLEXPACK_ICON_URL} style={{ width: 20, height: 20, objectFit: "contain" }} />
                   </div>
                   <div style={{ flex: 1 }}>
@@ -4012,7 +4012,7 @@ export default function App() {
         @keyframes flexpackBarGlow { 0%,100% { box-shadow: 0 0 0 0 rgba(10,157,79,0.35); } 50% { box-shadow: 0 0 0 5px rgba(10,157,79,0); } }
         .oft-flexpack-bar-completo { animation: flexpackBarGlow 1.1s ease-out 1; }
         .oft-flexpack-badge { transition: transform 0.15s ease, box-shadow 0.15s ease; }
-        .oft-flexpack-badge:hover { transform: translateY(-1px); box-shadow: 0 4px 14px rgba(0,0,0,0.25); }
+        .oft-flexpack-badge:hover { transform: translateY(-1px); box-shadow: 0 4px 14px rgba(227,30,36,0.2); background: #FDECEC; }
         @keyframes flexpackTrackIn { 0% { opacity: 0; transform: translateY(10px) scale(0.97); } 100% { opacity: 1; transform: translateY(0) scale(1); } }
         .oft-flexpack-track-card {
           display: flex; align-items: center; gap: 14px; width: 100%; padding: 16px; border-radius: 16px;
