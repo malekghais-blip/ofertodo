@@ -4022,8 +4022,9 @@ export default function App() {
         }
         .oft-flexpack-track-card:hover { border-color: ${BLACK}; box-shadow: 0 8px 20px rgba(0,0,0,0.1); transform: translateY(-2px); }
         .oft-flexpack-track-num {
-          flex-shrink: 0; width: 56px; height: 56px; border-radius: 14px; background: linear-gradient(135deg, #1a1a1a, #3a3a3a);
+          flex-shrink: 0; width: 56px; height: 56px; border-radius: 14px; background: linear-gradient(135deg, ${RED}, ${RED_D});
           color: ${WHITE}; display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 15px; letter-spacing: -0.5px;
+          box-shadow: 0 4px 12px rgba(227,30,36,0.3);
         }
         .oft-flexpack-track-num span { opacity: 0.5; margin: 0 1px; font-weight: 500; }
         @keyframes catChipPop { 0% { opacity: 0; transform: scale(0.85) translateY(6px); } 100% { opacity: 1; transform: scale(1) translateY(0); } }
