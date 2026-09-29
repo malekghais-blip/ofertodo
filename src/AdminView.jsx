@@ -2047,10 +2047,13 @@ function PrecioMini({ etiqueta, valor, colorTexto }) {
   );
 }
 
-function PreciosPanel({ products }) {
+function PreciosPanel({ products, categories }) {
   const [busqueda, setBusqueda] = useState("");
+  const [categoriaId, setCategoriaId] = useState(null); // null = todas
   const q = busqueda.trim().toLowerCase();
-  const filtrados = products.filter(p => p.activo && (!q || p.nombre.toLowerCase().includes(q) || (p.referencia || "").toLowerCase().includes(q)));
+  const filtrados = products.filter(p => p.activo
+    && (!q || p.nombre.toLowerCase().includes(q) || (p.referencia || "").toLowerCase().includes(q))
+    && (categoriaId === null || p.categoria_id === categoriaId));
 
   return (
     <div>
@@ -2059,9 +2062,21 @@ function PreciosPanel({ products }) {
         Consulta rápida para saber qué ofrecer en una venta: el precio normal, el mejor precio con descuento
         (docena o 6 piezas), hasta dónde puedes bajar (mínimo), y el precio especial para cerrar la venta.
       </p>
-      <div style={{ position: "relative", marginBottom: 18, maxWidth: 420 }}>
+      <div style={{ position: "relative", marginBottom: 12, maxWidth: 420 }}>
         <Search size={16} color={GRAY3} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)" }} />
         <input value={busqueda} onChange={e => setBusqueda(e.target.value)} placeholder="Buscar por nombre o referencia..." style={{ ...S.input, paddingLeft: 36, marginBottom: 0 }} />
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 18 }}>
+        <button onClick={() => setCategoriaId(null)} className="oft-btn-press"
+          style={{ fontSize: 12.5, fontWeight: 700, padding: "6px 14px", borderRadius: 999, border: `1.5px solid ${categoriaId === null ? RED : GRAY2}`, background: categoriaId === null ? "#FDECEC" : WHITE, color: categoriaId === null ? RED : GRAY3, cursor: "pointer" }}>
+          Todas
+        </button>
+        {categories.map(c => (
+          <button key={c.id} onClick={() => setCategoriaId(c.id)} className="oft-btn-press"
+            style={{ fontSize: 12.5, fontWeight: 700, padding: "6px 14px", borderRadius: 999, border: `1.5px solid ${categoriaId === c.id ? RED : GRAY2}`, background: categoriaId === c.id ? "#FDECEC" : WHITE, color: categoriaId === c.id ? RED : GRAY3, cursor: "pointer" }}>
+            {c.nombre}
+          </button>
+        ))}
       </div>
       {filtrados.length === 0 ? (
         <div style={{ padding: 40, textAlign: "center", color: GRAY3, fontSize: 13 }}>No hay productos que coincidan.</div>
@@ -6628,7 +6643,7 @@ function AdminView() {
         , document.body)}
 
         {/* ═══════════ MÓDULO DE PRECIOS (para vendedores) ═══════════ */}
-        {tab === "precios" && <PreciosPanel products={products} />}
+        {tab === "precios" && <PreciosPanel products={products} categories={categories} />}
 
         {/* ═══════════ PÍXELES DE MARKETING ═══════════ */}
         {tab === "pixeles" && esAdminCompleto && <PixelesPanel />}
