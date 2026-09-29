@@ -2047,7 +2047,7 @@ function PrecioMini({ etiqueta, valor, colorTexto }) {
   );
 }
 
-function PreciosPanel({ products, categories }) {
+function PreciosPanel({ products, categories, esAdminCompleto }) {
   const [busqueda, setBusqueda] = useState("");
   const [categoriaId, setCategoriaId] = useState(null); // null = todas
   const q = busqueda.trim().toLowerCase();
@@ -2095,7 +2095,7 @@ function PreciosPanel({ products, categories }) {
                   <PrecioMini etiqueta="Pieza" valor={p.precio_pieza} />
                   <PrecioMini etiqueta={esPerfumeria ? "3 Piezas" : "Media Doc."} valor={p.precio_media_docena} />
                   <PrecioMini etiqueta={esPerfumeria ? "6 Piezas · mejor" : "Docena · mejor"} valor={p.precio_docena} colorTexto="#0A9D4F" />
-                  <PrecioMini etiqueta="Mínimo" valor={p.precio_minimo} colorTexto="#92400E" />
+                  {esAdminCompleto && <PrecioMini etiqueta="Mínimo" valor={p.precio_minimo} colorTexto="#92400E" />}
                   <PrecioMini etiqueta="Especial" valor={p.precio_especial} colorTexto={RED} />
                 </div>
               </div>
@@ -6643,7 +6643,7 @@ function AdminView() {
         , document.body)}
 
         {/* ═══════════ MÓDULO DE PRECIOS (para vendedores) ═══════════ */}
-        {tab === "precios" && <PreciosPanel products={products} categories={categories} />}
+        {tab === "precios" && <PreciosPanel products={products} categories={categories} esAdminCompleto={esAdminCompleto} />}
 
         {/* ═══════════ PÍXELES DE MARKETING ═══════════ */}
         {tab === "pixeles" && esAdminCompleto && <PixelesPanel />}
