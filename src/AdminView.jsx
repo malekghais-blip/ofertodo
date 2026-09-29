@@ -2031,6 +2031,68 @@ function CampoPixel({ etiqueta, claveConfig, descripcion, placeholder, valor, co
   );
 }
 
+// ═══════════════════════════════════════════════════════════════
+//  MÓDULO DE PRECIOS — consulta rápida para vendedores: precio normal,
+//  el mejor precio (docena/6 piezas), precio mínimo y precio especial.
+//  Los primeros 3 los define el propio catálogo; mínimo/especial los pone
+//  el admin en el formulario del producto.
+// ═══════════════════════════════════════════════════════════════
+function PrecioMini({ etiqueta, valor, colorTexto }) {
+  const money = (n) => (n === null || n === undefined) ? "—" : "$" + Number(n).toFixed(2);
+  return (
+    <div style={{ textAlign: "center", minWidth: 68 }}>
+      <div style={{ fontSize: 15, fontWeight: 900, color: colorTexto || BLACK }}>{money(valor)}</div>
+      <div style={{ fontSize: 9.5, color: GRAY3, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3, marginTop: 1 }}>{etiqueta}</div>
+    </div>
+  );
+}
+
+function PreciosPanel({ products }) {
+  const [busqueda, setBusqueda] = useState("");
+  const q = busqueda.trim().toLowerCase();
+  const filtrados = products.filter(p => p.activo && (!q || p.nombre.toLowerCase().includes(q) || (p.referencia || "").toLowerCase().includes(q)));
+
+  return (
+    <div>
+      <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 4, display: "flex", alignItems: "center", gap: 10 }}><DollarSign size={24} color={RED} /> Módulo de Precios</div>
+      <p style={{ fontSize: 13, color: GRAY3, marginBottom: 18, maxWidth: 640 }}>
+        Consulta rápida para saber qué ofrecer en una venta: el precio normal, el mejor precio con descuento
+        (docena o 6 piezas), hasta dónde puedes bajar (mínimo), y el precio especial para cerrar la venta.
+      </p>
+      <div style={{ position: "relative", marginBottom: 18, maxWidth: 420 }}>
+        <Search size={16} color={GRAY3} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)" }} />
+        <input value={busqueda} onChange={e => setBusqueda(e.target.value)} placeholder="Buscar por nombre o referencia..." style={{ ...S.input, paddingLeft: 36, marginBottom: 0 }} />
+      </div>
+      {filtrados.length === 0 ? (
+        <div style={{ padding: 40, textAlign: "center", color: GRAY3, fontSize: 13 }}>No hay productos que coincidan.</div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {filtrados.map(p => {
+            const esPerfumeria = p.modalidad_presentacion === "perfumeria";
+            return (
+              <div key={p.id} style={{ background: WHITE, borderRadius: 14, border: `1px solid ${GRAY2}`, padding: 16, display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
+                {p.imagen_url ? <img src={p.imagen_url} style={{ width: 48, height: 48, borderRadius: 8, objectFit: "cover", flexShrink: 0 }} /> : <div style={{ width: 48, height: 48, borderRadius: 8, background: GRAY, flexShrink: 0 }} />}
+                <div style={{ minWidth: 130, flex: "1 1 150px" }}>
+                  <div style={{ fontWeight: 800, fontSize: 14 }}>{p.nombre}</div>
+                  <div style={{ fontSize: 11.5, color: GRAY3 }}>{p.referencia || "sin referencia"}</div>
+                </div>
+                <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+                  <PrecioMini etiqueta="Pieza" valor={p.precio_pieza} />
+                  <PrecioMini etiqueta={esPerfumeria ? "3 Piezas" : "Media Doc."} valor={p.precio_media_docena} />
+                  <PrecioMini etiqueta={esPerfumeria ? "6 Piezas · mejor" : "Docena · mejor"} valor={p.precio_docena} colorTexto="#0A9D4F" />
+                  <PrecioMini etiqueta="Mínimo" valor={p.precio_minimo} colorTexto="#92400E" />
+                  <PrecioMini etiqueta="Especial" valor={p.precio_especial} colorTexto={RED} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
 function PixelesPanel() {
   const [valores, setValores] = useState({ meta_pixel_id: "", google_pixel_id: "" });
   const [cargando, setCargando] = useState(true);
@@ -2618,7 +2680,7 @@ function AdminView() {
   const [bulkLoading, setBulkLoading] = useState(false);
   const [newCatName, setNewCatName] = useState("");
   const [catUploading, setCatUploading] = useState(null); // id de categoría subiendo icono
-  const emptyProd = { referencia: "", nombre: "", descripcion: "", categoria_id: categories[0]?.id || 1, precio_pieza: "", precio_media_docena: "", precio_docena: "", badge: "", activo: true, destacado: false, imagen_url: "", tiene_tallas: false, tiene_colores: false, tallas: "", colores: "", distribucion_docena: "", distribucion_eje: "", proveedor_id: null, venta_por_unidad: false, tiene_stock_fisico: false, notas_fragancia: "", modalidad_presentacion: "estandar", flexpack_grupo_id: null };
+  const emptyProd = { referencia: "", nombre: "", descripcion: "", categoria_id: categories[0]?.id || 1, precio_pieza: "", precio_media_docena: "", precio_docena: "", precio_minimo: "", precio_especial: "", badge: "", activo: true, destacado: false, imagen_url: "", tiene_tallas: false, tiene_colores: false, tallas: "", colores: "", distribucion_docena: "", distribucion_eje: "", proveedor_id: null, venta_por_unidad: false, tiene_stock_fisico: false, notas_fragancia: "", modalidad_presentacion: "estandar", flexpack_grupo_id: null };
   const [prodForm, setProdForm] = useState(emptyProd);
   const fileInputRef = useRef(null);
   const catFileRef = useRef(null);
@@ -3212,7 +3274,7 @@ function AdminView() {
   // ── GUARDAR / EDITAR PRODUCTO ──────────────────────────────────
   const openNewProduct = () => { setProdForm(emptyProd); setEditingId(null); setShowProdForm(true); setShowBulk(false); };
   const openEditProduct = (p) => {
-    setProdForm({ referencia: p.referencia || "", nombre: p.nombre || "", descripcion: p.descripcion || "", categoria_id: p.categoria_id || categories[0]?.id || 1, precio_pieza: p.precio_pieza, precio_media_docena: p.precio_media_docena, precio_docena: p.precio_docena, badge: p.badge || "", activo: p.activo, destacado: p.destacado || false, imagen_url: p.imagen_url || "", tiene_tallas: p.tiene_tallas || false, tiene_colores: p.tiene_colores || false, tallas: p.tallas || "", colores: p.colores || "", distribucion_docena: p.distribucion_docena || "", distribucion_eje: p.distribucion_eje || "", proveedor_id: p.proveedor_id || null, venta_por_unidad: p.venta_por_unidad || false, tiene_stock_fisico: p.tiene_stock_fisico || false, notas_fragancia: p.notas_fragancia || "", modalidad_presentacion: p.modalidad_presentacion || "estandar", flexpack_grupo_id: p.flexpack_grupo_id || null });
+    setProdForm({ referencia: p.referencia || "", nombre: p.nombre || "", descripcion: p.descripcion || "", categoria_id: p.categoria_id || categories[0]?.id || 1, precio_pieza: p.precio_pieza, precio_media_docena: p.precio_media_docena, precio_docena: p.precio_docena, precio_minimo: p.precio_minimo ?? "", precio_especial: p.precio_especial ?? "", badge: p.badge || "", activo: p.activo, destacado: p.destacado || false, imagen_url: p.imagen_url || "", tiene_tallas: p.tiene_tallas || false, tiene_colores: p.tiene_colores || false, tallas: p.tallas || "", colores: p.colores || "", distribucion_docena: p.distribucion_docena || "", distribucion_eje: p.distribucion_eje || "", proveedor_id: p.proveedor_id || null, venta_por_unidad: p.venta_por_unidad || false, tiene_stock_fisico: p.tiene_stock_fisico || false, notas_fragancia: p.notas_fragancia || "", modalidad_presentacion: p.modalidad_presentacion || "estandar", flexpack_grupo_id: p.flexpack_grupo_id || null });
     setEditingId(p.id);
     setShowProdForm(true);
     setShowBulk(false);
@@ -3221,7 +3283,7 @@ function AdminView() {
 
   const handleSaveProd = async () => {
     if (!prodForm.nombre || prodForm.precio_pieza === "") { alert("Nombre y precio por pieza son requeridos"); return; }
-    const payload = { ...prodForm, precio_pieza: Number(prodForm.precio_pieza), precio_media_docena: Number(prodForm.precio_media_docena), precio_docena: Number(prodForm.precio_docena) };
+    const payload = { ...prodForm, precio_pieza: Number(prodForm.precio_pieza), precio_media_docena: Number(prodForm.precio_media_docena), precio_docena: Number(prodForm.precio_docena), precio_minimo: prodForm.precio_minimo === "" ? null : Number(prodForm.precio_minimo), precio_especial: prodForm.precio_especial === "" ? null : Number(prodForm.precio_especial) };
     try {
       if (editingId) {
         const updated = await sb.patch("productos", editingId, payload);
@@ -3976,6 +4038,7 @@ function AdminView() {
     ["dashboard", "Inicio", BarChart3],
     ["orders", "Pedidos", Package],
     ["crear", "Crear", FilePlus],
+    ["precios", "Precios", DollarSign],
     ["retornos", "Retornos", RefreshCw],
     ["users", "Clientes", Users],
   ] : [
@@ -3984,6 +4047,7 @@ function AdminView() {
     ["orders", "Pedidos", Package],
     ["crear", "Crear", FilePlus],
     ["products", "Productos", Tag],
+    ["precios", "Precios", DollarSign],
     ["categories", "Categorías", FolderOpen],
     ["banners", "Banners Inicio", ImageIcon],
     ["popups", "Pop-ups", Sparkles],
@@ -5065,6 +5129,22 @@ function AdminView() {
                       </div>
                     </div>
                   ))}
+                  <div>
+                    <label style={S.label}>Precio mínimo <span style={{ fontWeight: 400, color: GRAY3 }}>(el piso hasta donde el vendedor puede bajar)</span></label>
+                    <div style={{ position: "relative" }}>
+                      <span style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: GRAY3, fontWeight: 700, fontSize: 15, pointerEvents: "none" }}>$</span>
+                      <input style={{ ...S.input, paddingLeft: 22 }} type="number" inputMode="decimal" min="0" step="0.01" placeholder="Opcional"
+                        value={prodForm.precio_minimo ?? ""} onChange={e => setProdForm({...prodForm, precio_minimo: e.target.value.replace(/[^0-9.]/g, "")})} />
+                    </div>
+                  </div>
+                  <div>
+                    <label style={S.label}>Precio especial <span style={{ fontWeight: 400, color: GRAY3 }}>(el que puede ofrecer para cerrar una venta)</span></label>
+                    <div style={{ position: "relative" }}>
+                      <span style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: GRAY3, fontWeight: 700, fontSize: 15, pointerEvents: "none" }}>$</span>
+                      <input style={{ ...S.input, paddingLeft: 22 }} type="number" inputMode="decimal" min="0" step="0.01" placeholder="Opcional"
+                        value={prodForm.precio_especial ?? ""} onChange={e => setProdForm({...prodForm, precio_especial: e.target.value.replace(/[^0-9.]/g, "")})} />
+                    </div>
+                  </div>
                   <div><label style={S.label}>Categoría</label>
                     <select style={{ ...S.input }} value={prodForm.categoria_id} onChange={e => setProdForm({...prodForm,categoria_id:Number(e.target.value)})}>
                       {categories.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
@@ -6546,6 +6626,9 @@ function AdminView() {
             </div>
           </div>
         , document.body)}
+
+        {/* ═══════════ MÓDULO DE PRECIOS (para vendedores) ═══════════ */}
+        {tab === "precios" && <PreciosPanel products={products} />}
 
         {/* ═══════════ PÍXELES DE MARKETING ═══════════ */}
         {tab === "pixeles" && esAdminCompleto && <PixelesPanel />}
