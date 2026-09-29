@@ -302,6 +302,31 @@ async function compartirProducto(product, showToast) {
 }
 
 // Precio total = precio unitario de la presentación × cantidad de paquetes
+// Reordena una lista de productos para que los del MISMO grupo Flex Pack
+// queden uno al lado del otro (en vez de aparecer sueltos, según el orden en
+// que se subieron) -- así el cliente ve junta toda la línea (ej. los perfumes
+// de un mismo grupo) sin tener que buscarlos por separado. Los productos sin
+// grupo mantienen su posición de siempre; el orden general no se altera, solo
+// se "jala" a los compañeros de grupo hacia donde aparece el primero de ellos.
+function agruparPorFlexPack(productos) {
+  const yaColocados = new Set();
+  const resultado = [];
+  for (const p of productos) {
+    if (yaColocados.has(p.id)) continue;
+    resultado.push(p);
+    yaColocados.add(p.id);
+    if (p.flexpack_grupo_id) {
+      for (const compañero of productos) {
+        if (compañero.flexpack_grupo_id === p.flexpack_grupo_id && !yaColocados.has(compañero.id)) {
+          resultado.push(compañero);
+          yaColocados.add(compañero.id);
+        }
+      }
+    }
+  }
+  return resultado;
+}
+
 function presTotal(product, pres, count) {
   return presUnitPrice(product, pres) * count;
 }
@@ -1559,7 +1584,7 @@ function CatalogoView() {
     return palabrasBusqueda.every(pb => palabrasCategoria.some(pc => pc.includes(pb) || pb.includes(pc)));
   };
 
-  const filtered = products.filter(p => {
+  const filtered = agruparPorFlexPack(products.filter(p => {
     if (!p.activo || p.visible_web === false) return false;
     if (searchNorm === "") return catFilter === 0 || p.categoria_id === catFilter;
     // Con texto de búsqueda: coincide por nombre, referencia, O por el nombre de la
@@ -1573,7 +1598,7 @@ function CatalogoView() {
     if (!coincide) return false;
     // Si además hay una categoría específica seleccionada con los chips, respétala también
     return catFilter === 0 || p.categoria_id === catFilter;
-  });
+  }));
 
   // Si lo que escribió coincide con el nombre de una categoría, la resalta visualmente
   // (aunque no la haya seleccionado con clic) para que quede claro qué está viendo.
