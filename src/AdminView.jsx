@@ -3064,34 +3064,30 @@ function AdminView() {
     try {
       // Nuevo código de pedido (mantiene el número de factura)
       const nuevoCodigo = "OFT-" + (cot.num_factura || Date.now().toString().slice(-6));
-      // La fecha pasa a HOY: la venta cuenta el día en que se confirma, no el día de la cotización
-      const ahora = new Date().toISOString();
-      await sb.patch("pedidos", cot.id, {
-        tipo: "pedido", codigo: nuevoCodigo, estado: 0, created_at: ahora,
-        es_cotizacion_convertida: true, fecha_cotizacion_original: cot.created_at,
-      });
-      setOrders(prev => prev.map(o => o.id === cot.id ? { ...o, tipo: "pedido", codigo: nuevoCodigo, estado: 0, created_at: ahora, es_cotizacion_convertida: true, fecha_cotizacion_original: cot.created_at } : o));
-      showToast(`¡Cotización convertida en pedido ${nuevoCodigo}!`);
 
-      // Crea la venta en Odoo. Esta conversión tampoco pasa por Yappy (igual que un pedido
-      // manual nuevo), así que llamamos directo a la misma función que usa yappy-ipn.
+      // Antes de convertir nada, se le pregunta a Odoo (que tiene el inventario real) si
+      // alcanza el stock -- la cotización pudo haberse hecho ayer, y el stock de hoy puede
+      // ser distinto. Si algo no alcanza, se DETIENE aquí: la cotización se queda tal cual,
+      // sin convertir, y se avisa exactamente qué producto(s) no tienen suficiente stock.
+      const itemsOdoo = (cot.items || []).map(it => {
+        const prod = products.find(p => p.id === it.producto_id);
+        const cantidad = Number(it.cantidad) || 0;
+        // El "precio_unitario" guardado a veces es el precio de la docena/media docena
+        // completa, no el de 1 pieza (aunque "cantidad" sí está en piezas) — para Odoo
+        // necesitamos el precio real POR PIEZA, así que lo derivamos del subtotal (que
+        // siempre es correcto) en vez de usar precio_unitario tal cual.
+        const precioPorPieza = cantidad > 0 ? Number(it.subtotal) / cantidad : Number(it.precio_unitario) || 0;
+        return {
+          referencia: prod?.referencia || null,
+          nombre_producto: it.nombre_producto,
+          cantidad: it.cantidad,
+          precio_unitario: precioPorPieza,
+        };
+      });
+
+      let dataOdoo;
       try {
-        const itemsOdoo = (cot.items || []).map(it => {
-          const prod = products.find(p => p.id === it.producto_id);
-          const cantidad = Number(it.cantidad) || 0;
-          // El "precio_unitario" guardado a veces es el precio de la docena/media docena
-          // completa, no el de 1 pieza (aunque "cantidad" sí está en piezas) — para Odoo
-          // necesitamos el precio real POR PIEZA, así que lo derivamos del subtotal (que
-          // siempre es correcto) en vez de usar precio_unitario tal cual.
-          const precioPorPieza = cantidad > 0 ? Number(it.subtotal) / cantidad : Number(it.precio_unitario) || 0;
-          return {
-            referencia: prod?.referencia || null,
-            nombre_producto: it.nombre_producto,
-            cantidad: it.cantidad,
-            precio_unitario: precioPorPieza,
-          };
-        });
-        await fetch(`${SUPABASE_URL}/functions/v1/crear-venta-odoo`, {
+        const respOdoo = await fetch(`${SUPABASE_URL}/functions/v1/crear-venta-odoo`, {
           method: "POST",
           headers: sb.functionHeaders(),
           body: JSON.stringify({
@@ -3101,9 +3097,33 @@ function AdminView() {
             items: itemsOdoo,
           }),
         });
+        dataOdoo = await respOdoo.json().catch(() => ({}));
       } catch(e) {
-        console.error("Error creando venta en Odoo:", e);
-        showToast("Pedido creado, pero no se pudo sincronizar con Odoo. Avísale a soporte.");
+        alert("No se pudo conectar con Odoo para verificar el stock. La cotización NO se convirtió -- intenta de nuevo.\n\n" + e.message);
+        return;
+      }
+      if (!dataOdoo.ok) {
+        if (dataOdoo.sin_stock) {
+          const detalle = (dataOdoo.problemas || []).map(p => `• ${p.nombre}: pidió ${p.solicitado}, hay ${p.disponible} disponibles`).join("\n");
+          alert(`No se pudo convertir -- no hay suficiente stock en Odoo:\n\n${detalle}\n\nLa cotización se quedó tal cual. Ajusta las cantidades o repón stock antes de intentar de nuevo.`);
+        } else {
+          alert("No se pudo convertir: " + (dataOdoo.mensaje || dataOdoo.error || "error desconocido al sincronizar con Odoo") + "\n\nLa cotización se quedó tal cual -- intenta de nuevo.");
+        }
+        return;
+      }
+
+      // La fecha pasa a HOY: la venta cuenta el día en que se confirma, no el día de la cotización
+      const ahora = new Date().toISOString();
+      await sb.patch("pedidos", cot.id, {
+        tipo: "pedido", codigo: nuevoCodigo, estado: 0, created_at: ahora,
+        es_cotizacion_convertida: true, fecha_cotizacion_original: cot.created_at,
+      });
+      setOrders(prev => prev.map(o => o.id === cot.id ? { ...o, tipo: "pedido", codigo: nuevoCodigo, estado: 0, created_at: ahora, es_cotizacion_convertida: true, fecha_cotizacion_original: cot.created_at } : o));
+      showToast(`¡Cotización convertida en pedido ${nuevoCodigo}!`);
+      if (dataOdoo.entrega_error) {
+        // La venta y el stock SÍ quedaron reservados en Odoo (eso ya pasó al confirmar la
+        // orden) -- solo el paso final de "Validar" la entrega no se pudo hacer solo.
+        showToast("Convertido, pero hay que terminar de validar la entrega en Odoo manualmente.");
       }
     } catch(e) { alert("Error al convertir: " + (e.message || e)); }
   };
