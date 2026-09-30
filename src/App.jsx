@@ -1936,8 +1936,8 @@ function CartModal() {
                 registrarEvento("consulta_whatsapp", null, "Pedido desde el carrito");
                 const lineas = cart.map((i, idx) => {
                   if (i.esFlexPack) {
-                    const detalle = i.items.map(it => `${it.cantidad}x ${it.nombre}`).join(", ");
-                    return `${idx + 1}. Flex Pack (${i.grupoNombre}): ${detalle} — ${i.totalPiezas} piezas por $${Number(i.precioTotal).toFixed(2)}`;
+                    const detalle = i.items.map(it => `   • ${it.cantidad}x ${it.nombre}${it.referencia ? ` (Ref: ${it.referencia})` : ""}`).join("\n");
+                    return `${idx + 1}. Flex Pack (${i.grupoNombre}) — ${i.totalPiezas} piezas por $${Number(i.precioTotal).toFixed(2)}\n${detalle}`;
                   }
                   let linea = `${idx + 1}. ${i.product.nombre}`;
                   if (i.product.referencia) linea += ` (Ref: ${i.product.referencia})`;
