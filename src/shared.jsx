@@ -1313,21 +1313,14 @@ export function CrearPedidoView({ onCreado } = {}) {
       ];
 
       if (tipo !== "cotizacion") {
-        // Marca el PEDIDO como pagado ahora que ya existen sus items.
+        // Antes de dar la venta por hecha, se crea (y se intenta confirmar) la orden
+        // en Odoo -- que es quien tiene el inventario real -- y se espera su respuesta.
+        // Si Odoo dice que algo no alcanza en stock, se DETIENE la venta aquí mismo:
+        // se borra lo que ya se había creado en Ofertodo y se avisa exactamente qué
+        // producto(s) no tienen suficiente disponibilidad, en vez de dejar la venta
+        // hecha en Ofertodo mientras en Odoo se queda pendiente sin que nadie se entere.
         try {
-          await sb.patch("pedidos", pedidoId, { pagado: true });
-        } catch(e) {
-          showToast("Pedido creado, pero hubo un problema marcándolo como pagado. Revísalo en Pedidos.");
-        }
-        // Crea la venta en Odoo directamente.
-        // IMPORTANTE: la sincronización con Odoo NO está en un trigger de la base de datos —
-        // vive dentro de la función "yappy-ipn", que Yappy llama únicamente cuando confirma un
-        // pago real. Un pedido manual del admin nunca pasa por Yappy, así que ese webhook nunca
-        // se dispara para estos pedidos. Por eso llamamos aquí, directo, a la misma función que
-        // usa yappy-ipn ("crear-venta-odoo") con los mismos datos que ella le manda.
-        // No bloquea el flujo si falla (igual que en yappy-ipn).
-        try {
-          await fetch(`${SUPABASE_URL}/functions/v1/crear-venta-odoo`, {
+          const respOdoo = await fetch(`${SUPABASE_URL}/functions/v1/crear-venta-odoo`, {
             method: "POST",
             headers: sb.functionHeaders(),
             body: JSON.stringify({
@@ -1343,9 +1336,40 @@ export function CrearPedidoView({ onCreado } = {}) {
               })),
             }),
           });
+          const dataOdoo = await respOdoo.json().catch(() => ({}));
+          if (!dataOdoo.ok) {
+            // Revierte lo que ya se había creado -- no queda ningún rastro de una
+            // venta que en realidad no se pudo concretar.
+            for (const it of itemsCreados) { try { await sb.delete("pedido_items", it.id); } catch(e) {} }
+            try { await sb.delete("pedidos", pedidoId); } catch(e) {}
+            if (dataOdoo.sin_stock) {
+              const detalle = (dataOdoo.problemas || []).map(p => `• ${p.nombre}: pidió ${p.solicitado}, hay ${p.disponible} disponibles`).join("\n");
+              alert(`No se pudo completar la venta -- no hay suficiente stock en Odoo:\n\n${detalle}\n\nAjusta las cantidades o repón stock antes de intentar de nuevo.`);
+            } else {
+              alert("No se pudo completar la venta: " + (dataOdoo.mensaje || dataOdoo.error || "error desconocido al sincronizar con Odoo") + "\n\nNo se creó nada -- intenta de nuevo.");
+            }
+            setSaving(false);
+            return;
+          }
+          if (dataOdoo.entrega_error) {
+            // La venta y el stock SÍ quedaron reservados en Odoo (eso ya pasó al confirmar
+            // la orden) -- solo el paso final de "Validar" la entrega no se pudo hacer solo.
+            // No detiene nada, pero avisa para que se termine ese paso a mano en Odoo.
+            showToast("Venta creada y confirmada, pero hay que terminar de validar la entrega en Odoo manualmente.");
+          }
         } catch(e) {
-          console.error("Error creando venta en Odoo:", e);
-          showToast("Pedido creado, pero no se pudo sincronizar con Odoo. Avísale a soporte.");
+          for (const it of itemsCreados) { try { await sb.delete("pedido_items", it.id); } catch(e2) {} }
+          try { await sb.delete("pedidos", pedidoId); } catch(e2) {}
+          alert("No se pudo conectar con Odoo para completar la venta. No se creó nada -- intenta de nuevo.\n\n" + e.message);
+          setSaving(false);
+          return;
+        }
+        // Marca el PEDIDO como pagado ahora que Odoo ya confirmó que hay stock y la
+        // orden quedó creada y confirmada del otro lado.
+        try {
+          await sb.patch("pedidos", pedidoId, { pagado: true });
+        } catch(e) {
+          showToast("Pedido creado, pero hubo un problema marcándolo como pagado. Revísalo en Pedidos.");
         }
       }
 
