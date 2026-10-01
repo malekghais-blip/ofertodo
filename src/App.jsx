@@ -8,7 +8,7 @@ import {
   FileSpreadsheet, FolderPlus, Zap, Lock, Users, BarChart3, DollarSign,
   TrendingUp, Wallet, ShoppingBag, Pencil as PencilIcon, Save,
   Building2, MapPin as MapPinIcon, Send, FilePlus, Download, FileText, Receipt,
-  Calendar as CalendarIcon, Eye, EyeOff, Share2, AlertTriangle, ChevronRight, ArrowLeft
+  Calendar as CalendarIcon, Eye, EyeOff, Share2, AlertTriangle, AlertCircle, ChevronRight, ArrowLeft
 } from "lucide-react";
 
 import {
@@ -1183,9 +1183,28 @@ function PanelFlexPack({ grupo, onClose }) {
     ] : []),
   ];
 
+  // Cuánto se podría llegar a juntar entre TODOS los productos de una
+  // modalidad, como máximo -- si un producto no tiene stock sincronizado (es
+  // "bajo pedido"), cuenta como ilimitado.
+  const calcularStockMaximo = (modalidad) => {
+    const productosDeEsaModalidad = todosLosProductosDelGrupo.filter(p =>
+      modalidad === "perfumeria" ? p.modalidad_presentacion === "perfumeria" : p.modalidad_presentacion !== "perfumeria"
+    );
+    return productosDeEsaModalidad.reduce((suma, p) => {
+      if (suma === Infinity) return suma;
+      if (!p.stock_actualizado_at) return Infinity;
+      return suma + Math.max(0, Number(p.stock) || 0);
+    }, 0);
+  };
+
   const productosDelGrupo = targetElegido ? todosLosProductosDelGrupo.filter(p =>
     targetElegido.modalidad === "perfumeria" ? p.modalidad_presentacion === "perfumeria" : p.modalidad_presentacion !== "perfumeria"
   ) : [];
+
+  // Si ni sumando todo el stock de este grupo alcanza la meta elegida, no tiene
+  // caso dejar que el cliente empiece a armarlo -- se avisa de una vez.
+  const stockMaximoTotal = targetElegido ? calcularStockMaximo(targetElegido.modalidad) : Infinity;
+  const sinStockSuficiente = targetElegido ? stockMaximoTotal < targetElegido.piezas : false;
 
   const totalPiezas = Object.values(cantidades).reduce((s, c) => s + c, 0);
   const completo = targetElegido ? totalPiezas === targetElegido.piezas : false;
@@ -1259,16 +1278,19 @@ function PanelFlexPack({ grupo, onClose }) {
               <button onClick={onClose} className="oft-btn-press" style={{ background: GRAY, border: "none", borderRadius: "50%", width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}><X size={15} /></button>
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              {opciones.map((op, i) => (
-                <button key={op.etiqueta} onClick={() => elegirTarget(op)} className="oft-btn-press oft-flexpack-track-card" style={{ animationDelay: `${0.05 + i * 0.05}s` }}>
-                  <div className="oft-flexpack-track-num">{op.piezas}</div>
-                  <div style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
-                    <div style={{ fontWeight: 800, fontSize: 14.5 }}>{op.etiqueta}</div>
-                    <div style={{ fontSize: 11.5, color: GRAY3 }}>{op.detalle}</div>
-                  </div>
-                  <ChevronRight size={16} color={GRAY3} style={{ flexShrink: 0 }} />
-                </button>
-              ))}
+              {opciones.map((op, i) => {
+                const alcanza = calcularStockMaximo(op.modalidad) >= op.piezas;
+                return (
+                  <button key={op.etiqueta} onClick={() => alcanza && elegirTarget(op)} disabled={!alcanza} className="oft-btn-press oft-flexpack-track-card" style={{ animationDelay: `${0.05 + i * 0.05}s`, opacity: alcanza ? 1 : 0.55, cursor: alcanza ? "pointer" : "not-allowed" }}>
+                    <div className="oft-flexpack-track-num" style={!alcanza ? { background: GRAY2, color: GRAY3, boxShadow: "none" } : undefined}>{op.piezas}</div>
+                    <div style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
+                      <div style={{ fontWeight: 800, fontSize: 14.5 }}>{op.etiqueta}</div>
+                      <div style={{ fontSize: 11.5, color: alcanza ? GRAY3 : "#92400E", fontWeight: alcanza ? 400 : 700 }}>{alcanza ? op.detalle : "Sin stock suficiente por ahora"}</div>
+                    </div>
+                    {alcanza && <ChevronRight size={16} color={GRAY3} style={{ flexShrink: 0 }} />}
+                  </button>
+                );
+              })}
             </div>
           </div>
         ) : (
@@ -1284,6 +1306,15 @@ function PanelFlexPack({ grupo, onClose }) {
             </div>
 
             <div style={{ flex: 1, overflowY: "auto", padding: "4px 20px" }}>
+              {sinStockSuficiente && (
+                <div style={{ display: "flex", alignItems: "flex-start", gap: 10, background: "#FEF3C7", borderRadius: 12, padding: 14, margin: "12px 0" }}>
+                  <AlertCircle size={18} color="#92400E" style={{ flexShrink: 0, marginTop: 1 }} />
+                  <div>
+                    <div style={{ fontWeight: 800, fontSize: 13.5, color: "#92400E" }}>Sin stock suficiente para completar {targetElegido.etiqueta}</div>
+                    <div style={{ fontSize: 12, color: "#92400E", marginTop: 2 }}>Entre todos los productos de este grupo solo hay {stockMaximoTotal} disponibles -- no alcanza para {targetElegido.piezas}. Prueba con la otra opción si hay, o vuelve más tarde.</div>
+                  </div>
+                </div>
+              )}
               {productosDelGrupo.length === 0 ? (
                 <div style={{ padding: "30px 0", textAlign: "center", color: GRAY3, fontSize: 13 }}>Este grupo todavía no tiene productos disponibles.</div>
               ) : productosDelGrupo.map(p => (
