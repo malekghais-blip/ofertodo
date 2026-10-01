@@ -828,6 +828,13 @@ function PromoCarousel({ banners }) {
 function HomeView() {
   const { setView, setCatalogCat, categories, gruposCategorias, products, addToCart, banners } = useApp();
   const featured = products.filter(p => p.activo && p.visible_web !== false && p.destacado);
+  // Agrupa los destacados por categoría, en el mismo orden en que vienen las
+  // categorías (el que configuraste en el admin con "Orden") -- así se ve
+  // primero la categoría que tú elijas, y dentro de cada una, los productos
+  // del mismo Flex Pack quedan uno al lado del otro.
+  const destacadosPorCategoria = categories
+    .map(c => ({ categoria: c, productos: agruparPorFlexPack(featured.filter(p => p.categoria_id === c.id)) }))
+    .filter(grupo => grupo.productos.length > 0);
   const [catSheetAbierto, setCatSheetAbierto] = useState(false);
   const [grupoInicialSheet, setGrupoInicialSheet] = useState(null);
 
@@ -911,13 +918,20 @@ function HomeView() {
       {featured.length > 0 && (
         <div className="oft-section" style={S.section}>
           <div style={S.sectionTitle}><span style={{ color: RED }}>▮</span> Productos <span style={{ color: RED }}>Destacados</span></div>
-          <div className="oft-prod-grid" style={S.prodGrid}>
-            {featured.map((p, i) => (
-              <div key={p.id} className="oft-prod-anim" style={{ animationDelay: `${Math.min(i * 0.08, 0.5)}s`, height: "100%" }}>
-                <ProductCard product={p} />
+          {destacadosPorCategoria.map(({ categoria, productos }, gi) => (
+            <div key={categoria.id} style={{ marginBottom: gi < destacadosPorCategoria.length - 1 ? 36 : 0 }}>
+              <div style={{ fontWeight: 800, fontSize: 15, color: BLACK, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}>
+                <CategoryIcon cat={categoria} size={18} color={RED} /> {categoria.nombre}
               </div>
-            ))}
-          </div>
+              <div className="oft-prod-grid" style={S.prodGrid}>
+                {productos.map((p, i) => (
+                  <div key={p.id} className="oft-prod-anim" style={{ animationDelay: `${Math.min(i * 0.08, 0.5)}s`, height: "100%" }}>
+                    <ProductCard product={p} />
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
         </div>
       )}
 
@@ -3873,7 +3887,7 @@ export default function App() {
 
       try {
         const [cats, prods] = await Promise.all([
-          sb.get("categorias", "?activa=eq.true&order=id"),
+          sb.get("categorias", "?activa=eq.true&order=orden.asc,id.asc"),
           sb.get("productos", "?activo=eq.true&order=id"),
         ]);
         setCategories(cats);
