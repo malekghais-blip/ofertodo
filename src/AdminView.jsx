@@ -2753,6 +2753,8 @@ function AdminView() {
   }, []);
   const [guardandoToggleRetiro, setGuardandoToggleRetiro] = useState(false);
   const [proveedorAEliminar, setProveedorAEliminar] = useState(null); // proveedor a eliminar (confirmación)
+  const [convirtiendoId, setConvirtiendoId] = useState(null); // id de la cotización que se está convirtiendo ahora mismo (para desactivar su botón)
+  const convirtiendoRef = useRef(new Set()); // candado sincrónico -- evita que un doble clic/doble toque alcance a disparar 2 conversiones en paralelo antes de que el estado de React se actualice
   // ── DESCUENTOS ──
   const [descuentos, setDescuentos] = useState([]); // lista de códigos de descuento
   const [descForm, setDescForm] = useState(null); // formulario crear/editar descuento o null
@@ -3059,9 +3061,16 @@ function AdminView() {
 
   // ── CONVERTIR COTIZACIÓN EN PEDIDO ─────────────────────────────
   const convertirAPedido = async (cot) => {
-    const ok = confirm(`¿Convertir la cotización ${cot.codigo} en un pedido real?\n\nSe registrará como venta de HOY y aparecerá en Pedidos.`);
-    if (!ok) return;
+    // Candado sincrónico: si ya hay una conversión en curso para ESTA misma
+    // cotización (ej. por un doble clic o doble toque en celular), la segunda
+    // llamada se ignora de inmediato -- ni siquiera llega a mostrar el "¿Confirmar?".
+    // Esto es lo que evita que se cree la venta 2 veces en Odoo.
+    if (convirtiendoRef.current.has(cot.id)) return;
+    convirtiendoRef.current.add(cot.id);
     try {
+      const ok = confirm(`¿Convertir la cotización ${cot.codigo} en un pedido real?\n\nSe registrará como venta de HOY y aparecerá en Pedidos.`);
+      if (!ok) return;
+      setConvirtiendoId(cot.id);
       // Nuevo código de pedido (mantiene el número de factura)
       const nuevoCodigo = "OFT-" + (cot.num_factura || Date.now().toString().slice(-6));
 
@@ -3125,7 +3134,14 @@ function AdminView() {
         // orden) -- solo el paso final de "Validar" la entrega no se pudo hacer solo.
         showToast("Convertido, pero hay que terminar de validar la entrega en Odoo manualmente.");
       }
-    } catch(e) { alert("Error al convertir: " + (e.message || e)); }
+    } catch(e) {
+      alert("Error al convertir: " + (e.message || e));
+    } finally {
+      // Se libera el candado pase lo que pase -- éxito, cancelado, o cualquier error --
+      // así una cotización SOLO queda bloqueada mientras su propia conversión está en curso.
+      convirtiendoRef.current.delete(cot.id);
+      setConvirtiendoId(prev => prev === cot.id ? null : prev);
+    }
   };
 
   // ── ELIMINAR PEDIDO (con confirmación) ─────────────────────────
@@ -4469,8 +4485,8 @@ function AdminView() {
                           <button onClick={() => setCotizacionImagen(o)} className="oft-btn-press" style={{ flex: 1, justifyContent: "center", background: "none", color: "#856404", border: "1.5px solid #856404", borderRadius: 8, padding: "9px", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
                             <ImageIcon size={15} /> Imagen
                           </button>
-                          <button onClick={() => convertirAPedido(o)} className="oft-btn-press" style={{ flex: 1, justifyContent: "center", background: RED, color: WHITE, border: "none", borderRadius: 8, padding: "9px", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
-                            <CheckCircle2 size={15} /> A pedido
+                          <button onClick={() => convertirAPedido(o)} disabled={convirtiendoId === o.id} className="oft-btn-press" style={{ flex: 1, justifyContent: "center", background: convirtiendoId === o.id ? GRAY2 : RED, color: convirtiendoId === o.id ? GRAY3 : WHITE, border: "none", borderRadius: 8, padding: "9px", fontSize: 13, fontWeight: 700, cursor: convirtiendoId === o.id ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: 6 }}>
+                            {convirtiendoId === o.id ? <>Convirtiendo...</> : <><CheckCircle2 size={15} /> A pedido</>}
                           </button>
                         </div>
                       </div>
@@ -4578,8 +4594,8 @@ function AdminView() {
                             <button onClick={() => setCotizacionImagen(o)} className="oft-btn-press" style={{ flex: 1, justifyContent: "center", background: "none", color: "#856404", border: "1.5px solid #856404", borderRadius: 8, padding: "9px", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
                               <ImageIcon size={15} /> Imagen
                             </button>
-                            <button onClick={() => convertirAPedido(o)} className="oft-btn-press" style={{ flex: 1, justifyContent: "center", background: RED, color: WHITE, border: "none", borderRadius: 8, padding: "9px", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
-                              <CheckCircle2 size={15} /> A pedido
+                            <button onClick={() => convertirAPedido(o)} disabled={convirtiendoId === o.id} className="oft-btn-press" style={{ flex: 1, justifyContent: "center", background: convirtiendoId === o.id ? GRAY2 : RED, color: convirtiendoId === o.id ? GRAY3 : WHITE, border: "none", borderRadius: 8, padding: "9px", fontSize: 13, fontWeight: 700, cursor: convirtiendoId === o.id ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: 6 }}>
+                              {convirtiendoId === o.id ? <>Convirtiendo...</> : <><CheckCircle2 size={15} /> A pedido</>}
                             </button>
                           </div>
                         </div>
