@@ -3687,6 +3687,31 @@ function AdminView() {
     }
   };
 
+  // Mismo patrón que handleMoveGrupo, pero para CATEGORÍAS individuales -- este
+  // orden es el que usa "Destacados" en la web para decidir qué categoría se ve
+  // primero (ej. Jeans Hombre, luego Perfumería, etc).
+  const handleMoveCategoria = async (cat, direccion) => {
+    const ordenadas = [...categories].sort((a, b) => (a.orden - b.orden) || a.nombre.localeCompare(b.nombre));
+    const idx = ordenadas.findIndex(c => c.id === cat.id);
+    const idxVecina = direccion === "arriba" ? idx - 1 : idx + 1;
+    if (idxVecina < 0 || idxVecina >= ordenadas.length) return;
+    const vecina = ordenadas[idxVecina];
+
+    setCategories(prev => prev.map(c => {
+      if (c.id === cat.id) return { ...c, orden: vecina.orden };
+      if (c.id === vecina.id) return { ...c, orden: cat.orden };
+      return c;
+    }));
+    try {
+      await Promise.all([
+        sb.patch("categorias", cat.id, { orden: vecina.orden }),
+        sb.patch("categorias", vecina.id, { orden: cat.orden }),
+      ]);
+    } catch(e) {
+      showToast("No se pudo guardar el nuevo orden: " + e.message);
+    }
+  };
+
   // ── BANNERS PROMOCIONALES (carrusel del inicio) ─────────────────
   const [bannerUploading, setBannerUploading] = useState(false);
   const bannerNuevoFileRef = useRef(null);
@@ -5619,6 +5644,24 @@ function AdminView() {
               <button style={{ ...S.btnRed, display: "inline-flex", alignItems: "center", gap: 6, height: 42 }} onClick={handleAddCategory}><FolderPlus size={16} /> Agregar categoría</button>
             </div>
             <p style={{ fontSize: 13, color: GRAY3, marginBottom: 16 }}>Haz click en el icono de cada categoría para subir tu propia imagen. Asígnale un "Grupo" a varias categorías relacionadas (ej. "Ropa de Dama") para que en la web el cliente las vea agrupadas, en vez de una lista larga suelta.</p>
+
+            {/* ORDEN DE LAS CATEGORÍAS */}
+            <div style={{ fontSize: 18, fontWeight: 900, margin: "8px 0 6px", display: "flex", alignItems: "center", gap: 8 }}><ChevronUp size={20} color={RED} /> Orden de las categorías</div>
+            <p style={{ fontSize: 13, color: GRAY3, marginBottom: 16 }}>Este orden es el que usa "Destacados" en la página de inicio para decidir qué categoría aparece primero (ej. Jeans Hombre, luego Perfumería, y así sucesivamente).</p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, maxWidth: 480, marginBottom: 36 }}>
+              {[...categories].sort((a, b) => (a.orden - b.orden) || a.nombre.localeCompare(b.nombre)).map((c, idx, arr) => (
+                <div key={c.id} style={{ display: "flex", alignItems: "center", gap: 12, background: WHITE, borderRadius: 12, padding: 10, border: `1px solid ${GRAY2}` }}>
+                  <div style={{ width: 36, height: 36, borderRadius: 8, background: GRAY, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                    <CategoryIcon cat={c} size={20} />
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0, fontWeight: 700, fontSize: 13.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.nombre}</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 3, flexShrink: 0 }}>
+                    <button onClick={() => handleMoveCategoria(c, "arriba")} disabled={idx === 0} title="Subir" style={{ background: GRAY, border: "none", borderRadius: 6, width: 26, height: 20, display: "flex", alignItems: "center", justifyContent: "center", cursor: idx === 0 ? "default" : "pointer", opacity: idx === 0 ? 0.35 : 1 }}><ChevronUp size={14} /></button>
+                    <button onClick={() => handleMoveCategoria(c, "abajo")} disabled={idx === arr.length - 1} title="Bajar" style={{ background: GRAY, border: "none", borderRadius: 6, width: 26, height: 20, display: "flex", alignItems: "center", justifyContent: "center", cursor: idx === arr.length - 1 ? "default" : "pointer", opacity: idx === arr.length - 1 ? 0.35 : 1 }}><ChevronDown size={14} /></button>
+                  </div>
+                </div>
+              ))}
+            </div>
             <datalist id="grupos-existentes">
               {gruposCategorias.map(g => <option key={g.id} value={g.nombre} />)}
             </datalist>
