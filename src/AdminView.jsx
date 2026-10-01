@@ -2092,6 +2092,12 @@ function PreciosPanel({ products, categories, esAdminCompleto }) {
                   <div style={{ fontSize: 11.5, color: GRAY3 }}>{p.referencia || "sin referencia"}</div>
                 </div>
                 <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+                  <div style={{ textAlign: "center", minWidth: 60 }}>
+                    <div style={{ fontSize: 15, fontWeight: 900, color: !p.stock_actualizado_at ? GRAY3 : Number(p.stock) <= 0 ? RED : Number(p.stock) < (esPerfumeria ? 6 : 12) ? "#92400E" : "#0A9D4F" }}>
+                      {p.stock_actualizado_at ? Number(p.stock) : "—"}
+                    </div>
+                    <div style={{ fontSize: 9.5, color: GRAY3, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3, marginTop: 1 }}>Stock</div>
+                  </div>
                   <PrecioMini etiqueta="Pieza" valor={p.precio_pieza} />
                   <PrecioMini etiqueta={esPerfumeria ? "3 Piezas" : "Media Doc."} valor={p.precio_media_docena} />
                   <PrecioMini etiqueta={esPerfumeria ? "6 Piezas · mejor" : "Docena · mejor"} valor={p.precio_docena} colorTexto="#0A9D4F" />
