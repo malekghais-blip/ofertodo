@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, lazy, Suspense } from "react";
+import { useState, useEffect, useLayoutEffect, useRef, lazy, Suspense } from "react";
 import { createPortal } from "react-dom";
 import {
   ShoppingCart, Search, Trash2, MessageCircle, X, Package, CheckCircle2,
@@ -1027,12 +1027,16 @@ function QtySelector({ product, pres, setPres, count, setCount, size = "normal" 
 
   // Si la opción seleccionada deja de estar disponible (por stock bajo), cambia sola a
   // la siguiente mejor opción disponible — nunca deja al cliente "atascado" en una opción
-  // que ya no se puede comprar.
-  useEffect(() => {
+  // que ya no se puede comprar. Usa useLayoutEffect (no useEffect) a propósito: corre
+  // ANTES de que el navegador pinte el cuadro, así nunca se alcanza a ver, ni por un
+  // instante, el Total calculado con una presentación que ya se ve bloqueada/"No
+  // disponible" en los chips -- ambas partes cambian juntas, en el mismo cuadro.
+  useLayoutEffect(() => {
     const actual = presentaciones.find(p => p.key === pres);
     if (actual?.disabled) {
-      if (pres === "docena" && !mediaDeshabilitada) setPres("media");
-      else setPres("pieza");
+      const siguiente = (pres === "docena" && !mediaDeshabilitada) ? "media" : "pieza";
+      setPres(siguiente);
+      setCount(1); // mismo comportamiento que un cambio manual de presentación
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pres, docenaDeshabilitada, mediaDeshabilitada]);
