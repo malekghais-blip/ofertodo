@@ -3695,18 +3695,22 @@ function AdminView() {
     const idx = ordenadas.findIndex(c => c.id === cat.id);
     const idxVecina = direccion === "arriba" ? idx - 1 : idx + 1;
     if (idxVecina < 0 || idxVecina >= ordenadas.length) return;
-    const vecina = ordenadas[idxVecina];
+
+    // En vez de solo intercambiar el valor de "orden" entre las dos (lo cual no
+    // cambia nada si ambas empezaron con el mismo valor, ej. 0 -- que es
+    // justo lo que pasaba la primera vez que se usa esto), se reordena la
+    // lista completa y se le asigna un número único y consecutivo a cada una.
+    const reordenadas = [...ordenadas];
+    const [movida] = reordenadas.splice(idx, 1);
+    reordenadas.splice(idxVecina, 0, movida);
+    const actualizaciones = reordenadas.map((c, i) => ({ id: c.id, orden: i }));
 
     setCategories(prev => prev.map(c => {
-      if (c.id === cat.id) return { ...c, orden: vecina.orden };
-      if (c.id === vecina.id) return { ...c, orden: cat.orden };
-      return c;
+      const act = actualizaciones.find(a => a.id === c.id);
+      return act ? { ...c, orden: act.orden } : c;
     }));
     try {
-      await Promise.all([
-        sb.patch("categorias", cat.id, { orden: vecina.orden }),
-        sb.patch("categorias", vecina.id, { orden: cat.orden }),
-      ]);
+      await Promise.all(actualizaciones.map(a => sb.patch("categorias", a.id, { orden: a.orden })));
     } catch(e) {
       showToast("No se pudo guardar el nuevo orden: " + e.message);
     }
