@@ -1204,6 +1204,20 @@ function PanelFlexPack({ grupo, onClose }) {
     return suma + precioPorPieza * cantidad;
   }, 0) : null;
 
+  // Lo que costaría exactamente lo mismo que ya eligió, pero comprado pieza por
+  // pieza (precio normal, sin el descuento del Flex Pack) -- así se puede
+  // mostrar cuánto se está ahorrando, sin que el cliente tenga que calcularlo.
+  // Se calcula siempre (no solo al completar), para dar una referencia mientras
+  // sigue armando el paquete.
+  const precioRegular = targetElegido ? Object.entries(cantidades).reduce((suma, [productId, cantidad]) => {
+    if (cantidad <= 0) return suma;
+    const prod = productosDelGrupo.find(p => p.id === Number(productId));
+    if (!prod) return suma;
+    return suma + Number(prod.precio_pieza || 0) * cantidad;
+  }, 0) : null;
+  const ahorro = (completo && precioActual != null && precioRegular != null) ? Math.max(0, precioRegular - precioActual) : null;
+  const ahorroPorcentaje = (ahorro != null && precioRegular > 0) ? Math.round((ahorro / precioRegular) * 100) : null;
+
   const espacioDisponibleGlobal = targetElegido ? targetElegido.piezas - totalPiezas : 0;
 
   const cambiarCantidad = (productoId, delta) => {
@@ -1290,7 +1304,18 @@ function PanelFlexPack({ grupo, onClose }) {
                 <div className={completo ? "oft-flexpack-bar-completo" : ""} style={{ height: "100%", width: `${Math.min(100, (totalPiezas / targetElegido.piezas) * 100)}%`, background: completo ? "#0A9D4F" : RED, borderRadius: 5, transition: "width 0.35s cubic-bezier(0.16,1,0.3,1)" }} />
               </div>
               {!completo && (
-                <div style={{ fontSize: 11.5, color: GRAY3, marginTop: 6 }}>Agrega {targetElegido.piezas - totalPiezas} más para completar tu {targetElegido.etiqueta}</div>
+                <div style={{ fontSize: 11.5, color: GRAY3, marginTop: 6 }}>
+                  Agrega {targetElegido.piezas - totalPiezas} más para completar tu {targetElegido.etiqueta}
+                  {totalPiezas > 0 && precioRegular > 0 && <span> · A precio normal: ${precioRegular.toFixed(2)}</span>}
+                </div>
+              )}
+              {completo && ahorro != null && ahorro > 0 && (
+                <div className="oft-fade-in" style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8, background: "#E8F5E9", borderRadius: 9, padding: "7px 11px" }}>
+                  <Zap size={14} color="#0A9D4F" style={{ flexShrink: 0 }} />
+                  <span style={{ fontSize: 12, color: "#0A9D4F", fontWeight: 700 }}>
+                    Ahorras ${ahorro.toFixed(2)}{ahorroPorcentaje != null ? ` (${ahorroPorcentaje}%)` : ""} comparado con comprarlo por pieza
+                  </span>
+                </div>
               )}
               <button onClick={confirmar} disabled={!completo} className="oft-btn-press"
                 style={{ width: "100%", marginTop: 12, padding: 14, borderRadius: 12, border: "none", background: completo ? RED : GRAY2, color: completo ? WHITE : GRAY3, fontWeight: 800, fontSize: 14.5, cursor: completo ? "pointer" : "not-allowed", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
