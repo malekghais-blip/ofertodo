@@ -768,7 +768,7 @@ function PromoverClienteModal({ onClose, onSaved, showToast, users }) {
 //  CREAR / EDITAR CLIENTE (reutilizable — desde la sección Clientes
 //  o directo desde el formulario de Nuevo Pedido/Cotización)
 // ═══════════════════════════════════════════════════════════════
-function StockRankingModal({ tipo, items, itemsSinFiltroNiLimite, proveedores, proveedorIdInicial, onClose }) {
+function StockRankingModal({ tipo, items, itemsSinFiltroNiLimite, proveedores, proveedorIdInicial, categories, onClose }) {
   useLockBodyScroll();
   const money = (n) => "$" + Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const config = {
@@ -783,17 +783,25 @@ function StockRankingModal({ tipo, items, itemsSinFiltroNiLimite, proveedores, p
   // y volver a abrir, y descargar la lista completa (no solo los primeros 50).
   const esReponer = tipo === "reponer";
   const [proveedorFiltroModal, setProveedorFiltroModal] = useState(proveedorIdInicial || "todos");
+  // Filtro por categoría -- útil, por ejemplo, para Perfumería, donde una misma
+  // referencia a veces se compra de más de un proveedor: filtrando solo por
+  // categoría se ve todo lo de esa línea junto, sin importar a quién se le compró.
+  const [categoriaFiltroModal, setCategoriaFiltroModal] = useState("todas");
   const listaReponerFiltrada = esReponer
-    ? (proveedorFiltroModal === "todos" ? itemsSinFiltroNiLimite : itemsSinFiltroNiLimite.filter(f => f.prod?.proveedor_id === Number(proveedorFiltroModal)))
+    ? itemsSinFiltroNiLimite.filter(f =>
+        (proveedorFiltroModal === "todos" || f.prod?.proveedor_id === Number(proveedorFiltroModal)) &&
+        (categoriaFiltroModal === "todas" || f.prod?.categoria_id === Number(categoriaFiltroModal))
+      )
     : [];
   const itemsAMostrar = esReponer ? listaReponerFiltrada : items;
 
   const descargarCSV = () => {
     const filas = [
-      ["Referencia", "Producto", "Proveedor", "Stock actual", "Días para reponer", "Cantidad sugerida a comprar"],
+      ["Referencia", "Producto", "Categoría", "Proveedor", "Stock actual", "Días para reponer", "Cantidad sugerida a comprar"],
       ...listaReponerFiltrada.map(f => {
         const nombreProveedor = proveedores.find(p => p.id === f.prod?.proveedor_id)?.nombre || "Sin proveedor";
-        return [f.prod?.referencia || "", f.prod?.nombre || "", nombreProveedor, f.stockActual ?? "", f.diasParaReponer, f.sugerenciaCompra];
+        const nombreCategoria = categories.find(c => c.id === f.prod?.categoria_id)?.nombre || "Sin categoría";
+        return [f.prod?.referencia || "", f.prod?.nombre || "", nombreCategoria, nombreProveedor, f.stockActual ?? "", f.diasParaReponer, f.sugerenciaCompra];
       }),
     ];
     const csv = filas.map(fila => fila.map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
@@ -801,7 +809,8 @@ function StockRankingModal({ tipo, items, itemsSinFiltroNiLimite, proveedores, p
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     const sufijoProveedor = proveedorFiltroModal === "todos" ? "todos_los_proveedores" : (proveedores.find(p => p.id === Number(proveedorFiltroModal))?.nombre || "proveedor").replace(/\s+/g, "_");
-    a.href = url; a.download = `Reponer_${sufijoProveedor}.csv`;
+    const sufijoCategoria = categoriaFiltroModal === "todas" ? "" : `_${(categories.find(c => c.id === Number(categoriaFiltroModal))?.nombre || "categoria").replace(/\s+/g, "_")}`;
+    a.href = url; a.download = `Reponer_${sufijoProveedor}${sufijoCategoria}.csv`;
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     URL.revokeObjectURL(url);
   };
@@ -820,6 +829,10 @@ function StockRankingModal({ tipo, items, itemsSinFiltroNiLimite, proveedores, p
                 <option value="todos">Todos los proveedores</option>
                 {proveedores.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
               </select>
+              <select value={categoriaFiltroModal} onChange={e => setCategoriaFiltroModal(e.target.value)} style={{ padding: "7px 10px", borderRadius: 8, border: `1px solid ${GRAY2}`, fontSize: 12.5, fontWeight: 700, background: WHITE, flex: 1, minWidth: 160 }}>
+                <option value="todas">Todas las categorías</option>
+                {categories.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+              </select>
               <button onClick={descargarCSV} disabled={listaReponerFiltrada.length === 0} className="oft-btn-press" style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "#856404", color: WHITE, border: "none", borderRadius: 8, padding: "7px 14px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", opacity: listaReponerFiltrada.length === 0 ? 0.5 : 1 }}>
                 <Download size={14} /> Descargar Excel
               </button>
@@ -829,7 +842,7 @@ function StockRankingModal({ tipo, items, itemsSinFiltroNiLimite, proveedores, p
         <div style={{ padding: "6px 18px 18px", maxHeight: "75vh", overflowY: "auto" }}>
           {itemsAMostrar.length === 0 ? (
             <div style={{ textAlign: "center", color: GRAY3, padding: "30px 0", fontSize: 13 }}>
-              {esReponer && proveedorFiltroModal !== "todos" ? "Este proveedor no tiene productos pendientes de reponer." : "No hay datos suficientes todavía."}
+              {esReponer && (proveedorFiltroModal !== "todos" || categoriaFiltroModal !== "todas") ? "No hay productos pendientes de reponer con ese filtro." : "No hay datos suficientes todavía."}
             </div>
           ) : tipo === "zona" ? itemsAMostrar.map((f, i) => (
             <div key={f.area} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 0", borderBottom: i < itemsAMostrar.length - 1 ? `1px solid ${GRAY2}` : "none" }}>
@@ -2981,6 +2994,24 @@ function AdminView() {
   const ingresoOrdenado = [...analisisStock].sort((a, b) => b.ingreso - a.ingreso);
   const urgentesReponer = analisisStock.filter(f => f.diasParaReponer !== null && f.diasParaReponer <= 3).sort((a, b) => a.diasParaReponer - b.diasParaReponer);
 
+  // ── INGRESOS POR CATEGORÍA ──────────────────────────────────────
+  // Agrupa el mismo ingreso ya calculado por producto, pero sumado por
+  // categoría -- para ver de un vistazo cuál línea (ej. Perfumería vs. Jeans)
+  // genera más dinero en total, sin tener que sumarlo a mano producto por producto.
+  const ingresoPorCategoria = (() => {
+    const map = {};
+    analisisStock.forEach(f => {
+      const catId = f.prod?.categoria_id ?? "sin_categoria";
+      if (!map[catId]) map[catId] = { categoria_id: catId, ingreso: 0, cantidad: 0, productos: 0 };
+      map[catId].ingreso += f.ingreso;
+      map[catId].cantidad += f.cantidad;
+      map[catId].productos += 1;
+    });
+    return Object.values(map)
+      .map(m => ({ ...m, categoria: categories.find(c => c.id === m.categoria_id)?.nombre || "Sin categoría" }))
+      .sort((a, b) => b.ingreso - a.ingreso);
+  })();
+
   // ── VENTAS POR ÁREA/UBICACIÓN ──────────────────────────────────
   // Prioridad: 1) sucursal de destino (ya es un valor limpio, elegido de una lista)
   //            2) si no hay sucursal, busca una provincia/ciudad conocida dentro de la dirección de texto libre
@@ -4866,6 +4897,7 @@ function AdminView() {
             itemsSinFiltroNiLimite={rankingModal === "reponer" ? urgentesReponer : null}
             proveedores={proveedores}
             proveedorIdInicial={rankingModalProveedorId}
+            categories={categories}
             onClose={() => { setRankingModal(null); setRankingModalProveedorId(null); }}
           />
         )}
@@ -6426,6 +6458,29 @@ function AdminView() {
                     )}
                   </div>
                 </div>
+
+                {/* INGRESOS POR CATEGORÍA */}
+                {ingresoPorCategoria.length > 0 && (
+                  <div style={{ background: WHITE, borderRadius: 14, padding: 20, border: `1px solid ${GRAY2}`, marginBottom: 24 }}>
+                    <div style={{ fontWeight: 800, marginBottom: 4, display: "flex", alignItems: "center", gap: 8 }}><DollarSign size={17} color={RED} /> Ingresos por categoría</div>
+                    <div style={{ fontSize: 12, color: GRAY3, marginBottom: 14 }}>Qué línea de productos genera más dinero en total (todos los proveedores juntos)</div>
+                    {(() => {
+                      const maxIngreso = ingresoPorCategoria[0]?.ingreso || 1;
+                      return ingresoPorCategoria.map((c, i) => (
+                        <div key={c.categoria_id} style={{ padding: "9px 0", borderBottom: i < ingresoPorCategoria.length - 1 ? `1px solid ${GRAY2}` : "none" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 5 }}>
+                            <span style={{ fontWeight: 700, fontSize: 13 }}>{i + 1}. {c.categoria}</span>
+                            <span style={{ fontWeight: 900, fontSize: 13.5, color: RED }}>{money(c.ingreso)}</span>
+                          </div>
+                          <div style={{ height: 6, borderRadius: 4, background: GRAY, overflow: "hidden" }}>
+                            <div style={{ height: "100%", width: `${Math.max(2, (c.ingreso / maxIngreso) * 100)}%`, background: RED, borderRadius: 4 }} />
+                          </div>
+                          <div style={{ fontSize: 10.5, color: GRAY3, marginTop: 3 }}>{c.productos} producto{c.productos !== 1 ? "s" : ""} · {c.cantidad} unidades vendidas</div>
+                        </div>
+                      ));
+                    })()}
+                  </div>
+                )}
 
                 {/* VENTAS POR ZONA/UBICACIÓN */}
                 <div style={{ background: WHITE, borderRadius: 14, padding: 20, border: `1px solid ${GRAY2}`, marginBottom: 24 }}>
