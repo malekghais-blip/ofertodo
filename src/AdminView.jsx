@@ -768,6 +768,52 @@ function PromoverClienteModal({ onClose, onSaved, showToast, users }) {
 //  CREAR / EDITAR CLIENTE (reutilizable — desde la sección Clientes
 //  o directo desde el formulario de Nuevo Pedido/Cotización)
 // ═══════════════════════════════════════════════════════════════
+// Selector con b\xfasqueda: en vez de desplazarse por una lista larga (ej. muchos
+// proveedores o categor\xedas), el admin escribe parte del nombre y la lista se
+// filtra sola. Dale clic afuera para cerrarlo sin elegir nada.
+function SelectBuscable({ opciones, valor, valorTodos, onChange, placeholder, etiquetaTodos }) {
+  const [abierto, setAbierto] = useState(false);
+  const [texto, setTexto] = useState("");
+  const ref = useRef(null);
+
+  const opcionActual = valor === valorTodos ? null : opciones.find(o => String(o.id) === String(valor));
+  const textoAMostrar = abierto ? texto : (opcionActual ? opcionActual.nombre : etiquetaTodos);
+
+  const filtradas = texto.trim()
+    ? opciones.filter(o => o.nombre.toLowerCase().includes(texto.trim().toLowerCase()))
+    : opciones;
+
+  useEffect(() => {
+    const cerrarAlClickFuera = (e) => { if (ref.current && !ref.current.contains(e.target)) { setAbierto(false); setTexto(""); } };
+    document.addEventListener("mousedown", cerrarAlClickFuera);
+    return () => document.removeEventListener("mousedown", cerrarAlClickFuera);
+  }, []);
+
+  const elegir = (id) => { onChange(id); setAbierto(false); setTexto(""); };
+
+  return (
+    <div ref={ref} style={{ position: "relative", flex: 1, minWidth: 160 }}>
+      <input
+        value={textoAMostrar}
+        onFocus={() => { setAbierto(true); setTexto(""); }}
+        onChange={e => setTexto(e.target.value)}
+        placeholder={placeholder}
+        style={{ width: "100%", padding: "7px 10px", borderRadius: 8, border: `1px solid ${GRAY2}`, fontSize: 12.5, fontWeight: 700, background: WHITE, boxSizing: "border-box" }}
+      />
+      {abierto && (
+        <div style={{ position: "absolute", top: "100%", left: 0, right: 0, background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 8, marginTop: 4, maxHeight: 220, overflowY: "auto", zIndex: 20, boxShadow: "0 4px 14px rgba(0,0,0,0.15)" }}>
+          <div onClick={() => elegir(valorTodos)} style={{ padding: "8px 10px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", color: GRAY3, borderBottom: `1px solid ${GRAY2}` }}>{etiquetaTodos}</div>
+          {filtradas.length === 0 ? (
+            <div style={{ padding: "8px 10px", fontSize: 12, color: GRAY3 }}>Sin resultados</div>
+          ) : filtradas.map(o => (
+            <div key={o.id} onClick={() => elegir(String(o.id))} className="oft-btn-press" style={{ padding: "8px 10px", fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>{o.nombre}</div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function StockRankingModal({ tipo, items, itemsSinFiltroNiLimite, proveedores, proveedorIdInicial, categories, onClose }) {
   useLockBodyScroll();
   const money = (n) => "$" + Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -825,14 +871,14 @@ function StockRankingModal({ tipo, items, itemsSinFiltroNiLimite, proveedores, p
           </div>
           {esReponer && (
             <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap", alignItems: "center" }}>
-              <select value={proveedorFiltroModal} onChange={e => setProveedorFiltroModal(e.target.value)} style={{ padding: "7px 10px", borderRadius: 8, border: `1px solid ${GRAY2}`, fontSize: 12.5, fontWeight: 700, background: WHITE, flex: 1, minWidth: 160 }}>
-                <option value="todos">Todos los proveedores</option>
-                {proveedores.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
-              </select>
-              <select value={categoriaFiltroModal} onChange={e => setCategoriaFiltroModal(e.target.value)} style={{ padding: "7px 10px", borderRadius: 8, border: `1px solid ${GRAY2}`, fontSize: 12.5, fontWeight: 700, background: WHITE, flex: 1, minWidth: 160 }}>
-                <option value="todas">Todas las categorías</option>
-                {categories.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
-              </select>
+              <SelectBuscable
+                opciones={proveedores} valor={proveedorFiltroModal} valorTodos="todos"
+                onChange={setProveedorFiltroModal} placeholder="Buscar proveedor..." etiquetaTodos="Todos los proveedores"
+              />
+              <SelectBuscable
+                opciones={categories} valor={categoriaFiltroModal} valorTodos="todas"
+                onChange={setCategoriaFiltroModal} placeholder="Buscar categoría..." etiquetaTodos="Todas las categorías"
+              />
               <button onClick={descargarCSV} disabled={listaReponerFiltrada.length === 0} className="oft-btn-press" style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "#856404", color: WHITE, border: "none", borderRadius: 8, padding: "7px 14px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", opacity: listaReponerFiltrada.length === 0 ? 0.5 : 1 }}>
                 <Download size={14} /> Descargar Excel
               </button>
