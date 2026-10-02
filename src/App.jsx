@@ -19,7 +19,7 @@ import {
   idVisitante, registrarEvento, obtenerTokenRecaptcha, notaFragancia,
   cargarMetaPixel, cargarGooglePixel, trackVerProducto, trackAgregarCarrito, trackIniciarCheckout, trackCompra,
   imagenOptimizada, mediaDocenaDesdeDistribucion, parseDistribucion, presLabelPlural, presToPiezas,
-  presUnitPrice, sb, useApp, useLockBodyScroll,
+  presUnitPrice, sb, useApp, useLockBodyScroll, supabaseRealtime,
 } from "./shared.jsx";
 
 // El panel de administrador vive en su propio archivo y solo se descarga cuando
@@ -308,6 +308,85 @@ async function compartirProducto(product, showToast) {
 // de un mismo grupo) sin tener que buscarlos por separado. Los productos sin
 // grupo mantienen su posición de siempre; el orden general no se altera, solo
 // se "jala" a los compañeros de grupo hacia donde aparece el primero de ellos.
+// Actualiza de una vez todas las etiquetas que le importan a Google y a las
+// vistas previas al compartir un link (título, meta descripción, Open Graph,
+// Twitter Card, y -- cuando se le pasa un producto -- los datos estructurados
+// de Producto en formato Schema.org, que es justo lo que le permite a Google
+// mostrar precio y disponibilidad directo en el buscador). Devuelve una
+// función para restaurar el título al cerrar/salir de la página.
+function actualizarSEO({ title, description, image, url, productoParaSchema }) {
+  const tituloAnterior = document.title;
+
+  const fijarMeta = (attr, valor, contenido) => {
+    let el = document.querySelector(`meta[${attr}="${valor}"]`);
+    if (!el) {
+      el = document.createElement("meta");
+      el.setAttribute(attr, valor);
+      document.head.appendChild(el);
+    }
+    el.setAttribute("content", contenido);
+  };
+
+  if (title) document.title = title;
+  if (description) {
+    fijarMeta("name", "description", description);
+    fijarMeta("property", "og:description", description);
+    fijarMeta("name", "twitter:description", description);
+  }
+  if (title) {
+    fijarMeta("property", "og:title", title);
+    fijarMeta("name", "twitter:title", title);
+  }
+  if (image) {
+    fijarMeta("property", "og:image", image);
+    fijarMeta("name", "twitter:image", image);
+  }
+  fijarMeta("name", "twitter:card", "summary_large_image");
+  fijarMeta("property", "og:type", productoParaSchema ? "product" : "website");
+
+  if (url) {
+    fijarMeta("property", "og:url", url);
+    let canon = document.querySelector('link[rel="canonical"]');
+    if (!canon) { canon = document.createElement("link"); canon.setAttribute("rel", "canonical"); document.head.appendChild(canon); }
+    canon.setAttribute("href", url);
+  }
+
+  // Datos estructurados de Producto -- el precio se guarda SIEMPRE como el de
+  // "pieza" (el más bajo, de entrada) ya que Schema.org solo acepta UN precio
+  // por producto, no los 3 niveles de Ofertodo.
+  let script = document.getElementById("oft-schema-producto");
+  if (productoParaSchema) {
+    const p = productoParaSchema;
+    const datos = {
+      "@context": "https://schema.org/",
+      "@type": "Product",
+      name: p.nombre,
+      description: description || p.nombre,
+      ...(p.imagen_url ? { image: p.imagen_url } : {}),
+      ...(p.referencia ? { sku: p.referencia } : {}),
+      brand: { "@type": "Brand", name: "Ofertodo" },
+      offers: {
+        "@type": "Offer",
+        priceCurrency: "USD",
+        price: Number(p.precio_pieza || 0).toFixed(2),
+        availability: (p.stock_actualizado_at && Number(p.stock) <= 0) ? "https://schema.org/OutOfStock" : "https://schema.org/InStock",
+        ...(url ? { url } : {}),
+      },
+    };
+    if (!script) {
+      script = document.createElement("script");
+      script.type = "application/ld+json";
+      script.id = "oft-schema-producto";
+      document.head.appendChild(script);
+    }
+    script.textContent = JSON.stringify(datos);
+  } else if (script) {
+    script.remove();
+  }
+
+  return () => { document.title = tituloAnterior; };
+}
+
 function agruparPorFlexPack(productos) {
   const yaColocados = new Set();
   const resultado = [];
@@ -1623,10 +1702,14 @@ function CatalogoView() {
   // Si el usuario eligió una categoría desde el inicio, ábrela
   useEffect(() => { setCatFilter(catalogCat || 0); }, [catalogCat]);
 
-  // Cambia el título de la pestaña del navegador según la categoría que se esté viendo
+  // Cambia el título y la meta descripción según la categoría que se esté viendo
   useEffect(() => {
     const cat = categories.find(c => c.id === catFilter);
-    document.title = cat ? `${cat.nombre} | Ofertodo - Distribuidora en Panamá` : "Catálogo | Ofertodo - Distribuidora en Panamá";
+    const titulo = cat ? `${cat.nombre} | Ofertodo - Distribuidora en Panamá` : "Catálogo | Ofertodo - Distribuidora en Panamá";
+    const descripcion = cat
+      ? `Compra ${cat.nombre} al por mayor en Panamá -- por pieza, media docena o docena, con envíos a todo el país.`
+      : "Catálogo completo de Ofertodo -- ropa, calzado, accesorios y perfumería al por mayor en Panamá. Por pieza, media docena o docena.";
+    actualizarSEO({ title: titulo, description: descripcion, url: `${window.location.origin}/catalogo` });
     return () => { document.title = "Ofertodo - Distribuidora al por Mayor en Panamá | Ropa, Calzado y Accesorios"; };
   }, [catFilter, categories]);
 
@@ -1743,12 +1826,21 @@ function ProductModal() {
 
   useEffect(() => { setPres("docena"); setCount(1); setAdded(false); setTalla(""); setColor(""); }, [product]);
 
-  // Cambia el título de la pestaña al nombre del producto mientras está abierto
+  // Mientras el producto está abierto, actualiza título, meta descripción,
+  // Open Graph, y los datos estructurados de Producto (para Google y para que
+  // se vea bien al compartir el link por WhatsApp).
   useEffect(() => {
     if (!product) return;
-    const anterior = document.title;
-    document.title = `${product.nombre} | Ofertodo`;
-    return () => { document.title = anterior; };
+    const descripcion = (product.descripcion ? product.descripcion.slice(0, 155) : "")
+      || `${product.nombre}${product.referencia ? ` (Ref: ${product.referencia})` : ""} -- disponible por pieza, media docena y docena. Distribuidora al por mayor en Panamá.`;
+    const deshacer = actualizarSEO({
+      title: `${product.nombre} | Ofertodo`,
+      description: descripcion,
+      image: product.imagen_url,
+      url: `${window.location.origin}/producto/${product.id}`,
+      productoParaSchema: product,
+    });
+    return deshacer;
   }, [product]);
 
   // Registra que se vio este producto (para "productos más vistos" en Analítica),
@@ -3725,6 +3817,22 @@ export default function App() {
   const [recuperacionToken, setRecuperacionToken] = useState(null); // token del link de "olvidé mi contraseña", mientras el cliente escribe la nueva
   const [pendingCheckout, setPendingCheckout] = useState(false); // el cliente quería pagar y tuvo que loguearse
   const [products, setProducts] = useState([]);
+
+  // En vivo: cuando el stock de un producto cambia (la sincronización con Odoo
+  // corre cada 15 segundos), se actualiza solo en la pantalla de cualquier
+  // cliente que ya tenga la página abierta -- sin que tenga que refrescar para
+  // ver la disponibilidad real. "productos" es de lectura pública, así que esto
+  // funciona para cualquier visitante, esté o no logueado.
+  useEffect(() => {
+    const canal = supabaseRealtime
+      .channel("productos_stock_en_vivo")
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "productos" }, (payload) => {
+        setProducts(prev => prev.map(p => p.id === payload.new.id ? { ...p, ...payload.new } : p));
+      })
+      .subscribe();
+    return () => { supabaseRealtime.removeChannel(canal); };
+  }, []);
+
   const [categories, setCategories] = useState([]);
   const [flexpackGrupos, setFlexpackGrupos] = useState([]);
   const [gruposCategorias, setGruposCategorias] = useState([]); // grupos generales (ej. "Ropa de Dama"), cada uno con su propio ícono
