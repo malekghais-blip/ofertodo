@@ -7,10 +7,12 @@
 //
 // Como funciona: toma el index.html YA COMPILADO que Vercel publico (asi siempre
 // usa los nombres de archivo correctos que genera Vite, sin necesidad de adivinarlos
-// aqui), le cambia el titulo/descripcion/imagen por los del producto real, y lo
+// aqui), le cambia el titulo/descripcion/imagen por los del producto real, le agrega
+// los datos estructurados de Producto (Schema.org -- lo que le permite a Google
+// mostrar precio y disponibilidad directo en el resultado de busqueda), y lo
 // devuelve. La app de React sigue arrancando normal despues para cualquier persona
 // real que abra el link -- esto SOLO cambia lo que ven los "bots" de vista previa
-// (y de paso, tambien ayuda a que Google indexe cada producto por separado).
+// y los buscadores (y de paso, tambien ayuda a que Google indexe cada producto por separado).
  
 const SUPABASE_URL = "https://esezhctdiucwovbvxmou.supabase.co";
 const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVzZXpoY3RkaXVjd292YnZ4bW91Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODExMDY0NjgsImV4cCI6MjA5NjY4MjQ2OH0.5u--RCUEWH6hBrH0EFnmW1hZhuVjzqMbJax1qQh7zNo";
@@ -32,7 +34,7 @@ export default async function handler(req, res) {
   if (productoId) {
     try {
       const resp = await fetch(
-        `${SUPABASE_URL}/rest/v1/productos?id=eq.${encodeURIComponent(productoId)}&select=nombre,precio_pieza,imagen_url,referencia&limit=1`,
+        `${SUPABASE_URL}/rest/v1/productos?id=eq.${encodeURIComponent(productoId)}&select=nombre,precio_pieza,imagen_url,referencia,descripcion,stock,stock_actualizado_at&limit=1`,
         { headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` } }
       );
       const data = await resp.json();
@@ -54,14 +56,17 @@ export default async function handler(req, res) {
     return;
   }
  
-  // 3) Arma el titulo/descripcion/imagen segun si encontro el producto o no
+  // 3) Arma el titulo/descripcion/imagen segun si encontro el producto o no.
+  //    La descripcion usa el texto real del producto si existe (mas especifica
+  //    y util para SEO que un texto generico repetido en todos los productos).
   const titulo = producto
     ? `${producto.nombre} | Ofertodo`
     : "Ofertodo - Distribuidora al por Mayor en Panamá | Ropa, Calzado y Accesorios";
  
-  const descripcion = producto
+  const descripcionGenerica = producto
     ? `${producto.nombre}${producto.referencia ? ` (Ref: ${producto.referencia})` : ""} — Desde $${Number(producto.precio_pieza || 0).toFixed(2)} por pieza. Distribuidora al por mayor en Panamá.`
     : "Distribuidora mayorista en Colón, Panamá. Ropa, calzado y accesorios por pieza, media docena y docena.";
+  const descripcion = (producto?.descripcion ? producto.descripcion.slice(0, 155) : "") || descripcionGenerica;
  
   const imagen = producto?.imagen_url || `${SITE_URL}/og-image.jpg`;
   const urlActual = productoId ? `${SITE_URL}/producto/${encodeURIComponent(productoId)}` : SITE_URL;
@@ -81,6 +86,22 @@ export default async function handler(req, res) {
     <meta name="twitter:title" content="${escapeHtml(titulo)}" />
     <meta name="twitter:description" content="${escapeHtml(descripcion)}" />
     <meta name="twitter:image" content="${escapeHtml(imagen)}" />
+    ${producto ? `<script type="application/ld+json">${JSON.stringify({
+      "@context": "https://schema.org/",
+      "@type": "Product",
+      name: producto.nombre,
+      description: descripcion,
+      ...(producto.imagen_url ? { image: producto.imagen_url } : {}),
+      ...(producto.referencia ? { sku: producto.referencia } : {}),
+      brand: { "@type": "Brand", name: "Ofertodo" },
+      offers: {
+        "@type": "Offer",
+        priceCurrency: "USD",
+        price: Number(producto.precio_pieza || 0).toFixed(2),
+        availability: (producto.stock_actualizado_at && Number(producto.stock) <= 0) ? "https://schema.org/OutOfStock" : "https://schema.org/InStock",
+        url: urlActual,
+      },
+    })}</script>` : ""}
   `;
  
   // 4) Quita el titulo/meta original del index.html (para no duplicarlos) y mete
