@@ -3242,14 +3242,33 @@ function AdminView() {
       //    Las cotizaciones nunca se mandaron a Odoo, así que se saltan.
       //    Si Odoo no encuentra ninguna venta con este código (pedidos viejos, o que
       //    nunca se pagaron), simplemente responde ok sin hacer nada.
+      let hayReembolsoPendiente = false;
       if (pedidoAEliminar.tipo !== "cotizacion") {
         let dataOdoo = null, falloConexion = null;
-        try {
+        const llamarOdoo = async (aceptaNotaCredito) => {
           const respOdoo = await fetch(`${SUPABASE_URL}/functions/v1/cancelar-venta-odoo`, {
             method: "POST", headers: sb.functionHeaders(),
-            body: JSON.stringify({ codigo: pedidoAEliminar.codigo }),
+            body: JSON.stringify({ codigo: pedidoAEliminar.codigo, acepta_nota_credito: aceptaNotaCredito }),
           });
-          dataOdoo = await respOdoo.json().catch(() => ({}));
+          return await respOdoo.json().catch(() => ({}));
+        };
+        try {
+          dataOdoo = await llamarOdoo(false);
+          // Si el pedido ya está facturado en Odoo, hace falta una nota de crédito (contabilidad):
+          // Odoo NO ha tocado nada todavía -- primero se le explica al usuario y se le pide confirmar.
+          if (dataOdoo?.requiere_confirmacion) {
+            const estadoPago = (e) => e === "not_paid" ? "sin pagar" : e === "partial" ? "pago parcial" : "ya pagada";
+            const lineas = (dataOdoo.facturas || []).map(f => `  • ${f.factura} — $${Number(f.total).toFixed(2)} (${estadoPago(f.estado_pago)})`).join("\n");
+            const hayPagadas = (dataOdoo.facturas || []).some(f => f.estado_pago !== "not_paid");
+            const aceptar = confirm(
+              `Este pedido ya está facturado en Odoo:\n\n${lineas}\n\n` +
+              `Si continúas, en Odoo se va a:\n  1. Devolver la mercancía al inventario\n  2. Emitir la nota de crédito de la factura\n  3. Cancelar la venta\n` +
+              (hayPagadas ? `\nComo la factura ya está pagada, la nota de crédito deja un saldo a favor del cliente. El reembolso del dinero (Yappy/tarjeta) lo registras tú a mano.\n` : "") +
+              `\n¿Continuar?`
+            );
+            if (!aceptar) return; // no se elimina nada, ni en Odoo ni en la web
+            dataOdoo = await llamarOdoo(true);
+          }
         } catch(e) { falloConexion = e.message || String(e); }
 
         if (falloConexion || !dataOdoo?.ok) {
@@ -3265,7 +3284,10 @@ function AdminView() {
           if (!seguir) return;
           notaOdoo = " (Odoo: pendiente de arreglar a mano)";
         } else if (dataOdoo.encontrada) {
-          notaOdoo = " · Odoo: venta cancelada y mercancía devuelta";
+          const ordenesOdoo = dataOdoo.ordenes || [];
+          const nNotas = ordenesOdoo.reduce((s, o) => s + (o.notas_credito?.length || 0), 0);
+          hayReembolsoPendiente = ordenesOdoo.some(o => (o.notas_credito || []).some(n => n.saldo_a_favor));
+          notaOdoo = " · Odoo: venta cancelada y mercancía devuelta" + (nNotas ? ` · ${nNotas} nota(s) de crédito emitida(s)` : "");
         }
       }
 
@@ -3277,7 +3299,13 @@ function AdminView() {
       await sb.delete("pedidos", pedidoAEliminar.id);
       setOrders(prev => prev.filter(o => o.id !== pedidoAEliminar.id));
       showToast(`Pedido ${pedidoAEliminar.codigo} eliminado${notaOdoo}`);
+      const codigoEliminado = pedidoAEliminar.codigo;
       setPedidoAEliminar(null);
+      // Recordatorio importante: la nota de crédito dejó un saldo a favor del cliente, y el
+      // dinero NO se devuelve solo -- hay que registrarlo a mano, así que no se deja pasar.
+      if (hayReembolsoPendiente) {
+        alert(`Pedido ${codigoEliminado} eliminado.\n\nRecuerda: en Odoo quedó un saldo a favor del cliente (nota de crédito). Falta devolverle el dinero y registrar ese reembolso a mano.`);
+      }
     } catch(e) {
       alert("Error al eliminar: " + (e.message || e));
     } finally {
@@ -4936,7 +4964,7 @@ function AdminView() {
                   </p>
                   {pedidoAEliminar.tipo !== "cotizacion" && (
                     <p style={{ fontSize: 12.5, color: GRAY3, marginBottom: 10, background: GRAY, borderRadius: 8, padding: "8px 10px" }}>
-                      Si este pedido ya está en Odoo, también se <strong>cancela la venta</strong> y se <strong>devuelve la mercancía</strong> al inventario.
+                      Si este pedido ya está en Odoo, también se <strong>devuelve la mercancía</strong> al inventario, se <strong>cancela la venta</strong> y, si ya estaba facturado, se emite la <strong>nota de crédito</strong> (te pedirá confirmar antes).
                     </p>
                   )}
                   <p style={{ fontSize: 13, color: RED, marginBottom: 22, fontWeight: 700 }}>Esta acción no se puede deshacer y se restará del dashboard.</p>
