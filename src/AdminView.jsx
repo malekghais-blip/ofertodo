@@ -2787,6 +2787,7 @@ function AdminView() {
   const [bulkEdit, setBulkEdit] = useState(emptyBulkEdit);
   const [shippingLabel, setShippingLabel] = useState(null); // pedido para la guía de envío
   const [pedidoAEliminar, setPedidoAEliminar] = useState(null); // pedido pendiente de eliminar (confirmación)
+  const eliminandoRef = useRef(false); // candado sincrónico contra doble clic al eliminar
   const [cotizacionAEditar, setCotizacionAEditar] = useState(null); // cotización que se está editando
   const [cotizacionImagen, setCotizacionImagen] = useState(null); // cotización a la que se le está generando la imagen
   const [facturaImagen, setFacturaImagen] = useState(null); // pedido al que se le está generando la imagen de factura
@@ -3230,19 +3231,59 @@ function AdminView() {
   // ── ELIMINAR PEDIDO (con confirmación) ─────────────────────────
   const eliminarPedido = async () => {
     if (!pedidoAEliminar?.id) return;
+    // Candado sincrónico: un doble clic no puede disparar 2 cancelaciones/devoluciones
+    // en Odoo a la vez (el estado de React no se actualiza lo bastante rápido para evitarlo).
+    if (eliminandoRef.current) return;
+    eliminandoRef.current = true;
     setEliminando(true);
     try {
-      // Borra primero los items del pedido, luego el pedido
+      let notaOdoo = "";
+      // 1) Primero Odoo: se cancela la venta y se devuelve la mercancía al inventario.
+      //    Las cotizaciones nunca se mandaron a Odoo, así que se saltan.
+      //    Si Odoo no encuentra ninguna venta con este código (pedidos viejos, o que
+      //    nunca se pagaron), simplemente responde ok sin hacer nada.
+      if (pedidoAEliminar.tipo !== "cotizacion") {
+        let dataOdoo = null, falloConexion = null;
+        try {
+          const respOdoo = await fetch(`${SUPABASE_URL}/functions/v1/cancelar-venta-odoo`, {
+            method: "POST", headers: sb.functionHeaders(),
+            body: JSON.stringify({ codigo: pedidoAEliminar.codigo }),
+          });
+          dataOdoo = await respOdoo.json().catch(() => ({}));
+        } catch(e) { falloConexion = e.message || String(e); }
+
+        if (falloConexion || !dataOdoo?.ok) {
+          const motivo = falloConexion
+            ? `No se pudo conectar con Odoo (${falloConexion}).`
+            : (dataOdoo?.mensaje || dataOdoo?.error || "Odoo respondió con un error.");
+          // Por defecto NO se elimina (para que la web y Odoo no queden desfasados),
+          // pero se deja la decisión en manos de quien lo está haciendo.
+          const seguir = confirm(
+            `No se pudo cancelar este pedido en Odoo:\n\n${motivo}\n\nEl pedido todavía NO se ha eliminado.\n\n` +
+            `¿Eliminarlo SOLO de la web de todas formas? (Tendrás que arreglarlo tú a mano en Odoo.)`
+          );
+          if (!seguir) return;
+          notaOdoo = " (Odoo: pendiente de arreglar a mano)";
+        } else if (dataOdoo.encontrada) {
+          notaOdoo = " · Odoo: venta cancelada y mercancía devuelta";
+        }
+      }
+
+      // 2) Después la web: borra primero los items del pedido, luego el pedido
       try {
         const its = await sb.get("pedido_items", `?pedido_id=eq.${pedidoAEliminar.id}`);
         for (const it of (its || [])) { if (it.id) await sb.delete("pedido_items", it.id); }
       } catch(e) {}
       await sb.delete("pedidos", pedidoAEliminar.id);
       setOrders(prev => prev.filter(o => o.id !== pedidoAEliminar.id));
-      showToast(`Pedido ${pedidoAEliminar.codigo} eliminado`);
+      showToast(`Pedido ${pedidoAEliminar.codigo} eliminado${notaOdoo}`);
       setPedidoAEliminar(null);
-    } catch(e) { alert("Error al eliminar: " + (e.message || e)); }
-    setEliminando(false);
+    } catch(e) {
+      alert("Error al eliminar: " + (e.message || e));
+    } finally {
+      eliminandoRef.current = false;
+      setEliminando(false);
+    }
   };
 
   // ── DESCUENTOS: crear / editar / eliminar / activar ────────────
@@ -4893,6 +4934,11 @@ function AdminView() {
                   <p style={{ fontSize: 14, color: GRAY3, marginBottom: 6 }}>
                     Vas a eliminar <strong style={{ color: BLACK }}>{pedidoAEliminar.codigo}</strong> de {pedidoAEliminar.nombre_cliente}.
                   </p>
+                  {pedidoAEliminar.tipo !== "cotizacion" && (
+                    <p style={{ fontSize: 12.5, color: GRAY3, marginBottom: 10, background: GRAY, borderRadius: 8, padding: "8px 10px" }}>
+                      Si este pedido ya está en Odoo, también se <strong>cancela la venta</strong> y se <strong>devuelve la mercancía</strong> al inventario.
+                    </p>
+                  )}
                   <p style={{ fontSize: 13, color: RED, marginBottom: 22, fontWeight: 700 }}>Esta acción no se puede deshacer y se restará del dashboard.</p>
                   <div style={{ display: "flex", gap: 10 }}>
                     <button onClick={() => setPedidoAEliminar(null)} disabled={eliminando} className="oft-btn-press" style={{ ...S.btnOutline, flex: 1, justifyContent: "center" }}>Cancelar</button>
