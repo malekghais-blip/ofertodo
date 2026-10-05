@@ -3243,6 +3243,7 @@ function AdminView() {
       //    Si Odoo no encuentra ninguna venta con este código (pedidos viejos, o que
       //    nunca se pagaron), simplemente responde ok sin hacer nada.
       let hayReembolsoPendiente = false;
+      let facturaEstabaCobrada = false; // Odoo la mostraba como cobrada/en pago al momento de confirmar
       if (pedidoAEliminar.tipo !== "cotizacion") {
         let dataOdoo = null, falloConexion = null;
         const llamarOdoo = async (aceptaNotaCredito) => {
@@ -3260,6 +3261,7 @@ function AdminView() {
             const estadoPago = (e) => e === "not_paid" ? "sin pagar" : e === "partial" ? "pago parcial" : "ya pagada";
             const lineas = (dataOdoo.facturas || []).map(f => `  • ${f.factura} — $${Number(f.total).toFixed(2)} (${estadoPago(f.estado_pago)})`).join("\n");
             const hayPagadas = (dataOdoo.facturas || []).some(f => f.estado_pago !== "not_paid");
+            facturaEstabaCobrada = hayPagadas;
             const aceptar = confirm(
               `Este pedido ya está facturado en Odoo:\n\n${lineas}\n\n` +
               `Si continúas, en Odoo se va a:\n  1. Devolver la mercancía al inventario\n  2. Emitir la nota de crédito de la factura\n  3. Cancelar la venta\n` +
@@ -3286,7 +3288,9 @@ function AdminView() {
         } else if (dataOdoo.encontrada) {
           const ordenesOdoo = dataOdoo.ordenes || [];
           const nNotas = ordenesOdoo.reduce((s, o) => s + (o.notas_credito?.length || 0), 0);
-          hayReembolsoPendiente = ordenesOdoo.some(o => (o.notas_credito || []).some(n => n.saldo_a_favor));
+          // El recordatorio sale si la nota quedo abierta (saldo a favor) O si la factura estaba cobrada:
+          // aunque la nota se cruce sola con la factura, el COBRO original no se devuelve ni se anula solo.
+          hayReembolsoPendiente = nNotas > 0 && (facturaEstabaCobrada || ordenesOdoo.some(o => (o.notas_credito || []).some(n => n.saldo_a_favor)));
           notaOdoo = " · Odoo: venta cancelada y mercancía devuelta" + (nNotas ? ` · ${nNotas} nota(s) de crédito emitida(s)` : "");
         }
       }
@@ -3304,7 +3308,7 @@ function AdminView() {
       // Recordatorio importante: la nota de crédito dejó un saldo a favor del cliente, y el
       // dinero NO se devuelve solo -- hay que registrarlo a mano, así que no se deja pasar.
       if (hayReembolsoPendiente) {
-        alert(`Pedido ${codigoEliminado} eliminado.\n\nRecuerda: en Odoo quedó un saldo a favor del cliente (nota de crédito). Falta devolverle el dinero y registrar ese reembolso a mano.`);
+        alert(`Pedido ${codigoEliminado} eliminado.\n\nRecuerda: este pedido ya estaba cobrado. En Odoo se emitió la nota de crédito, pero el sistema NO devuelve el dinero ni anula el cobro original. Falta reembolsarle al cliente y registrar ese reembolso (o anular el pago) a mano en Odoo.`);
       }
     } catch(e) {
       alert("Error al eliminar: " + (e.message || e));
