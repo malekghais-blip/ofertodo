@@ -9,7 +9,7 @@ import {
   TrendingUp, Wallet, ShoppingBag, Pencil as PencilIcon, Save,
   Building2, MapPin as MapPinIcon, Send, FilePlus, Download, FileText, Receipt,
   Calendar as CalendarIcon, Eye, EyeOff, Share2, AlertTriangle, ChevronRight,
-  ArrowUpRight, ArrowDownRight, MousePointerClick, Target, Printer, Boxes
+  ArrowUpRight, ArrowDownRight, MousePointerClick, Target, Printer, Boxes, GitMerge
 } from "lucide-react";
 import {
   BLACK, CategoryIcon, ChipAdder, ClienteFormModal, CrearPedidoView, SelectorColores,
@@ -2741,6 +2741,137 @@ function EditorCostoPuertaAPuerta({ showToast }) {
   );
 }
 
+// ═══ CLIENTES: ID interno, cuenta web y duplicados ═══
+const esCorreoReal = (email) => !!email && !String(email).includes("@ofertodo.local");
+
+// Estado de cuenta de un cliente para mostrar en la lista
+function estadoCuentaCliente(u) {
+  if (u.es_admin) return { texto: "Equipo", color: "#4a2c82", bg: "#ece4fa" };
+  if (u.cuenta_web) return { texto: "Con cuenta", color: "#155724", bg: "#d4edda" };
+  if (u.origen_cuenta === "web_invitado") return { texto: "Invitado (sin cuenta)", color: "#856404", bg: "#fff3cd" };
+  if (u.origen_cuenta === "admin_manual") return { texto: "Sin cuenta · interno", color: "#555", bg: "#eee" };
+  return { texto: "Sin confirmar", color: "#555", bg: "#eee" };
+}
+
+function ChipIdInterno({ id }) {
+  if (!id) return null;
+  return <span style={{ fontFamily: "ui-monospace, Menlo, monospace", fontSize: 11, fontWeight: 700, background: "#f1f1f1", color: "#333", padding: "2px 7px", borderRadius: 6, whiteSpace: "nowrap" }}>{id}</span>;
+}
+function ChipCuenta({ u }) {
+  const e = estadoCuentaCliente(u);
+  return <span style={{ fontSize: 11, fontWeight: 700, background: e.bg, color: e.color, padding: "2px 8px", borderRadius: 10, whiteSpace: "nowrap" }}>{e.texto}</span>;
+}
+
+// Búsqueda + filtro de la lista
+function filtrarClientes(users, busqueda, filtro) {
+  const q = (busqueda || "").trim().toLowerCase();
+  const qDigitos = q.replace(/\D/g, "");
+  return users.filter(u => {
+    if (filtro === "con_cuenta" && !u.cuenta_web) return false;
+    if (filtro === "sin_cuenta" && (u.cuenta_web || u.es_admin)) return false;
+    if (!q) return true;
+    if ((u.nombre || "").toLowerCase().includes(q)) return true;
+    if ((u.email || "").toLowerCase().includes(q)) return true;
+    if ((u.id_interno || "").toLowerCase().includes(q)) return true;
+    if (qDigitos.length >= 4 && (u.telefono || "").replace(/\D/g, "").includes(qDigitos)) return true;
+    return false;
+  });
+}
+
+// Agrupa fichas que parecen ser la misma persona (mismo teléfono). NUNCA se fusionan solas:
+// el admin revisa y confirma cada grupo.
+function agruparDuplicados(users, orders) {
+  const pedidosPor = {};
+  orders.forEach(o => { if (o.usuario_id) pedidosPor[o.usuario_id] = (pedidosPor[o.usuario_id] || 0) + 1; });
+  const grupos = {};
+  users.forEach(u => {
+    if (u.es_admin) return;
+    if (!u.telefono_norm || u.telefono_norm.length !== 8) return;
+    (grupos[u.telefono_norm] = grupos[u.telefono_norm] || []).push(u);
+  });
+  const puntaje = (u) => (u.cuenta_web ? 1000 : 0) + (esCorreoReal(u.email) ? 100 : 0) + Math.min(pedidosPor[u.id] || 0, 99);
+  return Object.entries(grupos).filter(([, l]) => l.length > 1).map(([tel, lista]) => {
+    const ordenada = [...lista].sort((a, b) => puntaje(b) - puntaje(a) || (a.numero_cliente || 0) - (b.numero_cliente || 0));
+    const bloqueado = lista.filter(u => u.cuenta_web).length >= 2;
+    return { tel, principal: ordenada[0], duplicados: ordenada.slice(1), bloqueado, pedidosPor };
+  });
+}
+
+function ClientesDuplicadosPanel({ users, orders, abierto, setAbierto, onFusionado, showToast }) {
+  const grupos = agruparDuplicados(users, orders);
+  const [trabajando, setTrabajando] = useState(null);
+  if (grupos.length === 0) return null;
+
+  const fusionar = async (g, dup) => {
+    const p = g.principal;
+    const correoPerdido = esCorreoReal(dup.email) && dup.email.toLowerCase() !== (p.email || "").toLowerCase() && (p.cuenta_web || esCorreoReal(p.email));
+    const msg =
+      `¿Unir estos dos clientes?\n\n` +
+      `SE QUEDA: ${p.nombre} (${p.id_interno})${esCorreoReal(p.email) ? " · " + p.email : ""}\n` +
+      `SE ELIMINA: ${dup.nombre} (${dup.id_interno})${esCorreoReal(dup.email) ? " · " + dup.email : ""}\n\n` +
+      `Sus pedidos pasan a la ficha que se queda.` +
+      (correoPerdido ? `\n\n⚠ El correo ${dup.email} dejará de estar registrado.` : "") +
+      `\n\nEsto no se puede deshacer (queda un registro de auditoría).`;
+    if (!window.confirm(msg)) return;
+    setTrabajando(dup.id);
+    try {
+      const r = await fetch(`${SUPABASE_URL}/rest/v1/rpc/fusionar_clientes`, {
+        method: "POST", headers: sb.dataHeaders(),
+        body: JSON.stringify({ p_principal: p.id, p_duplicado: dup.id }),
+      });
+      const data = await r.json().catch(() => null);
+      if (!r.ok) throw new Error(data?.message || "No se pudo unir");
+      showToast(`Unidos: ${data?.pedidos_movidos ?? 0} pedido(s) pasaron a ${data?.id_interno || p.id_interno}`);
+      await onFusionado();
+    } catch (e) {
+      showToast("Error: " + (e.message || "no se pudo unir"));
+    }
+    setTrabajando(null);
+  };
+
+  return (
+    <div style={{ background: "#fff8e1", border: "1.5px solid #f0c36d", borderRadius: 12, marginBottom: 24, overflow: "hidden" }}>
+      <button onClick={() => setAbierto(!abierto)} style={{ width: "100%", background: "none", border: "none", cursor: "pointer", padding: "14px 16px", display: "flex", alignItems: "center", gap: 10, textAlign: "left" }}>
+        <GitMerge size={20} color="#856404" />
+        <div style={{ flex: 1 }}>
+          <div style={{ fontWeight: 800, fontSize: 14, color: "#5c4400" }}>Posibles clientes duplicados ({grupos.length})</div>
+          <div style={{ fontSize: 12, color: "#856404" }}>Mismo WhatsApp en más de una ficha. Revisa y únelos si son la misma persona.</div>
+        </div>
+        {abierto ? <ChevronUp size={18} color="#856404" /> : <ChevronDown size={18} color="#856404" />}
+      </button>
+      {abierto && (
+        <div style={{ padding: "0 16px 16px", display: "flex", flexDirection: "column", gap: 12 }}>
+          {grupos.map(g => (
+            <div key={g.tel} style={{ background: WHITE, borderRadius: 10, border: `1px solid ${GRAY2}`, padding: 12 }}>
+              <div style={{ fontSize: 11, color: GRAY3, marginBottom: 8 }}>WhatsApp terminado en <strong>{g.tel}</strong></div>
+              {g.bloqueado && <div style={{ fontSize: 12, color: "#721c24", background: "#f8d7da", borderRadius: 8, padding: "6px 10px", marginBottom: 8 }}>Las dos tienen cuenta web propia: no se pueden unir (son cuentas distintas).</div>}
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {[g.principal, ...g.duplicados].map((u, i) => (
+                  <div key={u.id} style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontSize: 13, paddingBottom: 8, borderBottom: i < g.duplicados.length ? `1px dashed ${GRAY2}` : "none" }}>
+                    <ChipIdInterno id={u.id_interno} />
+                    <strong>{u.nombre}</strong>
+                    <span style={{ color: GRAY3, fontSize: 12 }}>{esCorreoReal(u.email) ? u.email : "sin correo"}</span>
+                    <ChipCuenta u={u} />
+                    <span style={{ color: RED, fontWeight: 700, fontSize: 12 }}>{g.pedidosPor[u.id] || 0} pedido(s)</span>
+                    {i === 0 ? (
+                      <span style={{ marginLeft: "auto", fontSize: 11, fontWeight: 800, color: "#155724" }}>SE QUEDA</span>
+                    ) : (
+                      <button disabled={g.bloqueado || trabajando === u.id} onClick={() => fusionar(g, u)} className="oft-btn-press"
+                        style={{ marginLeft: "auto", background: g.bloqueado ? GRAY2 : BLACK, color: WHITE, border: "none", borderRadius: 8, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: g.bloqueado ? "not-allowed" : "pointer", display: "inline-flex", alignItems: "center", gap: 5, opacity: trabajando === u.id ? 0.6 : 1 }}>
+                        <GitMerge size={13} /> {trabajando === u.id ? "Uniendo..." : "Unir a esta ficha"}
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AdminView() {
   const { products, setProducts, categories, setCategories, gruposCategorias, setGruposCategorias, banners, setBanners, popups, setPopups, empresas, setEmpresas, sucursales, setSucursales, localesRetiro, setLocalesRetiro, retiroLocalHabilitado, setRetiroLocalHabilitado, showToast, setView, setUser, user } = useApp();
   // Rol del usuario actual: 'admin' = módulo completo, 'operador' = acceso limitado.
@@ -2795,6 +2926,9 @@ function AdminView() {
   const [rankingModalProveedorId, setRankingModalProveedorId] = useState(null); // si se abrió desde el análisis de UN proveedor, filtra solo sus productos
   const [proveedorExpandidoId, setProveedorExpandidoId] = useState(null); // qué proveedor tiene su análisis de stock abierto
   const [clienteForm, setClienteForm] = useState(null); // null | {} (crear) | {id,...} (editar)
+  const [busquedaCliente, setBusquedaCliente] = useState("");
+  const [filtroCuenta, setFiltroCuenta] = useState("todos"); // todos | con_cuenta | sin_cuenta
+  const [verDuplicados, setVerDuplicados] = useState(false);
   const [equipoForm, setEquipoForm] = useState(false); // true = mostrar modal de agregar miembro
   const [promoverForm, setPromoverForm] = useState(false); // true = mostrar modal de promover cliente existente
   const [miembroAQuitar, setMiembroAQuitar] = useState(null); // usuario del equipo a quitar (confirmación)
@@ -7281,7 +7415,20 @@ function AdminView() {
         )}
 
         {/* ═══════════ CLIENTES ═══════════ */}
-        {tab === "users" && (
+        {tab === "users" && (() => {
+          const clientesFiltrados = filtrarClientes(users, busquedaCliente, filtroCuenta);
+          const recargarClientes = async () => {
+            try {
+              const [us, peds] = await Promise.all([
+                sb.get("usuarios", "?order=created_at.desc"),
+                sb.get("pedidos", "?select=id,usuario_id"),
+              ]);
+              setUsers(us || []);
+              const mapa = {}; (peds || []).forEach(p => { mapa[p.id] = p.usuario_id; });
+              setOrders(prev => prev.map(o => (o.id in mapa ? { ...o, usuario_id: mapa[o.id] } : o)));
+            } catch (e) { showToast("No se pudo recargar la lista de clientes"); }
+          };
+          return (
           <>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24, flexWrap: "wrap", gap: 12 }}>
               <div style={{ fontSize: 22, fontWeight: 900, display: "flex", alignItems: "center", gap: 10 }}><Users size={24} color={RED} /> Clientes Registrados</div>
@@ -7289,13 +7436,15 @@ function AdminView() {
                 <button onClick={() => {
                   // Exportar clientes a CSV (abre en Excel)
                   const BOM = "\uFEFF"; // para que Excel reconozca UTF-8
-                  const headers = ["Nombre", "Email", "WhatsApp", "Pedidos", "Admin", "Registrado"];
-                  const filas = users.map(u => {
+                  const headers = ["ID interno", "Nombre", "Email", "WhatsApp", "Cuenta web", "Pedidos", "Admin", "Registrado"];
+                  const filas = clientesFiltrados.map(u => {
                     const pedidosUser = orders.filter(o => o.usuario_id === u.id).length;
                     return [
+                      u.id_interno || "",
                       u.nombre || "",
                       (u.email || "").includes("@ofertodo.local") ? "" : (u.email || ""),
                       u.telefono || "",
+                      u.cuenta_web ? "Sí" : "No",
                       pedidosUser,
                       u.es_admin ? "Sí" : "No",
                       u.created_at ? new Date(u.created_at).toLocaleDateString("es-PA") : "",
@@ -7319,26 +7468,47 @@ function AdminView() {
               </div>
             </div>
             <div style={{ display: "flex", gap: 16, marginBottom: 28, flexWrap: "wrap" }}>
-              {[["Total clientes", users.length, Users, RED], ["Con pedidos", new Set(orders.map(o => o.usuario_id)).size, ShoppingBag, "#155724"]].map(([l,n,Icon,c]) => (
+              {[
+                ["Total clientes", users.length, Users, RED],
+                ["Con pedidos", new Set(orders.map(o => o.usuario_id).filter(Boolean)).size, ShoppingBag, "#155724"],
+                ["Con cuenta web", users.filter(u => u.cuenta_web && !u.es_admin).length, CheckCircle2, "#155724"],
+                ["Sin cuenta", users.filter(u => !u.cuenta_web && !u.es_admin).length, User, "#856404"],
+              ].map(([l,n,Icon,c]) => (
                 <div key={l} style={S.statCard}><Icon size={20} color={c} strokeWidth={1.8} /><div style={{ fontSize: 28, fontWeight: 900, color: c }}>{n}</div><div style={{ fontSize: 13, color: GRAY3 }}>{l}</div></div>
               ))}
+            </div>
+            {esAdminCompleto && !loadingData && (
+              <ClientesDuplicadosPanel users={users} orders={orders} abierto={verDuplicados} setAbierto={setVerDuplicados} onFusionado={recargarClientes} showToast={showToast} />
+            )}
+            <div style={{ display: "flex", gap: 10, marginBottom: 18, flexWrap: "wrap", alignItems: "center" }}>
+              <div style={{ position: "relative", flex: "1 1 240px", maxWidth: 380 }}>
+                <Search size={16} color={GRAY3} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)" }} />
+                <input value={busquedaCliente} onChange={e => setBusquedaCliente(e.target.value)} placeholder="Buscar por nombre, correo, WhatsApp o ID (CLI-00012)"
+                  style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px 10px 36px", border: `1.5px solid ${GRAY2}`, borderRadius: 10, fontSize: 14, outline: "none" }} />
+              </div>
+              {[["todos", "Todos"], ["con_cuenta", "Con cuenta"], ["sin_cuenta", "Sin cuenta"]].map(([k, l]) => (
+                <button key={k} onClick={() => setFiltroCuenta(k)} style={{ padding: "8px 14px", borderRadius: 20, fontSize: 13, fontWeight: 700, cursor: "pointer", border: `1.5px solid ${filtroCuenta === k ? BLACK : GRAY2}`, background: filtroCuenta === k ? BLACK : WHITE, color: filtroCuenta === k ? WHITE : BLACK }}>{l}</button>
+              ))}
+              {(busquedaCliente || filtroCuenta !== "todos") && <span style={{ fontSize: 12, color: GRAY3 }}>{clientesFiltrados.length} de {users.length}</span>}
             </div>
             {loadingData ? <Spinner /> : (
               <>
               {/* TABLA (solo escritorio) */}
               <div className="oft-table-wrap oft-only-desktop" style={{ background: WHITE, borderRadius: 12, overflow: "auto" }}>
                 <table style={S.table}>
-                  <thead><tr>{["Nombre","Email","WhatsApp","Pedidos","Registrado",""].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
+                  <thead><tr>{["ID","Nombre","Email","WhatsApp","Cuenta","Pedidos","Registrado",""].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
                   <tbody>
-                    {users.length === 0 ? (
-                      <tr><td colSpan={6} style={{ ...S.td, textAlign: "center", color: GRAY3, padding: 30 }}>Aún no hay clientes registrados</td></tr>
-                    ) : users.map(u => {
+                    {clientesFiltrados.length === 0 ? (
+                      <tr><td colSpan={8} style={{ ...S.td, textAlign: "center", color: GRAY3, padding: 30 }}>{users.length === 0 ? "Aún no hay clientes registrados" : "Ningún cliente coincide con la búsqueda"}</td></tr>
+                    ) : clientesFiltrados.map(u => {
                       const pedidosUser = orders.filter(o => o.usuario_id === u.id).length;
                       return (
                         <tr key={u.id}>
+                          <td style={S.td}><ChipIdInterno id={u.id_interno} /></td>
                           <td style={{ ...S.td, fontWeight: 700 }}>{u.nombre}{u.es_admin && <span style={{ marginLeft: 6, fontSize: 10, background: RED, color: WHITE, padding: "1px 6px", borderRadius: 10 }}>ADMIN</span>}</td>
-                          <td style={S.td}>{u.email}</td>
+                          <td style={S.td}>{esCorreoReal(u.email) ? u.email : <span style={{ color: GRAY3 }}>sin correo</span>}</td>
                           <td style={S.td}>{u.telefono || "-"}</td>
+                          <td style={S.td}><ChipCuenta u={u} /></td>
                           <td style={{ ...S.td, fontWeight: 700, color: RED }}>{pedidosUser}</td>
                           <td style={S.td}>{u.created_at ? new Date(u.created_at).toLocaleDateString() : "-"}</td>
                           <td style={S.td}>
@@ -7357,9 +7527,9 @@ function AdminView() {
 
               {/* TARJETAS (solo celular) */}
               <div className="oft-only-mobile" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                {users.length === 0 ? (
-                  <div style={{ textAlign: "center", padding: 30, color: GRAY3 }}>Aún no hay clientes registrados</div>
-                ) : users.map(u => {
+                {clientesFiltrados.length === 0 ? (
+                  <div style={{ textAlign: "center", padding: 30, color: GRAY3 }}>{users.length === 0 ? "Aún no hay clientes registrados" : "Ningún cliente coincide con la búsqueda"}</div>
+                ) : clientesFiltrados.map(u => {
                   const pedidosUser = orders.filter(o => o.usuario_id === u.id).length;
                   return (
                     <div key={u.id} style={{ background: WHITE, borderRadius: 14, border: `1px solid ${GRAY2}`, padding: 16 }}>
@@ -7369,7 +7539,8 @@ function AdminView() {
                         </div>
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <div style={{ fontWeight: 800, fontSize: 15, display: "flex", alignItems: "center", gap: 6 }}>{u.nombre}{u.es_admin && <span style={{ fontSize: 9, background: RED, color: WHITE, padding: "1px 6px", borderRadius: 10 }}>ADMIN</span>}</div>
-                          <div style={{ fontSize: 12, color: GRAY3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u.email}</div>
+                          <div style={{ fontSize: 12, color: GRAY3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{esCorreoReal(u.email) ? u.email : "sin correo"}</div>
+                          <div style={{ display: "flex", gap: 6, marginTop: 5, flexWrap: "wrap" }}><ChipIdInterno id={u.id_interno} /><ChipCuenta u={u} /></div>
                         </div>
                         <div style={{ textAlign: "center", flexShrink: 0 }}>
                           <div style={{ fontSize: 20, fontWeight: 900, color: RED }}>{pedidosUser}</div>
@@ -7392,7 +7563,8 @@ function AdminView() {
               </>
             )}
           </>
-        )}
+          );
+        })()}
 
         {/* ═══════════ EQUIPO (solo admin completo) ═══════════ */}
         {tab === "equipo" && esAdminCompleto && (
