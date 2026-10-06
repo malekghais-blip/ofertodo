@@ -667,8 +667,35 @@ function LegalPageView() {
 // ═══════════════════════════════════════════════════════════════
 //  RESULTADO DEL PAGO CON TARJETA (al volver de Powertranz)
 // ═══════════════════════════════════════════════════════════════
+// Botones al terminar una compra: con sesión, ver el pedido; sin sesión (compra de invitado), invitar a
+// crear la cuenta con los mismos datos -- si usa el mismo correo, su ficha de cliente se une sola a la cuenta.
+function FinPedidoAcciones({ email, nombre, telefono }) {
+  const { user, setView, setShowRegister, setRegisterPrefill } = useApp();
+  if (user) {
+    return <button style={{ ...S.btnRed, justifyContent: "center", margin: "0 auto" }} onClick={() => setView("dashboard")}>Ver estado de mi pedido</button>;
+  }
+  return (
+    <div>
+      {email && <p style={{ fontSize: 13, color: GRAY3, marginBottom: 14 }}>Te enviamos la confirmación a <strong>{email}</strong>.</p>}
+      <div style={{ background: "#FFF5F5", border: `1.5px solid ${RED}`, borderRadius: 12, padding: 16, textAlign: "left", marginBottom: 14 }}>
+        <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 4 }}>¿Quieres seguir tus pedidos?</div>
+        <div style={{ fontSize: 13, color: GRAY3, marginBottom: 12, lineHeight: 1.45 }}>
+          Crea tu cuenta con este mismo correo y verás aquí este pedido y los siguientes, y comprarás más rápido la próxima vez.
+        </div>
+        <button className="oft-btn-press" style={{ ...S.btnRed, width: "100%", justifyContent: "center", padding: 12 }}
+          onClick={() => { setRegisterPrefill({ nombre, email, telefono }); setShowRegister(true); }}>
+          Crear mi cuenta
+        </button>
+      </div>
+      <button style={{ background: "none", border: "none", color: GRAY3, fontSize: 13, textDecoration: "underline", cursor: "pointer" }} onClick={() => setView("home")}>
+        Seguir comprando
+      </button>
+    </div>
+  );
+}
+
 function PagoResultadoView() {
-  const { pagoResultado, setView } = useApp();
+  const { pagoResultado, setView, user } = useApp();
   const money = (n) => "$" + Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
   if (!pagoResultado) {
@@ -687,7 +714,7 @@ function PagoResultadoView() {
       <div className="oft-section" style={{ ...S.section, textAlign: "center", maxWidth: 500 }}>
         <div style={{ display: "flex", justifyContent: "center", marginBottom: 12 }}><CheckCircle2 size={64} color="#22c55e" strokeWidth={1.5} /></div>
         <h2 style={{ fontSize: 24, fontWeight: 900 }}>¡Pago exitoso!</h2>
-        <p style={{ color: GRAY3 }}>Tu pedido está confirmado. Sigue su estado desde "Mi Cuenta".</p>
+        <p style={{ color: GRAY3 }}>{user ? 'Tu pedido está confirmado. Sigue su estado desde "Mi Cuenta".' : "Tu pedido está confirmado. Te avisaremos por WhatsApp y por correo."}</p>
         <div style={{ background: GRAY, borderRadius: 12, padding: 20, margin: "20px 0", textAlign: "left" }}>
           <div style={{ fontWeight: 800, marginBottom: 8 }}>Número: <span style={{ color: RED }}>{codigo}</span></div>
           <div style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "#D4EDDA", color: "#155724", padding: "4px 12px", borderRadius: 20, fontWeight: 700, fontSize: 13, marginBottom: 4 }}>
@@ -712,7 +739,7 @@ function PagoResultadoView() {
             </>
           )}
         </div>
-        <button style={{ ...S.btnRed, justifyContent: "center", margin: "0 auto" }} onClick={() => setView("dashboard")}>Ver estado de mi pedido</button>
+        <FinPedidoAcciones email={pagoResultado.email || ""} nombre={pagoResultado.nombre || ""} telefono={pagoResultado.telefono || ""} />
       </div>
     );
   }
@@ -2088,9 +2115,14 @@ function CartModal() {
               <span>Total</span><span style={{ color: RED }}>${total.toFixed(2)}</span>
             </div>
             <button style={{ ...S.btnRed, width: "100%", justifyContent: "center", padding: 14, fontSize: 15 }}
-              onClick={() => { setShowCart(false); if (user) { setView("checkout"); } else { setPendingCheckout(true); setShowLogin(true); } }}>
+              onClick={() => { setShowCart(false); setView("checkout"); }}>
               Finalizar Pedido →
             </button>
+            {!user && (
+              <div style={{ textAlign: "center", fontSize: 12, color: GRAY3, marginTop: 8 }}>
+                Compra sin crear cuenta · <span style={{ color: RED, fontWeight: 700, cursor: "pointer" }} onClick={() => { setShowCart(false); setPendingCheckout(true); setShowLogin(true); }}>Ya tengo cuenta</span>
+              </div>
+            )}
             <button style={{ ...S.btnWA, width: "100%", justifyContent: "center", padding: 12, marginTop: 10 }}
               onClick={() => {
                 registrarEvento("consulta_whatsapp", null, "Pedido desde el carrito");
@@ -2154,7 +2186,19 @@ function LoginModal() {
       } else {
         // Activa la sesión (aunque sea parcial) para poder consultar el perfil y, si aplica, el 2do factor
         sb.setSession(res);
-        const users = await sb.get("usuarios", `?email=eq.${encodeURIComponent(emailLimpio)}&limit=1`);
+        // La ficha se guarda con el correo en minúsculas (así lo entrega también el inicio de sesión)
+        let users = await sb.get("usuarios", `?email=eq.${encodeURIComponent(emailLimpio.toLowerCase())}&limit=1`);
+        if (!users || !users[0]) {
+          // Cuenta sin ficha de cliente (ej. falló al registrarse): el servidor la crea, o la une a la que ya
+          // exista con ese correo, usando el correo de la sesión
+          try {
+            await fetch(SUPABASE_URL + "/functions/v1/registrar-cliente-web", {
+              method: "POST", headers: sb.functionHeaders(),
+              body: JSON.stringify({ nombre: res.user?.user_metadata?.nombre || emailLimpio.split("@")[0], email: emailLimpio, telefono: "" }),
+            });
+            users = await sb.get("usuarios", `?email=eq.${encodeURIComponent(emailLimpio.toLowerCase())}&limit=1`);
+          } catch(e) {}
+        }
         let factorVerificado = null;
         try {
           const factores = await sb.mfaListFactors();
@@ -2279,8 +2323,9 @@ function LoginModal() {
 }
 
 function RegisterModal() {
-  const { setShowRegister, setShowLogin, setUser, showToast } = useApp();
-  const [form, setForm] = useState({ nombre: "", telefono: "", email: "", pass: "", pass2: "" });
+  const { setShowRegister, setShowLogin, setUser, showToast, registerPrefill, setRegisterPrefill } = useApp();
+  const [form, setForm] = useState({ nombre: registerPrefill?.nombre || "", telefono: registerPrefill?.telefono || "", email: registerPrefill?.email || "", pass: "", pass2: "" });
+  useEffect(() => () => setRegisterPrefill(null), []); // los datos de la compra anterior no se quedan para la próxima vez
   const [loading, setLoading] = useState(false), [err, setErr] = useState("");
 
   const handle = async () => {
@@ -2294,7 +2339,15 @@ function RegisterModal() {
       if (auth.error || auth.error_description || auth.msg) {
         setErr(auth.error?.message || auth.error_description || auth.msg || "No se pudo crear la cuenta.");
       } else {
-        await sb.post("usuarios", { nombre: nombreLimpio, email: emailLimpio, telefono: form.telefono.trim(), es_admin: false, origen_cuenta: "web" });
+        // Si esta persona ya compró antes sin cuenta (o el admin la registró), el servidor reutiliza esa MISMA ficha
+        // (mismo ID interno y mismos pedidos) en vez de crear una duplicada. Si falla, la cuenta ya existe y la ficha
+        // se completa sola la primera vez que inicie sesión.
+        try {
+          await fetch(SUPABASE_URL + "/functions/v1/registrar-cliente-web", {
+            method: "POST", headers: sb.authHeaders(),
+            body: JSON.stringify({ nombre: nombreLimpio, email: emailLimpio, telefono: form.telefono.trim() }),
+          });
+        } catch(e) {}
         // Enviar email de bienvenida (sin bloquear el flujo si falla)
         try {
           fetch(SUPABASE_URL + "/functions/v1/bienvenida-cliente", {
@@ -2498,7 +2551,11 @@ function CompleteProfileModal() {
     if (!telefono.trim()) { setErr("Escribe tu WhatsApp / celular."); return; }
     setLoading(true); setErr("");
     try {
-      await sb.post("usuarios", { nombre: nombre.trim(), email: completeProfile.email, telefono: telefono.trim(), es_admin: false, origen_cuenta: "web" });
+      const regResp = await fetch(SUPABASE_URL + "/functions/v1/registrar-cliente-web", {
+        method: "POST", headers: sb.authHeaders(),
+        body: JSON.stringify({ nombre: nombre.trim(), email: completeProfile.email, telefono: telefono.trim() }),
+      });
+      if (!regResp.ok) throw new Error("registro");
       const perfil = await sb.get("usuarios", `?email=eq.${encodeURIComponent(completeProfile.email)}&limit=1`);
       setUser({ ...completeProfile.gUser, ...(perfil[0] || {}), token: completeProfile.token, refresh_token: completeProfile.refresh_token, expires_at: completeProfile.expires_at });
       // Enviar email de bienvenida (sin bloquear si falla)
@@ -2631,13 +2688,24 @@ function YappyButton({ pedido, onExito, onCancelar }) {
 //  CHECKOUT
 // ═══════════════════════════════════════════════════════════════
 function CheckoutView() {
-  const { cart, setCart, user, setView, showToast, empresas, sucursales, localesRetiro, retiroLocalHabilitado } = useApp();
+  const { cart, setCart, user, setView, showToast, empresas, sucursales, localesRetiro, retiroLocalHabilitado, setShowLogin, setPendingCheckout } = useApp();
   const [localRetiroId, setLocalRetiroId] = useState(null);
   const [address, setAddress] = useState(""), [notes, setNotes] = useState(""), [loading, setLoading] = useState(false), [placed, setPlaced] = useState(null);
   const [avisoValidacion, setAvisoValidacion] = useState(null); // mensaje del pop-up de validación (reemplaza alert() nativo)
   const [nombre, setNombre] = useState(user?.nombre || "");
   const [telefono, setTelefono] = useState(user?.telefono || "");
   const [telefonoYappy, setTelefonoYappy] = useState(user?.telefono || ""); // número específico para pagar con Yappy
+  const [email, setEmail] = useState(user?.email || "");
+  // Sin sesión iniciada = compra de invitado: no hace falta cuenta, pero sí nombre, WhatsApp y correo
+  const esInvitado = !user;
+  // Si inicia sesión estando ya aquí, se rellenan sus datos sin pisar lo que ya escribió
+  useEffect(() => {
+    if (!user) return;
+    setNombre(n => n || user.nombre || "");
+    setTelefono(t => t || user.telefono || "");
+    setTelefonoYappy(t => t || user.telefono || "");
+    setEmail(e => e || user.email || "");
+  }, [user]);
   const [empresaId, setEmpresaId] = useState(null);
   const [sucursalId, setSucursalId] = useState(null);
   const [modoEntrega, setModoEntrega] = useState("sucursal"); // "sucursal" | "puerta"
@@ -2744,8 +2812,31 @@ function CheckoutView() {
 
   const [pedidoPendiente, setPedidoPendiente] = useState(null); // pedido guardado, esperando pago Yappy
 
+    const construirItemsPayload = () => cart.flatMap(item => {
+          if (item.esFlexPack) {
+            // Una línea de Flex Pack se reparte en varias filas (una por producto elegido),
+            // prorrateando el precio del paquete por pieza -- tiene un precio ÚNICO para
+            // todo el conjunto, no por producto.
+            const precioPorPieza = item.precioTotal / item.totalPiezas;
+            return item.items.map(it => ({
+              producto_id: it.productId, nombre_producto: `${it.nombre} (Flex Pack ${item.grupoNombre})`,
+              cantidad: it.cantidad, precio_unitario: Number(precioPorPieza.toFixed(4)),
+              subtotal: Number((precioPorPieza * it.cantidad).toFixed(2)), presentacion: "pieza",
+            }));
+          }
+          return [{
+            producto_id: item.product.id, nombre_producto: item.product.nombre,
+            cantidad: item.qty, precio_unitario: item.product.precio_pieza, subtotal: cartItemTotal(item),
+            presentacion: item.pres || "pieza",
+          }];
+        });
+
   const handlePlace = async () => {
     if (!nombre.trim()) { setAvisoValidacion("Por favor escribe tu nombre."); return; }
+    if (esInvitado) {
+      if (!/^[^@ ]+@[^@ ]+[.][^@ ]+$/.test(email.trim())) { setAvisoValidacion("Por favor escribe un correo válido: ahí te enviamos la confirmación de tu pedido."); return; }
+      if (telefono.replace(/\D/g, "").length < 7) { setAvisoValidacion("Por favor escribe tu WhatsApp o celular para coordinar tu pedido."); return; }
+    }
     if (metodoPago === "yappy") {
       const aliasLimpio = telefonoYappy.replace(/\D/g, "");
       if (aliasLimpio.length < 7) { setAvisoValidacion("Por favor escribe tu número de Yappy para poder cobrar el pago."); return; }
@@ -2803,28 +2894,12 @@ function CheckoutView() {
     try {
       if (metodoPago === "tarjeta") {
         // El pedido se crea DENTRO de la función (junto con el inicio del pago en Powertranz)
-        const itemsPayload = cart.flatMap(item => {
-          if (item.esFlexPack) {
-            // Una línea de Flex Pack se reparte en varias filas (una por producto elegido),
-            // prorrateando el precio del paquete por pieza -- tiene un precio ÚNICO para
-            // todo el conjunto, no por producto.
-            const precioPorPieza = item.precioTotal / item.totalPiezas;
-            return item.items.map(it => ({
-              producto_id: it.productId, nombre_producto: `${it.nombre} (Flex Pack ${item.grupoNombre})`,
-              cantidad: it.cantidad, precio_unitario: Number(precioPorPieza.toFixed(4)),
-              subtotal: Number((precioPorPieza * it.cantidad).toFixed(2)), presentacion: "pieza",
-            }));
-          }
-          return [{
-            producto_id: item.product.id, nombre_producto: item.product.nombre,
-            cantidad: item.qty, precio_unitario: item.product.precio_pieza, subtotal: cartItemTotal(item),
-            presentacion: item.pres || "pieza",
-          }];
-        });
+        const itemsPayload = construirItemsPayload();
         const resp = await fetch(`${SUPABASE_URL}/functions/v1/crear-pago-tarjeta`, {
           method: "POST", headers: sb.functionHeaders(),
           body: JSON.stringify({
-            usuario_id: user.id, nombre_cliente: nombre, telefono, direccion: address, notas: notes, total: totalConEnvio,
+            usuario_id: user?.id || null, cliente: esInvitado ? { nombre: nombre.trim(), email: email.trim(), telefono: telefono.trim() } : undefined,
+            nombre_cliente: nombre, telefono, direccion: address, notas: notes, total: totalConEnvio,
             items: itemsPayload,
             empresa_envio_id: empresaFinalId, empresa_envio_nombre: empresaFinalNombre,
             sucursal_id: sucursalFinalId, sucursal_nombre: sucursalFinalNombre,
@@ -2837,7 +2912,40 @@ function CheckoutView() {
         });
         const data = await resp.json();
         if (!resp.ok || data.error) { setAvisoValidacion("Error al iniciar el pago: " + (data.error || "intenta de nuevo")); setLoading(false); return; }
+        // Al volver del banco la página se recarga y un invitado no puede leer su pedido (solo lo ve su dueño
+        // con sesión) -- se guarda un resumen aquí mismo para poder mostrarle su confirmación y avisar a marketing.
+        try {
+          localStorage.setItem("oft_pago_tarjeta_pendiente", JSON.stringify({
+            codigo: data.codigo, email: esInvitado ? email.trim() : (user?.email || ""), nombre: nombre.trim(), telefono: telefono.trim(),
+            pedido: {
+              total: totalConEnvio, retiro_local: modoEntrega === "local", local_retiro_nombre: localElegido?.nombre || null,
+              empresa_envio_nombre: empresaFinalNombre, sucursal_nombre: sucursalFinalNombre,
+              items: itemsPayload.map(it => ({ nombre_producto: it.nombre_producto, cantidad: it.cantidad, subtotal: it.subtotal })),
+            },
+            itemsTrack: cart.filter(i => !i.esFlexPack).map(i => ({ id: i.product.id, nombre: i.product.nombre, precio: i.product.precio_pieza, cantidad: i.qty })),
+          }));
+        } catch (e) {}
         setTarjetaPagoData({ RedirectData: data.RedirectData, codigo: data.codigo, modoPrueba: data.modo_prueba });
+      } else if (esInvitado) {
+        // Compra SIN cuenta: la ficha del cliente y el pedido los crea el servidor
+        const resp = await fetch(`${SUPABASE_URL}/functions/v1/crear-pedido-invitado`, {
+          method: "POST", headers: sb.functionHeaders(),
+          body: JSON.stringify({
+            cliente: { nombre: nombre.trim(), email: email.trim(), telefono: telefono.trim() },
+            nombre_cliente: nombre, telefono, direccion: address, notas: notes, total: totalConEnvio,
+            items: construirItemsPayload(),
+            empresa_envio_id: empresaFinalId, empresa_envio_nombre: empresaFinalNombre,
+            sucursal_id: sucursalFinalId, sucursal_nombre: sucursalFinalNombre,
+            retiro_local: modoEntrega === "local", local_retiro_id: localElegido?.id || null, local_retiro_nombre: localElegido?.nombre || null,
+            costo_envio: costoEnvioFinal,
+            descuento_codigo: descuentoAplicado?.codigo || null,
+            descuento_monto: montoDescuento > 0 ? Number(montoDescuento.toFixed(2)) : 0,
+            visitante_id: idVisitante(),
+          }),
+        });
+        const data = await resp.json();
+        if (!resp.ok || data.error) { setAvisoValidacion(data.error || "No se pudo crear el pedido. Intenta de nuevo."); setLoading(false); return; }
+        setPedidoPendiente({ id: data.pedido_id, codigo: data.codigo, yappyOrderId: data.yappy_order_id, total: totalConEnvio, telefono: telefonoYappy });
       } else {
         // orderId corto para Yappy (máx 15 caracteres alfanuméricos)
         const yappyOrderId = "OFT" + Date.now().toString().slice(-10);
@@ -2924,7 +3032,7 @@ function CheckoutView() {
     <div className="oft-section" style={{ ...S.section, textAlign: "center", maxWidth: 500 }}>
       <div style={{ display: "flex", justifyContent: "center", marginBottom: 12 }}><CheckCircle2 size={64} color="#22c55e" strokeWidth={1.5} /></div>
       <h2 style={{ fontSize: 24, fontWeight: 900 }}>¡Pago recibido!</h2>
-      <p style={{ color: GRAY3 }}>Tu pedido está confirmado. Sigue su estado desde "Mi Cuenta".</p>
+      <p style={{ color: GRAY3 }}>{user ? 'Tu pedido está confirmado. Sigue su estado desde "Mi Cuenta".' : "Tu pedido está confirmado. Te avisaremos por WhatsApp y por correo."}</p>
       <div style={{ background: GRAY, borderRadius: 12, padding: 20, margin: "20px 0", textAlign: "left" }}>
         <div style={{ fontWeight: 800, marginBottom: 8 }}>Número: <span style={{ color: RED }}>{placed}</span></div>
         <div style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "#D4EDDA", color: "#155724", padding: "4px 12px", borderRadius: 20, fontWeight: 700, fontSize: 13, marginBottom: 4 }}>
@@ -2934,7 +3042,7 @@ function CheckoutView() {
           ? <div style={{ marginTop: 10, fontSize: 13, color: "#856404", display: "flex", alignItems: "center", gap: 6, fontWeight: 700 }}><Home size={14} /> Retiro en el local{(() => { const l = localesRetiro.find(x => x.id === localRetiroId) || (localesRetiro.length === 1 ? localesRetiro[0] : null); return l ? `: ${l.nombre}` : ""; })()}</div>
           : empresaSel && <div style={{ marginTop: 10, fontSize: 13, color: GRAY3, display: "flex", alignItems: "center", gap: 6 }}><Truck size={14} /> {empresaSel.nombre}{sucursalSel ? ` · ${sucursalSel.nombre}` : ""}</div>}
       </div>
-      <button style={{ ...S.btnRed, justifyContent: "center", margin: "0 auto" }} onClick={() => setView("dashboard")}>Ver estado de mi pedido</button>
+      <FinPedidoAcciones email={email.trim()} nombre={nombre.trim()} telefono={telefono.trim()} />
     </div>
   );
 
@@ -3148,10 +3256,23 @@ function CheckoutView() {
       {/* DIRECCIÓN / NOTAS */}
       <div style={{ background: WHITE, borderRadius: 12, padding: 24, marginBottom: 16, border: `1px solid ${GRAY2}` }}>
         <div style={{ fontWeight: 800, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}><MapPin size={18} /> Datos adicionales</div>
+        {esInvitado && (
+          <div style={{ background: "#F0FAF3", border: "1px solid #BFE5CB", borderRadius: 10, padding: "10px 14px", marginBottom: 14, fontSize: 13, color: "#1F6B3A", lineHeight: 1.45 }}>
+            <strong>Compra sin crear cuenta.</strong> Solo necesitamos tus datos de contacto. ¿Ya tienes cuenta?{" "}
+            <span style={{ color: RED, fontWeight: 700, cursor: "pointer" }} onClick={() => { setPendingCheckout(true); setShowLogin(true); }}>Inicia sesión</span>
+          </div>
+        )}
         <label style={S.label}>Nombre *</label>
-        <input style={S.input} placeholder="Tu nombre" value={nombre} onChange={e => setNombre(e.target.value)} />
-        <label style={S.label}>WhatsApp / Teléfono</label>
-        <input style={S.input} placeholder="Ej: 6720-0474" value={telefono} onChange={e => setTelefono(e.target.value)} />
+        <input style={S.input} placeholder="Tu nombre" value={nombre} onChange={e => setNombre(e.target.value)} autoComplete="name" />
+        <label style={S.label}>WhatsApp / Teléfono{esInvitado ? " *" : ""}</label>
+        <input style={S.input} placeholder="Ej: 6720-0474" type="tel" value={telefono} onChange={e => setTelefono(e.target.value)} autoComplete="tel" />
+        {esInvitado && (
+          <>
+            <label style={S.label}>Correo electrónico *</label>
+            <input style={S.input} placeholder="tu@correo.com" type="email" inputMode="email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} />
+            <div style={{ fontSize: 11, color: GRAY3, marginTop: -6, marginBottom: 10 }}>Ahí te enviamos la confirmación de tu pedido.</div>
+          </>
+        )}
         <label style={S.label}>Dirección {modoEntrega === "puerta" ? "*" : "(opcional)"}</label>
         <input style={{ ...S.input, borderColor: modoEntrega === "puerta" && !address.trim() ? RED : GRAY2 }} placeholder={modoEntrega === "puerta" ? "Dirección completa para la entrega..." : "Ej: cerca del parque central..."} value={address} onChange={e => setAddress(e.target.value)} />
         <label style={S.label}>Notas (tallas, colores, referencias)</label>
@@ -3808,6 +3929,7 @@ export default function App() {
   }, [user]);
   const [showLogin, setShowLogin] = useState(false);
   const [showRegister, setShowRegister] = useState(false);
+  const [registerPrefill, setRegisterPrefill] = useState(null); // datos para rellenar el registro (ej. al terminar una compra de invitado)
   const [showCart, setShowCart] = useState(false);
   const [quickView, setQuickView] = useState(null); // producto a mostrar en detalle
   const [pagoResultado, setPagoResultado] = useState(null); // resultado de un pago con tarjeta al volver de Powertranz
@@ -4090,8 +4212,18 @@ export default function App() {
                   codigo: codigoPago, total: pedido.total,
                   items: (items || []).map(i => ({ id: i.producto_id, nombre: i.nombre_producto, precio: i.precio_unitario, cantidad: i.cantidad })),
                 });
+                try { localStorage.removeItem("oft_pago_tarjeta_pendiente"); } catch (e) {}
               } else {
-                setPagoResultado({ tipo: "exito", codigo: codigoPago, pedido: null });
+                // Sin sesión (compra de invitado) el pedido no se puede leer desde aquí: se usa el resumen guardado al pagar
+                let resp = null;
+                try { const g = JSON.parse(localStorage.getItem("oft_pago_tarjeta_pendiente") || "null"); if (g && g.codigo === codigoPago) resp = g; } catch (e) {}
+                if (resp) {
+                  setPagoResultado({ tipo: "exito", codigo: codigoPago, pedido: resp.pedido, email: resp.email, nombre: resp.nombre, telefono: resp.telefono });
+                  trackCompra({ codigo: codigoPago, total: resp.pedido.total, items: resp.itemsTrack || [] });
+                  try { localStorage.removeItem("oft_pago_tarjeta_pendiente"); } catch (e) {}
+                } else {
+                  setPagoResultado({ tipo: "exito", codigo: codigoPago, pedido: null });
+                }
               }
             } catch (e) {
               setPagoResultado({ tipo: "exito", codigo: codigoPago, pedido: null });
@@ -4162,7 +4294,7 @@ export default function App() {
   }, []);
 
   const isAdmin = view === "admin";
-  const ctx = { view, setView, cart, setCart, addToCart, agregarFlexPackAlCarrito, cartPulse, user, setUser, showLogin, setShowLogin, showRegister, setShowRegister, showCart, setShowCart, quickView, setQuickView, pagoResultado, setPagoResultado, catalogCat, setCatalogCat, completeProfile, setCompleteProfile, googleMfaPaso, setGoogleMfaPaso, recuperacionToken, setRecuperacionToken, pendingCheckout, setPendingCheckout, products, setProducts, categories, setCategories, gruposCategorias, setGruposCategorias, banners, setBanners, popups, setPopups, empresas, setEmpresas, sucursales, setSucursales, localesRetiro, setLocalesRetiro, retiroLocalHabilitado, setRetiroLocalHabilitado, flexpackGrupos, loading, showToast };
+  const ctx = { view, setView, cart, setCart, addToCart, agregarFlexPackAlCarrito, cartPulse, user, setUser, showLogin, setShowLogin, showRegister, setShowRegister, registerPrefill, setRegisterPrefill, showCart, setShowCart, quickView, setQuickView, pagoResultado, setPagoResultado, catalogCat, setCatalogCat, completeProfile, setCompleteProfile, googleMfaPaso, setGoogleMfaPaso, recuperacionToken, setRecuperacionToken, pendingCheckout, setPendingCheckout, products, setProducts, categories, setCategories, gruposCategorias, setGruposCategorias, banners, setBanners, popups, setPopups, empresas, setEmpresas, sucursales, setSucursales, localesRetiro, setLocalesRetiro, retiroLocalHabilitado, setRetiroLocalHabilitado, flexpackGrupos, loading, showToast };
 
   return (
     <AppCtx.Provider value={ctx}>
