@@ -490,6 +490,7 @@ export function registrarEvento(tipo, valor = null, valorNombre = null, usuarioI
     // Supabase rechazara TODO el intento. Aquí solo se manda a guardar, sin pedir nada de vuelta.
     fetch(`${SUPABASE_URL}/rest/v1/eventos_analytics`, {
       method: "POST",
+      keepalive: true, // para que el aviso de "salida" llegue aunque se cierre la pestaña
       headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Content-Type": "application/json", "Prefer": "return=minimal" },
       body: JSON.stringify({
         tipo,
