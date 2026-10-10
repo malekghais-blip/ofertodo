@@ -4832,7 +4832,24 @@ export default function App() {
   }, [view]);
   useEffect(() => {
     const latido = setInterval(() => registrarEvento("heartbeat", vistaActualRef.current), 60000);
-    return () => clearInterval(latido);
+    // "salida" al cerrar/irse de la página y "activo" al volver: así el contador de visitas en
+    // vivo del admin baja y sube al momento, sin esperar a los latidos de cada minuto.
+    let ultimoActivo = 0;
+    const alSalir = () => registrarEvento("salida", vistaActualRef.current);
+    const alVolver = () => {
+      if (document.visibilityState !== "visible" || Date.now() - ultimoActivo < 15000) return;
+      ultimoActivo = Date.now();
+      registrarEvento("activo", vistaActualRef.current);
+    };
+    window.addEventListener("pagehide", alSalir);
+    window.addEventListener("pageshow", alVolver);
+    document.addEventListener("visibilitychange", alVolver);
+    return () => {
+      clearInterval(latido);
+      window.removeEventListener("pagehide", alSalir);
+      window.removeEventListener("pageshow", alVolver);
+      document.removeEventListener("visibilitychange", alVolver);
+    };
   }, []);
 
   const isAdmin = view === "admin";
