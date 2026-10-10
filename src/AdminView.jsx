@@ -17,7 +17,7 @@ import {
   RED, RED_D, S, SUPABASE_URL, ShippingLabelModal, NOTAS_FRAGANCIA,
   Spinner, StatusBadge, WHITE, comprimirImagen, estadosDe,
   imagenOptimizada, resolverAreaVenta, sb, useApp, useLockBodyScroll,
-  agregarCanvasComoPaginasPdf,
+  agregarCanvasComoPaginasPdf, ofertaInfo,
 } from "./shared.jsx";
 
 // "YYYY-MM-DD" según la hora de PANAMÁ (America/Panama, UTC-5), sin importar la
@@ -2872,6 +2872,472 @@ function ClientesDuplicadosPanel({ users, orders, abierto, setAbierto, onFusiona
   );
 }
 
+// ═══════════════════════════════════════════════════════════════
+//  OFERTAS — campañas ("Ofertas de Black Weekend"), ofertas de un producto
+//  y combos fijos, separados en sección Detal y sección Mayor.
+//  Solo UNA campaña puede estar activa a la vez (la base de datos lo exige).
+// ═══════════════════════════════════════════════════════════════
+
+// Fecha de un <input type="datetime-local"> <-> timestamp, siempre en hora de Panamá (UTC-5)
+function aInputPanama(iso) {
+  if (!iso) return "";
+  const partes = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Panama", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(new Date(iso));
+  const o = {}; partes.forEach(p => { o[p.type] = p.value; });
+  return `${o.year}-${o.month}-${o.day}T${o.hour}:${o.minute}`;
+}
+function desdeInputPanama(valor) {
+  if (!valor) return null;
+  return new Date(valor + ":00-05:00").toISOString();
+}
+function fechaCortaPanama(iso) {
+  if (!iso) return "";
+  return new Intl.DateTimeFormat("es-PA", { timeZone: "America/Panama", day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(iso));
+}
+
+function OfertasAdmin() {
+  const { products, showToast } = useApp();
+  const [campanas, setCampanas] = useState([]);
+  const [items, setItems] = useState([]);       // ofertas de TODAS las campañas
+  const [comboRows, setComboRows] = useState([]);
+  const [cargando, setCargando] = useState(true);
+  const [selId, setSelId] = useState(null);
+  const [campForm, setCampForm] = useState(null);
+  const [ofForm, setOfForm] = useState(null);
+  const [guardando, setGuardando] = useState(false);
+  const [subiendoImg, setSubiendoImg] = useState(false);
+  const [busquedaProd, setBusquedaProd] = useState("");
+  const imgRef = useRef(null);
+
+  const productosPorId = {};
+  products.forEach(p => { productosPorId[p.id] = p; });
+
+  const cargar = async () => {
+    try {
+      const [c, i, r] = await Promise.all([
+        sb.get("campanas_ofertas", "?select=*&order=created_at.desc"),
+        sb.get("ofertas_items", "?select=*&order=orden.asc,id.asc"),
+        sb.get("ofertas_combo_productos", "?select=*&order=id.asc"),
+      ]);
+      setCampanas(c); setItems(i); setComboRows(r);
+      setSelId(prev => (prev && c.some(x => x.id === prev)) ? prev : (c.find(x => x.activa)?.id || c[0]?.id || null));
+    } catch (e) { alert("No se pudieron cargar las ofertas: " + e.message); }
+    setCargando(false);
+  };
+  useEffect(() => { cargar(); }, []);
+
+  const sel = campanas.find(c => c.id === selId) || null;
+  const itemsSel = items.filter(i => i.campana_id === selId);
+  const estadoCampana = (c) => {
+    const ahora = Date.now();
+    if (c.fecha_fin && new Date(c.fecha_fin).getTime() < ahora) return { txt: c.activa ? "ACTIVA · VENCIDA" : "VENCIDA", bg: "#FDE2E2", color: "#9B1C1C" };
+    if (c.activa && c.fecha_inicio && new Date(c.fecha_inicio).getTime() > ahora) return { txt: "PROGRAMADA", bg: "#FFF3CD", color: "#856404" };
+    if (c.activa) return { txt: "ACTIVA", bg: "#D4EDDA", color: "#155724" };
+    return { txt: "BORRADOR", bg: GRAY2, color: GRAY3 };
+  };
+
+  // ── Campañas ──
+  const nuevaCampana = () => setCampForm({ prefijo: "Ofertas de", nombre: "", subtitulo: "", color_principal: "#E31E24", color_secundario: "#111111", fecha_inicio: "", fecha_fin: "" });
+  const editarCampana = (c) => setCampForm({ id: c.id, prefijo: c.prefijo || "", nombre: c.nombre || "", subtitulo: c.subtitulo || "", color_principal: c.color_principal || "#E31E24", color_secundario: c.color_secundario || "#111111", fecha_inicio: aInputPanama(c.fecha_inicio), fecha_fin: aInputPanama(c.fecha_fin) });
+  const guardarCampana = async () => {
+    if (!campForm.nombre.trim()) { alert("Escribe el nombre de la campaña (ej. Black Weekend)."); return; }
+    const ini = desdeInputPanama(campForm.fecha_inicio), fin = desdeInputPanama(campForm.fecha_fin);
+    if (ini && fin && new Date(fin) <= new Date(ini)) { alert("La fecha de fin debe ser después de la de inicio."); return; }
+    setGuardando(true);
+    try {
+      const body = { prefijo: campForm.prefijo.trim(), nombre: campForm.nombre.trim(), subtitulo: campForm.subtitulo.trim() || null, color_principal: campForm.color_principal, color_secundario: campForm.color_secundario, fecha_inicio: ini, fecha_fin: fin };
+      if (campForm.id) await sb.patch("campanas_ofertas", campForm.id, body);
+      else { const r = await sb.post("campanas_ofertas", body); setSelId(r[0].id); }
+      setCampForm(null); showToast("Campaña guardada"); await cargar();
+    } catch (e) { alert("Error guardando la campaña: " + e.message); }
+    setGuardando(false);
+  };
+  const rpc = async (fn, args) => {
+    await sb.ensureFreshToken();
+    const r = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${fn}`, { method: "POST", headers: sb.dataHeaders(), body: JSON.stringify(args) });
+    if (!r.ok) throw new Error(await r.text());
+    return r.json();
+  };
+  const activarCampana = async (c) => {
+    const hayOtra = campanas.find(x => x.activa && x.id !== c.id);
+    const nItems = items.filter(i => i.campana_id === c.id && i.activo).length;
+    if (nItems === 0 && !confirm("Esta campaña no tiene ofertas activas todavía. ¿Activarla de todas formas?")) return;
+    if (hayOtra && !confirm(`Solo puede haber una campaña activa. Se desactivará "${hayOtra.prefijo} ${hayOtra.nombre}". ¿Continuar?`)) return;
+    try { await rpc("activar_campana", { p_id: c.id }); showToast("Campaña activada: ya se ve en la tienda"); await cargar(); }
+    catch (e) { alert("No se pudo activar: " + e.message); }
+  };
+  const desactivarCampana = async (c) => {
+    if (!confirm("¿Quitar esta campaña de la tienda? La página de ofertas dejará de mostrarse.")) return;
+    try { await sb.patch("campanas_ofertas", c.id, { activa: false }); showToast("Campaña desactivada"); await cargar(); }
+    catch (e) { alert("Error: " + e.message); }
+  };
+  const duplicarCampana = async (c) => {
+    try { const nuevo = await rpc("duplicar_campana", { p_id: c.id }); setSelId(Number(nuevo)); showToast("Campaña duplicada (queda inactiva)"); await cargar(); }
+    catch (e) { alert("No se pudo duplicar: " + e.message); }
+  };
+  const eliminarCampana = async (c) => {
+    if (c.activa) { alert("Primero desactiva la campaña para poder eliminarla."); return; }
+    if (!confirm(`¿Eliminar "${c.prefijo} ${c.nombre}" y todas sus ofertas? No se puede deshacer.`)) return;
+    try { await sb.delete("campanas_ofertas", c.id); showToast("Campaña eliminada"); await cargar(); }
+    catch (e) { alert("No se pudo eliminar: " + e.message); }
+  };
+
+  // ── Ofertas ──
+  const nuevaOferta = (seccion) => { setBusquedaProd(""); setOfForm({ tipo: "producto", seccion, producto_id: null, presentacion: seccion === "detal" ? "pieza" : "docena", titulo: "", descripcion: "", imagen_url: "", precio_oferta: "", precio_normal_manual: "", limite_por_pedido: "", etiqueta: "", orden: String(itemsSel.filter(i => i.seccion === seccion).length), activo: true, combo: [] }); };
+  const editarOferta = (o) => {
+    setBusquedaProd("");
+    setOfForm({
+      id: o.id, tipo: o.tipo, seccion: o.seccion, producto_id: o.producto_id, presentacion: o.presentacion || "docena",
+      titulo: o.titulo || "", descripcion: o.descripcion || "", imagen_url: o.imagen_url || "",
+      precio_oferta: String(o.precio_oferta ?? ""), precio_normal_manual: o.precio_normal_manual != null ? String(o.precio_normal_manual) : "",
+      limite_por_pedido: o.limite_por_pedido != null ? String(o.limite_por_pedido) : "", etiqueta: o.etiqueta || "", orden: String(o.orden ?? 0), activo: o.activo,
+      combo: comboRows.filter(r => r.oferta_id === o.id).map(r => ({ rowId: r.id, producto_id: r.producto_id, cantidad: String(r.cantidad) })),
+    });
+  };
+  // Resumen en vivo del formulario (normal, ahorro, costo, margen)
+  const resumenForm = (f) => {
+    if (!f) return null;
+    const tmp = { id: -1, tipo: f.tipo, producto_id: f.producto_id, presentacion: f.presentacion, titulo: f.titulo, precio_oferta: Number(f.precio_oferta) || 0, precio_normal_manual: f.precio_normal_manual ? Number(f.precio_normal_manual) : null, imagen_url: f.imagen_url };
+    const filas = f.combo.map(c => ({ oferta_id: -1, producto_id: c.producto_id, cantidad: Number(c.cantidad) || 0 }));
+    if (f.tipo === "combo" && (filas.length === 0 || filas.some(r => r.cantidad <= 0))) return null;
+    const info = ofertaInfo(tmp, productosPorId, filas);
+    if (!info) return null;
+    const costo = info.lineas.reduce((s, l) => s + (Number(l.product.costo) || 0) * l.piezas, 0);
+    const sinCosto = info.lineas.some(l => !(Number(l.product.costo) > 0));
+    return { info, costo, sinCosto };
+  };
+  const guardarOferta = async () => {
+    const f = ofForm;
+    const precio = Number(f.precio_oferta);
+    if (!(precio > 0)) { alert("Escribe el precio de la oferta."); return; }
+    if (f.tipo === "producto" && !f.producto_id) { alert("Elige el producto de la oferta."); return; }
+    if (f.tipo === "combo") {
+      if (!f.titulo.trim()) { alert("Ponle un nombre al combo (ej. Combo Hogar)."); return; }
+      if (f.combo.length < 2) { alert("Un combo necesita al menos 2 productos."); return; }
+      if (f.combo.some(c => !(Number(c.cantidad) > 0))) { alert("Revisa las cantidades del combo."); return; }
+    }
+    const res = resumenForm(f);
+    if (res && res.info.precioNormal > 0 && precio >= res.info.precioNormal && !confirm("El precio de oferta es igual o mayor al precio normal. ¿Guardar de todas formas?")) return;
+    if (res && !res.sinCosto && precio < res.costo && !confirm(`El precio de oferta ($${precio.toFixed(2)}) está por DEBAJO del costo ($${res.costo.toFixed(2)}). Venderías con pérdida. ¿Guardar de todas formas?`)) return;
+    setGuardando(true);
+    try {
+      const body = {
+        campana_id: selId, tipo: f.tipo, seccion: f.seccion,
+        producto_id: f.tipo === "producto" ? f.producto_id : null, presentacion: f.tipo === "producto" ? f.presentacion : null,
+        titulo: f.titulo.trim() || null, descripcion: f.descripcion.trim() || null, imagen_url: f.imagen_url || null,
+        precio_oferta: precio, precio_normal_manual: f.precio_normal_manual ? Number(f.precio_normal_manual) : null,
+        limite_por_pedido: f.limite_por_pedido ? parseInt(f.limite_por_pedido, 10) : null, etiqueta: f.etiqueta.trim() || null,
+        orden: parseInt(f.orden, 10) || 0, activo: f.activo,
+      };
+      let ofertaId = f.id;
+      if (f.id) { delete body.campana_id; await sb.patch("ofertas_items", f.id, body); }
+      else { const r = await sb.post("ofertas_items", body); ofertaId = r[0].id; }
+      if (f.tipo === "combo") {
+        const viejas = comboRows.filter(r => r.oferta_id === ofertaId);
+        for (const v of viejas) if (!f.combo.some(c => c.rowId === v.id)) await sb.delete("ofertas_combo_productos", v.id);
+        for (const c of f.combo) {
+          if (c.rowId) await sb.patch("ofertas_combo_productos", c.rowId, { cantidad: parseInt(c.cantidad, 10) });
+          else await sb.post("ofertas_combo_productos", { oferta_id: ofertaId, producto_id: c.producto_id, cantidad: parseInt(c.cantidad, 10) });
+        }
+      }
+      setOfForm(null); showToast("Oferta guardada"); await cargar();
+    } catch (e) { alert("Error guardando la oferta: " + e.message); }
+    setGuardando(false);
+  };
+  const alternarOferta = async (o) => {
+    try { await sb.patch("ofertas_items", o.id, { activo: !o.activo }); setItems(prev => prev.map(x => x.id === o.id ? { ...x, activo: !o.activo } : x)); }
+    catch (e) { alert("Error: " + e.message); }
+  };
+  const eliminarOferta = async (o) => {
+    if (!confirm("¿Eliminar esta oferta? No se puede deshacer.")) return;
+    try { await sb.delete("ofertas_items", o.id); showToast("Oferta eliminada"); await cargar(); }
+    catch (e) { alert("No se pudo eliminar: " + e.message); }
+  };
+  const subirImagen = async (e) => {
+    const file = e.target.files[0]; e.target.value = "";
+    if (!file) return;
+    setSubiendoImg(true);
+    try {
+      const limpio = file.name.normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-zA-Z0-9.\-_]/g, "_");
+      const path = `ofertas/${Date.now()}_${limpio}`;
+      await sb.upload("banners", path, file);
+      setOfForm(prev => ({ ...prev, imagen_url: `${sb.publicUrl("banners", path)}?t=${Date.now()}` }));
+    } catch (err) { alert("Error subiendo la imagen: " + err.message); }
+    setSubiendoImg(false);
+  };
+
+  const money = (n) => "$" + Number(n).toFixed(2);
+  const inputChico = { ...S.input, marginBottom: 0, padding: "8px 10px" };
+
+  if (cargando) return <Spinner />;
+
+  const renderSeccion = (seccion, titulo, ayuda) => {
+    const lista = itemsSel.filter(i => i.seccion === seccion);
+    return (
+      <div style={{ marginBottom: 28 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 6 }}>
+          <div style={{ fontSize: 17, fontWeight: 900 }}>{titulo} <span style={{ fontSize: 12, color: GRAY3, fontWeight: 700 }}>({lista.length})</span></div>
+          <button onClick={() => nuevaOferta(seccion)} className="oft-btn-press" style={{ ...S.btnRed, padding: "8px 14px", fontSize: 13 }}><Plus size={15} /> Agregar oferta o combo</button>
+        </div>
+        <div style={{ fontSize: 12, color: GRAY3, marginBottom: 12 }}>{ayuda}</div>
+        {lista.length === 0 ? (
+          <div style={{ border: `1px dashed ${GRAY2}`, borderRadius: 12, padding: 22, textAlign: "center", color: GRAY3, fontSize: 13 }}>Aún no hay ofertas en esta sección.</div>
+        ) : (
+          <div style={{ display: "grid", gap: 10 }}>
+            {lista.map(o => {
+              const info = ofertaInfo(o, productosPorId, comboRows);
+              const costo = info ? info.lineas.reduce((s, l) => s + (Number(l.product.costo) || 0) * l.piezas, 0) : 0;
+              const bajoCosto = info && costo > 0 && Number(o.precio_oferta) < costo;
+              return (
+                <div key={o.id} style={{ display: "flex", gap: 12, alignItems: "center", background: WHITE, border: `1px solid ${info ? GRAY2 : RED}`, borderRadius: 12, padding: 12, opacity: o.activo ? 1 : 0.55, flexWrap: "wrap" }}>
+                  <div style={{ width: 64, height: 64, borderRadius: 10, background: GRAY, overflow: "hidden", flexShrink: 0 }}>
+                    {info?.imagen && <img src={imagenOptimizada ? imagenOptimizada(info.imagen, 160) : info.imagen} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />}
+                  </div>
+                  <div style={{ flex: 1, minWidth: 180 }}>
+                    <div style={{ fontWeight: 800, fontSize: 14, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                      {info ? info.titulo : "⚠ Producto no disponible"}
+                      <span style={{ fontSize: 10, fontWeight: 800, padding: "2px 7px", borderRadius: 6, background: o.tipo === "combo" ? "#EDE7FF" : "#E3F2FD", color: o.tipo === "combo" ? "#4B2BB5" : "#0D47A1" }}>{o.tipo === "combo" ? "COMBO" : "PRODUCTO"}</span>
+                      {o.etiqueta && <span style={{ fontSize: 10, fontWeight: 800, padding: "2px 7px", borderRadius: 6, background: "#FFF3CD", color: "#856404" }}>{o.etiqueta}</span>}
+                    </div>
+                    {info && (
+                      <div style={{ fontSize: 12, color: GRAY3, marginTop: 3 }}>
+                        {o.tipo === "combo" ? info.lineas.map(l => `${l.piezas}× ${l.product.nombre}`).join(" + ") : `${info.totalPiezas} pieza${info.totalPiezas > 1 ? "s" : ""} (${{ pieza: "pieza", media: "media docena", docena: "docena" }[o.presentacion]})`}
+                      </div>
+                    )}
+                    {info && (
+                      <div style={{ marginTop: 4, display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
+                        <span style={{ textDecoration: "line-through", color: GRAY3, fontSize: 13 }}>{money(info.precioNormal)}</span>
+                        <span style={{ fontWeight: 900, color: RED, fontSize: 17 }}>{money(info.precioOferta)}</span>
+                        <span style={{ fontSize: 11, fontWeight: 800, background: info.pct > 0 ? "#D4EDDA" : "#FDE2E2", color: info.pct > 0 ? "#155724" : "#9B1C1C", padding: "2px 7px", borderRadius: 6 }}>{info.pct > 0 ? `-${info.pct}%` : "sin ahorro"}</span>
+                        {bajoCosto && <span style={{ fontSize: 11, fontWeight: 800, color: "#9B1C1C", display: "inline-flex", alignItems: "center", gap: 3 }}><AlertTriangle size={12} /> bajo el costo ({money(costo)})</span>}
+                      </div>
+                    )}
+                  </div>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <button onClick={() => alternarOferta(o)} title={o.activo ? "Ocultar" : "Mostrar"} className="oft-btn-press" style={{ background: WHITE, border: `1.5px solid ${GRAY2}`, borderRadius: 8, padding: "7px 10px", cursor: "pointer", display: "flex" }}>{o.activo ? <Eye size={15} /> : <EyeOff size={15} />}</button>
+                    <button onClick={() => editarOferta(o)} className="oft-btn-press" style={{ background: WHITE, border: `1.5px solid ${GRAY2}`, borderRadius: 8, padding: "7px 10px", cursor: "pointer", display: "flex" }}><PencilIcon size={15} /></button>
+                    <button onClick={() => eliminarOferta(o)} className="oft-btn-press" style={{ background: WHITE, border: `1.5px solid ${RED}`, color: RED, borderRadius: 8, padding: "7px 10px", cursor: "pointer", display: "flex" }}><Trash2 size={15} /></button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const productosFiltrados = (() => {
+    const q = busquedaProd.trim().toLowerCase();
+    const base = products.filter(p => p.activo !== false);
+    if (!q) return base.slice(0, 40);
+    return base.filter(p => `${p.nombre} ${p.referencia || ""}`.toLowerCase().includes(q)).slice(0, 40);
+  })();
+  const res = ofForm ? resumenForm(ofForm) : null;
+
+  return (
+    <>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 12 }}>
+        <div style={{ fontSize: 22, fontWeight: 900, display: "flex", alignItems: "center", gap: 10 }}><Tag size={24} color={RED} /> Ofertas y combos</div>
+        <button onClick={nuevaCampana} className="oft-btn-press" style={{ ...S.btnRed, padding: "10px 18px", fontSize: 14 }}><Plus size={16} /> Nueva campaña</button>
+      </div>
+      <p style={{ fontSize: 13, color: GRAY3, marginBottom: 20, maxWidth: 640 }}>
+        Crea una campaña (Black Weekend, Día de la Madre…), agrégale ofertas y combos en <strong>Detal</strong> o <strong>Mayor</strong>, y actívala. Solo <strong>una campaña</strong> se muestra a la vez en la página <strong>/ofertas</strong>. Los códigos de descuento no se acumulan con las ofertas.
+      </p>
+
+      {campanas.length === 0 ? (
+        <div style={{ background: WHITE, border: `1px dashed ${GRAY2}`, borderRadius: 14, padding: 40, textAlign: "center", color: GRAY3 }}>
+          <Tag size={36} color={GRAY3} strokeWidth={1.4} style={{ marginBottom: 10 }} />
+          <div style={{ fontWeight: 700, marginBottom: 4 }}>Aún no tienes campañas</div>
+          <div style={{ fontSize: 13 }}>Crea la primera con el botón de arriba.</div>
+        </div>
+      ) : (
+        <>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 12, marginBottom: 24 }}>
+            {campanas.map(c => {
+              const est = estadoCampana(c); const n = items.filter(i => i.campana_id === c.id).length;
+              return (
+                <div key={c.id} onClick={() => setSelId(c.id)} style={{ cursor: "pointer", background: WHITE, borderRadius: 14, border: `2px solid ${selId === c.id ? RED : GRAY2}`, padding: 14, borderTop: `5px solid ${c.color_principal}` }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "flex-start" }}>
+                    <div style={{ fontWeight: 900, fontSize: 15 }}>{c.prefijo} {c.nombre}</div>
+                    <span style={{ fontSize: 10, fontWeight: 800, padding: "3px 8px", borderRadius: 8, background: est.bg, color: est.color, whiteSpace: "nowrap" }}>{est.txt}</span>
+                  </div>
+                  <div style={{ fontSize: 12, color: GRAY3, marginTop: 6 }}>{n} oferta{n !== 1 ? "s" : ""}</div>
+                  {(c.fecha_inicio || c.fecha_fin) && <div style={{ fontSize: 11, color: GRAY3, marginTop: 2 }}>{c.fecha_inicio ? fechaCortaPanama(c.fecha_inicio) : "ya"} → {c.fecha_fin ? fechaCortaPanama(c.fecha_fin) : "sin fin"}</div>}
+                </div>
+              );
+            })}
+          </div>
+
+          {sel && (
+            <div style={{ background: GRAY, borderRadius: 16, padding: 18 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 16 }}>
+                <div style={{ fontSize: 19, fontWeight: 900 }}>{sel.prefijo} <span style={{ color: sel.color_principal }}>{sel.nombre}</span></div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  {sel.activa
+                    ? <button onClick={() => desactivarCampana(sel)} className="oft-btn-press" style={{ background: WHITE, border: `1.5px solid ${GRAY2}`, borderRadius: 8, padding: "8px 14px", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>Desactivar</button>
+                    : <button onClick={() => activarCampana(sel)} className="oft-btn-press" style={{ ...S.btnRed, padding: "8px 14px", fontSize: 13 }}><Zap size={14} /> Activar campaña</button>}
+                  {sel.activa && <a href="/ofertas" target="_blank" rel="noreferrer" style={{ background: WHITE, border: `1.5px solid ${GRAY2}`, borderRadius: 8, padding: "8px 14px", fontWeight: 700, fontSize: 13, color: BLACK, textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 5 }}><ArrowUpRight size={14} /> Ver página</a>}
+                  <button onClick={() => editarCampana(sel)} className="oft-btn-press" style={{ background: WHITE, border: `1.5px solid ${GRAY2}`, borderRadius: 8, padding: "8px 12px", cursor: "pointer", display: "flex", alignItems: "center", gap: 5, fontWeight: 700, fontSize: 13 }}><PencilIcon size={14} /> Editar</button>
+                  <button onClick={() => duplicarCampana(sel)} className="oft-btn-press" style={{ background: WHITE, border: `1.5px solid ${GRAY2}`, borderRadius: 8, padding: "8px 12px", cursor: "pointer", fontWeight: 700, fontSize: 13 }}>Duplicar</button>
+                  <button onClick={() => eliminarCampana(sel)} className="oft-btn-press" style={{ background: WHITE, border: `1.5px solid ${RED}`, color: RED, borderRadius: 8, padding: "8px 12px", cursor: "pointer", display: "flex" }}><Trash2 size={15} /></button>
+                </div>
+              </div>
+              {renderSeccion("detal", "Ofertas al detal", "Para clientes que compran pocas piezas o por unidad.")}
+              {renderSeccion("mayor", "Ofertas al mayor", "Para docenas, medias docenas y combos de volumen.")}
+            </div>
+          )}
+        </>
+      )}
+
+      {/* MODAL CAMPAÑA */}
+      {campForm && (
+        <div className="oft-overlay" style={{ ...S.overlay, alignItems: "flex-start", overflowY: "auto" }} onClick={() => !guardando && setCampForm(null)}>
+          <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 16, maxWidth: 480, width: "100%", margin: "20px auto", padding: 24 }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 14 }}>
+              <div style={{ fontWeight: 800, fontSize: 18 }}>{campForm.id ? "Editar" : "Nueva"} campaña</div>
+              <button onClick={() => setCampForm(null)} style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}><X size={22} /></button>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1.4fr", gap: 10 }}>
+              <div><label style={S.label}>Texto inicial</label><input style={S.input} value={campForm.prefijo} onChange={e => setCampForm({ ...campForm, prefijo: e.target.value })} placeholder="Ofertas de" /></div>
+              <div><label style={S.label}>Nombre *</label><input style={S.input} value={campForm.nombre} onChange={e => setCampForm({ ...campForm, nombre: e.target.value })} placeholder="Black Weekend" /></div>
+            </div>
+            <div style={{ background: campForm.color_secundario, color: WHITE, borderRadius: 10, padding: "12px 14px", marginBottom: 14, fontWeight: 900, fontSize: 18 }}>{campForm.prefijo} <span style={{ color: campForm.color_principal }}>{campForm.nombre || "…"}</span></div>
+            <label style={S.label}>Frase corta (opcional)</label>
+            <input style={S.input} value={campForm.subtitulo} onChange={e => setCampForm({ ...campForm, subtitulo: e.target.value })} placeholder="Precios que no vuelven. Hasta agotar existencias." />
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <div><label style={S.label}>Color principal</label><input type="color" value={campForm.color_principal} onChange={e => setCampForm({ ...campForm, color_principal: e.target.value })} style={{ width: "100%", height: 40, border: `1.5px solid ${GRAY2}`, borderRadius: 8, marginBottom: 14, padding: 2 }} /></div>
+              <div><label style={S.label}>Color de fondo</label><input type="color" value={campForm.color_secundario} onChange={e => setCampForm({ ...campForm, color_secundario: e.target.value })} style={{ width: "100%", height: 40, border: `1.5px solid ${GRAY2}`, borderRadius: 8, marginBottom: 14, padding: 2 }} /></div>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <div><label style={S.label}>Empieza (hora de Panamá)</label><input type="datetime-local" style={S.input} value={campForm.fecha_inicio} onChange={e => setCampForm({ ...campForm, fecha_inicio: e.target.value })} /></div>
+              <div><label style={S.label}>Termina</label><input type="datetime-local" style={S.input} value={campForm.fecha_fin} onChange={e => setCampForm({ ...campForm, fecha_fin: e.target.value })} /></div>
+            </div>
+            <div style={{ fontSize: 12, color: GRAY3, marginBottom: 14 }}>Si pones fecha de fin, la tienda muestra un contador regresivo y la campaña se oculta sola al terminar. Déjalas vacías para que dure hasta que la desactives.</div>
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={() => setCampForm(null)} disabled={guardando} className="oft-btn-press" style={{ ...S.btnOutline, flex: 1, justifyContent: "center" }}>Cancelar</button>
+              <button onClick={guardarCampana} disabled={guardando} className="oft-btn-press" style={{ ...S.btnRed, flex: 1, justifyContent: "center", opacity: guardando ? 0.7 : 1 }}>{guardando ? "Guardando..." : "Guardar"}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL OFERTA */}
+      {ofForm && (
+        <div className="oft-overlay" style={{ ...S.overlay, alignItems: "flex-start", overflowY: "auto" }} onClick={() => !guardando && setOfForm(null)}>
+          <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 16, maxWidth: 620, width: "100%", margin: "20px auto", padding: 24 }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 14 }}>
+              <div style={{ fontWeight: 800, fontSize: 18 }}>{ofForm.id ? "Editar" : "Nueva"} oferta · {ofForm.seccion === "detal" ? "Detal" : "Mayor"}</div>
+              <button onClick={() => setOfForm(null)} style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}><X size={22} /></button>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 14 }}>
+              {[["producto", "Un producto", "Un producto con precio rebajado"], ["combo", "Combo", "Varios productos fijos a un precio"]].map(([k, t, d]) => (
+                <div key={k} onClick={() => !ofForm.id && setOfForm({ ...ofForm, tipo: k })} style={{ border: `2px solid ${ofForm.tipo === k ? RED : GRAY2}`, background: ofForm.tipo === k ? "#FFF5F5" : WHITE, borderRadius: 10, padding: 12, cursor: ofForm.id ? "default" : "pointer", opacity: ofForm.id && ofForm.tipo !== k ? 0.4 : 1 }}>
+                  <div style={{ fontWeight: 800, fontSize: 14 }}>{t}</div><div style={{ fontSize: 11, color: GRAY3 }}>{d}</div>
+                </div>
+              ))}
+            </div>
+
+            <label style={S.label}>Sección</label>
+            <select style={S.input} value={ofForm.seccion} onChange={e => setOfForm({ ...ofForm, seccion: e.target.value })}>
+              <option value="detal">Ofertas al detal</option><option value="mayor">Ofertas al mayor</option>
+            </select>
+
+            {ofForm.tipo === "producto" ? (
+              <>
+                <label style={S.label}>Producto *</label>
+                {ofForm.producto_id ? (
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, border: `1.5px solid ${GRAY2}`, borderRadius: 8, padding: 8, marginBottom: 14 }}>
+                    <div style={{ width: 40, height: 40, borderRadius: 6, background: GRAY, overflow: "hidden" }}>{productosPorId[ofForm.producto_id]?.imagen_url && <img src={productosPorId[ofForm.producto_id].imagen_url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />}</div>
+                    <div style={{ flex: 1, fontWeight: 700, fontSize: 13 }}>{productosPorId[ofForm.producto_id]?.nombre || "Producto"}</div>
+                    <button onClick={() => setOfForm({ ...ofForm, producto_id: null })} style={{ background: "none", border: "none", cursor: "pointer", color: RED, fontWeight: 700, fontSize: 12 }}>Cambiar</button>
+                  </div>
+                ) : (
+                  <div style={{ marginBottom: 14 }}>
+                    <input style={{ ...S.input, marginBottom: 6 }} placeholder="Buscar por nombre o referencia…" value={busquedaProd} onChange={e => setBusquedaProd(e.target.value)} />
+                    <div style={{ border: `1px solid ${GRAY2}`, borderRadius: 10, maxHeight: 200, overflowY: "auto" }}>
+                      {productosFiltrados.map(p => (
+                        <div key={p.id} onClick={() => setOfForm({ ...ofForm, producto_id: p.id })} style={{ padding: "8px 12px", cursor: "pointer", borderBottom: `1px solid ${GRAY}`, fontSize: 13 }}>{p.nombre} <span style={{ color: GRAY3, fontSize: 11 }}>{p.referencia}</span></div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                <label style={S.label}>Presentación en oferta</label>
+                <select style={S.input} value={ofForm.presentacion} onChange={e => setOfForm({ ...ofForm, presentacion: e.target.value })}>
+                  <option value="pieza">Pieza</option><option value="media">Media docena{productosPorId[ofForm.producto_id]?.modalidad_presentacion === "perfumeria" ? " (3 piezas)" : " (6 piezas)"}</option><option value="docena">Docena{productosPorId[ofForm.producto_id]?.modalidad_presentacion === "perfumeria" ? " (6 piezas)" : " (12 piezas)"}</option>
+                </select>
+                <label style={S.label}>Nombre de la oferta (opcional)</label>
+                <input style={S.input} value={ofForm.titulo} onChange={e => setOfForm({ ...ofForm, titulo: e.target.value })} placeholder="Si lo dejas vacío usa el nombre del producto" />
+              </>
+            ) : (
+              <>
+                <label style={S.label}>Nombre del combo *</label>
+                <input style={S.input} value={ofForm.titulo} onChange={e => setOfForm({ ...ofForm, titulo: e.target.value })} placeholder="Combo Hogar, Pack Regreso a Clases…" />
+                <label style={S.label}>Productos del combo ({ofForm.combo.length})</label>
+                {ofForm.combo.map((c, idx) => (
+                  <div key={c.producto_id} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                    <div style={{ flex: 1, fontSize: 13, fontWeight: 700 }}>{productosPorId[c.producto_id]?.nombre || "Producto"}</div>
+                    <input type="number" min="1" style={{ ...inputChico, width: 70 }} value={c.cantidad} onChange={e => setOfForm({ ...ofForm, combo: ofForm.combo.map((x, i) => i === idx ? { ...x, cantidad: e.target.value } : x) })} />
+                    <span style={{ fontSize: 12, color: GRAY3 }}>pzs</span>
+                    <button onClick={() => setOfForm({ ...ofForm, combo: ofForm.combo.filter((_, i) => i !== idx) })} style={{ background: "none", border: "none", cursor: "pointer", color: RED, display: "flex" }}><X size={16} /></button>
+                  </div>
+                ))}
+                <input style={{ ...S.input, marginBottom: 6 }} placeholder="Buscar producto para agregar al combo…" value={busquedaProd} onChange={e => setBusquedaProd(e.target.value)} />
+                <div style={{ border: `1px solid ${GRAY2}`, borderRadius: 10, maxHeight: 160, overflowY: "auto", marginBottom: 14 }}>
+                  {productosFiltrados.filter(p => !ofForm.combo.some(c => c.producto_id === p.id)).map(p => (
+                    <div key={p.id} onClick={() => setOfForm({ ...ofForm, combo: [...ofForm.combo, { producto_id: p.id, cantidad: "1" }] })} style={{ padding: "8px 12px", cursor: "pointer", borderBottom: `1px solid ${GRAY}`, fontSize: 13 }}>+ {p.nombre} <span style={{ color: GRAY3, fontSize: 11 }}>{p.referencia}</span></div>
+                  ))}
+                </div>
+                <label style={S.label}>Descripción corta (opcional)</label>
+                <input style={S.input} value={ofForm.descripcion} onChange={e => setOfForm({ ...ofForm, descripcion: e.target.value })} placeholder="Todo lo que necesitas en un solo paquete" />
+              </>
+            )}
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <div><label style={S.label}>Precio de oferta *</label><input type="number" step="0.01" min="0" style={S.input} value={ofForm.precio_oferta} onChange={e => setOfForm({ ...ofForm, precio_oferta: e.target.value })} placeholder="0.00" /></div>
+              <div><label style={S.label}>Precio normal (opcional)</label><input type="number" step="0.01" min="0" style={S.input} value={ofForm.precio_normal_manual} onChange={e => setOfForm({ ...ofForm, precio_normal_manual: e.target.value })} placeholder={res ? res.info.precioNormal.toFixed(2) + " (automático)" : "automático"} /></div>
+            </div>
+
+            {res && (
+              <div style={{ background: GRAY, borderRadius: 10, padding: 12, marginBottom: 14, fontSize: 13 }}>
+                <div style={{ display: "flex", justifyContent: "space-between" }}><span>{res.info.totalPiezas} pieza{res.info.totalPiezas > 1 ? "s" : ""} · precio normal</span><strong>{money(res.info.precioNormal)}</strong></div>
+                {Number(ofForm.precio_oferta) > 0 && <div style={{ display: "flex", justifyContent: "space-between", color: res.info.pct > 0 ? "#155724" : "#9B1C1C" }}><span>El cliente ahorra</span><strong>{money(res.info.ahorro)} ({res.info.pct}%)</strong></div>}
+                {!res.sinCosto && res.costo > 0 && Number(ofForm.precio_oferta) > 0 && (
+                  <div style={{ display: "flex", justifyContent: "space-between", color: Number(ofForm.precio_oferta) < res.costo ? "#9B1C1C" : GRAY3 }}><span>Costo · margen</span><strong>{money(res.costo)} · {money(Number(ofForm.precio_oferta) - res.costo)}</strong></div>
+                )}
+                {res.sinCosto && <div style={{ fontSize: 11, color: GRAY3, marginTop: 4 }}>Algún producto no tiene costo cargado: no se puede calcular el margen.</div>}
+              </div>
+            )}
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <div><label style={S.label}>Máximo por pedido (opcional)</label><input type="number" min="1" style={S.input} value={ofForm.limite_por_pedido} onChange={e => setOfForm({ ...ofForm, limite_por_pedido: e.target.value })} placeholder="Sin límite" /></div>
+              <div><label style={S.label}>Etiqueta (opcional)</label><input style={S.input} value={ofForm.etiqueta} onChange={e => setOfForm({ ...ofForm, etiqueta: e.target.value })} placeholder="Más vendido, Últimas…" /></div>
+            </div>
+
+            <label style={S.label}>Imagen {ofForm.tipo === "combo" ? "del combo" : "(opcional, si no usa la del producto)"}</label>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+              <div style={{ width: 64, height: 64, borderRadius: 10, background: GRAY, overflow: "hidden", flexShrink: 0 }}>{(ofForm.imagen_url || res?.info.imagen) && <img src={ofForm.imagen_url || res.info.imagen} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />}</div>
+              <input ref={imgRef} type="file" accept="image/*" onChange={subirImagen} style={{ display: "none" }} />
+              <button onClick={() => imgRef.current?.click()} disabled={subiendoImg} className="oft-btn-press" style={{ ...S.btnOutline, padding: "8px 14px", fontSize: 13, display: "inline-flex", alignItems: "center", gap: 6 }}><Upload size={14} /> {subiendoImg ? "Subiendo…" : "Subir imagen"}</button>
+              {ofForm.imagen_url && <button onClick={() => setOfForm({ ...ofForm, imagen_url: "" })} style={{ background: "none", border: "none", cursor: "pointer", color: GRAY3, fontSize: 12 }}>Quitar</button>}
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <div><label style={S.label}>Orden (menor = primero)</label><input type="number" style={S.input} value={ofForm.orden} onChange={e => setOfForm({ ...ofForm, orden: e.target.value })} /></div>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14, fontWeight: 700, marginTop: 24, cursor: "pointer" }}><input type="checkbox" checked={ofForm.activo} onChange={e => setOfForm({ ...ofForm, activo: e.target.checked })} /> Visible en la tienda</label>
+            </div>
+
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={() => setOfForm(null)} disabled={guardando} className="oft-btn-press" style={{ ...S.btnOutline, flex: 1, justifyContent: "center" }}>Cancelar</button>
+              <button onClick={guardarOferta} disabled={guardando} className="oft-btn-press" style={{ ...S.btnRed, flex: 1, justifyContent: "center", opacity: guardando ? 0.7 : 1 }}>{guardando ? "Guardando..." : "Guardar oferta"}</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 function AdminView() {
   const { products, setProducts, categories, setCategories, gruposCategorias, setGruposCategorias, banners, setBanners, popups, setPopups, empresas, setEmpresas, sucursales, setSucursales, localesRetiro, setLocalesRetiro, retiroLocalHabilitado, setRetiroLocalHabilitado, showToast, setView, setUser, user } = useApp();
   // Rol del usuario actual: 'admin' = módulo completo, 'operador' = acceso limitado.
@@ -3289,6 +3755,19 @@ function AdminView() {
       const ok = confirm(`¿Convertir la cotización ${cot.codigo} en un pedido real?\n\nSe registrará como venta de HOY y aparecerá en Pedidos.`);
       if (!ok) return;
       setConvirtiendoId(cot.id);
+      // La lista que se ve en pantalla puede estar desactualizada (otro celular, otra pestaña u
+      // otra persona del equipo pudo convertir esta cotización hace segundos). Antes de tocar
+      // Odoo se revisa en la base de datos el estado REAL; si ya es pedido, no se hace nada.
+      // (Así pasó con OFT-1350: convertido desde una Mac y un iPhone con 11 s de diferencia.)
+      try {
+        const frescos = await sb.get("pedidos", `?id=eq.${cot.id}&select=id,tipo,codigo,estado,created_at`);
+        const fresco = Array.isArray(frescos) ? frescos[0] : null;
+        if (fresco && fresco.tipo !== "cotizacion") {
+          setOrders(prev => prev.map(o => o.id === cot.id ? { ...o, tipo: fresco.tipo, codigo: fresco.codigo, estado: fresco.estado, created_at: fresco.created_at, es_cotizacion_convertida: true } : o));
+          alert(`Esta cotización ya fue convertida en el pedido ${fresco.codigo} (desde otro dispositivo o por otra persona). No se hizo nada más.`);
+          return;
+        }
+      } catch(e) { /* si no se pudo revisar, sigue: el servidor igual evita duplicar la venta en Odoo */ }
       // Nuevo código de pedido (mantiene el número de factura)
       const nuevoCodigo = "OFT-" + (cot.num_factura || Date.now().toString().slice(-6));
 
@@ -4422,6 +4901,7 @@ function AdminView() {
     ["banners", "Banners Inicio", ImageIcon],
     ["popups", "Pop-ups", Sparkles],
     ["descuentos", "Descuentos", Zap],
+    ["ofertas", "Ofertas y Combos", Tag],
     ["retornos", "Retornos", RefreshCw],
     ["analisis", "Análisis Stock", TrendingUp],
     ["proveedores", "Proveedores", Building2],
@@ -6091,6 +6571,7 @@ function AdminView() {
                       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                         <select value={b.destino_tipo} onChange={e => handleUpdateBanner(b, { destino_tipo: e.target.value, destino_valor: null })} style={{ ...S.input, marginBottom: 0, fontSize: 13, width: 160 }}>
                           <option value="catalogo">→ Catálogo completo</option>
+                          <option value="ofertas">→ Página de ofertas</option>
                           <option value="categoria">→ Una categoría</option>
                           <option value="producto">→ Un producto</option>
                           <option value="url">→ Link externo</option>
@@ -6218,6 +6699,7 @@ function AdminView() {
                       <select value={p.destino_tipo || ""} onChange={e => handleUpdatePopup(p, { destino_tipo: e.target.value || null, destino_valor: null })} style={{ ...S.input, marginBottom: 0, fontSize: 13, width: 180 }}>
                         <option value="">Sin botón (solo aviso)</option>
                         <option value="catalogo">Botón → Catálogo completo</option>
+                        <option value="ofertas">Botón → Página de ofertas</option>
                         <option value="categoria">Botón → Una categoría</option>
                         <option value="producto">Botón → Un producto</option>
                         <option value="url">Botón → Link externo</option>
@@ -6264,6 +6746,8 @@ function AdminView() {
         )}
 
         {/* ═══════════ DESCUENTOS ═══════════ */}
+        {tab === "ofertas" && esAdminCompleto && <OfertasAdmin />}
+
         {tab === "descuentos" && esAdminCompleto && (
           <>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24, flexWrap: "wrap", gap: 12 }}>
