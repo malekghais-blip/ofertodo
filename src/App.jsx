@@ -2232,6 +2232,21 @@ function OfertasView() {
   const [tipo, setTipo] = useState("todo");
   const [orden, setOrden] = useState("destacado");
   const [ahora, setAhora] = useState(Date.now());
+  // En celular, la barra de búsqueda/filtros se esconde al bajar (para ver bien los productos) y reaparece al subir
+  const [barOculta, setBarOculta] = useState(false);
+  useEffect(() => {
+    let ultimo = window.scrollY;
+    const onScroll = () => {
+      const y = window.scrollY;
+      const dy = y - ultimo;
+      if (Math.abs(dy) < 6) return;
+      ultimo = y;
+      const enfocado = document.activeElement && document.activeElement.closest && document.activeElement.closest(".oft-of-bar");
+      if (y < 420 || dy < 0 || enfocado) setBarOculta(false); else setBarOculta(true);
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
 
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: "instant" });
@@ -2369,6 +2384,10 @@ function OfertasView() {
         .oft-of-variantes { border-top: 1px dashed #E0E0E0; padding-top: 8px; margin-top: 2px; }
         .oft-of-add.ok { background: #0A9D4F; animation: ofOk .4s ease; }
         .oft-of-add:disabled { background: ${GRAY2}; color: ${GRAY3}; cursor: default; }
+        @media (max-width: 768px) {
+          .oft-of-bar { transition: transform .28s ease, box-shadow .28s; }
+          .oft-of-bar.oculta { transform: translateY(-110%); box-shadow: none; }
+        }
         @media (max-width: 520px) {
           .oft-of-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
           .oft-of-count b { font-size: 22px; } .oft-of-count div { min-width: 54px; }
@@ -2405,7 +2424,7 @@ function OfertasView() {
         {maxPct > 0 && <div><span className="oft-of-maxpct" style={{ background: A }}>Hasta {maxPct}% de descuento</span></div>}
       </div>
 
-      <div className="oft-of-bar">
+      <div className={"oft-of-bar" + (barOculta ? " oculta" : "")}>
         <div className="oft-of-bar-in">
           <div className="oft-of-search">
             <Search size={18} className="ic" />
