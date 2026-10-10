@@ -472,6 +472,12 @@ function NavBar() {
   const cartCount = cart.reduce((s, i) => s + i.qty, 0);
   const [bounce, setBounce] = useState(false);
 
+  // Marca el body cuando hay campaña activa: en celular el menú tiene dos filas y las barras fijas bajan un poco
+  useEffect(() => {
+    document.body.classList.toggle("oft-has-campaign", !!campanaActiva);
+    return () => document.body.classList.remove("oft-has-campaign");
+  }, [campanaActiva]);
+
   useEffect(() => {
     if (cartPulse > 0) {
       setBounce(true);
@@ -483,20 +489,13 @@ function NavBar() {
   return (
     <nav className={"oft-nav" + (campanaActiva ? " oft-nav-conofertas" : "")} style={S.nav}>
       <Logo onClick={() => setView("home")} height={28} />
-      <div className="oft-nav-links" style={{ display: "flex", gap: 24, alignItems: "center" }}>
-        {["home","catalogo"].map(v => (
-          <span key={v} onClick={() => setView(v)} style={{ fontWeight: 600, fontSize: 14, cursor: "pointer", color: view === v ? RED : BLACK, borderBottom: view === v ? `2px solid ${RED}` : "2px solid transparent", paddingBottom: 2, whiteSpace: "nowrap" }}>
-            {v === "home" ? "Inicio" : "Catálogo"}
-          </span>
+      <div className="oft-nav-links" style={{ display: "flex", gap: 28, alignItems: "center" }}>
+        {[["home", "Inicio"], ["catalogo", "Catálogo"], ...(campanaActiva ? [["ofertas", "Ofertas"]] : [])].map(([v, txt]) => (
+          <span key={v} onClick={() => setView(v)} className={"oft-nav-link" + (view === v ? " on" : "")}>{txt}</span>
         ))}
-        {campanaActiva && (
-          <span onClick={() => setView("ofertas")} className="oft-nav-ofertas" style={{ fontWeight: 800, fontSize: 14, cursor: "pointer", color: view === "ofertas" ? WHITE : (campanaActiva.campana.color_principal || RED), background: view === "ofertas" ? (campanaActiva.campana.color_principal || RED) : "transparent", border: `2px solid ${campanaActiva.campana.color_principal || RED}`, borderRadius: 20, padding: "3px 12px", whiteSpace: "nowrap", display: "inline-flex", alignItems: "center", gap: 5 }}>
-            <Tag size={13} strokeWidth={2.6} /> Ofertas
-          </span>
-        )}
-        {user && <span onClick={() => setView("dashboard")} style={{ fontWeight: 600, fontSize: 14, cursor: "pointer", color: view === "dashboard" ? RED : BLACK, whiteSpace: "nowrap" }}>Mi Cuenta</span>}
-        {user?.es_admin && <span onClick={() => setView("admin")} style={{ fontWeight: 600, fontSize: 14, cursor: "pointer", color: view === "admin" ? RED : BLACK }}>Admin</span>}
-        {(user?.es_admin || user?.rol === "operador") && <span onClick={() => setView("crm")} style={{ fontWeight: 600, fontSize: 14, cursor: "pointer", color: view === "crm" ? RED : BLACK }}>CRM</span>}
+        {user && <span onClick={() => setView("dashboard")} className={"oft-nav-link" + (view === "dashboard" ? " on" : "")}>Mi Cuenta</span>}
+        {user?.es_admin && <span onClick={() => setView("admin")} className={"oft-nav-link" + (view === "admin" ? " on" : "")}>Admin</span>}
+        {(user?.es_admin || user?.rol === "operador") && <span onClick={() => setView("crm")} className={"oft-nav-link" + (view === "crm" ? " on" : "")}>CRM</span>}
       </div>
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
         <button className={bounce ? "oft-cart-bounce oft-btn-press" : "oft-btn-press"} style={{ ...S.btnOutline, position: "relative", display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 12px" }} onClick={() => setShowCart(true)}>
@@ -1003,7 +1002,7 @@ function HomeView() {
 
       {/* CATEGORÍAS */}
       <div className="oft-section" style={{ ...S.section, paddingBottom: 0 }}>
-        <div style={S.sectionTitle}><span style={{ color: RED }}>▮</span> Categorías</div>
+        <div className="oft-sec-head"><span /><div><h2>Categorías</h2><p>Elige un grupo y encuentra lo que tu negocio necesita</p></div></div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 14 }}>
           {gruposConCategorias.map((g, i) => {
             const primeraCatDelGrupo = categories.find(c => c.grupo_id === g.id);
@@ -1044,7 +1043,7 @@ function HomeView() {
       {/* DESTACADOS */}
       {featured.length > 0 && (
         <div className="oft-section" style={S.section}>
-          <div style={S.sectionTitle}><span style={{ color: RED }}>▮</span> Productos <span style={{ color: RED }}>Destacados</span></div>
+          <div className="oft-sec-head"><span /><div><h2>Productos destacados</h2><p>Lo más pedido por nuestros clientes</p></div></div>
           <div className="oft-prod-grid" style={S.prodGrid}>
             {featured.map((p, i) => (
               <div key={p.id} className="oft-prod-anim" style={{ animationDelay: `${Math.min(i * 0.08, 0.5)}s`, height: "100%" }}>
@@ -1103,6 +1102,9 @@ function HomeView() {
 // ═══════════════════════════════════════════════════════════════
 //  SELECTOR DE PRESENTACIÓN + CANTIDAD ANIMADO
 // ═══════════════════════════════════════════════════════════════
+// Precio para los bloques de presentación: sin ".00" cuando es exacto ($100), con decimales si los tiene ($54.50)
+const precioChip = (n) => { const v = Number(n) || 0; return Number.isInteger(Math.round(v * 100) / 100) ? v.toLocaleString("en-US") : v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
+
 function QtySelector({ product, pres, setPres, count, setCount, size = "normal" }) {
   const { showToast } = useApp();
   const [bump, setBump] = useState(false);
@@ -1187,7 +1189,7 @@ function QtySelector({ product, pres, setPres, count, setCount, size = "normal" 
               disabled={p.disabled}
               className={"oft-pres-chip oft-btn-press" + (big ? " oft-pres-big" : "")}
               style={{
-                padding: big ? "12px 4px" : "10px 2px", borderRadius: 10,
+                padding: big ? "12px 4px" : "10px 2px", borderRadius: 12,
                 border: `2px solid ${p.disabled ? GRAY2 : (active ? RED : GRAY2)}`,
                 background: p.disabled ? GRAY : (active ? "#FFF5F5" : WHITE),
                 cursor: p.disabled ? "not-allowed" : "pointer", transition: "all 0.18s",
@@ -1199,7 +1201,7 @@ function QtySelector({ product, pres, setPres, count, setCount, size = "normal" 
               <div className="oft-pres-label" style={{ fontWeight: 800, color: p.disabled ? GRAY3 : (active ? RED : BLACK), textAlign: "center", width: "100%", lineHeight: 1.2, whiteSpace: "nowrap", overflow: "hidden" }}>{p.label}</div>
               {p.disabled
                 ? <div style={{ fontSize: 10, fontWeight: 700, color: GRAY3, textAlign: "center", width: "100%", lineHeight: 1.2 }}>No disponible</div>
-                : <div className="oft-pres-price" style={{ fontWeight: 900, color: active ? RED : BLACK, textAlign: "center", width: "100%", lineHeight: 1.2, whiteSpace: "nowrap", overflow: "hidden" }}>${p.precio.toFixed(2)}</div>
+                : <div className="oft-pres-price" style={{ fontWeight: 900, color: active ? RED : BLACK, textAlign: "center", width: "100%", lineHeight: 1.2, whiteSpace: "nowrap", overflow: "hidden" }}>${precioChip(p.precio)}</div>
               }
             </button>
           );
@@ -1658,26 +1660,26 @@ function ProductCard({ product }) {
 
   return (
     <>
-    <div data-prod-card className="oft-card-hover" style={S.prodCard}>
+    <div data-prod-card className="oft-pcard" style={{ ...S.prodCard, border: undefined, borderRadius: undefined, boxShadow: undefined }}>
       <div data-prod-img onClick={() => setQuickView(product)} title="Ver detalle" style={{ background: GRAY, aspectRatio: "1 / 1", width: "100%", display: "flex", alignItems: "center", justifyContent: "center", position: "relative", overflow: "hidden", cursor: "pointer" }}>
         {imgUrl
           ? <img src={imgUrl} alt={product.nombre} loading="lazy" decoding="async" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
           : <Package size={56} color={GRAY3} strokeWidth={1.3} />
         }
-        {product.badge && <span style={{ position: "absolute", top: 10, left: 10, background: RED, color: WHITE, fontSize: 10, fontWeight: 800, padding: "3px 8px", borderRadius: 4, display: "inline-flex", alignItems: "center", gap: 4 }}><Sparkles size={11} /> {product.badge}</span>}
+        {product.badge && <span style={{ position: "absolute", top: 10, left: 10, background: RED, color: WHITE, fontSize: 11, fontWeight: 800, padding: "4px 10px", borderRadius: 10, display: "inline-flex", alignItems: "center", gap: 4 }}><Sparkles size={11} /> {product.badge}</span>}
         {/* Indicador de stock — solo se muestra si el producto está sincronizado con Odoo */}
         {product.stock_actualizado_at && (
           Number(product.stock) <= 0
-            ? <span style={{ position: "absolute", top: 10, right: 10, background: "#721C24", color: WHITE, fontSize: 10, fontWeight: 800, padding: "3px 8px", borderRadius: 4 }}>Agotado</span>
+            ? <span style={{ position: "absolute", top: 10, right: 10, background: "#721C24", color: WHITE, fontSize: 11, fontWeight: 800, padding: "4px 10px", borderRadius: 10 }}>Agotado</span>
             : Number(product.stock) <= 5
-              ? <span style={{ position: "absolute", top: 10, right: 10, background: "#856404", color: WHITE, fontSize: 10, fontWeight: 800, padding: "3px 8px", borderRadius: 4 }}>Pocas unidades</span>
+              ? <span style={{ position: "absolute", top: 10, right: 10, background: "#856404", color: WHITE, fontSize: 11, fontWeight: 800, padding: "4px 10px", borderRadius: 10 }}>Pocas unidades</span>
               : null
         )}
         <span style={{ position: "absolute", bottom: 8, right: 8, background: "rgba(0,0,0,0.55)", color: WHITE, fontSize: 10, fontWeight: 700, padding: "3px 8px", borderRadius: 12, display: "inline-flex", alignItems: "center", gap: 4 }}><Search size={11} /> Ver</span>
       </div>
       <div className="oft-prod-body" style={{ padding: 16, display: "flex", flexDirection: "column", flex: 1 }}>
         <div style={{ fontSize: 11, color: GRAY3, fontWeight: 600, marginBottom: 4 }}>REF: {product.referencia || "—"}</div>
-        <div onClick={() => setQuickView(product)} style={{ fontSize: 15, fontWeight: 800, marginBottom: 6, cursor: "pointer", lineHeight: 1.3, height: 39, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{product.nombre}</div>
+        <div className="oft-pcard-name" onClick={() => setQuickView(product)} style={{ marginBottom: 6, cursor: "pointer", height: 40, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{product.nombre}</div>
         {coloresDisponibles.length > 0 && (
           <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 8 }}>
             {coloresDisponibles.slice(0, 5).map((c, i) => (
@@ -1692,11 +1694,11 @@ function ProductCard({ product }) {
         <div style={{ fontSize: 13, color: GRAY3, marginBottom: 12, lineHeight: 1.4, height: 36, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{product.descripcion}</div>
         {/* SELECTOR DE PRESENTACIÓN + CANTIDAD + TOTAL */}
         <div style={{ marginBottom: 10 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-            <span style={{ fontSize: 13, fontWeight: 700 }}>Elige como comprar</span>
-            <div style={{ textAlign: "right" }}>
-              <div style={{ fontSize: 9, fontWeight: 700, color: GRAY3, letterSpacing: 0.5 }}>TOTAL</div>
-              <span style={{ fontSize: 18, color: RED, fontWeight: 900, lineHeight: 1 }}>${Number(total).toFixed(2)}</span>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: "4px 8px", marginBottom: 10 }}>
+            <span style={{ fontSize: 13, fontWeight: 800, paddingBottom: 2 }}>Elige cómo comprar</span>
+            <div style={{ textAlign: "right", marginLeft: "auto" }}>
+              <div style={{ fontSize: 10, fontWeight: 800, color: GRAY3, marginBottom: 3 }}>Total</div>
+              <span className="oft-pcard-total">${Number(total).toFixed(2)}</span>
             </div>
           </div>
           <QtySelector product={product} pres={pres} setPres={setPres} count={count} setCount={setCount} />
@@ -1718,16 +1720,16 @@ function ProductCard({ product }) {
         {/* Empuja los botones al fondo para alinear todas las tarjetas */}
         <div style={{ marginTop: "auto" }} />
         {modoConsulta ? (
-          <button className="oft-btn-press" style={{ ...S.btnWA, width: "100%", justifyContent: "center", padding: 12 }} onClick={consultarWhatsApp}>
+          <button className="oft-btn-press oft-pcard-add" style={{ width: "100%", background: "#25D366" }} onClick={consultarWhatsApp}>
             <MessageCircle size={16} /> Consultar disponibilidad
           </button>
         ) : (
-        <div style={{ display: "flex", gap: 8 }}>
-          <button ref={btnRef} className="oft-btn-press" disabled={agotadoBloqueado} style={{ ...S.btnRed, flex: 1, justifyContent: "center", background: agotadoBloqueado ? GRAY3 : (added ? "#25D366" : RED), transition: "background 0.3s", cursor: agotadoBloqueado ? "not-allowed" : "pointer", opacity: agotadoBloqueado ? 0.7 : 1 }} onClick={agotadoBloqueado ? undefined : handleAdd}>
-            {agotadoBloqueado ? "Agotado" : added ? <><CheckCircle2 size={16} className="oft-check-pop" /> ¡Agregado!</> : <><Plus size={15} strokeWidth={2.5} /> Agregar al pedido</>}
+        <div className="oft-pcard-actions" style={{ display: "flex", gap: 8 }}>
+          <button ref={btnRef} className="oft-pcard-add oft-btn-press" disabled={agotadoBloqueado} style={{ background: agotadoBloqueado ? GRAY3 : (added ? "#0A9D4F" : RED), cursor: agotadoBloqueado ? "not-allowed" : "pointer", opacity: agotadoBloqueado ? 0.7 : 1 }} onClick={agotadoBloqueado ? undefined : handleAdd}>
+            {agotadoBloqueado ? "Agotado" : added ? <><CheckCircle2 size={16} className="oft-check-pop" /> ¡Agregado!</> : <><Plus size={16} strokeWidth={2.8} /> Agregar</>}
           </button>
-          <button className="oft-btn-press" style={S.btnWA} onClick={() => { registrarEvento("consulta_whatsapp", product.id, "Interés en producto"); let m = `Hola Ofertodo, me interesa: ${product.nombre}`; if (product.referencia) m += ` (Ref: ${product.referencia})`; m += `\n\nVer producto: ${window.location.origin}/producto/${product.id}`; window.open(`https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(m)}`, "_blank"); }}><MessageCircle size={16} /></button>
-          <button className="oft-btn-press" style={{ ...S.btnWA, background: GRAY2, color: BLACK }} title="Compartir producto" onClick={() => compartirProducto(product, showToast)}><Share2 size={16} /></button>
+          <button className="oft-pcard-sq oft-btn-press" title="Consultar por WhatsApp" onClick={() => { registrarEvento("consulta_whatsapp", product.id, "Interés en producto"); let m = `Hola Ofertodo, me interesa: ${product.nombre}`; if (product.referencia) m += ` (Ref: ${product.referencia})`; m += `\n\nVer producto: ${window.location.origin}/producto/${product.id}`; window.open(`https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(m)}`, "_blank"); }}><MessageCircle size={18} /></button>
+          <button className="oft-pcard-sq gray oft-btn-press" title="Compartir producto" onClick={() => compartirProducto(product, showToast)}><Share2 size={16} /></button>
         </div>
         )}
       </div>
@@ -1821,15 +1823,25 @@ function CatalogoView() {
   if (loading) return <Spinner />;
 
   return (
-    <div className="oft-section" style={S.section}>
-      <div style={S.sectionTitle}><span style={{ color: RED }}>▮</span> Catálogo <span style={{ color: RED }}>de Productos</span></div>
-      <div style={{ position: "relative", maxWidth: 400, marginBottom: 14 }}>
-        <Search size={16} color={GRAY3} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)" }} />
-        <input style={{ ...S.input, paddingLeft: 36, marginBottom: 0 }} placeholder="Buscar producto, referencia o categoría..." value={search} onChange={e => setSearch(e.target.value)} />
+    <div>
+      <div className="oft-section" style={{ ...S.section, paddingTop: 34, paddingBottom: 20 }}>
+        <div className="oft-sec-head" style={{ marginBottom: 0 }}>
+          <span />
+          <div><h2>Catálogo de productos</h2><p>Compra por pieza, media docena o docena</p></div>
+          <em>{filtered.length} {filtered.length === 1 ? "producto" : "productos"}</em>
+        </div>
       </div>
-      <div style={{ marginBottom: 28 }}>
-        <CategoriaTrigger categorias={categories} gruposCategorias={gruposCategorias} seleccionadaId={catFilter} onClick={() => setCatSheetAbierto(true)} />
+      <div className="oft-tool">
+        <div className="oft-tool-in">
+          <div className="oft-tool-search">
+            <Search size={18} className="ic" />
+            <input placeholder="Buscar producto, referencia o categoría..." value={search} onChange={e => setSearch(e.target.value)} />
+            {search && <button className="x" onClick={() => setSearch("")} aria-label="Borrar búsqueda"><X size={14} /></button>}
+          </div>
+          <CategoriaTrigger categorias={categories} gruposCategorias={gruposCategorias} seleccionadaId={catFilter} onClick={() => setCatSheetAbierto(true)} />
+        </div>
       </div>
+      <div className="oft-section" style={{ ...S.section, paddingTop: 26 }}>
       {catSheetAbierto && (
         <CategoriaSheet
           categorias={categories}
@@ -1853,6 +1865,7 @@ function CatalogoView() {
             ))}
           </div>
       }
+      </div>
     </div>
   );
 }
@@ -2305,7 +2318,7 @@ function OfertasView() {
         .oft-of-count .s b { animation: ofTick .5s ease both; }
         .oft-of-maxpct { display: inline-block; margin-top: 18px; padding: 6px 16px; border-radius: 30px; font-weight: 900; font-size: 14px; animation: ofIn .7s .4s both; }
         .oft-of-bar { position: sticky; top: 60px; z-index: 40; background: #fff; border-bottom: 1px solid ${GRAY2}; padding: 12px 16px; box-shadow: 0 4px 14px rgba(0,0,0,0.05); }
-        .oft-of-bar-in { max-width: 1200px; margin: 0 auto; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+        .oft-of-bar-in { max-width: 1152px; margin: 0 auto; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
         .oft-of-search { flex: 1 1 260px; position: relative; }
         .oft-of-search input { width: 100%; border: 2px solid ${GRAY2}; border-radius: 30px; padding: 11px 40px 11px 42px; font-size: 15px; outline: none; transition: border-color .2s, box-shadow .2s; }
         .oft-of-search input:focus { border-color: ${A}; box-shadow: 0 0 0 4px ${A}22; }
@@ -2315,11 +2328,11 @@ function OfertasView() {
         .oft-of-chip:hover { border-color: ${A}; }
         .oft-of-chip.on { background: ${A}; border-color: ${A}; color: #fff; transform: scale(1.04); }
         .oft-of-sel { border: 2px solid ${GRAY2}; border-radius: 30px; padding: 8px 12px; font-size: 13px; font-weight: 700; background: #fff; }
-        .oft-of-wrap { max-width: 1200px; margin: 0 auto; padding: 26px 16px 110px; }
+        .oft-of-wrap { max-width: 1200px; margin: 0 auto; padding: 34px 24px 110px; }
         .oft-of-seccion { margin-bottom: 40px; }
         .oft-of-sec-head { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
         .oft-of-sec-head > span { width: 6px; height: 40px; border-radius: 4px; }
-        .oft-of-sec-head h2 { margin: 0; font-size: 22px; font-weight: 900; }
+        .oft-of-sec-head h2 { margin: 0; font-size: 24px; font-weight: 900; line-height: 1.15; letter-spacing: -0.2px; }
         .oft-of-sec-head p { margin: 2px 0 0; font-size: 13px; color: ${GRAY3}; }
         .oft-of-sec-head em { margin-left: auto; font-style: normal; font-size: 12px; font-weight: 800; color: ${GRAY3}; }
         .oft-of-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 18px; }
@@ -2358,7 +2371,6 @@ function OfertasView() {
         .oft-of-add:disabled { background: ${GRAY2}; color: ${GRAY3}; cursor: default; }
         @media (max-width: 520px) {
           .oft-of-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-          .oft-of-bar { top: 97px; }
           .oft-of-count b { font-size: 22px; } .oft-of-count div { min-width: 54px; }
           .oft-of-body { padding: 10px; }
           .oft-of-title { font-size: 14px; }
@@ -2366,7 +2378,8 @@ function OfertasView() {
           .oft-of-pct { font-size: 13px; padding: 5px 8px; top: 6px; right: 6px; }
           .oft-of-actions { flex-direction: column; }
           .oft-of-stepper { justify-content: space-between; } .oft-of-stepper button { flex: 0 0 44px; }
-          .oft-of-wrap { padding: 18px 10px 100px; }
+          .oft-of-wrap { padding: 26px 16px 100px; }
+          .oft-of-sec-head h2 { font-size: 21px; } .oft-of-sec-head > span { height: 36px !important; }
         }
         @media (prefers-reduced-motion: reduce) { .oft-of-page * { animation: none !important; transition: none !important; } }
       `}</style>
@@ -4802,10 +4815,42 @@ export default function App() {
       <style>{`
         @keyframes spin { to { transform: rotate(360deg); } }
         .spin { animation: spin 0.8s linear infinite; }
-        @keyframes ofNavPulse { 0%,100% { box-shadow: 0 0 0 0 rgba(227,30,36,0.45); } 50% { box-shadow: 0 0 0 7px rgba(227,30,36,0); } }
-        .oft-nav-ofertas { animation: ofNavPulse 2s ease-out infinite; }
+        /* Menú: Inicio · Catálogo · Ofertas se ven EXACTAMENTE igual (la página activa va en rojo con línea) */
+        .oft-nav-link { font-weight: 700; font-size: 14px; cursor: pointer; color: ${BLACK}; border-bottom: 2px solid transparent; padding: 4px 0 3px; white-space: nowrap; transition: color .18s, border-color .18s; }
+        .oft-nav-link:hover { color: ${RED}; }
+        .oft-nav-link.on { color: ${RED}; border-bottom-color: ${RED}; }
+        /* Encabezado de sección compartido: Inicio, Catálogo y Ofertas */
+        .oft-sec-head { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }
+        .oft-sec-head > span { width: 6px; height: 40px; border-radius: 4px; background: ${RED}; flex-shrink: 0; }
+        .oft-sec-head h2 { margin: 0; font-size: 24px; font-weight: 900; line-height: 1.15; letter-spacing: -0.2px; }
+        .oft-sec-head p { margin: 3px 0 0; font-size: 13px; color: ${GRAY3}; }
+        .oft-sec-head em { margin-left: auto; font-style: normal; font-size: 12px; font-weight: 800; color: ${GRAY3}; white-space: nowrap; }
+        /* Tarjeta de producto: misma cara que las ofertas (borde rojo + elevación al pasar el mouse o tocar) */
+        .oft-pcard { background: #fff; border: 1px solid ${GRAY2}; border-radius: 18px; overflow: hidden; box-shadow: 0 2px 10px rgba(0,0,0,0.05); transition: transform .25s, box-shadow .25s, border-color .25s; }
+        .oft-pcard [data-prod-img] img { transition: transform .5s; }
+        .oft-pcard:active { border-color: ${RED}; }
+        @media (hover: hover) {
+          .oft-pcard:hover { transform: translateY(-6px); box-shadow: 0 14px 30px rgba(0,0,0,0.13); border-color: ${RED}; }
+          .oft-pcard:hover [data-prod-img] img { transform: scale(1.06); }
+        }
+        .oft-pcard-name { font-size: 16px; font-weight: 900; line-height: 1.25; }
+        .oft-pcard-total { font-size: 26px; font-weight: 900; color: ${RED}; line-height: 1; letter-spacing: -0.5px; }
+        .oft-pcard-add { flex: 1; border: none; border-radius: 12px; background: ${RED}; color: #fff; font-weight: 800; font-size: 14px; min-height: 44px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 6px; white-space: nowrap; transition: background .2s, filter .2s; }
+        .oft-pcard-add:hover:not(:disabled) { filter: brightness(1.08); }
+        .oft-pcard-sq { width: 44px; min-height: 44px; border: none; border-radius: 12px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0; background: #25D366; color: #fff; }
+        .oft-pcard-sq.gray { background: ${GRAY2}; color: ${BLACK}; }
+        /* Barra de búsqueda del catálogo (igual a la de ofertas) */
+        .oft-tool { position: sticky; top: 60px; z-index: 40; background: #fff; border-top: 1px solid ${GRAY2}; border-bottom: 1px solid ${GRAY2}; padding: 12px 16px; box-shadow: 0 4px 14px rgba(0,0,0,0.05); }
+        .oft-tool-in { max-width: 1152px; margin: 0 auto; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+        .oft-tool-search { flex: 1 1 280px; position: relative; }
+        .oft-tool-search input { width: 100%; border: 2px solid ${GRAY2}; border-radius: 30px; padding: 11px 40px 11px 42px; font-size: 15px; outline: none; transition: border-color .2s, box-shadow .2s; }
+        .oft-tool-search input:focus { border-color: ${RED}; box-shadow: 0 0 0 4px ${RED}22; }
+        .oft-tool-search .ic { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: ${GRAY3}; }
+        .oft-tool-search .x { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); background: ${GRAY2}; border: none; width: 24px; height: 24px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+        .oft-tool .oft-cat-trigger { border-radius: 30px !important; border-width: 2px !important; padding: 5px 14px 5px 8px !important; width: auto !important; min-width: 230px; max-width: 320px; transition: border-color .2s; }
+        .oft-tool .oft-cat-trigger:hover { border-color: ${RED} !important; }
         * { box-sizing: border-box; }
-        html, body { margin: 0; padding: 0; overflow-x: hidden; max-width: 100%; font-family: Helvetica, Arial, sans-serif; }
+        html, body { margin: 0; padding: 0; overflow-x: hidden; overflow-x: clip; max-width: 100%; font-family: Helvetica, Arial, sans-serif; }
         input, button, textarea, select { font-family: inherit; }
         img { max-width: 100%; }
         /* La tabla nunca desborda: scroll horizontal dentro de su marco (web y celular) */
@@ -4814,10 +4859,10 @@ export default function App() {
         /* Mostrar/ocultar según dispositivo */
         .oft-only-mobile { display: none; }
         /* Bloques de presentación: tamaño base (escritorio) */
-        .oft-pres-label { font-size: 11px; }
-        .oft-pres-price { font-size: 13px; }
-        .oft-pres-big .oft-pres-label { font-size: 13px; }
-        .oft-pres-big .oft-pres-price { font-size: 16px; }
+        .oft-pres-label { font-size: 12px; }
+        .oft-pres-price { font-size: 18px; letter-spacing: -0.3px; }
+        .oft-pres-big .oft-pres-label { font-size: 14px; }
+        .oft-pres-big .oft-pres-price { font-size: 22px; }
         .oft-only-desktop { display: block; }
         @media (max-width: 768px) {
           .oft-only-mobile { display: flex; }
@@ -4994,14 +5039,15 @@ export default function App() {
 
         @media (max-width: 768px) {
           .oft-nav { padding: 0 14px !important; }
-          .oft-nav-links { gap: 14px !important; font-size: 13px !important; }
+          .oft-nav-links { gap: 18px !important; }
+          .oft-nav-link { font-size: 13px; }
           /* Con campaña de ofertas activa, el menú se reparte en dos filas en el celular: logo y botones arriba,
              Inicio · Catálogo · Ofertas abajo, con el mismo espacio entre cada uno (nada queda apretado) */
           .oft-nav-conofertas { height: auto !important; flex-wrap: wrap !important; row-gap: 0 !important; }
           .oft-nav-conofertas > :nth-child(1) { order: 1; min-height: 54px; }
           .oft-nav-conofertas > :nth-child(3) { order: 2; min-height: 54px; }
-          .oft-nav-conofertas .oft-nav-links { order: 3; flex: 0 0 100%; justify-content: space-evenly !important; gap: 0 !important; padding: 7px 0 8px; border-top: 1px solid #EEE; font-size: 14px !important; }
-          .oft-nav-conofertas .oft-nav-ofertas { padding: 3px 14px !important; }
+          .oft-nav-conofertas .oft-nav-links { order: 3; flex: 0 0 100%; justify-content: space-evenly !important; gap: 0 !important; padding: 7px 0 8px; border-top: 1px solid #EEE; }
+          .oft-nav-conofertas .oft-nav-link { font-size: 14px; }
           .oft-hero-title { font-size: 30px !important; }
           .oft-hero { padding: 40px 18px 48px !important; }
           .oft-infobar-item { border-right: none !important; border-bottom: 1px solid #E0E0E0; padding: 12px 16px !important; }
@@ -5037,6 +5083,18 @@ export default function App() {
           .oft-overlay-doc > div { margin: auto !important; width: 96% !important; max-width: 96% !important; }
           /* PRECIOS más legibles en celular */
           .oft-prod-body { padding: 12px !important; }
+          body.oft-has-campaign .oft-tool, body.oft-has-campaign .oft-of-bar { top: 97px; }
+          .oft-tool { padding: 10px 12px; position: static; box-shadow: none; }
+          .oft-tool .oft-cat-trigger { min-width: 0; width: 100% !important; max-width: none !important; }
+          .oft-pcard { border-radius: 16px; }
+          .oft-pcard-name { font-size: 14px; }
+          .oft-pcard-total { font-size: 22px; }
+          .oft-pcard-add { font-size: 13px; }
+          .oft-pcard-actions { gap: 6px !important; }
+          .oft-pcard-sq { width: 36px; }
+          .oft-pcard-add { padding: 0 6px; }
+          .oft-sec-head h2 { font-size: 21px; }
+          .oft-sec-head > span { height: 36px; }
           .oft-price-table { padding: 10px 10px !important; }
           .oft-price-row { font-size: 12px !important; padding: 4px 0 !important; gap: 6px !important; line-height: 1.25 !important; }
           .oft-price-label { font-size: 12px !important; }
@@ -5044,20 +5102,21 @@ export default function App() {
           .oft-qty-row { flex-wrap: wrap !important; gap: 6px !important; }
           /* Bloques de presentación: mismo tamaño de número y misma altura */
           .oft-pres-chip { padding: 9px 1px !important; }
-          .oft-pres-label { font-size: 10px !important; }
-          .oft-pres-price { font-size: 11px !important; letter-spacing: -0.3px !important; }
+          .oft-pres-label { font-size: 10.5px !important; }
+          .oft-pres-price { font-size: 14px !important; letter-spacing: -0.4px !important; }
           .oft-pres-grid { gap: 4px !important; }
           /* En el modal (vista detalle) hay más espacio: números más grandes */
           .oft-pres-big .oft-pres-label { font-size: 12px !important; }
-          .oft-pres-big .oft-pres-price { font-size: 15px !important; letter-spacing: 0 !important; }
+          .oft-pres-big .oft-pres-price { font-size: 18px !important; letter-spacing: 0 !important; }
         }
         @media (max-width: 380px) {
           /* En pantallas muy chicas, baja un poco pero TODOS por igual */
-          .oft-pres-price { font-size: 10px !important; }
-          .oft-pres-label { font-size: 9px !important; }
+          .oft-pres-price { font-size: 12.5px !important; }
+          .oft-pres-label { font-size: 9.5px !important; }
         }
         @media (max-width: 420px) {
           .oft-cat-grid { grid-template-columns: repeat(2, 1fr) !important; }
+          .oft-pcard-add svg:not(.oft-check-pop) { display: none; }
           .oft-prod-grid { gap: 8px !important; }
           .oft-prod-body { padding: 10px !important; }
           .oft-price-row { font-size: 11px !important; }
