@@ -481,7 +481,7 @@ function NavBar() {
   }, [cartPulse]);
 
   return (
-    <nav className="oft-nav" style={S.nav}>
+    <nav className={"oft-nav" + (campanaActiva ? " oft-nav-conofertas" : "")} style={S.nav}>
       <Logo onClick={() => setView("home")} height={28} />
       <div className="oft-nav-links" style={{ display: "flex", gap: 24, alignItems: "center" }}>
         {["home","catalogo"].map(v => (
@@ -2055,8 +2055,8 @@ function FloatingCart() {
     }
   }, [cartPulse]);
 
-  // Solo se muestra navegando catálogo/inicio y con productos
-  if (cartCount === 0 || !["home", "catalogo"].includes(view)) return null;
+  // Solo se muestra navegando inicio/catálogo/ofertas y con productos
+  if (cartCount === 0 || !["home", "catalogo", "ofertas"].includes(view)) return null;
 
   return (
     <div
@@ -2269,7 +2269,7 @@ function OfertasView() {
         .oft-of-chip:hover { border-color: ${A}; }
         .oft-of-chip.on { background: ${A}; border-color: ${A}; color: #fff; transform: scale(1.04); }
         .oft-of-sel { border: 2px solid ${GRAY2}; border-radius: 30px; padding: 8px 12px; font-size: 13px; font-weight: 700; background: #fff; }
-        .oft-of-wrap { max-width: 1200px; margin: 0 auto; padding: 26px 16px 60px; }
+        .oft-of-wrap { max-width: 1200px; margin: 0 auto; padding: 26px 16px 110px; }
         .oft-of-seccion { margin-bottom: 40px; }
         .oft-of-sec-head { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
         .oft-of-sec-head > span { width: 6px; height: 40px; border-radius: 4px; }
@@ -2310,7 +2310,7 @@ function OfertasView() {
         .oft-of-add:disabled { background: ${GRAY2}; color: ${GRAY3}; cursor: default; }
         @media (max-width: 520px) {
           .oft-of-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-          .oft-of-bar { top: 56px; }
+          .oft-of-bar { top: 97px; }
           .oft-of-count b { font-size: 22px; } .oft-of-count div { min-width: 54px; }
           .oft-of-body { padding: 10px; }
           .oft-of-title { font-size: 14px; }
@@ -2318,7 +2318,7 @@ function OfertasView() {
           .oft-of-pct { font-size: 13px; padding: 5px 8px; top: 6px; right: 6px; }
           .oft-of-actions { flex-direction: column; }
           .oft-of-stepper { justify-content: space-between; } .oft-of-stepper button { flex: 0 0 44px; }
-          .oft-of-wrap { padding: 18px 10px 50px; }
+          .oft-of-wrap { padding: 18px 10px 100px; }
         }
         @media (prefers-reduced-motion: reduce) { .oft-of-page * { animation: none !important; transition: none !important; } }
       `}</style>
@@ -4947,6 +4947,13 @@ export default function App() {
         @media (max-width: 768px) {
           .oft-nav { padding: 0 14px !important; }
           .oft-nav-links { gap: 14px !important; font-size: 13px !important; }
+          /* Con campaña de ofertas activa, el menú se reparte en dos filas en el celular: logo y botones arriba,
+             Inicio · Catálogo · Ofertas abajo, con el mismo espacio entre cada uno (nada queda apretado) */
+          .oft-nav-conofertas { height: auto !important; flex-wrap: wrap !important; row-gap: 0 !important; }
+          .oft-nav-conofertas > :nth-child(1) { order: 1; min-height: 54px; }
+          .oft-nav-conofertas > :nth-child(3) { order: 2; min-height: 54px; }
+          .oft-nav-conofertas .oft-nav-links { order: 3; flex: 0 0 100%; justify-content: space-evenly !important; gap: 0 !important; padding: 7px 0 8px; border-top: 1px solid #EEE; font-size: 14px !important; }
+          .oft-nav-conofertas .oft-nav-ofertas { padding: 3px 14px !important; }
           .oft-hero-title { font-size: 30px !important; }
           .oft-hero { padding: 40px 18px 48px !important; }
           .oft-infobar-item { border-right: none !important; border-bottom: 1px solid #E0E0E0; padding: 12px 16px !important; }
