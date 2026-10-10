@@ -17,7 +17,7 @@ import {
   RED, RED_D, S, SUPABASE_URL, ShippingLabelModal, NOTAS_FRAGANCIA,
   Spinner, StatusBadge, WHITE, comprimirImagen, estadosDe,
   imagenOptimizada, resolverAreaVenta, sb, useApp, useLockBodyScroll,
-  agregarCanvasComoPaginasPdf, ofertaInfo,
+  agregarCanvasComoPaginasPdf, ofertaInfo, precioNormalPiezas, piezasDePresentacion, presUnitPrice,
 } from "./shared.jsx";
 
 // "YYYY-MM-DD" según la hora de PANAMÁ (America/Panama, UTC-5), sin importar la
@@ -3134,6 +3134,30 @@ function OfertasAdmin() {
     return base.filter(p => `${p.nombre} ${p.referencia || ""}`.toLowerCase().includes(q)).slice(0, 40);
   })();
   const res = ofForm ? resumenForm(ofForm) : null;
+  // Precios "de antes" que se pueden mostrar tachados: los de la web del producto
+  const opcionesAntes = (() => {
+    if (!ofForm) return [];
+    const perf = (p) => p?.modalidad_presentacion === "perfumeria";
+    if (ofForm.tipo === "producto") {
+      const p = productosPorId[ofForm.producto_id];
+      if (!p) return [];
+      const nPiezas = piezasDePresentacion(p, ofForm.presentacion);
+      const autoValor = presUnitPrice(p, ofForm.presentacion);
+      const ops = [
+        { key: "pieza", label: "Pieza (web)", valor: Number(p.precio_pieza), pres: "pieza" },
+        { key: "media", label: perf(p) ? "3 piezas (web)" : "Media docena (web)", valor: Number(p.precio_media_docena), pres: "media" },
+        { key: "docena", label: perf(p) ? "6 piezas (web)" : "Docena (web)", valor: Number(p.precio_docena), pres: "docena" },
+      ].map(o => ({ ...o, auto: o.pres === ofForm.presentacion }));
+      if (nPiezas > 1) ops.push({ key: "sueltas", label: `${nPiezas} piezas sueltas`, valor: Number(p.precio_pieza) * nPiezas, auto: false });
+      return ops.filter(o => o.valor > 0 || o.auto);
+    }
+    const filas = ofForm.combo.map(c => ({ p: productosPorId[c.producto_id], q: Number(c.cantidad) || 0 })).filter(x => x.p && x.q > 0);
+    if (filas.length === 0) return [];
+    return [
+      { key: "auto", label: "Suma de precios de la web", valor: filas.reduce((sm, x) => sm + precioNormalPiezas(x.p, x.q), 0), auto: true },
+      { key: "sueltas", label: "Todo por pieza suelta", valor: filas.reduce((sm, x) => sm + Number(x.p.precio_pieza) * x.q, 0), auto: false },
+    ];
+  })();
 
   return (
     <>
@@ -3294,10 +3318,30 @@ function OfertasAdmin() {
               </>
             )}
 
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              <div><label style={S.label}>Precio de oferta *</label><input type="number" step="0.01" min="0" style={S.input} value={ofForm.precio_oferta} onChange={e => setOfForm({ ...ofForm, precio_oferta: e.target.value })} placeholder="0.00" /></div>
-              <div><label style={S.label}>Precio normal (opcional)</label><input type="number" step="0.01" min="0" style={S.input} value={ofForm.precio_normal_manual} onChange={e => setOfForm({ ...ofForm, precio_normal_manual: e.target.value })} placeholder={res ? res.info.precioNormal.toFixed(2) + " (automático)" : "automático"} /></div>
-            </div>
+            <label style={S.label}>Precio de oferta *</label>
+            <input type="number" step="0.01" min="0" style={S.input} value={ofForm.precio_oferta} onChange={e => setOfForm({ ...ofForm, precio_oferta: e.target.value })} placeholder="0.00" />
+
+            {opcionesAntes.length > 0 && (
+              <div style={{ marginBottom: 14 }}>
+                <label style={S.label}>Precio de antes (el que se verá tachado) — elige uno</label>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  {opcionesAntes.map(op => {
+                    const activo = op.auto ? !ofForm.precio_normal_manual : (ofForm.precio_normal_manual !== "" && Math.abs(Number(ofForm.precio_normal_manual) - op.valor) < 0.005);
+                    return (
+                      <div key={op.key} onClick={() => setOfForm({ ...ofForm, precio_normal_manual: op.auto ? "" : op.valor.toFixed(2) })}
+                        style={{ cursor: "pointer", border: `2px solid ${activo ? RED : GRAY2}`, background: activo ? "#FFF5F5" : WHITE, borderRadius: 10, padding: "8px 12px", minWidth: 110 }}>
+                        <div style={{ fontSize: 11, color: GRAY3, fontWeight: 700 }}>{op.label}{op.auto ? " · automático" : ""}</div>
+                        <div style={{ fontWeight: 900, fontSize: 16 }}>{money(op.valor)}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+                  <span style={{ fontSize: 12, color: GRAY3 }}>¿Otro valor?</span>
+                  <input type="number" step="0.01" min="0" style={{ ...inputChico, width: 110 }} value={ofForm.precio_normal_manual} onChange={e => setOfForm({ ...ofForm, precio_normal_manual: e.target.value })} placeholder="Escríbelo" />
+                </div>
+              </div>
+            )}
 
             {res && (
               <div style={{ background: GRAY, borderRadius: 10, padding: 12, marginBottom: 14, fontSize: 13 }}>
