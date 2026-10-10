@@ -8,7 +8,7 @@ import {
   FileSpreadsheet, FolderPlus, Zap, Lock, Users, BarChart3, DollarSign,
   TrendingUp, Wallet, ShoppingBag, Pencil as PencilIcon, Save,
   Building2, MapPin as MapPinIcon, Send, FilePlus, Download, FileText, Receipt,
-  Calendar as CalendarIcon, Eye, EyeOff, Share2, AlertTriangle, AlertCircle, ChevronRight, ArrowLeft
+  Calendar as CalendarIcon, Eye, EyeOff, Share2, AlertTriangle, AlertCircle, ChevronRight, ArrowLeft, Boxes
 } from "lucide-react";
 
 import {
@@ -20,6 +20,7 @@ import {
   cargarMetaPixel, cargarGooglePixel, trackVerProducto, trackAgregarCarrito, trackIniciarCheckout, trackCompra,
   imagenOptimizada, mediaDocenaDesdeDistribucion, parseDistribucion, presLabelPlural, presToPiezas,
   presUnitPrice, sb, useApp, useLockBodyScroll, supabaseRealtime,
+  ofertaInfo, ofertaALineaCarrito, prorratearLinea, tiempoRestante,
 } from "./shared.jsx";
 
 // El panel de administrador vive en su propio archivo y solo se descarga cuando
@@ -423,14 +424,23 @@ function presBreakdown(pres, count, product) {
 
 // Precio total de un item del carrito (soporta presentación o cantidad libre)
 function cartItemTotal(item) {
+  if (item.esOferta) return Math.round(Number(item.precioUnidad) * item.unidades * 100) / 100;
   if (item.esFlexPack) return Number(item.precioTotal) || 0;
   if (item.pres) return presTotal(item.product, item.pres, item.count || 1);
   return calcPrice(item.product, item.qty); // compatibilidad con items viejos
 }
 function cartItemLabel(item) {
+  if (item.esOferta) return `${item.unidades} ${item.tipo === "combo" ? (item.unidades === 1 ? "combo" : "combos") : (item.unidades === 1 ? "oferta" : "ofertas")} · ${item.qty} pzs`;
   if (item.esFlexPack) return `Flex Pack · ${item.totalPiezas} piezas`;
   if (item.pres) return `${item.count} ${presLabelPlural(item.pres, item.count, item.product)} · ${item.qty} pzs`;
   return `${item.qty} pzs`;
+}
+
+// Lista de productos del carrito para los píxeles de marketing (Flex Pack no se cuenta; una oferta cuenta como un artículo)
+function itemsTrackDeCarrito(cart) {
+  return cart.filter(i => !i.esFlexPack).map(i => i.esOferta
+    ? { id: `oferta-${i.ofertaId}`, nombre: i.titulo, precio: i.precioUnidad, cantidad: i.unidades }
+    : { id: i.product.id, nombre: i.product.nombre, precio: i.product.precio_pieza, cantidad: i.qty });
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -458,7 +468,7 @@ function totalDistribucion(dist) {
 
 
 function NavBar() {
-  const { view, setView, cart, cartPulse, user, setUser, setShowLogin, setShowCart } = useApp();
+  const { view, setView, cart, cartPulse, user, setUser, setShowLogin, setShowCart, campanaActiva } = useApp();
   const cartCount = cart.reduce((s, i) => s + i.qty, 0);
   const [bounce, setBounce] = useState(false);
 
@@ -479,6 +489,11 @@ function NavBar() {
             {v === "home" ? "Inicio" : "Catálogo"}
           </span>
         ))}
+        {campanaActiva && (
+          <span onClick={() => setView("ofertas")} className="oft-nav-ofertas" style={{ fontWeight: 800, fontSize: 14, cursor: "pointer", color: view === "ofertas" ? WHITE : (campanaActiva.campana.color_principal || RED), background: view === "ofertas" ? (campanaActiva.campana.color_principal || RED) : "transparent", border: `2px solid ${campanaActiva.campana.color_principal || RED}`, borderRadius: 20, padding: "3px 12px", whiteSpace: "nowrap", display: "inline-flex", alignItems: "center", gap: 5 }}>
+            <Tag size={13} strokeWidth={2.6} /> Ofertas
+          </span>
+        )}
         {user && <span onClick={() => setView("dashboard")} style={{ fontWeight: 600, fontSize: 14, cursor: "pointer", color: view === "dashboard" ? RED : BLACK, whiteSpace: "nowrap" }}>Mi Cuenta</span>}
         {user?.es_admin && <span onClick={() => setView("admin")} style={{ fontWeight: 600, fontSize: 14, cursor: "pointer", color: view === "admin" ? RED : BLACK }}>Admin</span>}
         {(user?.es_admin || user?.rol === "operador") && <span onClick={() => setView("crm")} style={{ fontWeight: 600, fontSize: 14, cursor: "pointer", color: view === "crm" ? RED : BLACK }}>CRM</span>}
@@ -829,6 +844,8 @@ function PopupPromocional() {
     } else if (p.destino_tipo === "catalogo") {
       setCatalogCat(0);
       setView("catalogo");
+    } else if (p.destino_tipo === "ofertas") {
+      setView("ofertas");
     } else if (p.destino_tipo === "url" && p.destino_valor) {
       window.open(p.destino_valor, "_blank");
     }
@@ -887,6 +904,9 @@ function PromoCarousel({ banners }) {
       setCatalogCat(catId);
       setView("catalogo");
       if (catId) registrarEvento("click_categoria", catId, categories.find(c => c.id === catId)?.nombre);
+    } else if (b.destino_tipo === "ofertas") {
+      setView("ofertas");
+      registrarEvento("click_banner_ofertas");
     } else if (b.destino_tipo === "url" && b.destino_valor) {
       window.open(b.destino_valor, "_blank");
     } else {
@@ -932,7 +952,7 @@ function PromoCarousel({ banners }) {
 }
 
 function HomeView() {
-  const { setView, setCatalogCat, categories, gruposCategorias, products, addToCart, banners } = useApp();
+  const { setView, setCatalogCat, categories, gruposCategorias, products, addToCart, banners, campanaActiva } = useApp();
   // Ordena los destacados según el orden de categorías que configuraste en el
   // admin (Categorías > Orden de las categorías) -- se ve igual que antes, una
   // sola cuadrícula, solo que la SECUENCIA respeta ese orden. Los productos del
@@ -963,6 +983,25 @@ function HomeView() {
           <PromoCarousel banners={banners} />
         </div>
       </div>
+
+      {/* TIRA DE OFERTAS — solo aparece cuando hay una campaña activa */}
+      {campanaActiva && (() => {
+        const cm = campanaActiva.campana, A = cm.color_principal || RED, B = cm.color_secundario || BLACK;
+        const porId = {}; products.forEach(p => { porId[p.id] = p; });
+        const infos = campanaActiva.items.map(it => ofertaInfo(it, porId, campanaActiva.combos)).filter(Boolean);
+        if (infos.length === 0) return null;
+        const maxPct = infos.reduce((m, i) => Math.max(m, i.pct), 0);
+        return (
+          <div className="oft-home-ofertas" onClick={() => { setView("ofertas"); registrarEvento("click_tira_ofertas"); }} style={{ background: `linear-gradient(100deg, ${B}, ${A})`, backgroundSize: "200% 100%", color: WHITE, cursor: "pointer", padding: "16px 20px", display: "flex", alignItems: "center", justifyContent: "center", gap: 16, flexWrap: "wrap", textAlign: "center" }}>
+            <Tag size={26} strokeWidth={2.4} className="oft-home-of-ic" />
+            <div>
+              <div style={{ fontWeight: 900, fontSize: 20, letterSpacing: 0.3 }}>{cm.prefijo} {cm.nombre}</div>
+              <div style={{ fontSize: 13, opacity: 0.9 }}>{infos.length} ofertas y combos{maxPct > 0 ? ` · hasta ${maxPct}% de descuento` : ""}</div>
+            </div>
+            <span className="oft-btn-press" style={{ background: WHITE, color: A, fontWeight: 900, fontSize: 14, padding: "9px 20px", borderRadius: 24, display: "inline-flex", alignItems: "center", gap: 6 }}>Ver ofertas <ChevronRight size={16} /></span>
+          </div>
+        );
+      })()}
 
       {/* BARRA DE MARCA + ACCIONES — complementa el carrusel, minimalista y oscura */}
       <div className="oft-cta-bar">
@@ -2066,6 +2105,310 @@ function FloatingCart() {
 }
 
 // ═══════════════════════════════════════════════════════════════
+//  PÁGINA DE OFERTAS — "Ofertas de <campaña>": ofertas de un producto y
+//  combos fijos, separados en Detal y Mayor, con buscador, contador
+//  regresivo y precio normal vs precio de oferta.
+// ═══════════════════════════════════════════════════════════════
+function esc(s) { return String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase(); }
+
+function OfertaCard({ info, delay, vigente }) {
+  const { agregarOfertaAlCarrito, cart } = useApp();
+  const [uni, setUni] = useState(1);
+  const [okAnim, setOkAnim] = useState(false);
+  const o = info.oferta;
+  const enCarrito = cart.filter(i => i.esOferta && i.ofertaId === o.id).reduce((s, i) => s + i.unidades, 0);
+  const limite = o.limite_por_pedido ? Math.max(0, o.limite_por_pedido - enCarrito) : Infinity;
+  const stock = Number.isFinite(info.stockMax) ? Math.max(0, info.stockMax) : Infinity;
+  const maxAhora = Math.min(limite, stock === Infinity ? Infinity : stock);
+  const agotado = stock === 0;
+  const sinMas = !agotado && maxAhora <= 0;
+  const topeUni = Number.isFinite(maxAhora) ? Math.max(1, maxAhora) : 99;
+  useEffect(() => { if (uni > topeUni) setUni(topeUni); }, [topeUni]);
+
+  const agregar = () => {
+    if (!vigente) return;
+    const ok = agregarOfertaAlCarrito(info, uni);
+    if (ok) { setOkAnim(true); setTimeout(() => setOkAnim(false), 1400); setUni(1); }
+  };
+  const imgs = info.imagenes.slice(0, 4);
+  const esCombo = o.tipo === "combo";
+  const ultimas = !agotado && stock <= 5 && Number.isFinite(stock);
+
+  return (
+    <div className="oft-of-card" style={{ animationDelay: `${Math.min(delay * 0.06, 0.6)}s`, opacity: agotado || !vigente ? 0.75 : 1 }}>
+      <div className="oft-of-img">
+        {o.imagen_url || !esCombo || imgs.length < 2
+          ? (info.imagen ? <img src={imagenOptimizada(info.imagen, 500)} alt={info.titulo} loading="lazy" /> : <div className="oft-of-noimg"><Package size={40} color={GRAY3} /></div>)
+          : (
+            <div className={"oft-of-collage c" + imgs.length}>
+              {imgs.map((u, i) => <img key={i} src={imagenOptimizada(u, 300)} alt="" loading="lazy" />)}
+            </div>
+          )}
+        {info.pct > 0 && <div className="oft-of-pct">-{info.pct}%</div>}
+        {esCombo && <div className="oft-of-combo-tag"><Boxes size={12} /> COMBO</div>}
+        {o.etiqueta && <div className="oft-of-ribbon">{o.etiqueta}</div>}
+        {agotado && <div className="oft-of-agotado">AGOTADO</div>}
+      </div>
+      <div className="oft-of-body">
+        <div className="oft-of-title">{info.titulo}</div>
+        {esCombo ? (
+          <div className="oft-of-incluye">
+            <div style={{ fontWeight: 800, fontSize: 11, color: GRAY3, marginBottom: 3 }}>INCLUYE · {info.totalPiezas} piezas</div>
+            {info.lineas.map((l, i) => <div key={i} className="oft-of-linea"><b>{l.piezas}×</b> {l.product.nombre}</div>)}
+            {o.descripcion && <div style={{ fontSize: 11.5, color: GRAY3, marginTop: 4 }}>{o.descripcion}</div>}
+          </div>
+        ) : (
+          <div style={{ fontSize: 12, color: GRAY3 }}>
+            {o.presentacion === "pieza" ? "Por pieza" : `${info.totalPiezas} piezas · ${o.presentacion === "media" ? "media docena" : "docena"}`}
+            {info.totalPiezas > 1 && <> · ${(info.precioOferta / info.totalPiezas).toFixed(2)} c/u</>}
+          </div>
+        )}
+        <div className="oft-of-prices">
+          {info.precioNormal > info.precioOferta && <span className="oft-of-old">${info.precioNormal.toFixed(2)}</span>}
+          <span className="oft-of-new">${info.precioOferta.toFixed(2)}</span>
+        </div>
+        {info.ahorro > 0.005 && <div className="oft-of-save"><Sparkles size={12} /> Ahorras ${info.ahorro.toFixed(2)}</div>}
+        {ultimas && <div className="oft-of-last"><AlertTriangle size={12} /> ¡Quedan solo {stock}!</div>}
+        {o.limite_por_pedido && <div style={{ fontSize: 11, color: GRAY3 }}>Máx. {o.limite_por_pedido} por pedido</div>}
+        <div className="oft-of-actions">
+          <div className="oft-of-stepper">
+            <button onClick={() => setUni(u => Math.max(1, u - 1))} disabled={uni <= 1 || agotado} aria-label="Menos">−</button>
+            <span>{uni}</span>
+            <button onClick={() => setUni(u => Math.min(topeUni, u + 1))} disabled={uni >= topeUni || agotado || sinMas} aria-label="Más">+</button>
+          </div>
+          <button className={"oft-of-add oft-btn-press" + (okAnim ? " ok" : "")} onClick={agregar} disabled={agotado || sinMas || !vigente}>
+            {agotado ? "Agotado" : !vigente ? "Terminó" : sinMas ? "Límite en tu pedido" : okAnim ? <><CheckCircle2 size={16} /> ¡Agregado!</> : <><ShoppingCart size={16} /> Agregar</>}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function OfertasView() {
+  const { campanaActiva, products, cargarOfertas, setView, setCatalogCat, loading } = useApp();
+  const [q, setQ] = useState("");
+  const [seccion, setSeccion] = useState("todas");
+  const [tipo, setTipo] = useState("todo");
+  const [orden, setOrden] = useState("destacado");
+  const [ahora, setAhora] = useState(Date.now());
+
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: "instant" });
+    cargarOfertas();
+    registrarEvento("ver_ofertas");
+  }, []);
+  useEffect(() => { const t = setInterval(() => setAhora(Date.now()), 1000); return () => clearInterval(t); }, []);
+
+  const c = campanaActiva?.campana;
+  const productosPorId = {};
+  products.forEach(p => { productosPorId[p.id] = p; });
+  const todas = (campanaActiva?.items || []).map(it => ofertaInfo(it, productosPorId, campanaActiva.combos)).filter(Boolean);
+  const restante = c?.fecha_fin ? tiempoRestante(c.fecha_fin, ahora) : null;
+  const vigente = !!c && !(restante && restante.terminado);
+
+  if (loading && !campanaActiva) return <Spinner />;
+
+  if (!c || !vigente) {
+    return (
+      <div className="oft-section" style={{ ...S.section, textAlign: "center", padding: "80px 24px" }}>
+        <Tag size={56} color={GRAY3} strokeWidth={1.3} style={{ margin: "0 auto 14px" }} />
+        <h2 style={{ fontWeight: 900, fontSize: 24, margin: "0 0 8px" }}>Por ahora no hay ofertas activas</h2>
+        <p style={{ color: GRAY3, maxWidth: 420, margin: "0 auto 22px" }}>Estamos preparando la próxima campaña. Mientras tanto, mira todo nuestro catálogo.</p>
+        <button className="oft-btn-press" style={{ ...S.btnRed, padding: "12px 26px" }} onClick={() => { setCatalogCat(0); setView("catalogo"); }}>Ver catálogo</button>
+      </div>
+    );
+  }
+
+  const A = c.color_principal || RED, B = c.color_secundario || BLACK;
+  const maxPct = todas.reduce((m, i) => Math.max(m, i.pct), 0);
+  const nq = esc(q).trim();
+  const coincide = (i) => {
+    if (!nq) return true;
+    const texto = esc([i.titulo, i.oferta.descripcion, i.oferta.etiqueta, ...i.lineas.flatMap(l => [l.product.nombre, l.product.referencia])].join(" "));
+    return nq.split(/\s+/).every(w => texto.includes(w));
+  };
+  const filtradas = todas.filter(i => coincide(i) && (tipo === "todo" || i.oferta.tipo === tipo));
+  const ordenar = (arr) => {
+    const a = [...arr];
+    if (orden === "descuento") a.sort((x, y) => y.pct - x.pct);
+    else if (orden === "menor") a.sort((x, y) => x.precioOferta - y.precioOferta);
+    else if (orden === "mayor") a.sort((x, y) => y.precioOferta - x.precioOferta);
+    return a;
+  };
+  const detal = ordenar(filtradas.filter(i => i.oferta.seccion === "detal"));
+  const mayor = ordenar(filtradas.filter(i => i.oferta.seccion === "mayor"));
+  const cntDetal = todas.filter(i => i.oferta.seccion === "detal").length;
+  const cntMayor = todas.filter(i => i.oferta.seccion === "mayor").length;
+  const verDetal = seccion !== "mayor" && detal.length > 0;
+  const verMayor = seccion !== "detal" && mayor.length > 0;
+  const sinResultados = !verDetal && !verMayor;
+  const pad = (n) => String(n).padStart(2, "0");
+
+  const seccionHtml = (titulo, sub, lista, clave) => (
+    <div className="oft-of-seccion" key={clave}>
+      <div className="oft-of-sec-head"><span style={{ background: A }} />
+        <div><h2>{titulo}</h2><p>{sub}</p></div>
+        <em>{lista.length} {lista.length === 1 ? "oferta" : "ofertas"}</em>
+      </div>
+      <div className="oft-of-grid">
+        {lista.map((i, idx) => <OfertaCard key={i.oferta.id} info={i} delay={idx} vigente={vigente} />)}
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="oft-of-page">
+      <style>{`
+        @keyframes ofShine { 0% { background-position: 0% 50%; } 100% { background-position: 200% 50%; } }
+        @keyframes ofFloat { 0%,100% { transform: translateY(0) rotate(0deg); } 50% { transform: translateY(-14px) rotate(6deg); } }
+        @keyframes ofPulse { 0%,100% { transform: scale(1) rotate(-6deg); } 50% { transform: scale(1.12) rotate(-6deg); } }
+        @keyframes ofIn { from { opacity: 0; transform: translateY(22px) scale(0.97); } to { opacity: 1; transform: none; } }
+        @keyframes ofTick { 0% { transform: translateY(-6px); opacity: 0.2; } 100% { transform: none; opacity: 1; } }
+        @keyframes ofOk { 0% { transform: scale(0.9); } 50% { transform: scale(1.06); } 100% { transform: scale(1); } }
+        .oft-of-hero { position: relative; overflow: hidden; padding: 48px 20px 40px; text-align: center; color: #fff; }
+        .oft-of-hero .blob { position: absolute; border-radius: 50%; opacity: 0.18; animation: ofFloat 7s ease-in-out infinite; pointer-events: none; }
+        .oft-of-pre { font-weight: 800; letter-spacing: 3px; text-transform: uppercase; font-size: 14px; opacity: 0.85; animation: ofIn .6s both; }
+        .oft-of-name { font-weight: 900; font-size: clamp(38px, 9vw, 84px); line-height: 1.02; margin: 6px 0 10px; background-size: 200% auto; -webkit-background-clip: text; background-clip: text; color: transparent; animation: ofShine 4s linear infinite, ofIn .7s .1s both; }
+        .oft-of-sub { max-width: 560px; margin: 0 auto; font-size: 16px; opacity: 0.9; animation: ofIn .7s .2s both; }
+        .oft-of-count { display: inline-flex; gap: 10px; margin-top: 22px; animation: ofIn .7s .3s both; }
+        .oft-of-count div { background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.22); backdrop-filter: blur(4px); border-radius: 12px; min-width: 62px; padding: 8px 6px; }
+        .oft-of-count b { display: block; font-size: 28px; font-weight: 900; font-variant-numeric: tabular-nums; }
+        .oft-of-count small { font-size: 10px; letter-spacing: 1px; text-transform: uppercase; opacity: 0.75; }
+        .oft-of-count .s b { animation: ofTick .5s ease both; }
+        .oft-of-maxpct { display: inline-block; margin-top: 18px; padding: 6px 16px; border-radius: 30px; font-weight: 900; font-size: 14px; animation: ofIn .7s .4s both; }
+        .oft-of-bar { position: sticky; top: 60px; z-index: 40; background: #fff; border-bottom: 1px solid ${GRAY2}; padding: 12px 16px; box-shadow: 0 4px 14px rgba(0,0,0,0.05); }
+        .oft-of-bar-in { max-width: 1200px; margin: 0 auto; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+        .oft-of-search { flex: 1 1 260px; position: relative; }
+        .oft-of-search input { width: 100%; border: 2px solid ${GRAY2}; border-radius: 30px; padding: 11px 40px 11px 42px; font-size: 15px; outline: none; transition: border-color .2s, box-shadow .2s; }
+        .oft-of-search input:focus { border-color: ${A}; box-shadow: 0 0 0 4px ${A}22; }
+        .oft-of-search .ic { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: ${GRAY3}; }
+        .oft-of-search .x { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); background: ${GRAY2}; border: none; width: 24px; height: 24px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+        .oft-of-chip { border: 2px solid ${GRAY2}; background: #fff; border-radius: 30px; padding: 8px 14px; font-weight: 700; font-size: 13px; cursor: pointer; transition: all .18s; white-space: nowrap; }
+        .oft-of-chip:hover { border-color: ${A}; }
+        .oft-of-chip.on { background: ${A}; border-color: ${A}; color: #fff; transform: scale(1.04); }
+        .oft-of-sel { border: 2px solid ${GRAY2}; border-radius: 30px; padding: 8px 12px; font-size: 13px; font-weight: 700; background: #fff; }
+        .oft-of-wrap { max-width: 1200px; margin: 0 auto; padding: 26px 16px 60px; }
+        .oft-of-seccion { margin-bottom: 40px; }
+        .oft-of-sec-head { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+        .oft-of-sec-head > span { width: 6px; height: 40px; border-radius: 4px; }
+        .oft-of-sec-head h2 { margin: 0; font-size: 22px; font-weight: 900; }
+        .oft-of-sec-head p { margin: 2px 0 0; font-size: 13px; color: ${GRAY3}; }
+        .oft-of-sec-head em { margin-left: auto; font-style: normal; font-size: 12px; font-weight: 800; color: ${GRAY3}; }
+        .oft-of-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 18px; }
+        .oft-of-card { background: #fff; border: 1px solid ${GRAY2}; border-radius: 18px; overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 2px 10px rgba(0,0,0,0.05); animation: ofIn .55s cubic-bezier(.16,1,.3,1) both; transition: transform .25s, box-shadow .25s, border-color .25s; }
+        .oft-of-card:hover { transform: translateY(-6px); box-shadow: 0 14px 30px rgba(0,0,0,0.13); border-color: ${A}; }
+        .oft-of-img { position: relative; aspect-ratio: 1 / 1; background: ${GRAY}; overflow: hidden; }
+        .oft-of-img > img { width: 100%; height: 100%; object-fit: cover; transition: transform .5s; }
+        .oft-of-card:hover .oft-of-img > img, .oft-of-card:hover .oft-of-collage img { transform: scale(1.07); }
+        .oft-of-noimg { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
+        .oft-of-collage { display: grid; width: 100%; height: 100%; gap: 2px; }
+        .oft-of-collage.c2 { grid-template-columns: 1fr 1fr; } .oft-of-collage.c3 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; } .oft-of-collage.c3 img:first-child { grid-row: span 2; } .oft-of-collage.c4 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+        .oft-of-collage img { width: 100%; height: 100%; object-fit: cover; transition: transform .5s; min-height: 0; }
+        .oft-of-pct { position: absolute; top: 10px; right: 10px; background: ${A}; color: #fff; font-weight: 900; font-size: 15px; padding: 7px 11px; border-radius: 12px; animation: ofPulse 2.2s ease-in-out infinite; box-shadow: 0 4px 12px ${A}66; }
+        .oft-of-combo-tag { position: absolute; top: 10px; left: 10px; background: ${B}; color: #fff; font-weight: 800; font-size: 11px; padding: 5px 9px; border-radius: 8px; display: flex; align-items: center; gap: 4px; }
+        .oft-of-ribbon { position: absolute; bottom: 10px; left: 10px; background: #FFD43B; color: #111; font-weight: 900; font-size: 11px; padding: 4px 10px; border-radius: 8px; }
+        .oft-of-agotado { position: absolute; inset: 0; background: rgba(255,255,255,0.7); display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 20px; letter-spacing: 2px; color: #333; }
+        .oft-of-body { padding: 14px; display: flex; flex-direction: column; gap: 6px; flex: 1; }
+        .oft-of-title { font-weight: 900; font-size: 16px; line-height: 1.25; }
+        .oft-of-incluye { background: ${GRAY}; border-radius: 10px; padding: 8px 10px; }
+        .oft-of-linea { font-size: 12.5px; line-height: 1.5; }
+        .oft-of-prices { display: flex; align-items: baseline; gap: 10px; margin-top: auto; padding-top: 4px; flex-wrap: wrap; }
+        .oft-of-old { text-decoration: line-through; color: ${GRAY3}; font-size: 15px; font-weight: 600; }
+        .oft-of-new { color: ${A}; font-weight: 900; font-size: 28px; line-height: 1; }
+        .oft-of-save { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 800; color: #0A7D3B; background: #E3F7EA; border-radius: 8px; padding: 3px 9px; align-self: flex-start; }
+        .oft-of-last { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 800; color: #B45309; }
+        .oft-of-actions { display: flex; gap: 8px; margin-top: 6px; }
+        .oft-of-stepper { display: flex; align-items: center; border: 2px solid ${GRAY2}; border-radius: 12px; overflow: hidden; }
+        .oft-of-stepper button { width: 34px; height: 100%; min-height: 42px; border: none; background: ${GRAY}; font-size: 18px; font-weight: 800; cursor: pointer; }
+        .oft-of-stepper button:disabled { opacity: 0.35; cursor: default; }
+        .oft-of-stepper span { min-width: 30px; text-align: center; font-weight: 900; }
+        .oft-of-add { flex: 1; border: none; border-radius: 12px; background: ${A}; color: #fff; font-weight: 800; font-size: 14px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px; min-height: 42px; transition: background .2s, transform .15s; }
+        .oft-of-add:hover:not(:disabled) { filter: brightness(1.08); }
+        .oft-of-add.ok { background: #0A9D4F; animation: ofOk .4s ease; }
+        .oft-of-add:disabled { background: ${GRAY2}; color: ${GRAY3}; cursor: default; }
+        @media (max-width: 520px) {
+          .oft-of-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+          .oft-of-bar { top: 56px; }
+          .oft-of-count b { font-size: 22px; } .oft-of-count div { min-width: 54px; }
+          .oft-of-body { padding: 10px; }
+          .oft-of-title { font-size: 14px; }
+          .oft-of-new { font-size: 22px; } .oft-of-old { font-size: 13px; }
+          .oft-of-pct { font-size: 13px; padding: 5px 8px; top: 6px; right: 6px; }
+          .oft-of-actions { flex-direction: column; }
+          .oft-of-stepper { justify-content: space-between; } .oft-of-stepper button { flex: 0 0 44px; }
+          .oft-of-wrap { padding: 18px 10px 50px; }
+        }
+        @media (prefers-reduced-motion: reduce) { .oft-of-page * { animation: none !important; transition: none !important; } }
+      `}</style>
+
+      <div className="oft-of-hero" style={{ background: `linear-gradient(135deg, ${B} 0%, ${B} 55%, ${A}55 100%)` }}>
+        <div className="blob" style={{ width: 220, height: 220, background: A, top: -60, left: -50 }} />
+        <div className="blob" style={{ width: 150, height: 150, background: A, bottom: -40, right: "8%", animationDelay: "1.5s" }} />
+        <div className="blob" style={{ width: 90, height: 90, background: "#fff", top: 30, right: "22%", animationDelay: "3s" }} />
+        <div className="oft-of-pre">{c.prefijo}</div>
+        <h1 className="oft-of-name" style={{ backgroundImage: `linear-gradient(90deg, #fff, ${A}, #fff, ${A})` }}>{c.nombre}</h1>
+        {c.subtitulo && <div className="oft-of-sub">{c.subtitulo}</div>}
+        {restante && !restante.terminado && (
+          <div style={{ display: "block" }}>
+            <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: 2, marginTop: 20, opacity: 0.8 }}>TERMINA EN</div>
+            <div className="oft-of-count" style={{ marginTop: 8 }}>
+              {restante.d > 0 && <div><b>{pad(restante.d)}</b><small>días</small></div>}
+              <div><b>{pad(restante.h)}</b><small>horas</small></div>
+              <div><b>{pad(restante.m)}</b><small>min</small></div>
+              <div className="s"><b key={restante.s}>{pad(restante.s)}</b><small>seg</small></div>
+            </div>
+          </div>
+        )}
+        {maxPct > 0 && <div><span className="oft-of-maxpct" style={{ background: A }}>Hasta {maxPct}% de descuento</span></div>}
+      </div>
+
+      <div className="oft-of-bar">
+        <div className="oft-of-bar-in">
+          <div className="oft-of-search">
+            <Search size={18} className="ic" />
+            <input value={q} onChange={e => setQ(e.target.value)} placeholder="Buscar una oferta: bolsos, combo, perfume…" aria-label="Buscar ofertas" />
+            {q && <button className="x" onClick={() => setQ("")} aria-label="Borrar búsqueda"><X size={14} /></button>}
+          </div>
+          <button className={"oft-of-chip" + (seccion === "todas" ? " on" : "")} onClick={() => setSeccion("todas")}>Todas ({todas.length})</button>
+          {cntDetal > 0 && <button className={"oft-of-chip" + (seccion === "detal" ? " on" : "")} onClick={() => setSeccion("detal")}>Al detal ({cntDetal})</button>}
+          {cntMayor > 0 && <button className={"oft-of-chip" + (seccion === "mayor" ? " on" : "")} onClick={() => setSeccion("mayor")}>Al mayor ({cntMayor})</button>}
+          <button className={"oft-of-chip" + (tipo === "combo" ? " on" : "")} onClick={() => setTipo(tipo === "combo" ? "todo" : "combo")}>Solo combos</button>
+          <select className="oft-of-sel" value={orden} onChange={e => setOrden(e.target.value)} aria-label="Ordenar">
+            <option value="destacado">Ordenar: destacados</option>
+            <option value="descuento">Mayor descuento</option>
+            <option value="menor">Menor precio</option>
+            <option value="mayor">Mayor precio</option>
+          </select>
+        </div>
+      </div>
+
+      <div className="oft-of-wrap">
+        {todas.length === 0 ? (
+          <div style={{ textAlign: "center", padding: "60px 0", color: GRAY3 }}>Estamos cargando las ofertas de la campaña…</div>
+        ) : sinResultados ? (
+          <div style={{ textAlign: "center", padding: "60px 16px" }}>
+            <Search size={48} color={GRAY3} strokeWidth={1.3} style={{ margin: "0 auto 12px" }} />
+            <div style={{ fontWeight: 900, fontSize: 20, marginBottom: 6 }}>No encontramos ofertas{nq ? ` para "${q}"` : ""}</div>
+            <p style={{ color: GRAY3, marginBottom: 18 }}>Prueba con otra palabra o quita los filtros.</p>
+            <div style={{ display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap" }}>
+              <button className="oft-btn-press" style={{ ...S.btnRed, padding: "11px 22px", background: A }} onClick={() => { setQ(""); setSeccion("todas"); setTipo("todo"); }}>Ver todas las ofertas</button>
+              <button className="oft-btn-press" style={{ ...S.btnOutline, padding: "9px 20px" }} onClick={() => { setCatalogCat(0); setView("catalogo"); }}>Buscar en el catálogo</button>
+            </div>
+          </div>
+        ) : (
+          <>
+            {verDetal && seccionHtml("Ofertas al detal", "Para llevar pocas piezas a precio especial", detal, "detal")}
+            {verMayor && seccionHtml("Ofertas al mayor", "Docenas, medias docenas y combos de volumen", mayor, "mayor")}
+          </>
+        )}
+        <div style={{ textAlign: "center", fontSize: 12, color: GRAY3, marginTop: 10 }}>Los precios de oferta no se combinan con códigos de descuento. Hasta agotar existencias.</div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
 //  CART MODAL
 // ═══════════════════════════════════════════════════════════════
 function CartModal() {
@@ -2083,7 +2426,23 @@ function CartModal() {
           ? <div style={{ textAlign: "center", padding: "40px 0", color: GRAY3 }}><ShoppingCart size={48} strokeWidth={1.3} style={{ margin: "0 auto 12px" }} /><p>Tu pedido está vacío</p></div>
           : <>
             {cart.map((item, idx) => (
-              item.esFlexPack ? (
+              item.esOferta ? (
+                <div key={idx} style={{ display: "flex", gap: 12, alignItems: "flex-start", padding: "12px 0", borderBottom: `1px solid ${GRAY2}` }}>
+                  {item.imagen
+                    ? <img src={item.imagen} style={{ width: 36, height: 36, borderRadius: 6, objectFit: "cover", flexShrink: 0 }} />
+                    : <div style={{ width: 36, height: 36, borderRadius: 6, background: GRAY, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Tag size={18} color={RED} /></div>}
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 700, fontSize: 14 }}>{item.tipo === "combo" ? "Combo" : "Oferta"} · {item.titulo}</div>
+                    {item.tipo === "combo" && (
+                      <div style={{ fontSize: 11.5, color: GRAY3, lineHeight: 1.5 }}>
+                        {item.lineas.map((l, i) => <span key={i}>{l.piezas * item.unidades}× {l.nombre}{i < item.lineas.length - 1 ? ", " : ""}</span>)}
+                      </div>
+                    )}
+                    <div style={{ fontSize: 12, color: GRAY3, marginTop: 2 }}>{cartItemLabel(item)} · <b style={{ color: BLACK }}>${cartItemTotal(item).toFixed(2)}</b> <span style={{ textDecoration: "line-through" }}>${(item.precioNormalUnidad * item.unidades).toFixed(2)}</span></div>
+                  </div>
+                  <button onClick={() => setCart(cart.filter((_, i) => i !== idx))} style={{ background: "none", border: "none", color: RED, cursor: "pointer", display: "flex", flexShrink: 0 }}><Trash2 size={18} /></button>
+                </div>
+              ) : item.esFlexPack ? (
                 <div key={idx} style={{ display: "flex", gap: 12, alignItems: "flex-start", padding: "12px 0", borderBottom: `1px solid ${GRAY2}` }}>
                   <div style={{ width: 36, height: 36, borderRadius: 6, background: GRAY, border: `1px solid ${GRAY2}`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                     <img src={FLEXPACK_ICON_URL} style={{ width: 20, height: 20, objectFit: "contain" }} />
@@ -2127,6 +2486,10 @@ function CartModal() {
               onClick={() => {
                 registrarEvento("consulta_whatsapp", null, "Pedido desde el carrito");
                 const lineas = cart.map((i, idx) => {
+                  if (i.esOferta) {
+                    const det = i.tipo === "combo" ? "\n" + i.lineas.map(l => `   • ${l.piezas * i.unidades}x ${l.nombre}`).join("\n") : "";
+                    return `${idx + 1}. ${i.tipo === "combo" ? "Combo" : "Oferta"}: ${i.titulo} — ${i.unidades} und. por $${cartItemTotal(i).toFixed(2)}${det}`;
+                  }
                   if (i.esFlexPack) {
                     const detalle = i.items.map(it => `   • ${it.cantidad}x ${it.nombre}${it.referencia ? ` (Ref: ${it.referencia})` : ""}`).join("\n");
                     return `${idx + 1}. Flex Pack (${i.grupoNombre}) — ${i.totalPiezas} piezas por $${Number(i.precioTotal).toFixed(2)}\n${detalle}`;
@@ -2688,7 +3051,7 @@ function YappyButton({ pedido, onExito, onCancelar }) {
 //  CHECKOUT
 // ═══════════════════════════════════════════════════════════════
 function CheckoutView() {
-  const { cart, setCart, user, setView, showToast, empresas, sucursales, localesRetiro, retiroLocalHabilitado, setShowLogin, setPendingCheckout } = useApp();
+  const { cart, setCart, user, setView, showToast, empresas, sucursales, localesRetiro, retiroLocalHabilitado, setShowLogin, setPendingCheckout, sincronizarOfertasCarrito } = useApp();
   const [localRetiroId, setLocalRetiroId] = useState(null);
   const [address, setAddress] = useState(""), [notes, setNotes] = useState(""), [loading, setLoading] = useState(false), [placed, setPlaced] = useState(null);
   const [avisoValidacion, setAvisoValidacion] = useState(null); // mensaje del pop-up de validación (reemplaza alert() nativo)
@@ -2736,7 +3099,7 @@ function CheckoutView() {
     if (cart.length > 0) {
       trackIniciarCheckout({
         total: cart.reduce((s, i) => s + cartItemTotal(i), 0),
-        items: cart.filter(i => !i.esFlexPack).map(i => ({ id: i.product.id, nombre: i.product.nombre, precio: i.product.precio_pieza, cantidad: i.qty })),
+        items: itemsTrackDeCarrito(cart),
       });
     }
   }, []);
@@ -2752,7 +3115,9 @@ function CheckoutView() {
     if (!descuentoAplicado) return 0;
     const pct = Number(descuentoAplicado.porcentaje) / 100;
     if (descuentoAplicado.tipo_aplicacion === "tienda") {
-      return subtotalBruto * pct;
+      // Las ofertas y combos ya tienen su precio rebajado: el código no se acumula con ellas
+      const baseSinOfertas = cart.reduce((s, i) => i.esOferta ? s : s + cartItemTotal(i), 0);
+      return baseSinOfertas * pct;
     }
     // Solo sobre los productos incluidos en el descuento
     const ids = descuentoAplicado.productos_ids || [];
@@ -2813,6 +3178,7 @@ function CheckoutView() {
   const [pedidoPendiente, setPedidoPendiente] = useState(null); // pedido guardado, esperando pago Yappy
 
     const construirItemsPayload = () => cart.flatMap(item => {
+          if (item.esOferta) return prorratearLinea(item); // varias filas, con oferta_id y oferta_unidades
           if (item.esFlexPack) {
             // Una línea de Flex Pack se reparte en varias filas (una por producto elegido),
             // prorrateando el precio del paquete por pieza -- tiene un precio ÚNICO para
@@ -2874,6 +3240,25 @@ function CheckoutView() {
 
     setLoading(true);
 
+    // Si hay ofertas o combos en el pedido, se confirma con el servidor que sigan vigentes y que el
+    // precio sea el de la oferta (por si cambió o terminó la campaña mientras el cliente decidía).
+    if (cart.some(i => i.esOferta)) {
+      try {
+        const filas = construirItemsPayload().filter(r => r.oferta_id).map(r => ({ oferta_id: r.oferta_id, oferta_unidades: r.oferta_unidades, producto_id: r.producto_id, cantidad: r.cantidad, subtotal: r.subtotal }));
+        await sb.ensureFreshToken();
+        const rr = await fetch(`${SUPABASE_URL}/rest/v1/rpc/verificar_ofertas_items`, { method: "POST", headers: sb.dataHeaders(), body: JSON.stringify({ p_items: filas }) });
+        if (rr.ok) {
+          const chk = await rr.json();
+          if (chk && chk.ok === false) {
+            const avisos = await sincronizarOfertasCarrito();
+            setLoading(false);
+            setAvisoValidacion(((chk.errores || []).join(" ") + " Actualizamos tu pedido con las ofertas vigentes: revísalo y vuelve a confirmar.").trim());
+            return;
+          }
+        }
+      } catch (e) { /* si no se puede consultar, el servidor vuelve a verificar al guardar */ }
+    }
+
     // Verificación antibots (reCAPTCHA v3, pedida por el banco) -- nunca bloquea
     // la compra si el servicio de Google o nuestra propia verificación fallan,
     // solo frena si Google mismo dice con seguridad que esto parece un robot.
@@ -2922,7 +3307,7 @@ function CheckoutView() {
               empresa_envio_nombre: empresaFinalNombre, sucursal_nombre: sucursalFinalNombre,
               items: itemsPayload.map(it => ({ nombre_producto: it.nombre_producto, cantidad: it.cantidad, subtotal: it.subtotal })),
             },
-            itemsTrack: cart.filter(i => !i.esFlexPack).map(i => ({ id: i.product.id, nombre: i.product.nombre, precio: i.product.precio_pieza, cantidad: i.qty })),
+            itemsTrack: itemsTrackDeCarrito(cart),
           }));
         } catch (e) {}
         setTarjetaPagoData({ RedirectData: data.RedirectData, codigo: data.codigo, modoPrueba: data.modo_prueba });
@@ -2964,7 +3349,10 @@ function CheckoutView() {
         });
         const pedidoId = pedido[0].id;
         for (const item of cart) {
-          if (item.esFlexPack) {
+          if (item.esOferta) {
+            // Oferta o combo: una fila por producto, con el precio de la oferta repartido y la marca de oferta
+            for (const fila of prorratearLinea(item)) await sb.post("pedido_items", { pedido_id: pedidoId, ...fila });
+          } else if (item.esFlexPack) {
             // Una línea de Flex Pack se reparte en varias filas de pedido_items (una por
             // producto elegido), prorrateando el precio del paquete por pieza -- ya que el
             // Flex Pack tiene un precio ÚNICO para todo el conjunto, no por producto.
@@ -3021,7 +3409,7 @@ function CheckoutView() {
     setPlaced(pedidoPendiente.codigo);
     trackCompra({
       codigo: pedidoPendiente.codigo, total: pedidoPendiente.total,
-      items: cart.filter(i => !i.esFlexPack).map(i => ({ id: i.product.id, nombre: i.product.nombre, precio: i.product.precio_pieza, cantidad: i.qty })),
+      items: itemsTrackDeCarrito(cart),
     });
     setCart([]);
     setPedidoPendiente(null);
@@ -3069,7 +3457,7 @@ function CheckoutView() {
         <div style={{ fontWeight: 800, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}><Package size={18} /> Resumen</div>
         {cart.map((item, idx) => (
           <div key={idx} style={{ display: "flex", justifyContent: "space-between", fontSize: 14, padding: "6px 0", borderBottom: `1px solid ${GRAY2}` }}>
-            <span>{item.esFlexPack ? `Flex Pack (${item.grupoNombre})` : item.product.nombre} <span style={{ color: GRAY3, fontSize: 12 }}>({cartItemLabel(item)})</span></span>
+            <span>{item.esOferta ? `${item.tipo === "combo" ? "Combo" : "Oferta"}: ${item.titulo}` : item.esFlexPack ? `Flex Pack (${item.grupoNombre})` : item.product.nombre} <span style={{ color: GRAY3, fontSize: 12 }}>({cartItemLabel(item)})</span></span>
             <span style={{ fontWeight: 700 }}>${cartItemTotal(item).toFixed(2)}</span>
           </div>
         ))}
@@ -3859,6 +4247,7 @@ export default function App() {
     try {
       const v = localStorage.getItem("oft_view");
       // Solo las vistas "seguras" para persistir (no modales intermedios)
+      if (window.location.pathname.replace(/\/+$/, "") === "/ofertas") return "ofertas";
       const permitidas = ["home", "catalog", "dashboard", "admin", "checkout"];
       return (v && permitidas.includes(v)) ? v : "home";
     } catch(e) { return "home"; }
@@ -3870,6 +4259,15 @@ export default function App() {
     // estaba desplazado en la página anterior (ej. al elegir una categoría desde el inicio)
     window.scrollTo({ top: 0, behavior: "instant" });
   };
+
+  // La página de ofertas tiene su propio link (/ofertas) para compartirlo por WhatsApp, redes, etc.
+  useEffect(() => {
+    try {
+      const enOfertas = window.location.pathname.replace(/\/+$/, "") === "/ofertas";
+      if (view === "ofertas" && !enOfertas) window.history.replaceState(null, "", "/ofertas");
+      else if (view !== "ofertas" && enOfertas) window.history.replaceState(null, "", "/");
+    } catch (e) {}
+  }, [view]);
 
   // El carrito se guarda en el navegador para que NO se pierda al iniciar sesión o recargar
   const [cart, setCart] = useState(() => {
@@ -3982,6 +4380,79 @@ export default function App() {
   }, [user, pendingCheckout]);
 
   const [cartPulse, setCartPulse] = useState(0);
+
+  // ── OFERTAS: campaña activa + sus ofertas y combos ──
+  const [campanaActiva, setCampanaActiva] = useState(null); // { campana, items, combos } | null
+  const cargarOfertas = async () => {
+    try {
+      const cs = await sb.get("campanas_ofertas", "?activa=eq.true&limit=1");
+      const c = cs && cs[0];
+      const ahora = Date.now();
+      if (!c || (c.fecha_fin && new Date(c.fecha_fin).getTime() <= ahora) || (c.fecha_inicio && new Date(c.fecha_inicio).getTime() > ahora)) { setCampanaActiva(null); return null; }
+      const its = (await sb.get("ofertas_items", `?campana_id=eq.${c.id}&activo=eq.true&order=orden.asc,id.asc`)) || [];
+      const ids = its.map(i => i.id);
+      const cb = ids.length ? ((await sb.get("ofertas_combo_productos", `?oferta_id=in.(${ids.join(",")})`)) || []) : [];
+      const data = { campana: c, items: its, combos: cb };
+      setCampanaActiva(data);
+      return data;
+    } catch (e) { console.warn("Ofertas no cargadas:", e.message); return null; }
+  };
+
+  // Piezas de un producto que ya están en el carrito (sueltas, en Flex Pack o dentro de ofertas/combos)
+  const piezasEnCarritoDe = (productId, excluirOfertaId = null, incluirFlex = true) => cart.reduce((s, i) => {
+    if (i.esOferta) return i.ofertaId === excluirOfertaId ? s : s + i.lineas.filter(l => l.productId === productId).reduce((a, l) => a + l.piezas * i.unidades, 0);
+    if (i.esFlexPack) return !incluirFlex ? s : s + i.items.filter(it => it.productId === productId).reduce((a, it) => a + it.cantidad, 0);
+    return i.product.id === productId ? s + i.qty : s;
+  }, 0);
+
+  // Agrega `unidades` de una oferta/combo. Respeta stock real y el límite por pedido.
+  const agregarOfertaAlCarrito = (info, unidades) => {
+    const o = info.oferta;
+    const yaUni = cart.filter(i => i.esOferta && i.ofertaId === o.id).reduce((s, i) => s + i.unidades, 0);
+    let nuevas = unidades;
+    if (o.limite_por_pedido && yaUni + nuevas > o.limite_por_pedido) {
+      nuevas = o.limite_por_pedido - yaUni;
+      if (nuevas <= 0) { showToast(`Esta oferta permite máximo ${o.limite_por_pedido} por pedido`); return false; }
+      showToast(`Máximo ${o.limite_por_pedido} por pedido: se ajustó la cantidad`);
+    }
+    for (const l of info.lineas) {
+      const p = l.product;
+      if (!((!p.proveedor_id || p.tiene_stock_fisico) && p.stock_actualizado_at)) continue;
+      const libre = Math.max(0, (Number(p.stock) || 0) - piezasEnCarritoDe(p.id, o.id));
+      const caben = Math.floor(libre / l.piezas) - yaUni;
+      if (caben < nuevas) {
+        if (caben <= 0) { showToast(`Ya no queda stock suficiente de "${p.nombre}" para esta oferta`); return false; }
+        nuevas = caben; showToast(`Solo hay stock para ${caben} de esta oferta: se ajustó la cantidad`);
+      }
+    }
+    const total = yaUni + nuevas;
+    setCart(prev => {
+      const sinEsta = prev.filter(i => !(i.esOferta && i.ofertaId === o.id));
+      return [...sinEsta, ofertaALineaCarrito(info, total)];
+    });
+    setCartPulse(p => p + 1);
+    registrarEvento("agregar_oferta", o.id, info.titulo, user?.id);
+    trackAgregarCarrito({ id: `oferta-${o.id}`, nombre: info.titulo, precio: info.precioOferta, cantidad: nuevas });
+    showToast(`${o.tipo === "combo" ? "Combo agregado" : "Oferta agregada"} a tu pedido`);
+    return true;
+  };
+
+  // Vuelve a leer la campaña y deja el carrito con los precios/ofertas vigentes de verdad.
+  const sincronizarOfertasCarrito = async () => {
+    const data = await cargarOfertas();
+    const porId = {}; products.forEach(p => { porId[p.id] = p; });
+    setCart(prev => prev.flatMap(i => {
+      if (!i.esOferta) return [i];
+      const of = data?.items.find(x => x.id === i.ofertaId);
+      const info = of ? ofertaInfo(of, porId, data.combos) : null;
+      if (!info) return []; // la oferta ya no existe o terminó
+      let uni = i.unidades;
+      if (of.limite_por_pedido) uni = Math.min(uni, of.limite_por_pedido);
+      if (Number.isFinite(info.stockMax)) uni = Math.min(uni, info.stockMax);
+      return uni > 0 ? [ofertaALineaCarrito(info, uni)] : [];
+    }));
+  };
+
   const addToCart = (product, qty, pres = "pieza", count = qty) => {
     let qtyFinal = qty, countFinal = count;
     // No dejar agregar más de lo que hay en stock real (cuando el stock está
@@ -3992,7 +4463,7 @@ export default function App() {
     // sueltas por quedar cortos de stock).
     if (product.stock_actualizado_at) {
       const stockDisponible = Number(product.stock || 0);
-      const yaEnCarrito = cart.filter(i => !i.esFlexPack && i.product.id === product.id).reduce((s, i) => s + i.qty, 0);
+      const yaEnCarrito = piezasEnCarritoDe(product.id, null, false);
       const disponibleParaAgregar = Math.max(0, stockDisponible - yaEnCarrito);
       const esPerfumeria = product.modalidad_presentacion === "perfumeria";
       const piezasPorUnidad = pres === "docena" ? (esPerfumeria ? 6 : 12) : pres === "media" ? (esPerfumeria ? 3 : 6) : 1;
@@ -4010,8 +4481,8 @@ export default function App() {
     }
     setCart(prev => {
       // mismo producto Y misma presentación = se suman; si no, entrada nueva
-      const existing = prev.find(i => !i.esFlexPack && i.product.id === product.id && i.pres === pres);
-      if (existing) return prev.map(i => (!i.esFlexPack && i.product.id === product.id && i.pres === pres) ? { ...i, qty: i.qty + qtyFinal, count: (i.count || 0) + countFinal } : i);
+      const existing = prev.find(i => !i.esFlexPack && !i.esOferta && i.product.id === product.id && i.pres === pres);
+      if (existing) return prev.map(i => (!i.esFlexPack && !i.esOferta && i.product.id === product.id && i.pres === pres) ? { ...i, qty: i.qty + qtyFinal, count: (i.count || 0) + countFinal } : i);
       return [...prev, { product, qty: qtyFinal, pres, count: countFinal }];
     });
     setCartPulse(p => p + 1); // dispara animación del carrito
@@ -4172,6 +4643,7 @@ export default function App() {
         ]);
         setCategories(cats);
         setProducts(prods);
+        cargarOfertas();
         sb.get("flexpack_grupos", "?activo=eq.true").then(d => setFlexpackGrupos(d || [])).catch(() => {});
 
         // Link directo a un producto — reconoce tanto el formato nuevo y limpio
@@ -4294,13 +4766,20 @@ export default function App() {
   }, []);
 
   const isAdmin = view === "admin";
-  const ctx = { view, setView, cart, setCart, addToCart, agregarFlexPackAlCarrito, cartPulse, user, setUser, showLogin, setShowLogin, showRegister, setShowRegister, registerPrefill, setRegisterPrefill, showCart, setShowCart, quickView, setQuickView, pagoResultado, setPagoResultado, catalogCat, setCatalogCat, completeProfile, setCompleteProfile, googleMfaPaso, setGoogleMfaPaso, recuperacionToken, setRecuperacionToken, pendingCheckout, setPendingCheckout, products, setProducts, categories, setCategories, gruposCategorias, setGruposCategorias, banners, setBanners, popups, setPopups, empresas, setEmpresas, sucursales, setSucursales, localesRetiro, setLocalesRetiro, retiroLocalHabilitado, setRetiroLocalHabilitado, flexpackGrupos, loading, showToast };
+  const ctx = { view, setView, cart, setCart, addToCart, agregarFlexPackAlCarrito, campanaActiva, cargarOfertas, agregarOfertaAlCarrito, sincronizarOfertasCarrito, cartPulse, user, setUser, showLogin, setShowLogin, showRegister, setShowRegister, registerPrefill, setRegisterPrefill, showCart, setShowCart, quickView, setQuickView, pagoResultado, setPagoResultado, catalogCat, setCatalogCat, completeProfile, setCompleteProfile, googleMfaPaso, setGoogleMfaPaso, recuperacionToken, setRecuperacionToken, pendingCheckout, setPendingCheckout, products, setProducts, categories, setCategories, gruposCategorias, setGruposCategorias, banners, setBanners, popups, setPopups, empresas, setEmpresas, sucursales, setSucursales, localesRetiro, setLocalesRetiro, retiroLocalHabilitado, setRetiroLocalHabilitado, flexpackGrupos, loading, showToast };
 
   return (
     <AppCtx.Provider value={ctx}>
       <style>{`
         @keyframes spin { to { transform: rotate(360deg); } }
         .spin { animation: spin 0.8s linear infinite; }
+        @keyframes ofHomeShine { 0% { background-position: 0% 50%; } 100% { background-position: 200% 50%; } }
+        @keyframes ofHomeWiggle { 0%,100% { transform: rotate(-8deg) scale(1); } 50% { transform: rotate(8deg) scale(1.15); } }
+        .oft-home-ofertas { animation: ofHomeShine 6s linear infinite alternate; transition: filter .2s; }
+        .oft-home-ofertas:hover { filter: brightness(1.1); }
+        .oft-home-of-ic { animation: ofHomeWiggle 1.8s ease-in-out infinite; }
+        @keyframes ofNavPulse { 0%,100% { box-shadow: 0 0 0 0 rgba(227,30,36,0.45); } 50% { box-shadow: 0 0 0 7px rgba(227,30,36,0); } }
+        .oft-nav-ofertas { animation: ofNavPulse 2s ease-out infinite; }
         * { box-sizing: border-box; }
         html, body { margin: 0; padding: 0; overflow-x: hidden; max-width: 100%; font-family: Helvetica, Arial, sans-serif; }
         input, button, textarea, select { font-family: inherit; }
@@ -4558,6 +5037,7 @@ export default function App() {
         {!isAdmin && <NavBar />}
         {view === "home" && <HomeView />}
         {view === "catalogo" && <CatalogoView />}
+        {view === "ofertas" && <OfertasView />}
         {(view === "terminos" || view === "devoluciones" || view === "privacidad") && <LegalPageView />}
         {view === "checkout" && <CheckoutView />}
         {view === "pago-resultado" && <PagoResultadoView />}
