@@ -2092,8 +2092,15 @@ function FloatingCart() {
 // ═══════════════════════════════════════════════════════════════
 function esc(s) { return String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase(); }
 
-function OfertaCard({ info, delay, vigente }) {
-  const { agregarOfertaAlCarrito, cart } = useApp();
+function OfertaCard({ info, delay, vigente, campana }) {
+  const { agregarOfertaAlCarrito, cart, showToast } = useApp();
+  // Ropa / calzado (productos con tallas o colores): por ahora se elige talla y color y se consulta por WhatsApp
+  const tieneTallas = (p) => p.tiene_tallas && (p.tallas || "").trim();
+  const tieneColores = (p) => p.tiene_colores && (p.colores || "").trim();
+  const lineasConVariantes = info.lineas.filter(l => tieneTallas(l.product) || tieneColores(l.product));
+  const modoConsulta = lineasConVariantes.length > 0;
+  const [sel, setSel] = useState({}); // { [productoId]: { talla, color } }
+  const setVar = (pid, campo, valor) => setSel(prev => ({ ...prev, [pid]: { ...(prev[pid] || {}), [campo]: valor } }));
   const [uni, setUni] = useState(1);
   const [okAnim, setOkAnim] = useState(false);
   const o = info.oferta;
@@ -2110,6 +2117,28 @@ function OfertaCard({ info, delay, vigente }) {
     if (!vigente) return;
     const ok = agregarOfertaAlCarrito(info, uni);
     if (ok) { setOkAnim(true); setTimeout(() => setOkAnim(false), 1400); setUni(1); }
+  };
+  const consultarWhatsApp = () => {
+    if (!vigente) return;
+    for (const l of lineasConVariantes) {
+      const v = sel[l.product.id] || {};
+      if (tieneTallas(l.product) && !v.talla) { showToast(`Elige la talla${info.lineas.length > 1 ? ` de ${l.product.nombre}` : ""} primero`); return; }
+      if (tieneColores(l.product) && !v.color) { showToast(`Elige el color${info.lineas.length > 1 ? ` de ${l.product.nombre}` : ""} primero`); return; }
+    }
+    const esC = o.tipo === "combo";
+    let msg = `Hola Ofertodo, quiero consultar disponibilidad de esta oferta:\n\n*${campana ? `${campana.prefijo} ${campana.nombre}` : "Oferta"}*\n*${info.titulo}* (${esC ? "Combo" : "Oferta"} al ${o.seccion === "mayor" ? "mayor" : "detal"})`;
+    msg += `\nPrecio de oferta: $${info.precioOferta.toFixed(2)}${info.precioNormal > info.precioOferta ? ` (antes $${info.precioNormal.toFixed(2)})` : ""}`;
+    msg += `\nCantidad: ${uni} ${esC ? (uni === 1 ? "combo" : "combos") : (uni === 1 ? "oferta" : "ofertas")}`;
+    msg += `\n\nIncluye:`;
+    for (const l of info.lineas) {
+      const v = sel[l.product.id] || {};
+      msg += `\n• ${l.piezas * uni}x ${l.product.nombre}${l.product.referencia ? ` (Ref: ${l.product.referencia})` : ""}`;
+      if (v.talla) msg += ` — Talla: ${v.talla}`;
+      if (v.color) msg += ` — Color: ${v.color}`;
+    }
+    if (info.lineas.length === 1) msg += `\n\nVer producto: ${window.location.origin}/producto/${info.lineas[0].product.id}`;
+    registrarEvento("consulta_whatsapp", o.id, `Consulta de oferta: ${info.titulo}`);
+    window.open(`https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(msg)}`, "_blank");
   };
   const imgs = info.imagenes.slice(0, 4);
   const esCombo = o.tipo === "combo";
@@ -2151,15 +2180,32 @@ function OfertaCard({ info, delay, vigente }) {
         {info.ahorro > 0.005 && <div className="oft-of-save"><Sparkles size={12} /> Ahorras ${info.ahorro.toFixed(2)}</div>}
         {ultimas && <div className="oft-of-last"><AlertTriangle size={12} /> ¡Quedan solo {stock}!</div>}
         {o.limite_por_pedido && <div style={{ fontSize: 11, color: GRAY3 }}>Máx. {o.limite_por_pedido} por pedido</div>}
+        {modoConsulta && (
+          <div className="oft-of-variantes">
+            {lineasConVariantes.map(l => (
+              <div key={l.product.id} style={{ marginTop: 4 }}>
+                {info.lineas.length > 1 && <div style={{ fontSize: 11.5, fontWeight: 800, marginBottom: 4 }}>{l.product.nombre}</div>}
+                <VariantPicker product={l.product} talla={(sel[l.product.id] || {}).talla || ""} setTalla={v => setVar(l.product.id, "talla", v)} color={(sel[l.product.id] || {}).color || ""} setColor={v => setVar(l.product.id, "color", v)} />
+              </div>
+            ))}
+            <div style={{ fontSize: 11, color: GRAY3, marginTop: 6 }}>¿Necesitas varias tallas o colores? Indícalo en el mensaje de WhatsApp.</div>
+          </div>
+        )}
         <div className="oft-of-actions">
           <div className="oft-of-stepper">
             <button onClick={() => setUni(u => Math.max(1, u - 1))} disabled={uni <= 1 || agotado} aria-label="Menos">−</button>
             <span>{uni}</span>
-            <button onClick={() => setUni(u => Math.min(topeUni, u + 1))} disabled={uni >= topeUni || agotado || sinMas} aria-label="Más">+</button>
+            <button onClick={() => setUni(u => Math.min(topeUni, u + 1))} disabled={uni >= topeUni || agotado || (sinMas && !modoConsulta)} aria-label="Más">+</button>
           </div>
+          {modoConsulta ? (
+            <button className="oft-of-add oft-of-wa oft-btn-press" onClick={consultarWhatsApp} disabled={agotado || !vigente}>
+              {agotado ? "Agotado" : !vigente ? "Terminó" : <><MessageCircle size={16} /> Consultar</>}
+            </button>
+          ) : (
           <button className={"oft-of-add oft-btn-press" + (okAnim ? " ok" : "")} onClick={agregar} disabled={agotado || sinMas || !vigente}>
             {agotado ? "Agotado" : !vigente ? "Terminó" : sinMas ? "Límite en tu pedido" : okAnim ? <><CheckCircle2 size={16} /> ¡Agregado!</> : <><ShoppingCart size={16} /> Agregar</>}
           </button>
+          )}
         </div>
       </div>
     </div>
@@ -2233,7 +2279,7 @@ function OfertasView() {
         <em>{lista.length} {lista.length === 1 ? "oferta" : "ofertas"}</em>
       </div>
       <div className="oft-of-grid">
-        {lista.map((i, idx) => <OfertaCard key={i.oferta.id} info={i} delay={idx} vigente={vigente} />)}
+        {lista.map((i, idx) => <OfertaCard key={i.oferta.id} info={i} delay={idx} vigente={vigente} campana={c} />)}
       </div>
     </div>
   );
@@ -2306,6 +2352,8 @@ function OfertasView() {
         .oft-of-stepper span { min-width: 30px; text-align: center; font-weight: 900; }
         .oft-of-add { flex: 1; border: none; border-radius: 12px; background: ${A}; color: #fff; font-weight: 800; font-size: 14px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px; min-height: 42px; transition: background .2s, transform .15s; }
         .oft-of-add:hover:not(:disabled) { filter: brightness(1.08); }
+        .oft-of-add.oft-of-wa { background: #25D366; }
+        .oft-of-variantes { border-top: 1px dashed #E0E0E0; padding-top: 8px; margin-top: 2px; }
         .oft-of-add.ok { background: #0A9D4F; animation: ofOk .4s ease; }
         .oft-of-add:disabled { background: ${GRAY2}; color: ${GRAY3}; cursor: default; }
         @media (max-width: 520px) {
