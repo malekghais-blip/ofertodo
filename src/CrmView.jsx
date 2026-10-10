@@ -7,14 +7,63 @@ import {
   Timer, AlertCircle, FileText, ExternalLink, Workflow, GitBranch, Plus,
   Trash2, Play, UserCheck, ToggleLeft, ToggleRight, StickyNote,
   Megaphone, Image as ImageIcon, Instagram, Plug, CheckCircle2, Upload,
+  ChevronDown, Power, KeyRound, ShieldCheck,
 } from "lucide-react";
-import { RED, BLACK, GRAY, GRAY2, GRAY3, WHITE, S, useApp, sb, Spinner, comprimirImagen, supabaseRealtime } from "./shared.jsx";
+import { RED, BLACK, GRAY, GRAY2, GRAY3, WHITE, S, useApp, sb, Spinner, comprimirImagen, supabaseRealtime, SUPABASE_URL } from "./shared.jsx";
 
 // ═══════════════════════════════════════════════════════════════
 //  CRM — bandeja de WhatsApp, etapas de cliente, equipo de agentes,
 //  y analítica de desempeño. Vive como su propia sección grande del
 //  sitio, accesible desde el link "CRM" del encabezado.
 // ═══════════════════════════════════════════════════════════════
+
+// ─────────────────────────────────────────────────────────────
+//  Envío real por WhatsApp: el mensaje ya está guardado en la base
+//  como "saliente"; la función whatsapp-enviar lo manda por la Cloud
+//  API y devuelve el mensaje actualizado (o el motivo si falló).
+//  Devuelve siempre { [id]: { ok, error, mensaje } }, sin lanzar errores.
+// ─────────────────────────────────────────────────────────────
+async function enviarPorWhatsApp(ids) {
+  const salida = {};
+  for (let i = 0; i < ids.length; i += 30) {
+    const lote = ids.slice(i, i + 30);
+    try {
+      await sb.ensureFreshToken?.();
+      const r = await fetch(`${SUPABASE_URL}/functions/v1/whatsapp-enviar`, {
+        method: "POST", headers: sb.functionHeaders(), body: JSON.stringify({ mensaje_ids: lote }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok || !Array.isArray(data.resultados)) throw new Error(data?.error || `Error ${r.status}`);
+      data.resultados.forEach(x => { salida[x.id] = x; });
+    } catch (e) {
+      const texto = "No se pudo conectar con el servicio de WhatsApp. Intenta de nuevo.";
+      for (const id of lote) {
+        try { await sb.patch("crm_mensajes", id, { estado: "fallido", error_envio: texto }); } catch { /* sin conexión */ }
+        salida[id] = { id, ok: false, error: texto, mensaje: null };
+      }
+    }
+  }
+  return salida;
+}
+
+const HORAS_VENTANA = 24;
+// Horas que le quedan al equipo para escribirle texto libre a este cliente
+// (WhatsApp lo permite solo 24 h después del último mensaje del cliente).
+function horasDeVentana(mensajes) {
+  let ultimo = 0;
+  for (const m of mensajes) if (m.direccion === "entrante") ultimo = Math.max(ultimo, new Date(m.created_at).getTime());
+  if (!ultimo) return 0;
+  return Math.max(0, HORAS_VENTANA - (Date.now() - ultimo) / 3600000);
+}
+
+const ESTADO_NUMERO = {
+  CONNECTED: { texto: "Activo", bg: "#D1FAE5", color: "#065F46" },
+  PENDING: { texto: "Falta activarlo", bg: "#FEF3C7", color: "#92400E" },
+  FLAGGED: { texto: "Con alerta de calidad", bg: "#FEE2E2", color: "#991B1B" },
+  RESTRICTED: { texto: "Restringido por Meta", bg: "#FEE2E2", color: "#991B1B" },
+  DISCONNECTED: { texto: "Desconectado", bg: "#FEE2E2", color: "#991B1B" },
+};
+const CALIDAD_NUMERO = { GREEN: "Calidad alta", YELLOW: "Calidad media", RED: "Calidad baja", UNKNOWN: "Calidad sin medir" };
 
 const ESTILO_TAB_ACTIVO = { color: WHITE, background: BLACK };
 const ESTILO_TAB = { color: GRAY3, background: "transparent" };
@@ -227,6 +276,16 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
   const [enviando, setEnviando] = useState(false);
   const [enviandoPedidoId, setEnviandoPedidoId] = useState(null);
   const hiloRef = useRef(null);
+  const [numeros, setNumeros] = useState([]);
+  const [, setReloj] = useState(0); // refresca el aviso de las 24 h sin tocar nada
+  useEffect(() => {
+    if (!sesionLista) return;
+    sb.get("crm_numeros_whatsapp", "?order=created_at.asc").then(d => setNumeros(d || [])).catch(() => {});
+  }, [sesionLista]);
+  useEffect(() => { const t = setInterval(() => setReloj(x => x + 1), 60000); return () => clearInterval(t); }, []);
+  const numeroPorId = Object.fromEntries(numeros.map(n => [n.id, n]));
+  const variasLineas = numeros.filter(n => n.activo).length > 1;
+  const nombreLinea = (id) => { const n = numeroPorId[id]; return n ? (n.etiqueta || n.numero_visible || "Línea") : null; };
 
   // En móvil solo se ve UNA pantalla a la vez: la lista, el chat, o el panel
   // de contacto -- igual que WhatsApp. En escritorio las 3 conviven siempre.
@@ -318,6 +377,11 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
         if (payload.new.conversacion_id !== seleccionada.id) return;
         setMensajes(prev => prev.some(m => m.id === payload.new.id) ? prev : [...prev, payload.new]);
       })
+      // Cambios de estado que manda WhatsApp (entregado, leído) o el envío (fallido).
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "crm_mensajes" }, (payload) => {
+        if (payload.new.conversacion_id !== seleccionada.id) return;
+        setMensajes(prev => prev.map(m => m.id === payload.new.id ? { ...m, ...payload.new } : m));
+      })
       .subscribe();
     return () => { supabaseRealtime.removeChannel(canal); };
   }, [seleccionada?.id, sesionLista]);
@@ -335,27 +399,40 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
 
   const [respondiendoA, setRespondiendoA] = useState(null); // mensaje al que se le está por responder, o null
 
+  // Guarda el mensaje en el CRM y lo manda de verdad por WhatsApp. Si WhatsApp
+  // lo rechaza (por ejemplo, pasaron más de 24 h), el mensaje queda marcado
+  // "No enviado" en el chat con el motivo, y esta función devuelve ese motivo.
   const registrarMensajeSaliente = async (contenido, actualizarPreview = true, respondeAId = null) => {
     const creado = await sb.post("crm_mensajes", {
       conversacion_id: seleccionada.id, direccion: "saliente", tipo: "texto",
       contenido, agente_id: user?.id || null, estado: "enviado",
-      responde_a_id: respondeAId,
+      responde_a_id: respondeAId, canal: "whatsapp",
     });
-    if (Array.isArray(creado) && creado[0]) setMensajes(prev => [...prev, creado[0]]);
-    if (actualizarPreview) {
+    const fila = Array.isArray(creado) ? creado[0] : null;
+    if (!fila) throw new Error("No se pudo guardar el mensaje");
+    setMensajes(prev => prev.some(m => m.id === fila.id) ? prev : [...prev, fila]);
+    const res = (await enviarPorWhatsApp([fila.id]))[fila.id];
+    const actualizado = res?.mensaje || { ...fila, estado: res?.ok ? "enviado" : "fallido", error_envio: res?.ok ? null : (res?.error || "No se pudo enviar") };
+    setMensajes(prev => prev.map(m => m.id === fila.id ? { ...m, ...actualizado } : m));
+    if (actualizarPreview && res?.ok) {
       const preview = contenido.length > 60 ? contenido.slice(0, 60) + "…" : contenido;
-      await sb.patch("crm_conversaciones", seleccionada.id, { ultimo_mensaje_at: new Date().toISOString(), ultimo_mensaje_preview: preview });
-      setConversaciones(prev => prev.map(c => c.id === seleccionada.id ? { ...c, ultimo_mensaje_at: new Date().toISOString(), ultimo_mensaje_preview: preview } : c));
+      const ahora = new Date().toISOString();
+      await sb.patch("crm_conversaciones", seleccionada.id, { ultimo_mensaje_at: ahora, ultimo_mensaje_preview: preview });
+      setConversaciones(prev => prev.map(c => c.id === seleccionada.id ? { ...c, ultimo_mensaje_at: ahora, ultimo_mensaje_preview: preview } : c));
     }
+    return { ok: !!res?.ok, error: res?.error || null };
   };
 
-  // NOTA: por ahora esto solo GUARDA el mensaje en la base de datos como
-  // "saliente" -- falta conectar el envío real por WhatsApp (pendiente a que
-  // termine la revisión de Meta). Una vez esté lista la API, esto mismo se
-  // conecta a la función que manda el mensaje de verdad -- ahí mismo se le
-  // pasaría el "whatsapp_message_id" del mensaje original como "context" de
-  // WhatsApp, para que la respuesta cite el mensaje también del lado del
-  // cliente, no solo aquí dentro del CRM.
+  const reintentarMensaje = async (m) => {
+    setMensajes(prev => prev.map(x => x.id === m.id ? { ...x, estado: "enviado", error_envio: null } : x));
+    const res = (await enviarPorWhatsApp([m.id]))[m.id];
+    const actualizado = res?.mensaje || { estado: res?.ok ? "enviado" : "fallido", error_envio: res?.ok ? null : (res?.error || "No se pudo enviar") };
+    setMensajes(prev => prev.map(x => x.id === m.id ? { ...x, ...actualizado } : x));
+  };
+
+  // Se escribe en el chat y sale por WhatsApp por la misma línea por la que
+  // el cliente nos escribió. El "context" (citar el mensaje original) lo arma
+  // la función de envío a partir de responde_a_id.
   const enviarMensaje = async () => {
     if (!texto.trim() || !seleccionada) return;
     setEnviando(true);
@@ -375,11 +452,14 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
       const lineas = (items || []).map((it, i) => `${i + 1}. ${it.nombre_producto} — $${Number(it.subtotal).toFixed(2)}`);
       const esCot = pedido.tipo === "cotizacion";
       const texto = `${esCot ? "Aquí tienes tu cotización" : "Aquí tienes el resumen de tu pedido"} *${pedido.codigo}*:\n\n${lineas.join("\n")}\n\nTotal: $${Number(pedido.total).toFixed(2)}${esCot ? "\n\n¿Confirmamos el pedido?" : ""}`;
-      await registrarMensajeSaliente(texto);
+      const r = await registrarMensajeSaliente(texto);
+      if (!r.ok) alert("No se pudo enviar por WhatsApp:\n" + r.error);
     } catch (e) { alert("Error preparando el envío: " + e.message); }
     setEnviandoPedidoId(null);
   };
 
+  const ventanaHoras = horasDeVentana(mensajes);
+  const ventanaCerrada = !!seleccionada && mensajes.length > 0 && ventanaHoras <= 0;
   const pedidosDelContacto = seleccionada ? pedidos.filter(p => p.telefono === seleccionada.telefono) : [];
 
   return (
@@ -423,6 +503,8 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
                   <div style={{ display: "flex", gap: 5, marginTop: 5, flexWrap: "wrap" }}>
                     {etapa && <span style={{ fontSize: 9.5, fontWeight: 800, padding: "2px 7px", borderRadius: 5, background: etapa.color + "22", color: etapa.color }}>{etapa.nombre}</span>}
                     {agente && <span style={{ fontSize: 9.5, fontWeight: 700, padding: "2px 7px", borderRadius: 5, background: GRAY2, color: GRAY3 }}>{agente.nombre}</span>}
+                    {c.origen === "anuncio" && <span title={c.anuncio_titulo || "Vino de un anuncio"} style={{ fontSize: 9.5, fontWeight: 800, padding: "2px 7px", borderRadius: 5, background: "#DBEAFE", color: "#1E40AF", display: "inline-flex", alignItems: "center", gap: 3 }}><Megaphone size={9} /> Anuncio</span>}
+                    {variasLineas && nombreLinea(c.numero_id) && <span style={{ fontSize: 9.5, fontWeight: 700, padding: "2px 7px", borderRadius: 5, border: `1px solid ${GRAY2}`, color: GRAY3 }}>{nombreLinea(c.numero_id)}</span>}
                     {c.no_leidos > 0 && <span style={{ fontSize: 9.5, fontWeight: 800, padding: "2px 7px", borderRadius: 5, background: RED, color: WHITE }}>{c.no_leidos}</span>}
                   </div>
                 </div>
@@ -454,7 +536,11 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontWeight: 800, fontSize: 14.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{seleccionada.nombre_contacto || seleccionada.telefono}</div>
-                <div style={{ fontSize: 11.5, color: GRAY3 }}>{seleccionada.telefono}</div>
+                <div style={{ fontSize: 11.5, color: GRAY3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {seleccionada.telefono}
+                  {seleccionada.origen === "anuncio" && <span style={{ color: "#1E40AF", fontWeight: 700 }}> · Vino de un anuncio{seleccionada.anuncio_titulo ? `: ${seleccionada.anuncio_titulo}` : ""}</span>}
+                  {nombreLinea(seleccionada.numero_id) && variasLineas && <span> · por {nombreLinea(seleccionada.numero_id)}</span>}
+                </div>
               </div>
               {esMobil && (
                 <button onClick={() => setVistaMobil("contacto")} className="oft-btn-press" style={{ background: GRAY, border: "none", borderRadius: 8, padding: "6px 10px", cursor: "pointer", display: "flex", alignItems: "center", gap: 5, fontSize: 11.5, fontWeight: 700, color: GRAY3, flexShrink: 0 }}>
@@ -536,8 +622,16 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
                         {m.tipo !== "documento" && m.contenido}
                         <div style={{ display: "flex", alignItems: "center", gap: 4, justifyContent: "flex-end", marginTop: 4, marginBottom: tieneMedia ? 4 : 0, opacity: 0.6, fontSize: 10 }}>
                           {formatoHora(m.created_at)}
-                          {m.direccion === "saliente" && (m.estado === "leido" ? <CheckCheck size={12} /> : m.estado === "entregado" ? <CheckCheck size={12} /> : <Check size={12} />)}
+                          {m.direccion === "saliente" && (m.estado === "fallido" ? <AlertCircle size={12} color="#FCA5A5" /> : m.estado === "leido" ? <CheckCheck size={12} color="#7DD3FC" /> : m.estado === "entregado" ? <CheckCheck size={12} /> : <Check size={12} />)}
                         </div>
+                        {m.direccion === "saliente" && m.estado === "fallido" && (
+                          <div style={{ marginTop: 6, padding: "7px 9px", borderRadius: 8, background: "rgba(220,38,38,0.18)", fontSize: 11.5, lineHeight: 1.4, color: "#FECACA", whiteSpace: "normal" }}>
+                            <strong style={{ color: "#FCA5A5" }}>No enviado.</strong> {m.error_envio || "WhatsApp no pudo entregar este mensaje."}
+                            {!/24 horas/.test(m.error_envio || "") && (
+                              <button onClick={() => reintentarMensaje(m)} className="oft-btn-press" style={{ display: "block", marginTop: 5, background: "rgba(255,255,255,0.14)", border: "none", color: WHITE, borderRadius: 6, padding: "4px 9px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>Reintentar</button>
+                            )}
+                          </div>
+                        )}
                       </div>
                     </div>
                     {m.direccion === "entrante" && (
@@ -569,12 +663,24 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
                   </button>
                 </div>
               )}
+              {mensajes.length > 0 && ventanaHoras <= 0 && (
+                <div style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "9px 14px", background: "#FEF3C7", color: "#92400E", fontSize: 12, lineHeight: 1.4 }}>
+                  <Clock size={14} style={{ flexShrink: 0, marginTop: 1 }} />
+                  <span>Pasaron más de 24 horas desde el último mensaje del cliente. WhatsApp solo deja escribirle de nuevo cuando él te escriba otra vez.</span>
+                </div>
+              )}
+              {mensajes.length > 0 && ventanaHoras > 0 && ventanaHoras < 3 && (
+                <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 14px", background: "#FEF3C7", color: "#92400E", fontSize: 12 }}>
+                  <Clock size={13} style={{ flexShrink: 0 }} />
+                  <span>Te {ventanaHoras < 1 ? "queda menos de 1 hora" : `quedan unas ${Math.ceil(ventanaHoras)} horas`} para responderle.</span>
+                </div>
+              )}
               <div style={{ padding: 14, display: "flex", gap: 8 }}>
-                <input value={texto} onChange={e => setTexto(e.target.value)} placeholder="Escribe un mensaje..."
+                <input value={texto} onChange={e => setTexto(e.target.value)} placeholder={ventanaCerrada ? "Esperando que el cliente escriba..." : "Escribe un mensaje..."} disabled={ventanaCerrada}
                   onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); enviarMensaje(); } }}
-                  style={{ ...S.input, marginBottom: 0, flex: 1 }} />
-                <button onClick={enviarMensaje} disabled={enviando || !texto.trim()} className="oft-btn-press"
-                  style={{ background: BLACK, color: WHITE, border: "none", borderRadius: 10, width: 44, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", opacity: enviando || !texto.trim() ? 0.5 : 1 }}>
+                  style={{ ...S.input, marginBottom: 0, flex: 1, opacity: ventanaCerrada ? 0.6 : 1 }} />
+                <button onClick={enviarMensaje} disabled={enviando || !texto.trim() || ventanaCerrada} className="oft-btn-press"
+                  style={{ background: BLACK, color: WHITE, border: "none", borderRadius: 10, width: 44, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", opacity: enviando || !texto.trim() || ventanaCerrada ? 0.5 : 1 }}>
                   <Send size={17} />
                 </button>
               </div>
@@ -599,6 +705,18 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
             <div style={{ fontWeight: 800, fontSize: 15 }}>{seleccionada.nombre_contacto || "Sin nombre"}</div>
             <div style={{ fontSize: 12.5, color: GRAY3 }}>{seleccionada.telefono}</div>
           </div>
+
+          {seleccionada.origen === "anuncio" && (
+            <div style={{ background: "#EFF6FF", border: "1px solid #BFDBFE", borderRadius: 12, padding: "10px 12px", marginBottom: 20 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 800, color: "#1E40AF" }}><Megaphone size={13} /> Llegó desde un anuncio</div>
+              {seleccionada.anuncio_titulo && <div style={{ fontSize: 12.5, color: BLACK, marginTop: 5, lineHeight: 1.4 }}>{seleccionada.anuncio_titulo}</div>}
+              {seleccionada.anuncio_url && (
+                <a href={seleccionada.anuncio_url} target="_blank" rel="noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, marginTop: 6, fontSize: 11.5, fontWeight: 700, color: "#1E40AF", textDecoration: "none" }}>
+                  Ver el anuncio <ExternalLink size={11} />
+                </a>
+              )}
+            </div>
+          )}
 
           <div style={{ fontSize: 11, fontWeight: 800, color: GRAY3, letterSpacing: 0.5, marginBottom: 8 }}>ETAPA</div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 20 }}>
@@ -1594,7 +1712,7 @@ function ComposerBroadcast({ etapas, conversaciones, user, esMobil, onCerrar, on
   const enviar = async () => {
     if (!nombre.trim() || !mensajeTexto.trim()) { alert("Ponle un nombre interno y escribe el mensaje"); return; }
     if (destinatarios.length === 0) { alert("No hay ningún cliente con ese filtro de etapa"); return; }
-    if (!confirm(`¿Enviar este broadcast a ${destinatarios.length} clientes? No se puede deshacer.`)) return;
+    if (!confirm(`¿Enviar este broadcast a ${destinatarios.length} clientes? No se puede deshacer.\n\nWhatsApp solo entrega a quienes te escribieron en las últimas 24 horas.`)) return;
     setEnviando(true);
     try {
       let imagenUrl = null;
@@ -1609,23 +1727,47 @@ function ComposerBroadcast({ etapas, conversaciones, user, esMobil, onCerrar, on
         etapas_objetivo: etapasSeleccionadas, estado: "enviando", total_destinatarios: destinatarios.length,
         enviado_por: user?.id || null,
       });
-      let enviados = 0;
-      // NOTA: hoy se guarda como "enviado" en la base de datos -- falta conectar
-      // el envío real por WhatsApp (pendiente a que termine la revisión de Meta).
+      let enviados = 0, rechazados = 0, fueraDeVentana = 0, primerError = "";
+      // Cada cliente: se guarda el mensaje y se manda por WhatsApp en tandas de 10.
+      // WhatsApp solo deja escribir texto libre a quien escribió en las últimas 24 h;
+      // al resto el mensaje queda marcado "No enviado" en su chat con el motivo.
+      let pendientes = [];
+      const vaciar = async () => {
+        if (pendientes.length === 0) return;
+        const lote = pendientes; pendientes = [];
+        const res = await enviarPorWhatsApp(lote.map(x => x.id));
+        for (const x of lote) {
+          const r = res[x.id];
+          if (r?.ok) {
+            enviados++;
+            await sb.patch("crm_conversaciones", x.convId, {
+              ultimo_mensaje_at: new Date().toISOString(),
+              ultimo_mensaje_preview: (imagenUrl ? "📷 " : "") + mensajeTexto.trim().slice(0, 55),
+            });
+          } else {
+            rechazados++;
+            if (r?.codigo === "ventana") fueraDeVentana++;
+            else if (!primerError) primerError = r?.error || "Error desconocido";
+          }
+        }
+        setProgreso(enviados + rechazados);
+      };
       for (const conv of destinatarios) {
-        await sb.post("crm_mensajes", {
+        const [fila] = await sb.post("crm_mensajes", {
           conversacion_id: conv.id, direccion: "saliente", tipo: imagenUrl ? "imagen" : "texto",
           contenido: mensajeTexto.trim(), media_url: imagenUrl, agente_id: user?.id || null,
           estado: "enviado", broadcast_id: broadcast.id, canal: "whatsapp",
         });
-        await sb.patch("crm_conversaciones", conv.id, {
-          ultimo_mensaje_at: new Date().toISOString(),
-          ultimo_mensaje_preview: (imagenUrl ? "📷 " : "") + mensajeTexto.trim().slice(0, 55),
-        });
-        enviados++;
-        setProgreso(enviados);
+        pendientes.push({ id: fila.id, convId: conv.id });
+        if (pendientes.length >= 10) await vaciar();
       }
+      await vaciar();
       await sb.patch("crm_broadcasts", broadcast.id, { estado: "enviado", total_enviados: enviados, enviado_at: new Date().toISOString() });
+      if (rechazados > 0) {
+        alert(`Broadcast terminado.\n\nLlegó a ${enviados} cliente${enviados !== 1 ? "s" : ""}.` +
+          (fueraDeVentana ? `\n${fueraDeVentana} no lo recibieron porque pasaron más de 24 horas desde que te escribieron (regla de WhatsApp).` : "") +
+          (rechazados - fueraDeVentana > 0 ? `\n${rechazados - fueraDeVentana} fallaron por otro motivo: ${primerError}` : ""));
+      }
       onEnviado();
     } catch (e) { alert("Error enviando el broadcast: " + e.message); }
     setEnviando(false);
@@ -1678,6 +1820,10 @@ function ComposerBroadcast({ etapas, conversaciones, user, esMobil, onCerrar, on
         <div style={{ fontSize: 12.5, color: GRAY3, marginBottom: 24 }}>
           Este broadcast va a llegarle a <strong style={{ color: BLACK }}>{destinatarios.length}</strong> cliente{destinatarios.length !== 1 ? "s" : ""}.
         </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "flex-start", background: "#FEF3C7", color: "#92400E", borderRadius: 10, padding: "9px 12px", fontSize: 12, lineHeight: 1.4, margin: "-12px 0 20px" }}>
+          <Clock size={14} style={{ flexShrink: 0, marginTop: 1 }} />
+          <span>WhatsApp solo entrega mensajes libres a quienes te escribieron en las últimas 24 horas. A los demás les aparecerá "No enviado" en su chat.</span>
+        </div>
 
         <button onClick={enviar} disabled={enviando} className="oft-btn-press"
           style={{ width: "100%", padding: 14, borderRadius: 12, border: "none", background: RED, color: WHITE, fontWeight: 800, fontSize: 14.5, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, opacity: enviando ? 0.7 : 1 }}>
@@ -1694,18 +1840,67 @@ function ComposerBroadcast({ etapas, conversaciones, user, esMobil, onCerrar, on
 // ═══════════════════════════════════════════════════════════════
 function IntegracionesPanel() {
   const esMobil = useEsMobil();
-  const [whatsapp, setWhatsapp] = useState({ cargando: true, numero: null });
+  const { user } = useApp();
+  const esAdmin = !!user?.es_admin;
+  const [numeros, setNumeros] = useState([]);
+  const [cargando, setCargando] = useState(true);
+  const [ocupado, setOcupado] = useState(false);
+  const [aviso, setAviso] = useState(null); // { tipo: "ok" | "error", texto }
+  const [mostrarForm, setMostrarForm] = useState(false);
+  const [mostrarGuia, setMostrarGuia] = useState(false);
+  const [phoneId, setPhoneId] = useState("");
+  const [etiqueta, setEtiqueta] = useState("Anuncios");
+  const [pinPara, setPinPara] = useState(null); // phone_number_id al que se le pide PIN
+  const [pin, setPin] = useState("");
 
-  useEffect(() => {
-    (async () => {
-      try {
-        const filas = await sb.get("configuracion", "?clave=in.(whatsapp_phone_number,whatsapp_phone_number_id)");
-        const numero = filas?.find(f => f.clave === "whatsapp_phone_number")?.valor;
-        const phoneId = filas?.find(f => f.clave === "whatsapp_phone_number_id")?.valor;
-        setWhatsapp({ cargando: false, numero: numero ? JSON.parse(numero) : null, phoneId: phoneId ? JSON.parse(phoneId) : null });
-      } catch (e) { setWhatsapp({ cargando: false, numero: null }); }
-    })();
-  }, []);
+  const cargar = async () => {
+    try { setNumeros((await sb.get("crm_numeros_whatsapp", "?order=created_at.asc")) || []); }
+    catch (e) { setNumeros([]); }
+    setCargando(false);
+  };
+  useEffect(() => { cargar(); }, []);
+
+  // Llama a la función que habla con Meta (solo administradores).
+  const llamar = async (cuerpo) => {
+    await sb.ensureFreshToken?.();
+    const r = await fetch(`${SUPABASE_URL}/functions/v1/whatsapp-numeros`, { method: "POST", headers: sb.functionHeaders(), body: JSON.stringify(cuerpo) });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data?.error || `Error ${r.status}`);
+    return data;
+  };
+  const ejecutar = async (cuerpo, textoOk) => {
+    setOcupado(true); setAviso(null);
+    try {
+      const data = await llamar(cuerpo);
+      if (data.numeros) setNumeros(data.numeros); else await cargar();
+      const errs = data.errores ? Object.values(data.errores) : [];
+      setAviso(errs.length ? { tipo: "error", texto: errs[0] } : { tipo: "ok", texto: textoOk });
+      return true;
+    } catch (e) { setAviso({ tipo: "error", texto: e.message }); return false; }
+    finally { setOcupado(false); }
+  };
+
+  const conectar = async () => {
+    if (!/^\d{8,25}$/.test(phoneId.trim())) { setAviso({ tipo: "error", texto: "El ID del número son solo dígitos (15 o 16 en general). Lo ves en WhatsApp Manager > Teléfonos." }); return; }
+    const ok = await ejecutar({ modo: "conectar", phone_number_id: phoneId.trim(), etiqueta: etiqueta.trim() || "Anuncios" }, "Número conectado. Ya recibe y responde chats desde la Bandeja.");
+    if (ok) { setPhoneId(""); setMostrarForm(false); }
+  };
+  const activar = async () => {
+    const ok = await ejecutar({ modo: "activar", phone_number_id: pinPara, pin }, "Número activado en WhatsApp Cloud API.");
+    if (ok) { setPinPara(null); setPin(""); }
+  };
+
+  const pasos = [
+    ["Compra o consigue el chip nuevo", "Un número que NO tenga WhatsApp ni WhatsApp Business instalado (si lo tiene, bórrale la cuenta primero). Tiene que poder recibir un SMS o una llamada. Puede ser una línea prepago."],
+    ["Entra a WhatsApp Manager", "business.facebook.com > menú > Administrador de WhatsApp (WhatsApp Manager) > elige la cuenta de Ofertodo > pestaña Herramientas de la cuenta > Números de teléfono."],
+    ["Agrega el número", "Botón Agregar número de teléfono. Escribe el nombre que verán los clientes (Ofertodo) y la categoría. Meta revisa el nombre; suele tardar de minutos a un par de días."],
+    ["Verifica el código", "Meta te manda un SMS o llamada con un código de 6 dígitos al número nuevo. Escríbelo. Al terminar, el número aparece en tu lista con estado Conectado o Pendiente."],
+    ["Copia el ID del número", "En esa misma lista, toca el número: abajo del nombre verás Identificador del número de teléfono (15 o 16 dígitos). Ese es el ID que pegas aquí abajo en Conectar número API. No es el número de teléfono."],
+    ["Conéctalo aquí", "Pulsa Conectar número API, pega el ID y ponle una etiqueta (Anuncios). Si queda en Falta activarlo, aparece el botón Activar y le pones un PIN de 6 dígitos que inventes (guárdalo)."],
+    ["Apunta tus anuncios a ese número", "En Ads Manager, al crear o editar el anuncio de tipo Mensajes (clic a WhatsApp), elige este número como destino. Los chats que lleguen aparecerán en la Bandeja marcados como Anuncio."],
+  ];
+
+  const colorAviso = aviso?.tipo === "ok" ? { bg: "#D1FAE5", color: "#065F46" } : { bg: "#FEE2E2", color: "#991B1B" };
 
   return (
     <div style={{ flex: 1, padding: esMobil ? 14 : 24, overflowY: "auto" }}>
@@ -1714,34 +1909,135 @@ function IntegracionesPanel() {
         <div style={{ fontSize: 12.5, color: GRAY3 }}>Los canales conectados a tu Bandeja, Workflows, y Broadcasts.</div>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: esMobil ? "1fr" : "repeat(auto-fit, minmax(280px, 1fr))", gap: 14 }}>
+      <div style={{ display: "grid", gridTemplateColumns: esMobil ? "1fr" : "repeat(auto-fit, minmax(300px, 1fr))", gap: 14, alignItems: "start" }}>
         {/* WHATSAPP */}
         <div style={{ background: WHITE, borderRadius: 16, padding: 20, border: `1px solid ${GRAY2}` }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
             <div style={{ width: 44, height: 44, borderRadius: 12, background: "#25D366", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
               <MessageCircle size={22} color={WHITE} />
             </div>
-            <div>
-              <div style={{ fontWeight: 800, fontSize: 15 }}>WhatsApp Business</div>
-              <div style={{ fontSize: 11.5, color: GRAY3 }}>Bandeja, Workflows y Broadcasts</div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontWeight: 800, fontSize: 15 }}>WhatsApp</div>
+              <div style={{ fontSize: 11.5, color: GRAY3 }}>Números conectados a la Bandeja, Workflows y Broadcasts</div>
             </div>
+            {esAdmin && numeros.length > 0 && (
+              <button onClick={() => ejecutar({ modo: "estado" }, "Estado actualizado desde Meta.")} disabled={ocupado} title="Actualizar estado desde Meta" className="oft-btn-press"
+                style={{ background: GRAY, border: "none", borderRadius: 8, width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0, opacity: ocupado ? 0.5 : 1 }}>
+                <RefreshCw size={15} />
+              </button>
+            )}
           </div>
-          {whatsapp.cargando ? (
+
+          {cargando ? (
             <div style={{ fontSize: 12.5, color: GRAY3 }}>Revisando conexión...</div>
-          ) : whatsapp.numero ? (
-            <div style={{ display: "flex", alignItems: "center", gap: 8, background: "#D1FAE5", borderRadius: 10, padding: "10px 12px" }}>
-              <CheckCircle2 size={17} color="#065F46" />
-              <div>
-                <div style={{ fontWeight: 800, fontSize: 13, color: "#065F46" }}>Conectado</div>
-                <div style={{ fontSize: 11.5, color: "#065F46" }}>{whatsapp.numero}</div>
-              </div>
+          ) : numeros.length === 0 ? (
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 8, background: "#FEF3C7", borderRadius: 10, padding: "10px 12px", marginBottom: 12 }}>
+              <AlertCircle size={17} color="#92400E" style={{ flexShrink: 0, marginTop: 1 }} />
+              <div style={{ fontSize: 12, color: "#92400E", lineHeight: 1.4 }}>Todavía no hay ningún número conectado. Sigue la guía de abajo y conecta el número API.</div>
             </div>
           ) : (
-            <div style={{ display: "flex", alignItems: "flex-start", gap: 8, background: "#FEF3C7", borderRadius: 10, padding: "10px 12px" }}>
-              <AlertCircle size={17} color="#92400E" style={{ flexShrink: 0, marginTop: 1 }} />
-              <div>
-                <div style={{ fontWeight: 800, fontSize: 13, color: "#92400E" }}>Pendiente de aprobación de Meta</div>
-                <div style={{ fontSize: 11.5, color: "#92400E", lineHeight: 1.4 }}>El número ya está listo del lado de Ofertodo -- falta que Meta apruebe la app para poder enviar y recibir mensajes reales.</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 12 }}>
+              {numeros.map(n => {
+                const est = ESTADO_NUMERO[n.estado] || { texto: n.estado || "Sin revisar", bg: GRAY, color: GRAY3 };
+                const pendiente = n.estado && n.estado !== "CONNECTED";
+                return (
+                  <div key={n.id} style={{ border: `1px solid ${GRAY2}`, borderRadius: 12, padding: "11px 12px", opacity: n.activo ? 1 : 0.6 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                      <div style={{ fontWeight: 800, fontSize: 13.5 }}>{n.etiqueta || "Línea"}</div>
+                      <span style={{ fontSize: 10, fontWeight: 800, padding: "2px 7px", borderRadius: 5, background: est.bg, color: est.color }}>{est.texto}</span>
+                      {n.rol === "anuncios" && <span style={{ fontSize: 10, fontWeight: 800, padding: "2px 7px", borderRadius: 5, background: "#DBEAFE", color: "#1E40AF" }}>Anuncios</span>}
+                    </div>
+                    <div style={{ fontSize: 12, color: GRAY3, marginTop: 4 }}>
+                      {n.numero_visible || "Número sin leer"}{n.nombre_verificado ? ` · ${n.nombre_verificado}` : ""}
+                    </div>
+                    <div style={{ fontSize: 11, color: GRAY3, marginTop: 2 }}>
+                      {CALIDAD_NUMERO[n.calidad] || CALIDAD_NUMERO.UNKNOWN}
+                      {n.plataforma === "CLOUD_API" ? " · Solo API" : ""}
+                    </div>
+                    {esAdmin && (
+                      <div style={{ display: "flex", gap: 6, marginTop: 9, flexWrap: "wrap" }}>
+                        <button onClick={() => ejecutar({ modo: "alternar", phone_number_id: n.phone_number_id, activo: !n.activo }, n.activo ? "Número apagado en el CRM." : "Número encendido en el CRM.")} disabled={ocupado} className="oft-btn-press"
+                          style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11.5, fontWeight: 700, padding: "6px 10px", borderRadius: 8, border: `1.5px solid ${GRAY2}`, background: WHITE, color: BLACK, cursor: "pointer" }}>
+                          <Power size={12} /> {n.activo ? "Apagar" : "Encender"}
+                        </button>
+                        {pendiente && (
+                          <button onClick={() => { setPinPara(pinPara === n.phone_number_id ? null : n.phone_number_id); setPin(""); }} disabled={ocupado} className="oft-btn-press"
+                            style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11.5, fontWeight: 700, padding: "6px 10px", borderRadius: 8, border: "none", background: BLACK, color: WHITE, cursor: "pointer" }}>
+                            <KeyRound size={12} /> Activar
+                          </button>
+                        )}
+                      </div>
+                    )}
+                    {pinPara === n.phone_number_id && (
+                      <div style={{ marginTop: 9, background: GRAY, borderRadius: 10, padding: 10 }}>
+                        <div style={{ fontSize: 11.5, color: GRAY3, lineHeight: 1.4, marginBottom: 6 }}>Inventa un PIN de 6 dígitos y guárdalo. Meta lo pide si algún día hay que volver a registrar el número.</div>
+                        <div style={{ display: "flex", gap: 6 }}>
+                          <input value={pin} onChange={e => setPin(e.target.value.replace(/\D/g, "").slice(0, 6))} inputMode="numeric" placeholder="6 dígitos" style={{ ...S.input, marginBottom: 0, fontSize: 13, flex: 1 }} />
+                          <button onClick={activar} disabled={ocupado || pin.length !== 6} className="oft-btn-press"
+                            style={{ background: RED, color: WHITE, border: "none", borderRadius: 9, padding: "0 14px", fontWeight: 800, fontSize: 12.5, cursor: "pointer", opacity: ocupado || pin.length !== 6 ? 0.5 : 1 }}>
+                            {ocupado ? "..." : "Activar"}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {aviso && (
+            <div style={{ background: colorAviso.bg, color: colorAviso.color, borderRadius: 10, padding: "9px 12px", fontSize: 12, lineHeight: 1.4, marginBottom: 12, display: "flex", gap: 7, alignItems: "flex-start" }}>
+              {aviso.tipo === "ok" ? <CheckCircle2 size={15} style={{ flexShrink: 0, marginTop: 1 }} /> : <AlertCircle size={15} style={{ flexShrink: 0, marginTop: 1 }} />}
+              <span>{aviso.texto}</span>
+            </div>
+          )}
+
+          {esAdmin ? (
+            mostrarForm ? (
+              <div style={{ background: GRAY, borderRadius: 12, padding: 12, marginBottom: 12 }}>
+                <EtiquetaCampo>ID del número de teléfono (de Meta)</EtiquetaCampo>
+                <input value={phoneId} onChange={e => setPhoneId(e.target.value.replace(/\D/g, ""))} inputMode="numeric" placeholder="Ej: 1234567890123456" style={{ ...S.input, fontSize: 13 }} disabled={ocupado} />
+                <EtiquetaCampo>Etiqueta (cómo lo ves en el CRM)</EtiquetaCampo>
+                <input value={etiqueta} onChange={e => setEtiqueta(e.target.value)} placeholder="Anuncios" style={{ ...S.input, fontSize: 13 }} disabled={ocupado} />
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button onClick={conectar} disabled={ocupado || !phoneId.trim()} className="oft-btn-press"
+                    style={{ flex: 1, padding: "10px 0", borderRadius: 9, border: "none", background: RED, color: WHITE, fontWeight: 800, fontSize: 13, cursor: "pointer", opacity: ocupado || !phoneId.trim() ? 0.5 : 1 }}>
+                    {ocupado ? "Conectando..." : "Conectar"}
+                  </button>
+                  <button onClick={() => { setMostrarForm(false); setAviso(null); }} disabled={ocupado} className="oft-btn-press"
+                    style={{ padding: "10px 14px", borderRadius: 9, border: `1.5px solid ${GRAY2}`, background: WHITE, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>Cancelar</button>
+                </div>
+              </div>
+            ) : (
+              <button onClick={() => { setMostrarForm(true); setAviso(null); }} className="oft-btn-press"
+                style={{ width: "100%", padding: "11px 0", borderRadius: 10, border: "none", background: BLACK, color: WHITE, fontWeight: 800, fontSize: 13.5, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 7, marginBottom: 12 }}>
+                <Plus size={15} /> Conectar número API
+              </button>
+            )
+          ) : (
+            <div style={{ fontSize: 12, color: GRAY3, marginBottom: 12 }}>Solo el administrador puede conectar o apagar números.</div>
+          )}
+
+          <button onClick={() => setMostrarGuia(v => !v)} className="oft-btn-press"
+            style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 12px", borderRadius: 10, border: `1.5px solid ${GRAY2}`, background: WHITE, fontWeight: 700, fontSize: 13, cursor: "pointer", color: BLACK }}>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 7 }}><ShieldCheck size={15} /> Cómo agregar el número nuevo en Meta</span>
+            <ChevronDown size={16} style={{ transform: mostrarGuia ? "rotate(180deg)" : "none", transition: "transform 0.2s ease" }} />
+          </button>
+          {mostrarGuia && (
+            <div className="oft-fade-in" style={{ marginTop: 12 }}>
+              {pasos.map(([t, d], i) => (
+                <div key={t} style={{ display: "flex", gap: 10, marginBottom: 12 }}>
+                  <div style={{ width: 22, height: 22, borderRadius: "50%", background: BLACK, color: WHITE, fontSize: 11.5, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginTop: 1 }}>{i + 1}</div>
+                  <div>
+                    <div style={{ fontWeight: 800, fontSize: 13 }}>{t}</div>
+                    <div style={{ fontSize: 12, color: GRAY3, lineHeight: 1.5, marginTop: 2 }}>{d}</div>
+                  </div>
+                </div>
+              ))}
+              <div style={{ background: GRAY, borderRadius: 10, padding: "10px 12px", fontSize: 11.5, color: GRAY3, lineHeight: 1.5 }}>
+                Tu línea actual (+507 6720-0474) sigue funcionando igual en la app de WhatsApp Business. Este número nuevo es aparte: solo vive en el CRM, sin celular.
+                Un número nuevo empieza con un límite de conversaciones nuevas por día que Meta sube solo según uses y la calidad de tus chats.
               </div>
             </div>
           )}
