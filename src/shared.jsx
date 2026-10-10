@@ -2847,10 +2847,142 @@ export function ClienteFormModal({ cliente, onClose, onSaved, showToast }) {
   , document.body);
 }
 
+
+// ═══════════════════════════════════════════════════════════════
+//  OFERTAS Y COMBOS -- cálculos compartidos por la página pública, el
+//  carrito y el panel admin. El precio de la oferta lo manda el servidor
+//  (tabla ofertas_items); aquí solo se calcula cuánto costaría "normal",
+//  cuánto se ahorra y cómo se reparte el precio entre los productos.
+// ═══════════════════════════════════════════════════════════════
+
+// Precio normal de la tienda para `qty` piezas sueltas de un producto (misma
+// lógica escalonada que el catálogo: pieza / media docena / docena).
+function precioNormalPiezas(product, qty) {
+  const p1 = Number(product.precio_pieza), p6 = Number(product.precio_media_docena), p12 = Number(product.precio_docena);
+  if (!qty || qty <= 0) return 0;
+  if (qty < 6) return p1 * qty;
+  if (qty === 6) return p6;
+  if (qty < 12) return p6 + p1 * (qty - 6);
+  const docenas = Math.floor(qty / 12), resto = qty % 12;
+  const total = docenas * p12;
+  if (resto === 0) return total;
+  if (resto === 6) return total + p6;
+  if (resto < 6) return total + p1 * resto;
+  return total + p6 + p1 * (resto - 6);
+}
+
+// Piezas que trae UNA unidad de una oferta de producto (según la presentación)
+function piezasDePresentacion(product, pres) {
+  const perf = product?.modalidad_presentacion === "perfumeria";
+  if (pres === "docena") return perf ? 6 : 12;
+  if (pres === "media") return perf ? 3 : 6;
+  return 1;
+}
+
+// oferta: fila de ofertas_items. comboRows: filas de ofertas_combo_productos (de TODAS las
+// ofertas o solo de esta). productosPorId: { [id]: producto }.
+// Devuelve null si falta algún producto (no se puede mostrar ni vender).
+function ofertaInfo(oferta, productosPorId, comboRows) {
+  let lineas = [];
+  if (oferta.tipo === "combo") {
+    const filas = (comboRows || []).filter(r => r.oferta_id === oferta.id);
+    if (filas.length === 0) return null;
+    for (const r of filas) {
+      const product = productosPorId[r.producto_id];
+      if (!product) return null;
+      lineas.push({ product, piezas: Number(r.cantidad) });
+    }
+  } else {
+    const product = productosPorId[oferta.producto_id];
+    if (!product) return null;
+    lineas.push({ product, piezas: piezasDePresentacion(product, oferta.presentacion) });
+  }
+  const totalPiezas = lineas.reduce((s, l) => s + l.piezas, 0);
+  let normalCalculado;
+  if (oferta.tipo === "combo") normalCalculado = lineas.reduce((s, l) => s + precioNormalPiezas(l.product, l.piezas), 0);
+  else normalCalculado = presUnitPrice(lineas[0].product, oferta.presentacion);
+  const manual = Number(oferta.precio_normal_manual);
+  const precioNormal = manual > 0 ? manual : normalCalculado;
+  const precioOferta = Number(oferta.precio_oferta);
+  const ahorro = Math.max(0, precioNormal - precioOferta);
+  const pct = precioNormal > 0 ? Math.round((ahorro / precioNormal) * 100) : 0;
+  // Stock: cuántas unidades de la oferta alcanzan con lo que hay (solo si el stock es real/conocido)
+  let stockMax = Infinity;
+  for (const l of lineas) {
+    const p = l.product;
+    const respeta = (!p.proveedor_id || p.tiene_stock_fisico) && p.stock_actualizado_at;
+    if (respeta) stockMax = Math.min(stockMax, Math.floor(Math.max(0, Number(p.stock) || 0) / l.piezas));
+  }
+  const nombrePres = { pieza: "pieza", media: "media docena", docena: "docena" }[oferta.presentacion] || "";
+  const titulo = (oferta.titulo && oferta.titulo.trim()) || (lineas[0].product.nombre + (oferta.tipo === "producto" && nombrePres && oferta.presentacion !== "pieza" ? ` (${nombrePres})` : ""));
+  const imagen = oferta.imagen_url || lineas[0].product.imagen_url || "";
+  const imagenes = lineas.map(l => l.product.imagen_url).filter(Boolean);
+  return { oferta, lineas, totalPiezas, precioNormal, precioOferta, ahorro, pct, stockMax, titulo, imagen, imagenes };
+}
+
+// Línea del carrito para `unidades` de una oferta. Es una "foto" liviana (sin objetos de
+// producto completos) porque el carrito se guarda en el navegador. El precio por unidad
+// de oferta se vuelve a validar en el servidor al pagar.
+function ofertaALineaCarrito(info, unidades) {
+  const o = info.oferta;
+  return {
+    esOferta: true,
+    ofertaLineId: `of-${o.id}`,
+    ofertaId: o.id, tipo: o.tipo, presentacion: o.presentacion || null, seccion: o.seccion,
+    unidades, qty: info.totalPiezas * unidades,
+    titulo: info.titulo, imagen: info.imagen,
+    precioUnidad: info.precioOferta, precioNormalUnidad: info.precioNormal,
+    limite: o.limite_por_pedido || null,
+    lineas: info.lineas.map(l => ({ productId: l.product.id, nombre: l.product.nombre, piezas: l.piezas, normal: precioNormalPiezas(l.product, l.piezas) })),
+  };
+}
+
+// Reparte el precio de la línea de oferta entre sus productos (proporcional a lo que costaría
+// cada uno normalmente) para guardarlo en pedido_items / Odoo. La suma de los subtotales es
+// EXACTAMENTE precioUnidad * unidades (el último producto absorbe el redondeo).
+function prorratearLinea(linea) {
+  const unidades = linea.unidades;
+  const total = Math.round(Number(linea.precioUnidad) * unidades * 100) / 100;
+  if (linea.tipo === "producto") {
+    const l = linea.lineas[0];
+    const cantidad = l.piezas * unidades;
+    return [{
+      producto_id: l.productId, nombre_producto: `${l.nombre} (Oferta)`,
+      cantidad, precio_unitario: Number((total / cantidad).toFixed(4)), subtotal: total,
+      presentacion: linea.presentacion || "pieza", oferta_id: linea.ofertaId, oferta_unidades: unidades,
+    }];
+  }
+  const pesos = linea.lineas.map(l => Math.max(Number(l.normal) || 0, 0.0001));
+  const sumaPesos = pesos.reduce((a, b) => a + b, 0);
+  let acumulado = 0;
+  return linea.lineas.map((l, i) => {
+    const cantidad = l.piezas * unidades;
+    const subtotal = i === linea.lineas.length - 1
+      ? Math.round((total - acumulado) * 100) / 100
+      : Math.round((total * pesos[i] / sumaPesos) * 100) / 100;
+    acumulado += subtotal;
+    return {
+      producto_id: l.productId, nombre_producto: `${l.nombre} (Combo: ${linea.titulo})`,
+      cantidad, precio_unitario: Number((subtotal / cantidad).toFixed(4)), subtotal,
+      presentacion: "pieza", oferta_id: linea.ofertaId, oferta_unidades: unidades,
+    };
+  });
+}
+
+// Texto "Faltan 2 días 03:15:09" -> partes para el contador regresivo
+function tiempoRestante(fechaFin, ahora = Date.now()) {
+  if (!fechaFin) return null;
+  const ms = new Date(fechaFin).getTime() - ahora;
+  if (ms <= 0) return { terminado: true, d: 0, h: 0, m: 0, s: 0 };
+  const s = Math.floor(ms / 1000);
+  return { terminado: false, d: Math.floor(s / 86400), h: Math.floor((s % 86400) / 3600), m: Math.floor((s % 3600) / 60), s: s % 60 };
+}
+
 export {
   AppCtx, ORDER_STATUS_ENVIO, ORDER_STATUS_RETIRO, STATUS_COLORS,
   STATUS_ICONS_ENVIO, STATUS_ICONS_RETIRO, LOGO_URL, PRES_PIEZAS,
   presLabelPlural, presUnitPrice, presToPiezas, parseDistribucion,
   PANAMA_ZONAS, mediaDocenaDesdeDistribucion, COLOR_HEX, colorToHex,
   InvoiceModal, SUPABASE_KEY,
+  precioNormalPiezas, piezasDePresentacion, ofertaInfo, ofertaALineaCarrito, prorratearLinea, tiempoRestante,
 };
