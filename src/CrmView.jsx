@@ -56,6 +56,17 @@ function horasDeVentana(mensajes) {
   return Math.max(0, HORAS_VENTANA - (Date.now() - ultimo) / 3600000);
 }
 
+// Instagram: la conversación guarda el @usuario en vez de un teléfono
+const esInstagram = (c) => c?.canal === "instagram";
+const nombreDe = (c) => c?.nombre_contacto || (esInstagram(c) ? (c.ig_username ? `@${c.ig_username}` : "Contacto de Instagram") : c?.telefono) || "";
+const subtituloDe = (c) => esInstagram(c) ? (c.ig_username ? `@${c.ig_username}` : "Instagram") : (c?.telefono || "");
+const ESTADO_IG = {
+  CONNECTED: { texto: "Activa", bg: "#D1FAE5", color: "#065F46" },
+  TOKEN_EXPIRADO: { texto: "Token vencido", bg: "#FEE2E2", color: "#991B1B" },
+  SIN_TOKEN: { texto: "Sin token", bg: "#FEE2E2", color: "#991B1B" },
+  ERROR: { texto: "Con error", bg: "#FEF3C7", color: "#92400E" },
+};
+
 const ESTADO_NUMERO = {
   CONNECTED: { texto: "Activo", bg: "#D1FAE5", color: "#065F46" },
   PENDING: { texto: "Falta activarlo", bg: "#FEF3C7", color: "#92400E" },
@@ -296,6 +307,12 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
     if (!sesionLista) return;
     sb.get("crm_numeros_whatsapp", "?order=created_at.asc").then(d => setNumeros(d || [])).catch(() => {});
   }, [sesionLista]);
+  const [cuentasIg, setCuentasIg] = useState([]);
+  useEffect(() => {
+    if (!sesionLista) return;
+    sb.get("crm_cuentas_instagram", "?order=created_at.asc").then(d => setCuentasIg(d || [])).catch(() => {});
+  }, [sesionLista]);
+  const cuentaIgPorId = Object.fromEntries(cuentasIg.map(c => [c.id, c]));
   useEffect(() => { const t = setInterval(() => setReloj(x => x + 1), 60000); return () => clearInterval(t); }, []);
   const [filtro, setFiltro] = useState("todos"); // todos | sin_responder | mios | sin_asignar | cerradas | anuncios | etapa:<id> | tag:<x> | linea:<id>
   const [notas, setNotas] = useState([]);
@@ -339,18 +356,20 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
     if (filtro.startsWith("etapa:")) { const id = filtro.slice(6); return id === "ninguna" ? !c.etapa_id : c.etapa_id === id; }
     if (filtro.startsWith("tag:")) return (c.etiquetas || []).includes(filtro.slice(4));
     if (filtro.startsWith("linea:")) return c.numero_id === filtro.slice(6);
+    if (filtro.startsWith("ig:")) return c.ig_cuenta_id === filtro.slice(3);
     return true;
   };
   const TITULOS_FILTRO = { todos: "Todas las conversaciones", sin_responder: "Sin responder", mios: "Asignadas a mí", sin_asignar: "Sin asignar", cerradas: "Cerradas", anuncios: "Vienen de anuncios" };
   const tituloFiltro = TITULOS_FILTRO[filtro]
     || (filtro.startsWith("etapa:") ? (etapaPorId[filtro.slice(6)]?.nombre || "Sin etapa")
     : filtro.startsWith("tag:") ? `#${filtro.slice(4)}`
-    : filtro.startsWith("linea:") ? (numeroPorId[filtro.slice(6)]?.etiqueta || "Línea") : "");
+    : filtro.startsWith("linea:") ? (numeroPorId[filtro.slice(6)]?.etiqueta || "Línea")
+    : filtro.startsWith("ig:") ? (cuentaIgPorId[filtro.slice(3)]?.etiqueta || "Instagram") : "");
   const conversacionesFiltradas = conversaciones.filter(c => {
     if (!coincideFiltro(c)) return false;
     const q = busqueda.trim().toLowerCase();
     if (!q) return true;
-    return (c.nombre_contacto || "").toLowerCase().includes(q) || (c.telefono || "").includes(q);
+    return (c.nombre_contacto || "").toLowerCase().includes(q) || (c.telefono || "").includes(q) || (c.ig_username || "").toLowerCase().includes(q.replace(/^@/, ""));
   }).sort((x, y) => {
     const fx = new Date(x.ultimo_mensaje_at || x.created_at).getTime(), fy = new Date(y.ultimo_mensaje_at || y.created_at).getTime();
     return filtro === "sin_responder" ? fx - fy : fy - fx; // sin responder: los que más llevan esperando, primero
@@ -541,7 +560,7 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
     const creado = await sb.post("crm_mensajes", {
       conversacion_id: seleccionada.id, direccion: "saliente", tipo: "texto",
       contenido, agente_id: user?.id || null, estado: "enviado",
-      responde_a_id: respondeAId, canal: "whatsapp",
+      responde_a_id: respondeAId, canal: seleccionada.canal || "whatsapp",
     });
     const fila = Array.isArray(creado) ? creado[0] : null;
     if (!fila) throw new Error("No se pudo guardar el mensaje");
@@ -603,13 +622,13 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
     <>
       {/* BARRA LATERAL: carpetas, etapas, etiquetas */}
       {!esMobil && (
-        <BarraFiltros conversaciones={conversaciones} etapas={etapas} user={user} filtro={filtro} setFiltro={setFiltro} numeros={numeros} esMobil={false} />
+        <BarraFiltros conversaciones={conversaciones} etapas={etapas} user={user} filtro={filtro} setFiltro={setFiltro} numeros={numeros} cuentasIg={cuentasIg} esMobil={false} />
       )}
 
       {/* LISTA DE CONVERSACIONES */}
       {listaVisible && (
       <div className={esMobil ? "oft-fade-in" : undefined} style={{ width: esMobil ? "100%" : 340, minWidth: esMobil ? "100%" : 340, background: WHITE, borderRight: esMobil ? "none" : `1px solid ${GRAY2}`, display: "flex", flexDirection: "column" }}>
-        {esMobil && <BarraFiltros conversaciones={conversaciones} etapas={etapas} user={user} filtro={filtro} setFiltro={setFiltro} numeros={numeros} esMobil />}
+        {esMobil && <BarraFiltros conversaciones={conversaciones} etapas={etapas} user={user} filtro={filtro} setFiltro={setFiltro} numeros={numeros} cuentasIg={cuentasIg} esMobil />}
         <div style={{ padding: "12px 14px", borderBottom: `1px solid ${GRAY2}` }}>
           <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 8, gap: 8 }}>
             <div style={{ fontWeight: 900, fontSize: 14.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{tituloFiltro}</div>
@@ -636,12 +655,13 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
               <div key={c.id} onClick={() => cargarMensajes(c)}
                 style={{ padding: "13px 14px", borderBottom: `1px solid ${GRAY}`, cursor: "pointer", background: seleccionada?.id === c.id ? GRAY : WHITE, display: "flex", gap: 10 }}>
                 <div style={{ width: 38, height: 38, borderRadius: "50%", background: GRAY2, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontWeight: 800, fontSize: 14, color: GRAY3 }}>
-                  {(c.nombre_contacto || c.telefono || "?").charAt(0).toUpperCase()}
+                  {(nombreDe(c).replace(/^@/, "") || "?").charAt(0).toUpperCase()}
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 6 }}>
-                    <div style={{ fontWeight: c.no_leidos > 0 ? 800 : 700, fontSize: 13.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {c.nombre_contacto || c.telefono}
+                    <div style={{ fontWeight: c.no_leidos > 0 ? 800 : 700, fontSize: 13.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 5 }}>
+                      {esInstagram(c) && <Instagram size={12} color="#DD2A7B" style={{ flexShrink: 0 }} />}
+                      <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{nombreDe(c)}</span>
                     </div>
                     <div style={{ fontSize: 10.5, color: GRAY3, flexShrink: 0 }}>{formatoHora(c.ultimo_mensaje_at || c.created_at)}</div>
                   </div>
@@ -682,14 +702,14 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
                 </button>
               )}
               <div style={{ width: 34, height: 34, borderRadius: "50%", background: GRAY2, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, color: GRAY3, flexShrink: 0 }}>
-                {(seleccionada.nombre_contacto || seleccionada.telefono || "?").charAt(0).toUpperCase()}
+                {(nombreDe(seleccionada).replace(/^@/, "") || "?").charAt(0).toUpperCase()}
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontWeight: 800, fontSize: 14.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{seleccionada.nombre_contacto || seleccionada.telefono}</div>
+                <div style={{ fontWeight: 800, fontSize: 14.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{nombreDe(seleccionada)}</div>
                 <div style={{ fontSize: 11.5, color: GRAY3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {seleccionada.telefono}
+                  {esInstagram(seleccionada) ? <span style={{ color: "#BE185D", fontWeight: 700 }}>Instagram{seleccionada.ig_username ? ` · @${seleccionada.ig_username}` : ""}{cuentaIgPorId[seleccionada.ig_cuenta_id] && cuentasIg.length > 1 ? ` · por ${cuentaIgPorId[seleccionada.ig_cuenta_id].etiqueta}` : ""}</span> : seleccionada.telefono}
                   {seleccionada.origen === "anuncio" && <span style={{ color: "#1E40AF", fontWeight: 700 }}> · Vino de un anuncio{seleccionada.anuncio_titulo ? `: ${seleccionada.anuncio_titulo}` : ""}</span>}
-                  {nombreLinea(seleccionada.numero_id) && variasLineas && <span> · por {nombreLinea(seleccionada.numero_id)}</span>}
+                  {!esInstagram(seleccionada) && nombreLinea(seleccionada.numero_id) && variasLineas && <span> · por {nombreLinea(seleccionada.numero_id)}</span>}
                 </div>
               </div>
               {estaAbierta(seleccionada) ? (
@@ -807,7 +827,7 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
                         </div>
                         {m.direccion === "saliente" && m.estado === "fallido" && (
                           <div style={{ marginTop: 6, padding: "7px 9px", borderRadius: 8, background: "rgba(220,38,38,0.18)", fontSize: 11.5, lineHeight: 1.4, color: "#FECACA", whiteSpace: "normal" }}>
-                            <strong style={{ color: "#FCA5A5" }}>No enviado.</strong> {m.error_envio || "WhatsApp no pudo entregar este mensaje."}
+                            <strong style={{ color: "#FCA5A5" }}>No enviado.</strong> {m.error_envio || `${m.canal === "instagram" ? "Instagram" : "WhatsApp"} no pudo entregar este mensaje.`}
                             {!/24 horas/.test(m.error_envio || "") && (
                               <button onClick={() => reintentarMensaje(m)} className="oft-btn-press" style={{ display: "block", marginTop: 5, background: "rgba(255,255,255,0.14)", border: "none", color: WHITE, borderRadius: 6, padding: "4px 9px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>Reintentar</button>
                             )}
@@ -865,8 +885,8 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
               {modoComposer === "responder" && mensajes.length > 0 && ventanaHoras <= 0 && (
                 <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 14px", background: "#FEF3C7", color: "#92400E", fontSize: 12, lineHeight: 1.4, flexWrap: "wrap" }}>
                   <Clock size={14} style={{ flexShrink: 0 }} />
-                  <span style={{ flex: "1 1 220px" }}>Pasaron más de 24 horas desde el último mensaje del cliente. Solo puedes escribirle con una plantilla aprobada.</span>
-                  <button onClick={() => { setModalPlantilla(true); setErrorPlantilla(""); }} className="oft-btn-press" style={{ background: "#92400E", color: WHITE, border: "none", borderRadius: 8, padding: "6px 11px", fontWeight: 800, fontSize: 12, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 5 }}><FileText size={13} /> Enviar plantilla</button>
+                  <span style={{ flex: "1 1 220px" }}>{esInstagram(seleccionada) ? "Pasaron más de 24 horas desde el último mensaje de esta persona. Instagram solo deja responder dentro de las 24 horas: espera a que te escriba de nuevo." : "Pasaron más de 24 horas desde el último mensaje del cliente. Solo puedes escribirle con una plantilla aprobada."}</span>
+                  {!esInstagram(seleccionada) && <button onClick={() => { setModalPlantilla(true); setErrorPlantilla(""); }} className="oft-btn-press" style={{ background: "#92400E", color: WHITE, border: "none", borderRadius: 8, padding: "6px 11px", fontWeight: 800, fontSize: 12, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 5 }}><FileText size={13} /> Enviar plantilla</button>}
                 </div>
               )}
               {modoComposer === "responder" && mensajes.length > 0 && ventanaHoras > 0 && ventanaHoras < 3 && (
@@ -895,11 +915,11 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
                 {modoComposer === "responder" && (
                   <>
                     <button onClick={() => setMostrarRapidas(v => !v)} className="oft-btn-press" title="Respuestas rápidas (o escribe /)" style={{ background: mostrarRapidas ? BLACK : GRAY, color: mostrarRapidas ? WHITE : GRAY3, border: "none", borderRadius: 10, width: 38, height: 38, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}><Zap size={16} /></button>
-                    <button onClick={() => { setModalPlantilla(true); setErrorPlantilla(""); }} className="oft-btn-press" title="Enviar una plantilla de WhatsApp" style={{ background: GRAY, color: GRAY3, border: "none", borderRadius: 10, width: 38, height: 38, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}><FileText size={16} /></button>
+                    {!esInstagram(seleccionada) && <button onClick={() => { setModalPlantilla(true); setErrorPlantilla(""); }} className="oft-btn-press" title="Enviar una plantilla de WhatsApp" style={{ background: GRAY, color: GRAY3, border: "none", borderRadius: 10, width: 38, height: 38, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}><FileText size={16} /></button>}
                   </>
                 )}
                 <input value={texto} onChange={e => setTexto(e.target.value)}
-                  placeholder={modoComposer === "nota" ? "Nota interna: solo la ve tu equipo..." : ventanaCerrada ? "Pasaron 24 h: usa una plantilla" : (esMobil ? "Escribe un mensaje..." : "Escribe un mensaje... (o / para respuestas rápidas)")}
+                  placeholder={modoComposer === "nota" ? "Nota interna: solo la ve tu equipo..." : ventanaCerrada ? (esInstagram(seleccionada) ? "Pasaron 24 h: espera su próximo mensaje" : "Pasaron 24 h: usa una plantilla") : (esMobil ? "Escribe un mensaje..." : "Escribe un mensaje... (o / para respuestas rápidas)")}
                   disabled={modoComposer === "responder" && ventanaCerrada}
                   onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); modoComposer === "nota" ? enviarNota() : enviarMensaje(); } }}
                   style={{ ...S.input, marginBottom: 0, flex: 1, minWidth: 0, opacity: modoComposer === "responder" && ventanaCerrada ? 0.6 : 1, background: modoComposer === "nota" ? "#FEFCE8" : undefined, borderColor: modoComposer === "nota" ? "#FDE68A" : undefined }} />
@@ -924,10 +944,14 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
           )}
           <div style={{ textAlign: "center", marginBottom: 20 }}>
             <div style={{ width: 60, height: 60, borderRadius: "50%", background: GRAY2, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 22, color: GRAY3, margin: "0 auto 10px" }}>
-              {(seleccionada.nombre_contacto || seleccionada.telefono || "?").charAt(0).toUpperCase()}
+              {(nombreDe(seleccionada).replace(/^@/, "") || "?").charAt(0).toUpperCase()}
             </div>
-            <div style={{ fontWeight: 800, fontSize: 15 }}>{seleccionada.nombre_contacto || "Sin nombre"}</div>
-            <div style={{ fontSize: 12.5, color: GRAY3 }}>{seleccionada.telefono}</div>
+            <div style={{ fontWeight: 800, fontSize: 15 }}>{nombreDe(seleccionada) || "Sin nombre"}</div>
+            {esInstagram(seleccionada) ? (
+              <div style={{ fontSize: 12.5, color: "#BE185D", fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 5 }}>
+                <Instagram size={13} /> {seleccionada.ig_username ? <a href={`https://instagram.com/${seleccionada.ig_username}`} target="_blank" rel="noreferrer" style={{ color: "inherit", textDecoration: "none" }}>@{seleccionada.ig_username}</a> : "Instagram"}
+              </div>
+            ) : <div style={{ fontSize: 12.5, color: GRAY3 }}>{seleccionada.telefono}</div>}
           </div>
 
           {seleccionada.origen === "anuncio" && (
@@ -1053,7 +1077,7 @@ function EtapasPanel({ conversaciones, etapas, agentePorId, setConversaciones })
             <div style={{ textAlign: "center", color: GRAY3, fontSize: 12.5, padding: "40px 12px" }}>Sin clientes en esta etapa</div>
           ) : items.map(c => (
             <div key={c.id} style={{ background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 12, padding: 13 }}>
-              <div style={{ fontWeight: 700, fontSize: 13.5, marginBottom: 3 }}>{c.nombre_contacto || c.telefono}</div>
+              <div style={{ fontWeight: 700, fontSize: 13.5, marginBottom: 3 }}>{nombreDe(c)}</div>
               <div style={{ fontSize: 12, color: GRAY3, marginBottom: 10, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.ultimo_mensaje_preview || "Sin mensajes"}</div>
               <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
                 {etapas.filter(e => e.id !== etapaMobil).map(e => (
@@ -1086,7 +1110,7 @@ function EtapasPanel({ conversaciones, etapas, agentePorId, setConversaciones })
                 <div style={{ textAlign: "center", color: GRAY3, fontSize: 11.5, padding: "20px 8px" }}>Sin clientes en esta etapa</div>
               ) : items.map(c => (
                 <div key={c.id} style={{ border: `1px solid ${GRAY2}`, borderRadius: 9, padding: 10 }}>
-                  <div style={{ fontWeight: 700, fontSize: 12.5, marginBottom: 2 }}>{c.nombre_contacto || c.telefono}</div>
+                  <div style={{ fontWeight: 700, fontSize: 12.5, marginBottom: 2 }}>{nombreDe(c)}</div>
                   <div style={{ fontSize: 11, color: GRAY3, marginBottom: 8, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.ultimo_mensaje_preview || "Sin mensajes"}</div>
                   <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
                     {etapas.filter(e => e.id !== etapa.id).map(e => (
@@ -1986,6 +2010,7 @@ function ComposerBroadcast({ etapas, conversaciones, user, esMobil, onCerrar, on
   const todasEtiquetas = [...new Set(conversaciones.flatMap(c => c.etiquetas || []))];
 
   const destinatarios = conversaciones.filter(c =>
+    !esInstagram(c) && // Instagram no admite envíos masivos ni plantillas
     (etapasSeleccionadas.length === 0 || etapasSeleccionadas.includes(c.etapa_id)) &&
     (etiquetasSel.length === 0 || (c.etiquetas || []).some(t => etiquetasSel.includes(t))));
 
@@ -2735,7 +2760,7 @@ function RespuestasRapidasPanel({ esMobil, user }) {
 //  etiquetas y líneas, cada una con su número de chats y, en rojo, cuántos
 //  de esos todavía no se han respondido.
 // ─────────────────────────────────────────────────────────────
-function BarraFiltros({ conversaciones, etapas, user, filtro, setFiltro, numeros, esMobil }) {
+function BarraFiltros({ conversaciones, etapas, user, filtro, setFiltro, numeros, cuentasIg = [], esMobil }) {
   const abiertas = conversaciones.filter(estaAbierta);
   const cuenta = (lista) => ({ total: lista.length, sin: lista.filter(sinResponder).length });
   const carpetas = [
@@ -2752,7 +2777,11 @@ function BarraFiltros({ conversaciones, etapas, user, filtro, setFiltro, numeros
   abiertas.forEach(c => (c.etiquetas || []).forEach(t => { conteoTags[t] = conteoTags[t] || []; conteoTags[t].push(c); }));
   const etiquetas = Object.entries(conteoTags).sort((a, b) => b[1].length - a[1].length).slice(0, 12).map(([t, l]) => ({ id: "tag:" + t, label: t, ...cuenta(l) }));
   const lineasActivas = numeros.filter(n => n.activo);
-  const lineas = lineasActivas.length > 1 ? lineasActivas.map(n => ({ id: "linea:" + n.id, label: n.etiqueta || n.numero_visible || "Línea", ...cuenta(abiertas.filter(c => c.numero_id === n.id)) })) : [];
+  const lineasTodas = [
+    ...lineasActivas.map(n => ({ id: "linea:" + n.id, label: n.etiqueta || n.numero_visible || "Línea", ...cuenta(abiertas.filter(c => c.numero_id === n.id)) })),
+    ...cuentasIg.filter(a => a.activo).map(a => ({ id: "ig:" + a.id, label: a.etiqueta || (a.username ? "@" + a.username : "Instagram"), icono: Instagram, ...cuenta(abiertas.filter(c => c.ig_cuenta_id === a.id)) })),
+  ];
+  const lineas = lineasTodas.length > 1 ? lineasTodas : [];
   const anuncios = abiertas.filter(c => c.origen === "anuncio");
   const origenes = anuncios.length > 0 ? [{ id: "anuncios", label: "Vienen de anuncios", ...cuenta(anuncios) }] : [];
 
@@ -3118,6 +3147,7 @@ function ContactosPanel({ conversaciones, setConversaciones, etapas, etapaPorId,
   const esAdmin = !!user?.es_admin;
   const { campos, recargar: recargarCampos } = useCampos();
   const [busqueda, setBusqueda] = useState("");
+  const [fCanal, setFCanal] = useState("");
   const [fEtapa, setFEtapa] = useState(""); const [fAgente, setFAgente] = useState(""); const [fTag, setFTag] = useState(""); const [fOrigen, setFOrigen] = useState("");
   const [orden, setOrden] = useState({ col: "reciente", dir: "desc" });
   const [columnasExtra, setColumnasExtra] = useState([]); // claves de campos mostrados como columna
@@ -3128,9 +3158,10 @@ function ContactosPanel({ conversaciones, setConversaciones, etapas, etapaPorId,
   const [nuevaTag, setNuevaTag] = useState("");
 
   const todasTags = [...new Set(conversaciones.flatMap(c => c.etiquetas || []))].sort();
-  const textoBusqueda = (c) => [c.nombre_contacto, c.telefono, ...(c.etiquetas || []), ...Object.values(c.campos || {}).map(String)].join(" ").toLowerCase();
+  const textoBusqueda = (c) => [c.nombre_contacto, c.telefono, c.ig_username, ...(c.etiquetas || []), ...Object.values(c.campos || {}).map(String)].join(" ").toLowerCase();
   const filtradas = conversaciones.filter(c => {
     if (busqueda.trim() && !textoBusqueda(c).includes(busqueda.trim().toLowerCase())) return false;
+    if (fCanal && (c.canal || "whatsapp") !== fCanal) return false;
     if (fEtapa && (fEtapa === "ninguna" ? c.etapa_id : c.etapa_id !== fEtapa)) return false;
     if (fAgente && (fAgente === "ninguno" ? c.agente_id : c.agente_id !== fAgente)) return false;
     if (fTag && !(c.etiquetas || []).includes(fTag)) return false;
@@ -3139,8 +3170,8 @@ function ContactosPanel({ conversaciones, setConversaciones, etapas, etapaPorId,
     if (fOrigen === "directo" && (c.origen === "anuncio" || ["manual", "importado"].includes(c.origen))) return false;
     return true;
   });
-  const valorOrden = (c) => orden.col === "nombre" ? sinTildes(c.nombre_contacto || c.telefono)
-    : orden.col === "telefono" ? c.telefono
+  const valorOrden = (c) => orden.col === "nombre" ? sinTildes(nombreDe(c))
+    : orden.col === "telefono" ? subtituloDe(c)
     : orden.col === "creado" ? new Date(c.created_at).getTime()
     : orden.col.startsWith("campo:") ? String(c.campos?.[orden.col.slice(6)] ?? "").toLowerCase()
     : new Date(c.ultimo_mensaje_at || 0).getTime();
@@ -3154,9 +3185,9 @@ function ContactosPanel({ conversaciones, setConversaciones, etapas, etapaPorId,
   };
 
   const exportar = () => {
-    const filas = [["Nombre", "Teléfono", "Etapa", "Agente", "Etiquetas", "Origen", "Último mensaje", "Creado", ...campos.map(c => c.nombre)]];
+    const filas = [["Nombre", "Teléfono", "Usuario Instagram", "Etapa", "Agente", "Etiquetas", "Origen", "Último mensaje", "Creado", ...campos.map(c => c.nombre)]];
     ordenadas.forEach(c => filas.push([
-      c.nombre_contacto || "", c.telefono, etapaPorId[c.etapa_id]?.nombre || "", agentePorId[c.agente_id]?.nombre || "", (c.etiquetas || []).join("|"),
+      c.nombre_contacto || "", esInstagram(c) ? "" : c.telefono, c.ig_username ? "@" + c.ig_username : "", etapaPorId[c.etapa_id]?.nombre || "", agentePorId[c.agente_id]?.nombre || "", (c.etiquetas || []).join("|"),
       c.origen === "anuncio" ? "Anuncio" : c.origen === "importado" ? "Importado" : c.origen === "manual" ? "Manual" : "Chat directo",
       c.ultimo_mensaje_at ? new Date(c.ultimo_mensaje_at).toLocaleString("es-PA") : "", new Date(c.created_at).toLocaleDateString("es-PA"),
       ...campos.map(campo => textoDeCampo(campo, c.campos?.[campo.clave])),
@@ -3194,6 +3225,7 @@ function ContactosPanel({ conversaciones, setConversaciones, etapas, etapaPorId,
           <select value={fEtapa} onChange={e => setFEtapa(e.target.value)} style={selectFiltro}><option value="">Todas las etapas</option>{etapas.map(e => <option key={e.id} value={e.id}>{e.nombre}</option>)}<option value="ninguna">Sin etapa</option></select>
           <select value={fAgente} onChange={e => setFAgente(e.target.value)} style={selectFiltro}><option value="">Todos los agentes</option>{agentes.map(a => <option key={a.id} value={a.id}>{a.nombre}</option>)}<option value="ninguno">Sin asignar</option></select>
           {todasTags.length > 0 && <select value={fTag} onChange={e => setFTag(e.target.value)} style={selectFiltro}><option value="">Todas las etiquetas</option>{todasTags.map(t => <option key={t} value={t}>#{t}</option>)}</select>}
+          <select value={fCanal} onChange={e => setFCanal(e.target.value)} style={selectFiltro}><option value="">Todos los canales</option><option value="whatsapp">WhatsApp</option><option value="instagram">Instagram</option></select>
           <select value={fOrigen} onChange={e => setFOrigen(e.target.value)} style={selectFiltro}><option value="">Cualquier origen</option><option value="anuncio">De anuncios</option><option value="directo">Chat directo</option><option value="manual">Agregados a mano</option></select>
           {!esMobil && campos.length > 0 && (
             <div style={{ position: "relative" }}>
@@ -3224,10 +3256,10 @@ function ContactosPanel({ conversaciones, setConversaciones, etapas, etapaPorId,
             {ordenadas.slice(0, limite).map(c => (
               <div key={c.id} onClick={() => setDetalleId(c.id)} style={{ padding: "12px 14px", borderBottom: `1px solid ${GRAY}`, cursor: "pointer" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
-                  <div style={{ fontWeight: 800, fontSize: 14 }}>{c.nombre_contacto || c.telefono}</div>
+                  <div style={{ fontWeight: 800, fontSize: 14 }}>{nombreDe(c)}</div>
                   {etapaPorId[c.etapa_id] && <span style={{ fontSize: 10, fontWeight: 800, padding: "2px 7px", borderRadius: 5, background: etapaPorId[c.etapa_id].color + "22", color: etapaPorId[c.etapa_id].color, flexShrink: 0 }}>{etapaPorId[c.etapa_id].nombre}</span>}
                 </div>
-                <div style={{ fontSize: 12, color: GRAY3, marginTop: 2 }}>{c.telefono}{(c.etiquetas || []).length > 0 ? " · " + c.etiquetas.map(t => "#" + t).join(" ") : ""}</div>
+                <div style={{ fontSize: 12, color: GRAY3, marginTop: 2 }}>{subtituloDe(c)}{(c.etiquetas || []).length > 0 ? " · " + c.etiquetas.map(t => "#" + t).join(" ") : ""}</div>
               </div>
             ))}
           </div>
@@ -3235,7 +3267,7 @@ function ContactosPanel({ conversaciones, setConversaciones, etapas, etapaPorId,
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead><tr>
               <th style={th} onClick={() => cambiarOrden("nombre")}>Nombre<Flecha col="nombre" /></th>
-              <th style={th} onClick={() => cambiarOrden("telefono")}>Teléfono<Flecha col="telefono" /></th>
+              <th style={th} onClick={() => cambiarOrden("telefono")}>Teléfono / usuario<Flecha col="telefono" /></th>
               <th style={{ ...th, cursor: "default" }}>Etapa</th>
               <th style={{ ...th, cursor: "default" }}>Agente</th>
               <th style={{ ...th, cursor: "default" }}>Etiquetas</th>
@@ -3248,8 +3280,8 @@ function ContactosPanel({ conversaciones, setConversaciones, etapas, etapaPorId,
                 const et = etapaPorId[c.etapa_id];
                 return (
                   <tr key={c.id} onClick={() => setDetalleId(c.id)} style={{ cursor: "pointer", background: detalleId === c.id ? GRAY : WHITE }}>
-                    <td style={{ ...td, fontWeight: 700 }}>{c.nombre_contacto || <span style={{ color: GRAY3, fontWeight: 400 }}>Sin nombre</span>}{c.origen === "anuncio" && <span title="Vino de un anuncio" style={{ marginLeft: 6, fontSize: 9.5, fontWeight: 800, padding: "1px 6px", borderRadius: 5, background: "#DBEAFE", color: "#1E40AF" }}>Anuncio</span>}</td>
-                    <td style={td}>{c.telefono}</td>
+                    <td style={{ ...td, fontWeight: 700 }}>{esInstagram(c) && <Instagram size={12} color="#DD2A7B" style={{ marginRight: 5, verticalAlign: "-1px" }} />}{c.nombre_contacto || (esInstagram(c) ? nombreDe(c) : <span style={{ color: GRAY3, fontWeight: 400 }}>Sin nombre</span>)}{c.origen === "anuncio" && <span title="Vino de un anuncio" style={{ marginLeft: 6, fontSize: 9.5, fontWeight: 800, padding: "1px 6px", borderRadius: 5, background: "#DBEAFE", color: "#1E40AF" }}>Anuncio</span>}</td>
+                    <td style={td}>{subtituloDe(c)}</td>
                     <td style={td}>{et ? <span style={{ fontSize: 11, fontWeight: 800, padding: "2px 8px", borderRadius: 5, background: et.color + "22", color: et.color }}>{et.nombre}</span> : <span style={{ color: GRAY3 }}>—</span>}</td>
                     <td style={td}>{agentePorId[c.agente_id]?.nombre || <span style={{ color: GRAY3 }}>—</span>}</td>
                     <td style={td}>{(c.etiquetas || []).map(t => <span key={t} style={{ fontSize: 11, fontWeight: 700, padding: "2px 7px", borderRadius: 5, background: GRAY2, marginRight: 4 }}>#{t}</span>)}</td>
@@ -3273,10 +3305,10 @@ function ContactosPanel({ conversaciones, setConversaciones, etapas, etapaPorId,
         <div onClick={() => setDetalleId(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", zIndex: 240, display: "flex", justifyContent: "flex-end" }}>
           <div onClick={e => e.stopPropagation()} className="oft-fade-in" style={{ width: "100%", maxWidth: 400, background: WHITE, height: "100%", overflowY: "auto", padding: 20 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-              <div style={{ fontWeight: 900, fontSize: 16 }}>{detalle.nombre_contacto || detalle.telefono}</div>
+              <div style={{ fontWeight: 900, fontSize: 16 }}>{nombreDe(detalle)}</div>
               <button onClick={() => setDetalleId(null)} className="oft-btn-press" style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}><X size={18} /></button>
             </div>
-            <div style={{ fontSize: 12.5, color: GRAY3, marginBottom: 14 }}>{detalle.telefono}{detalle.origen === "anuncio" && detalle.anuncio_titulo ? ` · Anuncio: ${detalle.anuncio_titulo}` : ""}</div>
+            <div style={{ fontSize: 12.5, color: GRAY3, marginBottom: 14 }}>{esInstagram(detalle) ? `Instagram · ${subtituloDe(detalle)}` : detalle.telefono}{detalle.origen === "anuncio" && detalle.anuncio_titulo ? ` · Anuncio: ${detalle.anuncio_titulo}` : ""}</div>
             <button onClick={() => { setDetalleId(null); onAbrirChat(detalle.id); }} className="oft-btn-press" style={{ width: "100%", padding: 11, borderRadius: 10, border: "none", background: BLACK, color: WHITE, fontWeight: 800, fontSize: 13.5, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 7, marginBottom: 18 }}>
               <MessageCircle size={15} /> {detalle.ultimo_mensaje_at ? "Abrir chat" : "Abrir chat y escribirle"}
             </button>
@@ -3318,6 +3350,246 @@ function ContactosPanel({ conversaciones, setConversaciones, etapas, etapaPorId,
   );
 }
 
+
+
+// ═══════════════════════════════════════════════════════════════
+//  INSTAGRAM — conectar cuentas (Instagram API con Instagram Login).
+//  El token vive solo en el servidor; aquí nunca se vuelve a mostrar.
+// ═══════════════════════════════════════════════════════════════
+const URL_WEBHOOK_IG = `${SUPABASE_URL}/functions/v1/instagram-webhook`;
+const VERIFY_TOKEN_IG = "ofertodo_ig_wh_2026_Qm4Zr8Tn2";
+
+const PASOS_IG = [
+  ["La cuenta debe ser profesional", "En la app de Instagram, la cuenta tiene que ser Empresa o Creador (Configuración > Tipo de cuenta y herramientas > Cambiar a cuenta profesional). Una cuenta personal no funciona."],
+  ["Permite el acceso a los mensajes", "En la app de Instagram: Configuración y privacidad > Mensajes y respuestas a historias > Controles de mensajes > Herramientas conectadas, y activa Permitir acceso a los mensajes. Los nombres cambian un poco según la versión de la app."],
+  ["Abre tu app en Meta", "developers.facebook.com > Mis apps > ofertodo crm web. En el menú de la izquierda agrega el producto Instagram y entra a Configuración de la API con inicio de sesión de Instagram (API setup with Instagram login)."],
+  ["Genera el token de la cuenta", "En el paso Generate access tokens pulsa Add account, inicia sesión con la cuenta de Instagram (Ofertodo o Perfumería), acepta los permisos y pulsa Generate token. Copia el token largo."],
+  ["Copia el App secret de Instagram", "En esa misma pantalla, arriba, están Instagram app ID e Instagram app secret (botón Show). Copia el secret: sirve para comprobar que los mensajes que llegan de verdad vienen de Meta."],
+  ["Configura el webhook", "En el paso Configure webhooks pega la URL de devolución de llamada y el token de verificación de abajo, pulsa Verify and save, y deja el campo messages en Subscribed."],
+  ["Pon la app en modo Live", "Arriba en el panel de Meta el interruptor debe decir Live (publicada). En modo Development los mensajes de clientes no llegan."],
+  ["Conecta aquí", "Pulsa Conectar cuenta, pega el token y el App secret. Para la segunda cuenta repite desde el paso 4 (el App secret ya queda guardado). El CRM renueva los tokens solo cada 60 días."],
+];
+
+function InstagramCard({ esAdmin, esMobil }) {
+  const [cuentas, setCuentas] = useState([]);
+  const [cargando, setCargando] = useState(true);
+  const [ocupado, setOcupado] = useState(false);
+  const [aviso, setAviso] = useState(null); // { tipo: "ok" | "error", texto }
+  const [mostrarForm, setMostrarForm] = useState(false);
+  const [mostrarGuia, setMostrarGuia] = useState(false);
+  const [token, setToken] = useState("");
+  const [secreto, setSecreto] = useState("");
+  const [secretoGuardado, setSecretoGuardado] = useState(null); // null = todavía no se sabe
+  const [copiado, setCopiado] = useState("");
+
+  const cargar = async () => {
+    try { setCuentas((await sb.get("crm_cuentas_instagram", "?order=created_at.asc")) || []); }
+    catch (e) { setCuentas([]); }
+    setCargando(false);
+  };
+  const llamar = async (cuerpo) => {
+    await sb.ensureFreshToken?.();
+    const r = await fetch(`${SUPABASE_URL}/functions/v1/instagram-cuentas`, { method: "POST", headers: sb.functionHeaders(), body: JSON.stringify(cuerpo) });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data?.error || `Error ${r.status}`);
+    return data;
+  };
+  const revisar = async () => {
+    const d = await llamar({ modo: "estado" });
+    setSecretoGuardado(!!d.secreto_guardado);
+    await cargar();
+  };
+  useEffect(() => {
+    cargar();
+    if (esAdmin) revisar().catch(() => {});
+  }, []);
+
+  const ejecutar = async (cuerpo, textoOk) => {
+    setOcupado(true); setAviso(null);
+    try { await llamar(cuerpo); await cargar(); if (textoOk) setAviso({ tipo: "ok", texto: textoOk }); return true; }
+    catch (e) { setAviso({ tipo: "error", texto: e.message }); return false; }
+    finally { setOcupado(false); }
+  };
+
+  const conectar = async () => {
+    if (token.trim().length < 30) { setAviso({ tipo: "error", texto: "Pega el token completo de Instagram (es una cadena larga, sin espacios)." }); return; }
+    if (!secretoGuardado && !secreto.trim()) { setAviso({ tipo: "error", texto: "Falta el App secret de Instagram (paso 5 de la guía). Solo se pide la primera vez." }); return; }
+    setOcupado(true); setAviso(null);
+    try {
+      const d = await llamar({ modo: "conectar", token: token.trim(), app_secret: secreto.trim() || undefined });
+      setToken(""); setSecreto(""); setSecretoGuardado(true); setMostrarForm(false);
+      await cargar();
+      setAviso({ tipo: "ok", texto: `Conectada${d.username ? ` @${d.username}` : ""}. Ya recibe los mensajes directos en la Bandeja.` });
+    } catch (e) { setAviso({ tipo: "error", texto: e.message }); }
+    finally { setOcupado(false); }
+  };
+  const guardarSecreto = async () => {
+    if (!secreto.trim()) return;
+    const ok = await ejecutar({ modo: "guardar_secreto", secreto: secreto.trim() }, "App secret guardado.");
+    if (ok) { setSecreto(""); setSecretoGuardado(true); }
+  };
+  const quitar = async (c) => {
+    if (!confirm(`¿Desconectar ${c.etiqueta || "esta cuenta"}? Dejará de recibir mensajes. Los chats que ya tienes se conservan, pero no podrás responderlos hasta volver a conectarla.`)) return;
+    await ejecutar({ modo: "quitar", cuenta_id: c.id }, "Cuenta desconectada.");
+  };
+  const copiar = async (clave, texto) => {
+    try { await navigator.clipboard.writeText(texto); setCopiado(clave); setTimeout(() => setCopiado(""), 1500); } catch (e) { /* sin portapapeles */ }
+  };
+
+  const colorAviso = aviso?.tipo === "ok" ? { bg: "#D1FAE5", color: "#065F46" } : { bg: "#FEE2E2", color: "#991B1B" };
+  const dias = (c) => c.token_expira_at ? Math.ceil((new Date(c.token_expira_at).getTime() - Date.now()) / 86400000) : null;
+  const Chip = ({ bg, color, children }) => <span style={{ fontSize: 10.5, fontWeight: 800, padding: "2px 8px", borderRadius: 6, background: bg, color }}>{children}</span>;
+  const Copiable = ({ id, etiqueta, valor }) => (
+    <div style={{ marginBottom: 8 }}>
+      <div style={{ fontSize: 11, fontWeight: 800, color: GRAY3, marginBottom: 3 }}>{etiqueta}</div>
+      <div style={{ display: "flex", gap: 6 }}>
+        <input readOnly value={valor} onFocus={e => e.target.select()} style={{ ...S.input, marginBottom: 0, fontSize: 11.5, flex: 1, minWidth: 0, fontFamily: "monospace" }} />
+        <button onClick={() => copiar(id, valor)} className="oft-btn-press" style={{ background: GRAY, border: "none", borderRadius: 8, padding: "0 12px", fontWeight: 700, fontSize: 12, cursor: "pointer", flexShrink: 0 }}>{copiado === id ? "Copiado" : "Copiar"}</button>
+      </div>
+    </div>
+  );
+
+  return (
+    <div style={{ background: WHITE, borderRadius: 16, padding: 20, border: `1px solid ${GRAY2}` }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
+        <div style={{ width: 44, height: 44, borderRadius: 12, background: "linear-gradient(135deg, #F58529, #DD2A7B, #8134AF)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          <Instagram size={22} color={WHITE} />
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 800, fontSize: 15 }}>Instagram</div>
+          <div style={{ fontSize: 11.5, color: GRAY3 }}>Mensajes directos en la misma Bandeja</div>
+        </div>
+        {esAdmin && cuentas.length > 0 && (
+          <button onClick={async () => { setOcupado(true); setAviso(null); try { await revisar(); setAviso({ tipo: "ok", texto: "Estado actualizado desde Instagram." }); } catch (e) { setAviso({ tipo: "error", texto: e.message }); } setOcupado(false); }}
+            disabled={ocupado} title="Actualizar estado desde Instagram" className="oft-btn-press"
+            style={{ background: GRAY, border: "none", borderRadius: 8, width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0, opacity: ocupado ? 0.5 : 1 }}>
+            <RefreshCw size={15} />
+          </button>
+        )}
+      </div>
+
+      {aviso && <div style={{ background: colorAviso.bg, color: colorAviso.color, borderRadius: 10, padding: "9px 12px", fontSize: 12.5, lineHeight: 1.4, marginBottom: 12 }}>{aviso.texto}</div>}
+
+      {cargando ? (
+        <div style={{ fontSize: 12.5, color: GRAY3 }}>Revisando conexión...</div>
+      ) : cuentas.length === 0 ? (
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 8, background: "#FEF3C7", borderRadius: 10, padding: "10px 12px", marginBottom: 12 }}>
+          <AlertCircle size={17} color="#92400E" style={{ flexShrink: 0, marginTop: 1 }} />
+          <div style={{ fontSize: 12, color: "#92400E", lineHeight: 1.45 }}>Todavía no hay ninguna cuenta de Instagram conectada. Puedes conectar más de una (por ejemplo Ofertodo y Perfumería).</div>
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 12 }}>
+          {cuentas.map(c => {
+            const est = ESTADO_IG[c.estado] || { texto: c.estado || "Sin revisar", bg: GRAY, color: GRAY3 };
+            const d = dias(c);
+            return (
+              <div key={c.id} style={{ border: `1px solid ${GRAY2}`, borderRadius: 12, padding: 12, opacity: c.activo ? 1 : 0.6 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <div style={{ width: 36, height: 36, borderRadius: "50%", background: GRAY2, overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                    {c.foto_url ? <img src={c.foto_url} alt="" referrerPolicy="no-referrer" style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={e => { e.currentTarget.style.display = "none"; }} /> : <Instagram size={16} color={GRAY3} />}
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 800, fontSize: 13.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.etiqueta || c.username || "Instagram"}</div>
+                    <div style={{ fontSize: 11.5, color: GRAY3 }}>{c.username ? `@${c.username}` : "Sin usuario"}</div>
+                  </div>
+                  {esAdmin && (
+                    <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+                      <button onClick={() => ejecutar({ modo: "alternar", cuenta_id: c.id, activo: !c.activo }, c.activo ? "Cuenta apagada: no se podrá responder por ella." : "Cuenta encendida.")} disabled={ocupado} title={c.activo ? "Apagar en el CRM" : "Encender"} className="oft-btn-press"
+                        style={{ background: GRAY, border: "none", borderRadius: 8, width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}><Power size={14} color={c.activo ? "#065F46" : GRAY3} /></button>
+                      <button onClick={() => quitar(c)} disabled={ocupado} title="Desconectar" className="oft-btn-press"
+                        style={{ background: GRAY, border: "none", borderRadius: 8, width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}><Trash2 size={14} color="#991B1B" /></button>
+                    </div>
+                  )}
+                </div>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", marginTop: 10 }}>
+                  <Chip bg={est.bg} color={est.color}>{est.texto}</Chip>
+                  {c.estado === "CONNECTED" && (c.webhook_suscrito
+                    ? <Chip bg="#D1FAE5" color="#065F46">Recibiendo mensajes</Chip>
+                    : <Chip bg="#FEF3C7" color="#92400E">Mensajes sin activar</Chip>)}
+                  {d !== null && c.estado === "CONNECTED" && <span style={{ fontSize: 11, color: d < 10 ? "#991B1B" : GRAY3 }}>Token: {d > 0 ? `${d} días` : "vence hoy"}</span>}
+                  {esAdmin && c.estado === "CONNECTED" && d !== null && d < 30 && (
+                    <button onClick={() => ejecutar({ modo: "renovar", cuenta_id: c.id }, "Token renovado por 60 días.")} disabled={ocupado} className="oft-btn-press"
+                      style={{ background: "none", border: "none", cursor: "pointer", fontSize: 11.5, fontWeight: 800, color: RED, padding: 0 }}>Renovar</button>
+                  )}
+                </div>
+                {(c.estado === "TOKEN_EXPIRADO" || c.estado === "SIN_TOKEN") && (
+                  <div style={{ fontSize: 11.5, color: "#991B1B", lineHeight: 1.45, marginTop: 8 }}>Genera un token nuevo en Meta (paso 4 de la guía) y vuelve a conectar la cuenta; los chats se conservan.</div>
+                )}
+                {c.estado === "CONNECTED" && !c.webhook_suscrito && (
+                  <div style={{ fontSize: 11.5, color: "#92400E", lineHeight: 1.45, marginTop: 8 }}>Instagram todavía no manda los mensajes de esta cuenta. Revisa el paso 6 de la guía (webhook) y pulsa actualizar.</div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {esAdmin && secretoGuardado === false && cuentas.length > 0 && !mostrarForm && (
+        <div style={{ background: "#FEF3C7", borderRadius: 10, padding: "10px 12px", marginBottom: 12 }}>
+          <div style={{ fontSize: 12, color: "#92400E", lineHeight: 1.45, marginBottom: 8 }}>Falta el App secret de Instagram: sin él, los mensajes que llegan se rechazan por seguridad (paso 5).</div>
+          <div style={{ display: "flex", gap: 6 }}>
+            <input value={secreto} onChange={e => setSecreto(e.target.value)} placeholder="App secret de Instagram" style={{ ...S.input, marginBottom: 0, fontSize: 12.5, flex: 1, minWidth: 0 }} />
+            <button onClick={guardarSecreto} disabled={ocupado || !secreto.trim()} className="oft-btn-press" style={{ background: BLACK, color: WHITE, border: "none", borderRadius: 8, padding: "0 14px", fontWeight: 800, fontSize: 12.5, cursor: "pointer", opacity: ocupado || !secreto.trim() ? 0.5 : 1 }}>Guardar</button>
+          </div>
+        </div>
+      )}
+
+      {esAdmin ? (
+        mostrarForm ? (
+          <div style={{ background: GRAY, borderRadius: 12, padding: 14, marginBottom: 12 }}>
+            <div style={{ fontSize: 11.5, fontWeight: 800, color: GRAY3, marginBottom: 4 }}>Token de acceso de Instagram</div>
+            <textarea value={token} onChange={e => setToken(e.target.value)} rows={3} placeholder="Pega aquí el token que generaste en Meta (empieza con IG...)" autoComplete="off" spellCheck={false}
+              style={{ ...S.input, fontSize: 12, fontFamily: "monospace", resize: "vertical", marginBottom: 10 }} />
+            {!secretoGuardado && (
+              <>
+                <div style={{ fontSize: 11.5, fontWeight: 800, color: GRAY3, marginBottom: 4 }}>App secret de Instagram (solo la primera vez)</div>
+                <input value={secreto} onChange={e => setSecreto(e.target.value)} placeholder="32 letras y números" autoComplete="off" spellCheck={false} style={{ ...S.input, fontSize: 12.5, fontFamily: "monospace", marginBottom: 10 }} />
+              </>
+            )}
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={conectar} disabled={ocupado} className="oft-btn-press" style={{ flex: 1, padding: 11, borderRadius: 10, border: "none", background: RED, color: WHITE, fontWeight: 800, fontSize: 13.5, cursor: "pointer", opacity: ocupado ? 0.6 : 1 }}>{ocupado ? "Conectando..." : "Conectar cuenta"}</button>
+              <button onClick={() => { setMostrarForm(false); setToken(""); setSecreto(""); setAviso(null); }} disabled={ocupado} className="oft-btn-press" style={{ padding: "11px 16px", borderRadius: 10, border: `1.5px solid ${GRAY2}`, background: WHITE, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>Cancelar</button>
+            </div>
+          </div>
+        ) : (
+          <button onClick={() => { setMostrarForm(true); setAviso(null); }} className="oft-btn-press" style={{ width: "100%", padding: "10px 0", borderRadius: 9, border: "none", background: BLACK, color: WHITE, fontWeight: 800, fontSize: 13, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, marginBottom: 12 }}>
+            <Plus size={15} /> {cuentas.length === 0 ? "Conectar cuenta de Instagram" : "Conectar otra cuenta"}
+          </button>
+        )
+      ) : (
+        <div style={{ fontSize: 12, color: GRAY3, marginBottom: 12 }}>Solo un administrador puede conectar o desconectar cuentas.</div>
+      )}
+
+      <button onClick={() => setMostrarGuia(v => !v)} className="oft-btn-press" style={{ width: "100%", padding: "9px 0", borderRadius: 9, border: `1.5px solid ${GRAY2}`, background: WHITE, fontWeight: 700, fontSize: 12.5, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+        <ChevronDown size={14} style={{ transform: mostrarGuia ? "rotate(180deg)" : "none", transition: "transform 0.15s" }} /> {mostrarGuia ? "Ocultar guía" : "Guía paso a paso en Meta"}
+      </button>
+
+      {mostrarGuia && (
+        <div style={{ marginTop: 14 }}>
+          {PASOS_IG.map(([t, d], i) => (
+            <div key={i} style={{ display: "flex", gap: 10, marginBottom: 12 }}>
+              <div style={{ width: 22, height: 22, borderRadius: "50%", background: BLACK, color: WHITE, fontSize: 11.5, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginTop: 1 }}>{i + 1}</div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 800, fontSize: 13 }}>{t}</div>
+                <div style={{ fontSize: 12, color: GRAY3, lineHeight: 1.5, marginTop: 2 }}>{d}</div>
+                {i === 5 && (
+                  <div style={{ marginTop: 8 }}>
+                    <Copiable id="url" etiqueta="URL de devolución de llamada (Callback URL)" valor={URL_WEBHOOK_IG} />
+                    <Copiable id="vt" etiqueta="Token de verificación (Verify token)" valor={VERIFY_TOKEN_IG} />
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+          <div style={{ background: GRAY, borderRadius: 10, padding: "10px 12px", fontSize: 11.5, color: GRAY3, lineHeight: 1.5 }}>
+            Cómo funciona: la persona te escribe por Instagram y el chat aparece en la Bandeja. Tienes 24 horas para responder; pasado ese tiempo hay que esperar a que escriba otra vez.
+            Instagram no tiene plantillas, así que no se puede iniciar un chat ni mandar broadcasts por aquí. Los menús de Meta cambian de nombre con frecuencia: si algo no coincide, busca la opción parecida.
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 
 // ═══════════════════════════════════════════════════════════════
@@ -3529,27 +3801,7 @@ function IntegracionesPanel() {
           )}
         </div>
 
-        {/* INSTAGRAM */}
-        <div style={{ background: WHITE, borderRadius: 16, padding: 20, border: `1px solid ${GRAY2}` }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
-            <div style={{ width: 44, height: 44, borderRadius: 12, background: "linear-gradient(135deg, #F58529, #DD2A7B, #8134AF)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-              <Instagram size={22} color={WHITE} />
-            </div>
-            <div>
-              <div style={{ fontWeight: 800, fontSize: 15 }}>Instagram</div>
-              <div style={{ fontSize: 11.5, color: GRAY3 }}>Mensajes directos en la misma Bandeja</div>
-            </div>
-          </div>
-          <div style={{ display: "flex", alignItems: "flex-start", gap: 8, background: GRAY, borderRadius: 10, padding: "10px 12px", marginBottom: 12 }}>
-            <AlertCircle size={17} color={GRAY3} style={{ flexShrink: 0, marginTop: 1 }} />
-            <div style={{ fontSize: 11.5, color: GRAY3, lineHeight: 1.4 }}>
-              Todavía no conectado. Usa el mismo tipo de aprobación de Meta que WhatsApp -- una vez esa termine, conectar Instagram es más rápido porque ya tienes la App y el negocio verificados.
-            </div>
-          </div>
-          <button disabled className="oft-btn-press" style={{ width: "100%", padding: "10px 0", borderRadius: 9, border: `1.5px solid ${GRAY2}`, background: WHITE, color: GRAY3, fontWeight: 700, fontSize: 13, cursor: "not-allowed" }}>
-            Conectar Instagram (avísame cuando quieras empezar)
-          </button>
-        </div>
+        <InstagramCard esAdmin={esAdmin} esMobil={esMobil} />
       </div>
     </div>
   );
