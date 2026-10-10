@@ -2955,7 +2955,8 @@ function OfertasAdmin() {
     await sb.ensureFreshToken();
     const r = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${fn}`, { method: "POST", headers: sb.dataHeaders(), body: JSON.stringify(args) });
     if (!r.ok) throw new Error(await r.text());
-    return r.json();
+    const txt = await r.text();
+    try { return txt ? JSON.parse(txt) : null; } catch (e) { return null; } // activar_campana no devuelve nada
   };
   const activarCampana = async (c) => {
     const hayOtra = campanas.find(x => x.activa && x.id !== c.id);
