@@ -1710,6 +1710,32 @@ function AnalyticsPanel() {
     });
     return Object.entries(mapa).sort((a, b) => b[1] - a[1]); // sin límite -- se recorta donde se muestra
   };
+  // ── ¿Dónde navegan los clientes? (Inicio vs Catálogo vs Ofertas) ──
+  // "Vistas" = cuántas veces entraron a esa sección; "visitantes" = cuántas personas distintas;
+  // "minutos" = tiempo aproximado (un latido cada 60 s, con la sección donde estaba el cliente).
+  const SECCIONES_NAV = [
+    { key: "home", nombre: "Inicio", color: "#1D4ED8" },
+    { key: "catalogo", nombre: "Catálogo", color: RED },
+    { key: "ofertas", nombre: "Ofertas", color: "#B45309" },
+  ];
+  const latidosConSeccion = eventos.filter(e => e.tipo === "heartbeat" && e.valor && !["admin", "crm"].includes(e.valor));
+  const navSecciones = SECCIONES_NAV.map(sec => {
+    const vistasSec = eventos.filter(e => e.tipo === "ver_seccion" && e.valor === sec.key);
+    return {
+      ...sec,
+      vistas: vistasSec.length,
+      visitantes: new Set(vistasSec.map(e => e.visitante_id)).size,
+      minutos: latidosConSeccion.filter(e => e.valor === sec.key).length,
+    };
+  });
+  const minutosOtras = latidosConSeccion.filter(e => !SECCIONES_NAV.some(sec => sec.key === e.valor)).length;
+  const navTotalMin = navSecciones.reduce((t, x) => t + x.minutos, 0) + minutosOtras;
+  const navTotalVistas = navSecciones.reduce((t, x) => t + x.vistas, 0);
+  const navGanadora = navTotalMin > 0
+    ? [...navSecciones].sort((a, b) => b.minutos - a.minutos)[0]
+    : (navTotalVistas > 0 ? [...navSecciones].sort((a, b) => b.vistas - a.vistas)[0] : null);
+  const fmtMin = (m) => m >= 60 ? `${Math.floor(m / 60)} h ${m % 60} min` : `${m} min`;
+
   const topCategoriasFull = topPor("click_categoria");
   const topProductosFull = topPor("click_producto");
   // Distancia de edición (Levenshtein) -- cuántos cambios (agregar, quitar o cambiar
@@ -1927,6 +1953,55 @@ function AnalyticsPanel() {
             <TarjetaKPI icono={EyeOff} valor={visitantesSinCuenta} valorAnterior={visitantesSinCuentaAnt} etiqueta="Visitaron sin cuenta" color={GRAY3} delay={0.08} />
             <TarjetaKPI icono={ShoppingCart} valor={clientesQueAgregaron} valorAnterior={clientesQueAgregaronAnt} etiqueta="Agregaron al carrito" color="#0F6E56" delay={0.12} />
             <TarjetaKPI icono={MessageCircle} valor={totalWhatsapp} valorAnterior={totalWhatsappAnt} etiqueta="Consultas por WhatsApp" color="#25D366" delay={0.16} />
+          </div>
+
+          {/* ¿DÓNDE NAVEGAN LOS CLIENTES? */}
+          <div className="oft-prod-anim" style={{ background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 14, padding: 20, marginBottom: 28 }}>
+            <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 4, display: "flex", alignItems: "center", gap: 8 }}><Eye size={17} color={RED} /> ¿Dónde navegan tus clientes?</div>
+            {navGanadora ? (
+              <p style={{ fontSize: 13, color: GRAY3, margin: "0 0 16px" }}>
+                En este rango navegan más en <b style={{ color: navGanadora.color }}>{navGanadora.nombre}</b>
+                {navTotalMin > 0 ? <> — {navTotalMin > 0 ? Math.round((navGanadora.minutos / navTotalMin) * 100) : 0}% del tiempo en el sitio.</> : <> — {navGanadora.vistas} visitas a esa sección.</>}
+              </p>
+            ) : (
+              <p style={{ fontSize: 13, color: GRAY3, margin: "0 0 16px" }}>Todavía no hay datos en este rango. Esta medición empezó a guardarse el 10 de octubre de 2026, así que los rangos anteriores no tienen este dato.</p>
+            )}
+            {navTotalMin > 0 && (
+              <div style={{ display: "flex", height: 12, borderRadius: 8, overflow: "hidden", background: GRAY, marginBottom: 6 }}>
+                {navSecciones.map(sec => sec.minutos > 0 && <div key={sec.key} title={`${sec.nombre}: ${fmtMin(sec.minutos)}`} style={{ width: `${(sec.minutos / navTotalMin) * 100}%`, background: sec.color }} />)}
+                {minutosOtras > 0 && <div title={`Otras páginas: ${fmtMin(minutosOtras)}`} style={{ width: `${(minutosOtras / navTotalMin) * 100}%`, background: GRAY3 }} />}
+              </div>
+            )}
+            {navTotalMin > 0 && (
+              <div style={{ display: "flex", gap: 14, flexWrap: "wrap", fontSize: 11, color: GRAY3, fontWeight: 700, marginBottom: 16 }}>
+                {navSecciones.map(sec => <span key={sec.key} style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><span style={{ width: 9, height: 9, borderRadius: 3, background: sec.color }} />{sec.nombre} {Math.round((sec.minutos / navTotalMin) * 100)}%</span>)}
+                {minutosOtras > 0 && <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><span style={{ width: 9, height: 9, borderRadius: 3, background: GRAY3 }} />Pedido, cuenta y otras {Math.round((minutosOtras / navTotalMin) * 100)}%</span>}
+              </div>
+            )}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 14 }}>
+              {navSecciones.map(sec => {
+                const esGanadora = navGanadora && navGanadora.key === sec.key;
+                return (
+                  <div key={sec.key} style={{ border: `2px solid ${esGanadora ? sec.color : GRAY2}`, borderRadius: 12, padding: 14, background: esGanadora ? `${sec.color}0D` : WHITE }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                      <span style={{ fontWeight: 900, fontSize: 15, color: sec.color }}>{sec.nombre}</span>
+                      {esGanadora && <span style={{ fontSize: 10, fontWeight: 800, background: sec.color, color: WHITE, borderRadius: 10, padding: "2px 8px" }}>Más navegada</span>}
+                    </div>
+                    <div style={{ fontSize: 30, fontWeight: 900, lineHeight: 1 }}><NumeroAnimado valor={sec.vistas} /></div>
+                    <div style={{ fontSize: 12, color: GRAY3, marginBottom: 10 }}>visitas a la sección</div>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, borderTop: `1px solid ${GRAY2}`, paddingTop: 8 }}>
+                      <span style={{ color: GRAY3 }}>Personas distintas</span><b>{sec.visitantes}</b>
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, paddingTop: 4 }}>
+                      <span style={{ color: GRAY3 }}>Tiempo aprox.</span><b>{fmtMin(sec.minutos)}</b>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <p style={{ fontSize: 10.5, color: GRAY3, marginTop: 12, lineHeight: 1.4 }}>
+              El tiempo es aproximado: se mide cada minuto que el cliente sigue con la página abierta en esa sección (una visita de menos de un minuto cuenta como visita, pero no suma tiempo).
+            </p>
           </div>
 
           {/* TOP 4 LISTAS */}
