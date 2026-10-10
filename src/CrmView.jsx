@@ -203,8 +203,48 @@ export default function CrmView() {
           setConversaciones(prev => prev.filter(c => c.id !== payload.old.id));
         }
       })
-      .subscribe();
+      .subscribe((status, err) => {
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") console.warn("CRM en vivo (conversaciones):", status, err?.message || "");
+      });
     return () => { supabaseRealtime.removeChannel(canal); };
+  }, [sesionLista]);
+
+  // Red de seguridad del "en vivo": el canal en tiempo real puede caerse en
+  // silencio (el token de sesión vence cada hora, la conexión se corta al
+  // dormirse el equipo o cambiar de pestaña, etc.). Por eso:
+  //  1) se le pasa al canal el token renovado cada pocos minutos,
+  //  2) se vuelve a consultar la lista cada 6 segundos (solo si la pestaña
+  //     está a la vista) y apenas se regresa a la pestaña.
+  // Así los mensajes entran solos aunque el canal falle, sin recargar.
+  useEffect(() => {
+    if (!sesionLista) return;
+    const renovarToken = async () => {
+      try {
+        await sb.ensureFreshToken();
+        if (sb.session?.access_token) await supabaseRealtime.realtime.setAuth(sb.session.access_token);
+      } catch (_) {}
+    };
+    const refrescarLista = async () => {
+      if (document.hidden) return;
+      try {
+        await sb.ensureFreshToken();
+        const data = await sb.get("crm_conversaciones", "?order=ultimo_mensaje_at.desc.nullslast,created_at.desc");
+        if (!Array.isArray(data)) return;
+        setConversaciones(prev => JSON.stringify(prev) === JSON.stringify(data) ? prev : data);
+      } catch (_) {}
+    };
+    const alVolver = () => { if (!document.hidden) { renovarToken(); refrescarLista(); } };
+    const t1 = setInterval(renovarToken, 3 * 60 * 1000);
+    const t2 = setInterval(refrescarLista, 6000);
+    document.addEventListener("visibilitychange", alVolver);
+    window.addEventListener("focus", alVolver);
+    window.addEventListener("online", alVolver);
+    return () => {
+      clearInterval(t1); clearInterval(t2);
+      document.removeEventListener("visibilitychange", alVolver);
+      window.removeEventListener("focus", alVolver);
+      window.removeEventListener("online", alVolver);
+    };
   }, [sesionLista]);
 
   const etapaPorId = Object.fromEntries(etapas.map(e => [e.id, e]));
@@ -297,6 +337,8 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
   const [vistaMobil, setVistaMobil] = useState("hilo"); // hilo | contacto -- solo aplica en móvil cuando hay una conversación abierta
   const [busqueda, setBusqueda] = useState("");
   const [mensajes, setMensajes] = useState([]);
+  const mensajesRef = useRef([]);
+  mensajesRef.current = mensajes;
   const [texto, setTexto] = useState("");
   const [enviando, setEnviando] = useState(false);
   const [enviandoPedidoId, setEnviandoPedidoId] = useState(null);
@@ -474,8 +516,44 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
         if (payload.new.conversacion_id !== seleccionada.id) return;
         setMensajes(prev => prev.map(m => m.id === payload.new.id ? { ...m, ...payload.new } : m));
       })
-      .subscribe();
-    return () => { supabaseRealtime.removeChannel(canal); };
+      .subscribe((status, err) => {
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") console.warn("CRM en vivo (mensajes):", status, err?.message || "");
+      });
+
+    // Respaldo: cada 4 segundos revisa si hay mensajes nuevos o cambios de
+    // estado (entregado/leído) en esta conversación, por si el canal en vivo
+    // se cayó. Solo toca la pantalla si realmente cambió algo.
+    const convId = seleccionada.id;
+    let activo = true;
+    const revisar = async () => {
+      if (document.hidden) return;
+      try {
+        await sb.ensureFreshToken();
+        const data = await sb.get("crm_mensajes", `?conversacion_id=eq.${convId}&order=created_at.asc`);
+        if (!activo || !Array.isArray(data)) return;
+        const idsActuales = new Set(mensajesRef.current.map(m => m.id));
+        const hayEntrantesNuevos = data.some(m => !idsActuales.has(m.id) && m.direccion === "entrante");
+        setMensajes(prev => {
+          const idsServidor = new Set(data.map(m => m.id));
+          const soloLocales = prev.filter(m => !idsServidor.has(m.id));
+          const nuevo = [...data, ...soloLocales];
+          const firma = (arr) => arr.map(m => `${m.id}:${m.estado || ""}:${m.error_envio || ""}`).join("|");
+          return firma(nuevo) === firma(prev) ? prev : nuevo;
+        });
+        if (hayEntrantesNuevos) sb.patch("crm_conversaciones", convId, { no_leidos: 0 }).catch(() => {});
+      } catch (_) {}
+    };
+    const t = setInterval(revisar, 4000);
+    const alVolver = () => { if (!document.hidden) revisar(); };
+    document.addEventListener("visibilitychange", alVolver);
+    window.addEventListener("focus", alVolver);
+    return () => {
+      activo = false;
+      clearInterval(t);
+      document.removeEventListener("visibilitychange", alVolver);
+      window.removeEventListener("focus", alVolver);
+      supabaseRealtime.removeChannel(canal);
+    };
   }, [seleccionada?.id, sesionLista]);
 
   const cambiarEtapa = async (etapaId) => {
