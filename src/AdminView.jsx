@@ -17,7 +17,7 @@ import {
   RED, RED_D, S, SUPABASE_URL, ShippingLabelModal, NOTAS_FRAGANCIA,
   Spinner, StatusBadge, WHITE, comprimirImagen, estadosDe,
   imagenOptimizada, resolverAreaVenta, sb, useApp, useLockBodyScroll,
-  agregarCanvasComoPaginasPdf, ofertaInfo, precioNormalPiezas, piezasDePresentacion, presUnitPrice,
+  agregarCanvasComoPaginasPdf, ofertaInfo, precioNormalPiezas, piezasDePresentacion, presUnitPrice, idVisitante,
 } from "./shared.jsx";
 
 // "YYYY-MM-DD" según la hora de PANAMÁ (America/Panama, UTC-5), sin importar la
@@ -1663,25 +1663,32 @@ function AnalyticsPanel() {
 
   useEffect(() => { cargarDatos(); }, [desde, hasta]);
 
-  // Visitas en vivo: independiente del filtro de fecha, se refresca cada 30s por su cuenta.
-  // Los navegadores "frenan" los setInterval en pestañas que están de fondo (para ahorrar
-  // batería), así que el contador se quedaba atascado hasta refrescar la página a mano.
-  // Se agrega un refresco INMEDIATO justo al volver a esa pestaña, para que se sienta
-  // en vivo de verdad sin depender solo del temporizador.
+  // Visitas en vivo: independiente del filtro de fecha. Se refresca cada 5 segundos y
+  // también al instante cuando vuelves a esta pestaña del navegador (los navegadores
+  // frenan los temporizadores de las pestañas de fondo).
+  // Cuenta a cada persona UNA vez según lo último que hizo en los últimos 3 minutos:
+  //  · si lo último fue "salida" (cerró o se fue de la página), ya no cuenta -- sale al momento
+  //  · tu propio navegador y las pantallas de admin/CRM no cuentan como visitantes
   useEffect(() => {
+    let vivo = true;
     const cargarEnVivo = async () => {
       try {
         const haceTresMin = new Date(Date.now() - 3 * 60 * 1000).toISOString();
-        const recientes = await sb.get("eventos_analytics", `?created_at=gte.${haceTresMin}&tipo=in.(visita,heartbeat)&select=visitante_id`);
-        setEnVivo(new Set((recientes || []).map(r => r.visitante_id)).size);
-      } catch(e) { /* no es crítico, se reintenta solo en 30s */ }
+        const recientes = await sb.get("eventos_analytics", `?created_at=gte.${haceTresMin}&tipo=in.(visita,heartbeat,activo,salida)&select=visitante_id,tipo,valor,created_at&order=created_at.asc&limit=1000`);
+        const ultimo = {};
+        (recientes || []).forEach(r => { ultimo[r.visitante_id] = r; });
+        const yo = idVisitante();
+        const n = Object.values(ultimo).filter(r => r.visitante_id !== yo && r.tipo !== "salida" && !["admin", "crm"].includes(r.valor)).length;
+        if (vivo) setEnVivo(n);
+      } catch(e) { /* no es crítico, se reintenta solo */ }
     };
     cargarEnVivo();
-    const t = setInterval(cargarEnVivo, 30000);
+    const t = setInterval(cargarEnVivo, 5000);
     const alVolverVisible = () => { if (document.visibilityState === "visible") cargarEnVivo(); };
     document.addEventListener("visibilitychange", alVolverVisible);
     window.addEventListener("focus", alVolverVisible);
     return () => {
+      vivo = false;
       clearInterval(t);
       document.removeEventListener("visibilitychange", alVolverVisible);
       window.removeEventListener("focus", alVolverVisible);
@@ -1879,7 +1886,7 @@ function AnalyticsPanel() {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, flexWrap: "wrap", gap: 14 }}>
         <div style={{ fontSize: 22, fontWeight: 900, display: "flex", alignItems: "center", gap: 10 }}><Eye size={24} color={RED} /> Analítica Web</div>
         <div style={{ display: "flex", alignItems: "center", gap: 6, background: "#FFF0EF", padding: "7px 14px", borderRadius: 100, fontSize: 13, fontWeight: 700, color: "#B01519" }}>
-          <span className="oft-live-dot" /> <NumeroAnimado valor={enVivo} /> en vivo ahora
+          <span className="oft-live-dot" /> {enVivo} en vivo ahora
         </div>
       </div>
 
