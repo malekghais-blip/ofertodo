@@ -7,7 +7,7 @@ import {
   Timer, AlertCircle, FileText, ExternalLink, Workflow, GitBranch, Plus,
   Trash2, Play, UserCheck, ToggleLeft, ToggleRight, StickyNote,
   Megaphone, Image as ImageIcon, Instagram, Plug, CheckCircle2, Upload,
-  ChevronDown, Power, KeyRound, ShieldCheck,
+  ChevronDown, Power, KeyRound, ShieldCheck, Phone, RotateCcw, Hash,
 } from "lucide-react";
 import { RED, BLACK, GRAY, GRAY2, GRAY3, WHITE, S, useApp, sb, Spinner, comprimirImagen, supabaseRealtime, SUPABASE_URL } from "./shared.jsx";
 
@@ -140,6 +140,7 @@ export default function CrmView() {
   const { user } = useApp();
   const esMobil = useEsMobil();
   const [tab, setTab] = useState("inbox"); // inbox | etapas | agentes | analitica
+  const [convParaAbrir, setConvParaAbrir] = useState(null);
   const [etapas, setEtapas] = useState([]);
   const [agentes, setAgentes] = useState([]);
   const [conversaciones, setConversaciones] = useState([]);
@@ -214,10 +215,13 @@ export default function CrmView() {
           )}
         </div>
         <div style={{ display: "flex", gap: 4, background: GRAY, borderRadius: 10, padding: 4, overflowX: "auto", maxWidth: esMobil ? "calc(100% - 44px)" : "none" }}>
-          {[["inbox", "Bandeja", InboxIcon], ["etapas", "Etapas", Tag], ["workflows", "Workflows", Workflow], ["broadcasts", "Broadcasts", Megaphone], ["agentes", "Agentes", Users], ["analitica", "Analítica", BarChart3], ["integraciones", "Integraciones", Plug]].map(([id, label, Icon]) => (
+          {[["inbox", "Bandeja", InboxIcon], ["etapas", "Etapas", Tag], ["workflows", "Workflows", Workflow], ["broadcasts", "Broadcasts", Megaphone], ["contactos", "Contactos", User], ["plantillas", "Plantillas", FileText], ["agentes", "Agentes", Users], ["analitica", "Analítica", BarChart3], ["integraciones", "Integraciones", Plug]].map(([id, label, Icon]) => (
             <button key={id} onClick={() => setTab(id)} className="oft-btn-press"
               style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: esMobil ? "8px 10px" : "8px 14px", borderRadius: 8, border: "none", fontWeight: 700, fontSize: esMobil ? 12 : 13, cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0, transition: "background 0.25s ease, color 0.25s ease", ...(tab === id ? ESTILO_TAB_ACTIVO : ESTILO_TAB) }}>
               <Icon size={15} /> {label}
+              {id === "inbox" && conversaciones.filter(sinResponder).length > 0 && (
+                <span title="Chats sin responder" style={{ fontSize: 10.5, fontWeight: 800, padding: "1px 6px", borderRadius: 9, background: RED, color: WHITE }}>{conversaciones.filter(sinResponder).length}</span>
+              )}
             </button>
           ))}
         </div>
@@ -235,7 +239,13 @@ export default function CrmView() {
               pedidos={pedidos}
               user={user} recargar={cargarTodo}
               sesionLista={sesionLista}
+              abrirConvId={convParaAbrir} onAbierto={() => setConvParaAbrir(null)}
             />
+          )}
+          {tab === "contactos" && (
+            <ContactosPanel conversaciones={conversaciones} setConversaciones={setConversaciones} etapas={etapas} etapaPorId={etapaPorId}
+              agentes={agentes} agentePorId={agentePorId} pedidos={pedidos} user={user}
+              onAbrirChat={(id) => { setConvParaAbrir(id); setTab("inbox"); }} />
           )}
           {tab === "etapas" && (
             <EtapasPanel conversaciones={conversaciones} etapas={etapas} agentePorId={agentePorId} setConversaciones={setConversaciones} />
@@ -245,6 +255,9 @@ export default function CrmView() {
           )}
           {tab === "broadcasts" && (
             <BroadcastsPanel etapas={etapas} conversaciones={conversaciones} user={user} />
+          )}
+          {tab === "plantillas" && (
+            <PlantillasPanel />
           )}
           {tab === "agentes" && (
             <AgentesPanel agentes={agentes} conversaciones={conversaciones} />
@@ -266,8 +279,9 @@ export default function CrmView() {
 //  contacto (etapa, agente asignado, pedidos/cotizaciones de ese
 //  cliente con un botón para reenviárselos por WhatsApp).
 // ─────────────────────────────────────────────────────────────
-function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, agentes, agentePorId, pedidos, user, recargar, sesionLista }) {
+function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, agentes, agentePorId, pedidos, user, recargar, sesionLista, abrirConvId, onAbierto }) {
   const esMobil = useEsMobil();
+  const { campos: camposPersonalizados } = useCampos();
   const [seleccionada, setSeleccionada] = useState(null);
   const [vistaMobil, setVistaMobil] = useState("hilo"); // hilo | contacto -- solo aplica en móvil cuando hay una conversación abierta
   const [busqueda, setBusqueda] = useState("");
@@ -283,6 +297,27 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
     sb.get("crm_numeros_whatsapp", "?order=created_at.asc").then(d => setNumeros(d || [])).catch(() => {});
   }, [sesionLista]);
   useEffect(() => { const t = setInterval(() => setReloj(x => x + 1), 60000); return () => clearInterval(t); }, []);
+  const [filtro, setFiltro] = useState("todos"); // todos | sin_responder | mios | sin_asignar | cerradas | anuncios | etapa:<id> | tag:<x> | linea:<id>
+  const [notas, setNotas] = useState([]);
+  const [modoComposer, setModoComposer] = useState("responder"); // responder | nota
+  const [respuestas, setRespuestas] = useState([]);
+  const [mostrarRapidas, setMostrarRapidas] = useState(false);
+  const [modalPlantilla, setModalPlantilla] = useState(false);
+  const [valorPlantilla, setValorPlantilla] = useState({ nombre: "", idioma: "", variables: [], cabecera_url: null });
+  const [enviandoPlantilla, setEnviandoPlantilla] = useState(false);
+  const [errorPlantilla, setErrorPlantilla] = useState("");
+  const [nuevaEtiqueta, setNuevaEtiqueta] = useState("");
+  const { plantillas: plantillasAprobadas } = usePlantillas(true);
+  useEffect(() => {
+    if (!sesionLista) return;
+    sb.get("crm_respuestas_rapidas", "?order=atajo.asc").then(d => setRespuestas(d || [])).catch(() => {});
+  }, [sesionLista]);
+  // La conversación abierta se mantiene al día cuando cambia en vivo (cerrarla, etiquetas, quién habló último)
+  useEffect(() => {
+    if (!seleccionada) return;
+    const f = conversaciones.find(c => c.id === seleccionada.id);
+    if (f && f !== seleccionada) setSeleccionada(f);
+  }, [conversaciones]);
   const numeroPorId = Object.fromEntries(numeros.map(n => [n.id, n]));
   const variasLineas = numeros.filter(n => n.activo).length > 1;
   const nombreLinea = (id) => { const n = numeroPorId[id]; return n ? (n.etiqueta || n.numero_visible || "Línea") : null; };
@@ -293,10 +328,32 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
   const hiloVisible = !esMobil || (!!seleccionada && vistaMobil !== "contacto");
   const contactoVisible = esMobil ? (!!seleccionada && vistaMobil === "contacto") : !!seleccionada;
 
+  const coincideFiltro = (c) => {
+    if (filtro === "cerradas") return !estaAbierta(c);
+    if (!estaAbierta(c)) return false;
+    if (filtro === "todos") return true;
+    if (filtro === "sin_responder") return sinResponder(c);
+    if (filtro === "mios") return !!c.agente_id && c.agente_id === user?.id;
+    if (filtro === "sin_asignar") return !c.agente_id;
+    if (filtro === "anuncios") return c.origen === "anuncio";
+    if (filtro.startsWith("etapa:")) { const id = filtro.slice(6); return id === "ninguna" ? !c.etapa_id : c.etapa_id === id; }
+    if (filtro.startsWith("tag:")) return (c.etiquetas || []).includes(filtro.slice(4));
+    if (filtro.startsWith("linea:")) return c.numero_id === filtro.slice(6);
+    return true;
+  };
+  const TITULOS_FILTRO = { todos: "Todas las conversaciones", sin_responder: "Sin responder", mios: "Asignadas a mí", sin_asignar: "Sin asignar", cerradas: "Cerradas", anuncios: "Vienen de anuncios" };
+  const tituloFiltro = TITULOS_FILTRO[filtro]
+    || (filtro.startsWith("etapa:") ? (etapaPorId[filtro.slice(6)]?.nombre || "Sin etapa")
+    : filtro.startsWith("tag:") ? `#${filtro.slice(4)}`
+    : filtro.startsWith("linea:") ? (numeroPorId[filtro.slice(6)]?.etiqueta || "Línea") : "");
   const conversacionesFiltradas = conversaciones.filter(c => {
+    if (!coincideFiltro(c)) return false;
     const q = busqueda.trim().toLowerCase();
     if (!q) return true;
     return (c.nombre_contacto || "").toLowerCase().includes(q) || (c.telefono || "").includes(q);
+  }).sort((x, y) => {
+    const fx = new Date(x.ultimo_mensaje_at || x.created_at).getTime(), fy = new Date(y.ultimo_mensaje_at || y.created_at).getTime();
+    return filtro === "sin_responder" ? fx - fy : fy - fx; // sin responder: los que más llevan esperando, primero
   });
 
   const cargarMensajes = async (conv) => {
@@ -305,12 +362,23 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
     try {
       const data = await sb.get("crm_mensajes", `?conversacion_id=eq.${conv.id}&order=created_at.asc`);
       setMensajes(data || []);
+      sb.get("crm_notas", `?conversacion_id=eq.${conv.id}&order=created_at.asc`).then(n => setNotas(n || [])).catch(() => setNotas([]));
+      setModoComposer("responder"); setMostrarRapidas(false);
       if (conv.no_leidos > 0) {
         await sb.patch("crm_conversaciones", conv.id, { no_leidos: 0 });
         setConversaciones(prev => prev.map(c => c.id === conv.id ? { ...c, no_leidos: 0 } : c));
       }
     } catch (e) { console.warn("Error cargando mensajes:", e.message); }
   };
+
+  useEffect(() => {
+    if (!abrirConvId) return;
+    const c = conversaciones.find(x => x.id === abrirConvId);
+    if (!c) return;
+    setFiltro("todos"); setBusqueda("");
+    cargarMensajes(c);
+    onAbierto && onAbierto();
+  }, [abrirConvId, conversaciones]);
 
   useEffect(() => { if (hiloRef.current) hiloRef.current.scrollTop = hiloRef.current.scrollHeight; }, [mensajes]);
 
@@ -376,6 +444,11 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
         // tipos de columna -- filtrar en el navegador es más confiable.
         if (payload.new.conversacion_id !== seleccionada.id) return;
         setMensajes(prev => prev.some(m => m.id === payload.new.id) ? prev : [...prev, payload.new]);
+        if (payload.new.direccion === "entrante") sb.patch("crm_conversaciones", seleccionada.id, { no_leidos: 0 }).catch(() => {});
+      })
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "crm_notas" }, (payload) => {
+        if (payload.new.conversacion_id !== seleccionada.id) return;
+        setNotas(prev => prev.some(n => n.id === payload.new.id) ? prev : [...prev, payload.new]);
       })
       // Cambios de estado que manda WhatsApp (entregado, leído) o el envío (fallido).
       .on("postgres_changes", { event: "UPDATE", schema: "public", table: "crm_mensajes" }, (payload) => {
@@ -395,6 +468,68 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
     await sb.patch("crm_conversaciones", seleccionada.id, { agente_id: agenteId || null });
     setConversaciones(prev => prev.map(c => c.id === seleccionada.id ? { ...c, agente_id: agenteId || null } : c));
     setSeleccionada(prev => ({ ...prev, agente_id: agenteId || null }));
+  };
+
+  const actualizarConv = async (cambios) => {
+    const id = seleccionada.id;
+    setConversaciones(prev => prev.map(c => c.id === id ? { ...c, ...cambios } : c));
+    setSeleccionada(prev => ({ ...prev, ...cambios }));
+    try { await sb.patch("crm_conversaciones", id, cambios); } catch (e) { alert("No se pudo guardar el cambio: " + e.message); recargar?.(); }
+  };
+  const cerrarConversacion = () => actualizarConv({ estado_chat: "cerrada", cerrada_at: new Date().toISOString(), no_leidos: 0 });
+  const reabrirConversacion = () => actualizarConv({ estado_chat: "abierta", cerrada_at: null });
+  const asignarmeConversacion = () => actualizarConv({ agente_id: user?.id || null });
+  const agregarEtiqueta = (texto) => {
+    const t = String(texto || "").trim().replace(/^#/, "").slice(0, 30);
+    if (!t) return;
+    const actuales = seleccionada.etiquetas || [];
+    if (actuales.some(x => x.toLowerCase() === t.toLowerCase())) { setNuevaEtiqueta(""); return; }
+    actualizarConv({ etiquetas: [...actuales, t] });
+    setNuevaEtiqueta("");
+  };
+  const quitarEtiqueta = (t) => actualizarConv({ etiquetas: (seleccionada.etiquetas || []).filter(x => x !== t) });
+  const etiquetasExistentes = [...new Set(conversaciones.flatMap(c => c.etiquetas || []))];
+
+  const enviarNota = async () => {
+    if (!texto.trim() || !seleccionada) return;
+    setEnviando(true);
+    try {
+      const creada = await sb.post("crm_notas", { conversacion_id: seleccionada.id, contenido: texto.trim(), autor_agente_id: user?.id || null });
+      if (Array.isArray(creada) && creada[0]) setNotas(prev => prev.some(n => n.id === creada[0].id) ? prev : [...prev, creada[0]]);
+      setTexto("");
+    } catch (e) { alert("No se pudo guardar la nota: " + e.message); }
+    setEnviando(false);
+  };
+
+  const aplicarRespuesta = (r) => { setTexto(conNombre(r.contenido, seleccionada)); setMostrarRapidas(false); };
+  const rapidasVisibles = (() => {
+    if (modoComposer !== "responder") return [];
+    if (texto.startsWith("/")) { const q = texto.slice(1).toLowerCase(); return respuestas.filter(r => r.atajo.includes(q)); }
+    return mostrarRapidas ? respuestas : [];
+  })();
+
+  const enviarPlantilla = async () => {
+    const pl = plantillasAprobadas.find(p => p.nombre === valorPlantilla.nombre && p.idioma === valorPlantilla.idioma);
+    if (!pl) { setErrorPlantilla("Elige una plantilla."); return; }
+    const armado = armarMensajePlantilla(pl, valorPlantilla, seleccionada, user);
+    if (armado.error) { setErrorPlantilla(armado.error); return; }
+    setEnviandoPlantilla(true); setErrorPlantilla("");
+    try {
+      const creado = await sb.post("crm_mensajes", armado.fila);
+      const fila = Array.isArray(creado) ? creado[0] : null;
+      if (!fila) throw new Error("No se pudo guardar el mensaje");
+      setMensajes(prev => prev.some(m => m.id === fila.id) ? prev : [...prev, fila]);
+      const res = (await enviarPorWhatsApp([fila.id]))[fila.id];
+      const actualizado = res?.mensaje || { estado: res?.ok ? "enviado" : "fallido", error_envio: res?.ok ? null : (res?.error || "No se pudo enviar") };
+      setMensajes(prev => prev.map(m => m.id === fila.id ? { ...m, ...actualizado } : m));
+      if (res?.ok) {
+        const ahora = new Date().toISOString(); const preview = ("📋 " + fila.contenido).slice(0, 60);
+        await sb.patch("crm_conversaciones", seleccionada.id, { ultimo_mensaje_at: ahora, ultimo_mensaje_preview: preview });
+        setConversaciones(prev => prev.map(c => c.id === seleccionada.id ? { ...c, ultimo_mensaje_at: ahora, ultimo_mensaje_preview: preview } : c));
+        setModalPlantilla(false); setValorPlantilla({ nombre: "", idioma: "", variables: [], cabecera_url: null });
+      } else setErrorPlantilla(res?.error || "No se pudo enviar.");
+    } catch (e) { setErrorPlantilla(e.message); }
+    setEnviandoPlantilla(false);
   };
 
   const [respondiendoA, setRespondiendoA] = useState(null); // mensaje al que se le está por responder, o null
@@ -458,16 +593,29 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
     setEnviandoPedidoId(null);
   };
 
+  const hilo = [...mensajes, ...notas.map(n => ({ ...n, _nota: true }))].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+  useEffect(() => { if (hiloRef.current) hiloRef.current.scrollTop = hiloRef.current.scrollHeight; }, [notas]);
   const ventanaHoras = horasDeVentana(mensajes);
   const ventanaCerrada = !!seleccionada && mensajes.length > 0 && ventanaHoras <= 0;
   const pedidosDelContacto = seleccionada ? pedidos.filter(p => p.telefono === seleccionada.telefono) : [];
 
   return (
     <>
+      {/* BARRA LATERAL: carpetas, etapas, etiquetas */}
+      {!esMobil && (
+        <BarraFiltros conversaciones={conversaciones} etapas={etapas} user={user} filtro={filtro} setFiltro={setFiltro} numeros={numeros} esMobil={false} />
+      )}
+
       {/* LISTA DE CONVERSACIONES */}
       {listaVisible && (
       <div className={esMobil ? "oft-fade-in" : undefined} style={{ width: esMobil ? "100%" : 340, minWidth: esMobil ? "100%" : 340, background: WHITE, borderRight: esMobil ? "none" : `1px solid ${GRAY2}`, display: "flex", flexDirection: "column" }}>
-        <div style={{ padding: 14, borderBottom: `1px solid ${GRAY2}` }}>
+        {esMobil && <BarraFiltros conversaciones={conversaciones} etapas={etapas} user={user} filtro={filtro} setFiltro={setFiltro} numeros={numeros} esMobil />}
+        <div style={{ padding: "12px 14px", borderBottom: `1px solid ${GRAY2}` }}>
+          <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 8, gap: 8 }}>
+            <div style={{ fontWeight: 900, fontSize: 14.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{tituloFiltro}</div>
+            <div style={{ fontSize: 12, color: GRAY3, fontWeight: 700, flexShrink: 0 }}>{conversacionesFiltradas.length} chat{conversacionesFiltradas.length !== 1 ? "s" : ""}</div>
+          </div>
+          {filtro === "sin_responder" && conversacionesFiltradas.length > 0 && <div style={{ fontSize: 11.5, color: GRAY3, margin: "-4px 0 8px" }}>Primero los que llevan más tiempo esperando.</div>}
           <div style={{ position: "relative" }}>
             <Search size={15} color={GRAY3} style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)" }} />
             <input value={busqueda} onChange={e => setBusqueda(e.target.value)} placeholder="Buscar cliente o número..."
@@ -478,8 +626,8 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
           {conversacionesFiltradas.length === 0 ? (
             <div style={{ padding: "60px 24px", textAlign: "center" }}>
               <InboxIcon size={36} color={GRAY2} style={{ margin: "0 auto 12px" }} />
-              <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4 }}>Sin conversaciones todavía</div>
-              <div style={{ fontSize: 12.5, color: GRAY3, lineHeight: 1.5 }}>Aquí van a aparecer los chats de WhatsApp en cuanto se conecte el número.</div>
+              <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4 }}>{conversaciones.length === 0 ? "Sin conversaciones todavía" : filtro === "sin_responder" ? "¡Todo respondido!" : "No hay chats en esta vista"}</div>
+              <div style={{ fontSize: 12.5, color: GRAY3, lineHeight: 1.5 }}>{conversaciones.length === 0 ? "Aquí van a aparecer los chats de WhatsApp en cuanto se conecte el número." : filtro === "sin_responder" ? "No hay clientes esperando respuesta." : "Prueba con otra carpeta o etapa de la izquierda."}</div>
             </div>
           ) : conversacionesFiltradas.map(c => {
             const etapa = etapaPorId[c.etapa_id];
@@ -503,6 +651,8 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
                   <div style={{ display: "flex", gap: 5, marginTop: 5, flexWrap: "wrap" }}>
                     {etapa && <span style={{ fontSize: 9.5, fontWeight: 800, padding: "2px 7px", borderRadius: 5, background: etapa.color + "22", color: etapa.color }}>{etapa.nombre}</span>}
                     {agente && <span style={{ fontSize: 9.5, fontWeight: 700, padding: "2px 7px", borderRadius: 5, background: GRAY2, color: GRAY3 }}>{agente.nombre}</span>}
+                    {sinResponder(c) && <span style={{ fontSize: 9.5, fontWeight: 800, padding: "2px 7px", borderRadius: 5, background: "#FEE2E2", color: "#991B1B" }}>Esperando {tiempoEspera(c.ultimo_mensaje_at)}</span>}
+                    {(c.etiquetas || []).slice(0, 2).map(t => <span key={t} style={{ fontSize: 9.5, fontWeight: 700, padding: "2px 7px", borderRadius: 5, background: GRAY, color: GRAY3 }}>#{t}</span>)}
                     {c.origen === "anuncio" && <span title={c.anuncio_titulo || "Vino de un anuncio"} style={{ fontSize: 9.5, fontWeight: 800, padding: "2px 7px", borderRadius: 5, background: "#DBEAFE", color: "#1E40AF", display: "inline-flex", alignItems: "center", gap: 3 }}><Megaphone size={9} /> Anuncio</span>}
                     {variasLineas && nombreLinea(c.numero_id) && <span style={{ fontSize: 9.5, fontWeight: 700, padding: "2px 7px", borderRadius: 5, border: `1px solid ${GRAY2}`, color: GRAY3 }}>{nombreLinea(c.numero_id)}</span>}
                     {c.no_leidos > 0 && <span style={{ fontSize: 9.5, fontWeight: 800, padding: "2px 7px", borderRadius: 5, background: RED, color: WHITE }}>{c.no_leidos}</span>}
@@ -542,6 +692,15 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
                   {nombreLinea(seleccionada.numero_id) && variasLineas && <span> · por {nombreLinea(seleccionada.numero_id)}</span>}
                 </div>
               </div>
+              {estaAbierta(seleccionada) ? (
+                <button onClick={cerrarConversacion} className="oft-btn-press" title="Marcar como resuelta" style={{ background: GRAY, border: "none", borderRadius: 8, padding: "6px 10px", cursor: "pointer", display: "flex", alignItems: "center", gap: 5, fontSize: 11.5, fontWeight: 700, color: BLACK, flexShrink: 0 }}>
+                  <CheckCircle2 size={13} /> {esMobil ? "Cerrar" : "Cerrar chat"}
+                </button>
+              ) : (
+                <button onClick={reabrirConversacion} className="oft-btn-press" style={{ background: BLACK, border: "none", borderRadius: 8, padding: "6px 10px", cursor: "pointer", display: "flex", alignItems: "center", gap: 5, fontSize: 11.5, fontWeight: 700, color: WHITE, flexShrink: 0 }}>
+                  <RotateCcw size={13} /> Reabrir
+                </button>
+              )}
               {esMobil && (
                 <button onClick={() => setVistaMobil("contacto")} className="oft-btn-press" style={{ background: GRAY, border: "none", borderRadius: 8, padding: "6px 10px", cursor: "pointer", display: "flex", alignItems: "center", gap: 5, fontSize: 11.5, fontWeight: 700, color: GRAY3, flexShrink: 0 }}>
                   <Tag size={13} /> Info
@@ -549,9 +708,18 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
               )}
             </div>
             <div ref={hiloRef} style={{ flex: 1, overflowY: "auto", padding: esMobil ? 14 : 20, display: "flex", flexDirection: "column", gap: 8 }}>
-              {mensajes.length === 0 ? (
+              {hilo.length === 0 ? (
                 <div style={{ textAlign: "center", color: GRAY3, fontSize: 13, marginTop: 40 }}>Sin mensajes en esta conversación</div>
-              ) : mensajes.map(m => {
+              ) : hilo.map(m => {
+                if (m._nota) {
+                  const autor = m.autor_agente_id ? (agentePorId[m.autor_agente_id]?.nombre || "Agente") : "Workflow";
+                  return (
+                    <div key={"n" + m.id} style={{ alignSelf: "center", maxWidth: esMobil ? "92%" : "70%", background: "#FEF9C3", border: "1px solid #FDE68A", borderRadius: 10, padding: "8px 12px", fontSize: 12.5, lineHeight: 1.45, color: "#713F12", whiteSpace: "pre-wrap" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 10.5, fontWeight: 800, marginBottom: 3, opacity: 0.8 }}><StickyNote size={11} /> Nota interna · {autor} · {formatoHora(m.created_at)}</div>
+                      {m.contenido}
+                    </div>
+                  );
+                }
                 const media = resolverMedia(m.media_url);
                 const tieneMedia = m.tipo === "imagen" || m.tipo === "video" || m.tipo === "audio" || m.tipo === "documento";
                 const colorSecundario = m.direccion === "saliente" ? "rgba(255,255,255,0.65)" : GRAY3;
@@ -619,7 +787,20 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
 
                       <div style={{ padding: tieneMedia ? "0 7px" : 0 }}>
                         {/* Para documentos, "contenido" ya se usó arriba como nombre del archivo -- no se repite */}
+                        {m.tipo === "plantilla" && m.plantilla && (
+                          <>
+                            <div style={{ fontSize: 10, fontWeight: 800, opacity: 0.6, marginBottom: 4, display: "flex", alignItems: "center", gap: 4 }}><FileText size={10} /> Plantilla · {m.plantilla.nombre}</div>
+                            {m.plantilla.cabecera_url && <img src={m.plantilla.cabecera_url} onClick={() => setImagenAmpliada(m.plantilla.cabecera_url)} style={{ width: "100%", maxHeight: 200, objectFit: "cover", borderRadius: 9, display: "block", marginBottom: 6, cursor: "zoom-in" }} />}
+                            {m.plantilla.cabecera_tipo === "TEXT" && m.plantilla.cabecera_texto && <div style={{ fontWeight: 800, marginBottom: 3 }}>{m.plantilla.cabecera_texto}</div>}
+                          </>
+                        )}
                         {m.tipo !== "documento" && m.contenido}
+                        {m.tipo === "plantilla" && m.plantilla?.pie && <div style={{ fontSize: 11, opacity: 0.6, marginTop: 3 }}>{m.plantilla.pie}</div>}
+                        {m.tipo === "plantilla" && (m.plantilla?.botones || []).length > 0 && (
+                          <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 6 }}>
+                            {m.plantilla.botones.map((b, i) => <div key={i} style={{ textAlign: "center", fontSize: 11.5, fontWeight: 700, padding: "5px 8px", borderRadius: 7, background: m.direccion === "saliente" ? "rgba(255,255,255,0.12)" : GRAY }}>{b.texto}</div>)}
+                          </div>
+                        )}
                         <div style={{ display: "flex", alignItems: "center", gap: 4, justifyContent: "flex-end", marginTop: 4, marginBottom: tieneMedia ? 4 : 0, opacity: 0.6, fontSize: 10 }}>
                           {formatoHora(m.created_at)}
                           {m.direccion === "saliente" && (m.estado === "fallido" ? <AlertCircle size={12} color="#FCA5A5" /> : m.estado === "leido" ? <CheckCheck size={12} color="#7DD3FC" /> : m.estado === "entregado" ? <CheckCheck size={12} /> : <Check size={12} />)}
@@ -644,6 +825,24 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
                 );
               })}
             </div>
+            {modalPlantilla && createPortal(
+              <div onClick={() => !enviandoPlantilla && setModalPlantilla(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 250, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+                <div onClick={e => e.stopPropagation()} style={{ background: WHITE, borderRadius: 16, width: "100%", maxWidth: 460, maxHeight: "92vh", overflowY: "auto", padding: 20 }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+                    <div style={{ fontWeight: 900, fontSize: 16 }}>Enviar plantilla</div>
+                    <button onClick={() => setModalPlantilla(false)} disabled={enviandoPlantilla} className="oft-btn-press" style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}><X size={18} /></button>
+                  </div>
+                  <div style={{ fontSize: 12.5, color: GRAY3, lineHeight: 1.45, marginBottom: 14 }}>A {seleccionada.nombre_contacto || seleccionada.telefono}. Las plantillas se pueden mandar aunque hayan pasado más de 24 horas.</div>
+                  <PlantillaSelector plantillas={plantillasAprobadas} valor={valorPlantilla} onChange={setValorPlantilla} conv={seleccionada} />
+                  {errorPlantilla && <div style={{ background: "#FEE2E2", color: "#991B1B", borderRadius: 10, padding: "8px 11px", fontSize: 12.5, margin: "12px 0 0", lineHeight: 1.4 }}>{errorPlantilla}</div>}
+                  <button onClick={enviarPlantilla} disabled={enviandoPlantilla || !valorPlantilla.nombre} className="oft-btn-press"
+                    style={{ width: "100%", marginTop: 14, padding: 12, borderRadius: 11, border: "none", background: RED, color: WHITE, fontWeight: 800, fontSize: 14, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 7, opacity: enviandoPlantilla || !valorPlantilla.nombre ? 0.6 : 1 }}>
+                    <Send size={15} /> {enviandoPlantilla ? "Enviando..." : "Enviar plantilla"}
+                  </button>
+                </div>
+              </div>,
+              document.body
+            )}
             {imagenAmpliada && createPortal(
               <div onClick={() => setImagenAmpliada(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.9)", zIndex: 300, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, cursor: "zoom-out" }}>
                 <img src={imagenAmpliada} style={{ maxWidth: "100%", maxHeight: "100%", borderRadius: 8 }} onClick={e => e.stopPropagation()} />
@@ -663,25 +862,50 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
                   </button>
                 </div>
               )}
-              {mensajes.length > 0 && ventanaHoras <= 0 && (
-                <div style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "9px 14px", background: "#FEF3C7", color: "#92400E", fontSize: 12, lineHeight: 1.4 }}>
-                  <Clock size={14} style={{ flexShrink: 0, marginTop: 1 }} />
-                  <span>Pasaron más de 24 horas desde el último mensaje del cliente. WhatsApp solo deja escribirle de nuevo cuando él te escriba otra vez.</span>
+              {modoComposer === "responder" && mensajes.length > 0 && ventanaHoras <= 0 && (
+                <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 14px", background: "#FEF3C7", color: "#92400E", fontSize: 12, lineHeight: 1.4, flexWrap: "wrap" }}>
+                  <Clock size={14} style={{ flexShrink: 0 }} />
+                  <span style={{ flex: "1 1 220px" }}>Pasaron más de 24 horas desde el último mensaje del cliente. Solo puedes escribirle con una plantilla aprobada.</span>
+                  <button onClick={() => { setModalPlantilla(true); setErrorPlantilla(""); }} className="oft-btn-press" style={{ background: "#92400E", color: WHITE, border: "none", borderRadius: 8, padding: "6px 11px", fontWeight: 800, fontSize: 12, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 5 }}><FileText size={13} /> Enviar plantilla</button>
                 </div>
               )}
-              {mensajes.length > 0 && ventanaHoras > 0 && ventanaHoras < 3 && (
+              {modoComposer === "responder" && mensajes.length > 0 && ventanaHoras > 0 && ventanaHoras < 3 && (
                 <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 14px", background: "#FEF3C7", color: "#92400E", fontSize: 12 }}>
                   <Clock size={13} style={{ flexShrink: 0 }} />
                   <span>Te {ventanaHoras < 1 ? "queda menos de 1 hora" : `quedan unas ${Math.ceil(ventanaHoras)} horas`} para responderle.</span>
                 </div>
               )}
-              <div style={{ padding: 14, display: "flex", gap: 8 }}>
-                <input value={texto} onChange={e => setTexto(e.target.value)} placeholder={ventanaCerrada ? "Esperando que el cliente escriba..." : "Escribe un mensaje..."} disabled={ventanaCerrada}
-                  onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); enviarMensaje(); } }}
-                  style={{ ...S.input, marginBottom: 0, flex: 1, opacity: ventanaCerrada ? 0.6 : 1 }} />
-                <button onClick={enviarMensaje} disabled={enviando || !texto.trim() || ventanaCerrada} className="oft-btn-press"
-                  style={{ background: BLACK, color: WHITE, border: "none", borderRadius: 10, width: 44, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", opacity: enviando || !texto.trim() || ventanaCerrada ? 0.5 : 1 }}>
-                  <Send size={17} />
+              {rapidasVisibles.length > 0 && (
+                <div style={{ maxHeight: 190, overflowY: "auto", borderBottom: `1px solid ${GRAY2}`, background: WHITE }}>
+                  {rapidasVisibles.map(r => (
+                    <button key={r.id} onClick={() => aplicarRespuesta(r)} className="oft-btn-press" style={{ display: "block", width: "100%", textAlign: "left", padding: "8px 14px", border: "none", borderBottom: `1px solid ${GRAY}`, background: WHITE, cursor: "pointer" }}>
+                      <span style={{ fontWeight: 800, fontSize: 12.5 }}>/{r.atajo}</span>
+                      <span style={{ fontSize: 12, color: GRAY3, marginLeft: 8 }}>{r.contenido.length > 70 ? r.contenido.slice(0, 70) + "…" : r.contenido}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              <div style={{ display: "flex", gap: 4, padding: "8px 14px 0" }}>
+                {[["responder", "Responder"], ["nota", "Nota interna"]].map(([id, label]) => (
+                  <button key={id} onClick={() => { setModoComposer(id); setMostrarRapidas(false); }} className="oft-btn-press"
+                    style={{ fontSize: 12, fontWeight: 800, padding: "5px 11px", borderRadius: 7, border: "none", cursor: "pointer", background: modoComposer === id ? (id === "nota" ? "#FEF08A" : BLACK) : GRAY, color: modoComposer === id ? (id === "nota" ? "#713F12" : WHITE) : GRAY3 }}>{label}</button>
+                ))}
+              </div>
+              <div style={{ padding: "8px 14px 14px", display: "flex", gap: 8, alignItems: "center" }}>
+                {modoComposer === "responder" && (
+                  <>
+                    <button onClick={() => setMostrarRapidas(v => !v)} className="oft-btn-press" title="Respuestas rápidas (o escribe /)" style={{ background: mostrarRapidas ? BLACK : GRAY, color: mostrarRapidas ? WHITE : GRAY3, border: "none", borderRadius: 10, width: 38, height: 38, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}><Zap size={16} /></button>
+                    <button onClick={() => { setModalPlantilla(true); setErrorPlantilla(""); }} className="oft-btn-press" title="Enviar una plantilla de WhatsApp" style={{ background: GRAY, color: GRAY3, border: "none", borderRadius: 10, width: 38, height: 38, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}><FileText size={16} /></button>
+                  </>
+                )}
+                <input value={texto} onChange={e => setTexto(e.target.value)}
+                  placeholder={modoComposer === "nota" ? "Nota interna: solo la ve tu equipo..." : ventanaCerrada ? "Pasaron 24 h: usa una plantilla" : (esMobil ? "Escribe un mensaje..." : "Escribe un mensaje... (o / para respuestas rápidas)")}
+                  disabled={modoComposer === "responder" && ventanaCerrada}
+                  onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); modoComposer === "nota" ? enviarNota() : enviarMensaje(); } }}
+                  style={{ ...S.input, marginBottom: 0, flex: 1, minWidth: 0, opacity: modoComposer === "responder" && ventanaCerrada ? 0.6 : 1, background: modoComposer === "nota" ? "#FEFCE8" : undefined, borderColor: modoComposer === "nota" ? "#FDE68A" : undefined }} />
+                <button onClick={modoComposer === "nota" ? enviarNota : enviarMensaje} disabled={enviando || !texto.trim() || (modoComposer === "responder" && ventanaCerrada)} className="oft-btn-press"
+                  style={{ background: modoComposer === "nota" ? "#CA8A04" : BLACK, color: WHITE, border: "none", borderRadius: 10, width: 44, height: 38, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0, opacity: enviando || !texto.trim() || (modoComposer === "responder" && ventanaCerrada) ? 0.5 : 1 }}>
+                  {modoComposer === "nota" ? <StickyNote size={17} /> : <Send size={17} />}
                 </button>
               </div>
             </div>
@@ -718,6 +942,12 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
             </div>
           )}
 
+          <div style={{ fontSize: 11, fontWeight: 800, color: GRAY3, letterSpacing: 0.5, marginBottom: 8 }}>ESTADO DEL CHAT</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 20 }}>
+            <span style={{ fontSize: 12, fontWeight: 800, padding: "4px 10px", borderRadius: 7, background: estaAbierta(seleccionada) ? "#D1FAE5" : GRAY2, color: estaAbierta(seleccionada) ? "#065F46" : GRAY3 }}>{estaAbierta(seleccionada) ? "Abierto" : "Cerrado"}</span>
+            {sinResponder(seleccionada) && <span style={{ fontSize: 12, fontWeight: 800, padding: "4px 10px", borderRadius: 7, background: "#FEE2E2", color: "#991B1B" }}>Sin responder</span>}
+          </div>
+
           <div style={{ fontSize: 11, fontWeight: 800, color: GRAY3, letterSpacing: 0.5, marginBottom: 8 }}>ETAPA</div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 20 }}>
             {etapas.map(et => (
@@ -728,11 +958,30 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
             ))}
           </div>
 
-          <div style={{ fontSize: 11, fontWeight: 800, color: GRAY3, letterSpacing: 0.5, marginBottom: 8 }}>AGENTE ASIGNADO</div>
+          <div style={{ fontSize: 11, fontWeight: 800, color: GRAY3, letterSpacing: 0.5, marginBottom: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            AGENTE ASIGNADO
+            {seleccionada.agente_id !== user?.id && <button onClick={asignarmeConversacion} className="oft-btn-press" style={{ background: "none", border: "none", cursor: "pointer", fontSize: 11, fontWeight: 800, color: RED, padding: 0, letterSpacing: 0 }}>Asignarme</button>}
+          </div>
           <select value={seleccionada.agente_id || ""} onChange={e => cambiarAgente(e.target.value)} style={{ ...S.input, marginBottom: 20, fontSize: 13 }}>
             <option value="">Sin asignar</option>
             {agentes.map(a => <option key={a.id} value={a.id}>{a.nombre}</option>)}
           </select>
+
+          <div style={{ fontSize: 11, fontWeight: 800, color: GRAY3, letterSpacing: 0.5, marginBottom: 8 }}>ETIQUETAS</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
+            {(seleccionada.etiquetas || []).map(t => (
+              <span key={t} style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, fontWeight: 700, padding: "3px 8px", borderRadius: 7, background: GRAY2, color: BLACK }}>
+                #{t}
+                <button onClick={() => quitarEtiqueta(t)} className="oft-btn-press" style={{ background: "none", border: "none", cursor: "pointer", padding: 0, display: "flex" }}><X size={11} color={GRAY3} /></button>
+              </span>
+            ))}
+          </div>
+          <input value={nuevaEtiqueta} onChange={e => setNuevaEtiqueta(e.target.value)} list="oft-etiquetas" placeholder="Agregar etiqueta y Enter"
+            onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); agregarEtiqueta(nuevaEtiqueta); } }}
+            style={{ ...S.input, marginBottom: 20, fontSize: 13 }} />
+          <datalist id="oft-etiquetas">{etiquetasExistentes.map(t => <option key={t} value={t} />)}</datalist>
+
+          <CamposContacto key={seleccionada.id} conv={seleccionada} campos={camposPersonalizados} onGuardar={actualizarConv} />
 
           <div style={{ fontSize: 11, fontWeight: 800, color: GRAY3, letterSpacing: 0.5, marginBottom: 8 }}>PEDIDOS Y COTIZACIONES</div>
           {pedidosDelContacto.length === 0 ? (
@@ -1407,12 +1656,13 @@ function BloquePaso({ paso, esMobil, onClick, onEliminar }) {
 
 function resumenPaso(paso) {
   const c = paso.config || {};
+  if (paso.tipo === "enviar_mensaje" && c.modo === "plantilla") return c.plantilla_nombre ? `Plantilla: ${c.plantilla_nombre}` : "Sin plantilla todavía";
   if (paso.tipo === "enviar_mensaje") return c.texto ? `"${c.texto.slice(0, 40)}${c.texto.length > 40 ? "…" : ""}"` : "Sin texto todavía";
   if (paso.tipo === "esperar") return c.minutos ? `${c.minutos} minutos` : "Sin definir";
   if (paso.tipo === "cambiar_etapa") return c.etapa_id ? "Etapa elegida" : "Sin elegir etapa";
   if (paso.tipo === "asignar_agente") return c.modo === "menos_conversaciones" ? "Al que tenga menos chats" : c.agente_id ? "Agente elegido" : "Sin elegir agente";
   if (paso.tipo === "agregar_nota") return c.texto ? `"${c.texto.slice(0, 40)}${c.texto.length > 40 ? "…" : ""}"` : "Sin texto todavía";
-  if (paso.tipo === "bifurcacion") return c.campo ? `Si ${c.campo} ${c.operador || "es"} ...` : "Sin condición todavía";
+  if (paso.tipo === "bifurcacion") return c.campo ? `Si ${c.campo.replace("campos.", "")} ${c.operador || "es"} ...` : "Sin condición todavía";
   return "";
 }
 
@@ -1472,14 +1722,37 @@ function PanelConfigPaso({ paso, onActualizar, etapas, agentes, esMobil, onCerra
   const c = paso.config || {};
   const set = (cambios) => onActualizar({ ...c, ...cambios });
   const meta = TIPOS_PASO[paso.tipo];
+  const { campos: camposPers } = useCampos();
+  const campoSel = c.campo?.startsWith("campos.") ? camposPers.find(x => "campos." + x.clave === c.campo) : null;
+  const { plantillas: plantillasAprobadas } = usePlantillas(true);
+  // En workflows solo sirven las que se pueden mandar sin elegir imagen cada vez
+  const plantillasParaFlujo = plantillasAprobadas.filter(p => !["VIDEO", "DOCUMENT"].includes(p.cabecera_tipo) && (p.cabecera_tipo !== "IMAGE" || p.cabecera_media_url));
 
   return (
     <PanelLateral titulo={meta.label} icono={meta.icono} color={meta.color} esMobil={esMobil} onCerrar={onCerrar}>
       {paso.tipo === "enviar_mensaje" && (
         <>
-          <EtiquetaCampo>Mensaje a enviar</EtiquetaCampo>
-          <textarea value={c.texto || ""} onChange={e => set({ texto: e.target.value })} rows={5} placeholder="Escribe el mensaje... usa {nombre} para el nombre del cliente" style={{ ...S.input, resize: "vertical", fontSize: 13 }} />
-          <div style={{ fontSize: 11.5, color: GRAY3, marginTop: -10 }}>Ejemplo: "Hola {"{nombre}"}, ¿todavía te interesa el pedido?"</div>
+          <EtiquetaCampo>¿Qué enviar?</EtiquetaCampo>
+          <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+            {[["texto", "Mensaje libre"], ["plantilla", "Plantilla"]].map(([id, t]) => (
+              <button key={id} onClick={() => set({ modo: id })} className="oft-btn-press"
+                style={{ flex: 1, fontSize: 12.5, fontWeight: 700, padding: "7px 10px", borderRadius: 8, border: `1.5px solid ${(c.modo || "texto") === id ? BLACK : GRAY2}`, background: (c.modo || "texto") === id ? BLACK : WHITE, color: (c.modo || "texto") === id ? WHITE : GRAY3, cursor: "pointer" }}>{t}</button>
+            ))}
+          </div>
+          {c.modo === "plantilla" ? (
+            <>
+              <PlantillaSelector plantillas={plantillasParaFlujo}
+                valor={{ nombre: c.plantilla_nombre || "", idioma: c.plantilla_idioma || "", variables: c.variables || [], cabecera_url: null }}
+                onChange={v => set({ plantilla_nombre: v.nombre, plantilla_idioma: v.idioma, variables: v.variables })} />
+              <div style={{ fontSize: 11.5, color: GRAY3, marginTop: 10, lineHeight: 1.45 }}>Las plantillas se mandan aunque hayan pasado más de 24 horas. Meta cobra cada una.</div>
+            </>
+          ) : (
+            <>
+              <EtiquetaCampo>Mensaje a enviar</EtiquetaCampo>
+              <textarea value={c.texto || ""} onChange={e => set({ texto: e.target.value })} rows={5} placeholder="Escribe el mensaje... usa {nombre} para el nombre del cliente" style={{ ...S.input, resize: "vertical", fontSize: 13 }} />
+              <div style={{ fontSize: 11.5, color: GRAY3, marginTop: -10 }}>Ejemplo: "Hola {"{nombre}"}, ¿todavía te interesa el pedido?" · Solo llega si el cliente escribió en las últimas 24 horas.</div>
+            </>
+          )}
         </>
       )}
       {paso.tipo === "esperar" && (
@@ -1534,6 +1807,11 @@ function PanelConfigPaso({ paso, onActualizar, etapas, agentes, esMobil, onCerra
             <option value="">Elige un campo...</option>
             <option value="etapa_id">La etapa del cliente</option>
             <option value="agente_id">El agente asignado</option>
+            {camposPers.length > 0 && (
+              <optgroup label="Campos del contacto">
+                {camposPers.map(f => <option key={f.id} value={"campos." + f.clave}>{f.nombre}</option>)}
+              </optgroup>
+            )}
           </select>
           {c.campo && (
             <>
@@ -1549,11 +1827,17 @@ function PanelConfigPaso({ paso, onActualizar, etapas, agentes, esMobil, onCerra
           {c.campo && (c.operador === "es" || c.operador === "no_es" || !c.operador) && (
             <>
               <EtiquetaCampo>Valor</EtiquetaCampo>
+              {campoSel && !["seleccion", "si_no"].includes(campoSel.tipo) ? (
+                <input value={c.valor || ""} onChange={e => set({ valor: e.target.value })} type={campoSel.tipo === "numero" ? "number" : campoSel.tipo === "fecha" ? "date" : "text"} placeholder="Valor a comparar" style={{ ...S.input, fontSize: 13 }} />
+              ) : (
               <select value={c.valor || ""} onChange={e => set({ valor: e.target.value })} style={{ ...S.input, fontSize: 13 }}>
                 <option value="">Selecciona...</option>
+                {campoSel?.tipo === "seleccion" && (campoSel.opciones || []).map(o => <option key={o} value={o}>{o}</option>)}
+                {campoSel?.tipo === "si_no" && <><option value="true">Sí</option><option value="false">No</option></>}
                 {c.campo === "etapa_id" && etapas.map(et => <option key={et.id} value={et.id}>{et.nombre}</option>)}
                 {c.campo === "agente_id" && agentes.map(a => <option key={a.id} value={a.id}>{a.nombre}</option>)}
               </select>
+              )}
             </>
           )}
         </>
@@ -1695,8 +1979,15 @@ function ComposerBroadcast({ etapas, conversaciones, user, esMobil, onCerrar, on
   const [etapasSeleccionadas, setEtapasSeleccionadas] = useState([]); // [] = todas
   const [enviando, setEnviando] = useState(false);
   const [progreso, setProgreso] = useState(0);
+  const [modo, setModo] = useState("libre"); // libre (solo quienes escribieron en 24 h) | plantilla (a todos)
+  const [valorPlantilla, setValorPlantilla] = useState({ nombre: "", idioma: "", variables: [], cabecera_url: null });
+  const [etiquetasSel, setEtiquetasSel] = useState([]);
+  const { plantillas: plantillasAprobadas } = usePlantillas(true);
+  const todasEtiquetas = [...new Set(conversaciones.flatMap(c => c.etiquetas || []))];
 
-  const destinatarios = conversaciones.filter(c => etapasSeleccionadas.length === 0 || etapasSeleccionadas.includes(c.etapa_id));
+  const destinatarios = conversaciones.filter(c =>
+    (etapasSeleccionadas.length === 0 || etapasSeleccionadas.includes(c.etapa_id)) &&
+    (etiquetasSel.length === 0 || (c.etiquetas || []).some(t => etiquetasSel.includes(t))));
 
   const elegirImagen = (e) => {
     const file = e.target.files[0];
@@ -1710,20 +2001,29 @@ function ComposerBroadcast({ etapas, conversaciones, user, esMobil, onCerrar, on
   };
 
   const enviar = async () => {
-    if (!nombre.trim() || !mensajeTexto.trim()) { alert("Ponle un nombre interno y escribe el mensaje"); return; }
-    if (destinatarios.length === 0) { alert("No hay ningún cliente con ese filtro de etapa"); return; }
-    if (!confirm(`¿Enviar este broadcast a ${destinatarios.length} clientes? No se puede deshacer.\n\nWhatsApp solo entrega a quienes te escribieron en las últimas 24 horas.`)) return;
+    const esPlantilla = modo === "plantilla";
+    if (!nombre.trim() || (!esPlantilla && !mensajeTexto.trim())) { alert("Ponle un nombre interno y escribe el mensaje"); return; }
+    if (destinatarios.length === 0) { alert("No hay ningún cliente con ese filtro"); return; }
+    const plantillaSel = esPlantilla ? plantillasAprobadas.find(p => p.nombre === valorPlantilla.nombre && p.idioma === valorPlantilla.idioma) : null;
+    if (esPlantilla) {
+      if (!plantillaSel) { alert("Elige una plantilla aprobada"); return; }
+      const prueba = armarMensajePlantilla(plantillaSel, valorPlantilla, destinatarios[0], user);
+      if (prueba.error) { alert(prueba.error); return; }
+    }
+    if (!confirm(esPlantilla
+      ? `¿Enviar la plantilla "${plantillaSel.nombre}" a ${destinatarios.length} clientes? No se puede deshacer.\n\nMeta cobra cada plantilla enviada.`
+      : `¿Enviar este broadcast a ${destinatarios.length} clientes? No se puede deshacer.\n\nWhatsApp solo entrega a quienes te escribieron en las últimas 24 horas.`)) return;
     setEnviando(true);
     try {
       let imagenUrl = null;
-      if (imagenFile) {
+      if (imagenFile && !esPlantilla) {
         const comprimida = await comprimirImagen(imagenFile);
         const nombreArchivo = `broadcasts/${Date.now()}_${imagenFile.name.replace(/[^a-zA-Z0-9.]/g, "_")}`;
         await sb.upload("crm", nombreArchivo, comprimida);
         imagenUrl = sb.publicUrl("crm", nombreArchivo);
       }
       const [broadcast] = await sb.post("crm_broadcasts", {
-        nombre: nombre.trim(), canal: "whatsapp", mensaje_texto: mensajeTexto.trim(), imagen_url: imagenUrl,
+        nombre: nombre.trim(), canal: "whatsapp", mensaje_texto: esPlantilla ? `[Plantilla] ${plantillaSel.nombre}` : mensajeTexto.trim(), imagen_url: imagenUrl,
         etapas_objetivo: etapasSeleccionadas, estado: "enviando", total_destinatarios: destinatarios.length,
         enviado_por: user?.id || null,
       });
@@ -1742,7 +2042,7 @@ function ComposerBroadcast({ etapas, conversaciones, user, esMobil, onCerrar, on
             enviados++;
             await sb.patch("crm_conversaciones", x.convId, {
               ultimo_mensaje_at: new Date().toISOString(),
-              ultimo_mensaje_preview: (imagenUrl ? "📷 " : "") + mensajeTexto.trim().slice(0, 55),
+              ultimo_mensaje_preview: esPlantilla ? ("📋 " + x.resumen).slice(0, 55) : (imagenUrl ? "📷 " : "") + mensajeTexto.trim().slice(0, 55),
             });
           } else {
             rechazados++;
@@ -1753,12 +2053,15 @@ function ComposerBroadcast({ etapas, conversaciones, user, esMobil, onCerrar, on
         setProgreso(enviados + rechazados);
       };
       for (const conv of destinatarios) {
-        const [fila] = await sb.post("crm_mensajes", {
-          conversacion_id: conv.id, direccion: "saliente", tipo: imagenUrl ? "imagen" : "texto",
-          contenido: mensajeTexto.trim(), media_url: imagenUrl, agente_id: user?.id || null,
-          estado: "enviado", broadcast_id: broadcast.id, canal: "whatsapp",
-        });
-        pendientes.push({ id: fila.id, convId: conv.id });
+        const datos = esPlantilla
+          ? armarMensajePlantilla(plantillaSel, valorPlantilla, conv, user, { broadcast_id: broadcast.id }).fila
+          : {
+            conversacion_id: conv.id, direccion: "saliente", tipo: imagenUrl ? "imagen" : "texto",
+            contenido: mensajeTexto.trim(), media_url: imagenUrl, agente_id: user?.id || null,
+            estado: "enviado", broadcast_id: broadcast.id, canal: "whatsapp",
+          };
+        const [fila] = await sb.post("crm_mensajes", datos);
+        pendientes.push({ id: fila.id, convId: conv.id, resumen: datos.contenido });
         if (pendientes.length >= 10) await vaciar();
       }
       await vaciar();
@@ -1784,6 +2087,23 @@ function ComposerBroadcast({ etapas, conversaciones, user, esMobil, onCerrar, on
         <EtiquetaCampo>Nombre interno (solo para identificarlo tú)</EtiquetaCampo>
         <input value={nombre} onChange={e => setNombre(e.target.value)} placeholder="Ej: Promo de fin de mes" style={{ ...S.input, fontSize: 13.5 }} disabled={enviando} />
 
+        <EtiquetaCampo>Tipo de mensaje</EtiquetaCampo>
+        <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
+          {[["libre", "Mensaje libre", "Solo les llega a quienes te escribieron en las últimas 24 h"], ["plantilla", "Plantilla aprobada", "Llega a todos, aunque no te escriban hace meses"]].map(([id, t, d]) => (
+            <button key={id} onClick={() => setModo(id)} disabled={enviando} className="oft-btn-press"
+              style={{ flex: "1 1 200px", textAlign: "left", padding: "9px 11px", borderRadius: 10, border: `1.5px solid ${modo === id ? BLACK : GRAY2}`, background: modo === id ? GRAY : WHITE, cursor: "pointer" }}>
+              <div style={{ fontWeight: 800, fontSize: 13 }}>{t}</div>
+              <div style={{ fontSize: 11.5, color: GRAY3, lineHeight: 1.35 }}>{d}</div>
+            </button>
+          ))}
+        </div>
+
+        {modo === "plantilla" ? (
+          <div style={{ marginBottom: 14 }}>
+            <PlantillaSelector plantillas={plantillasAprobadas} valor={valorPlantilla} onChange={setValorPlantilla} conv={destinatarios[0] || null} />
+          </div>
+        ) : (
+        <>
         <EtiquetaCampo>Mensaje</EtiquetaCampo>
         <textarea value={mensajeTexto} onChange={e => setMensajeTexto(e.target.value)} rows={5} placeholder="Escribe el mensaje que van a recibir..." style={{ ...S.input, resize: "vertical", fontSize: 13.5 }} disabled={enviando} />
 
@@ -1804,6 +2124,9 @@ function ComposerBroadcast({ etapas, conversaciones, user, esMobil, onCerrar, on
           </label>
         )}
 
+        </>
+        )}
+
         <EtiquetaCampo>¿A quién? (por etapa)</EtiquetaCampo>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 6 }}>
           <button onClick={() => setEtapasSeleccionadas([])} disabled={enviando} className="oft-btn-press"
@@ -1817,13 +2140,31 @@ function ComposerBroadcast({ etapas, conversaciones, user, esMobil, onCerrar, on
             </button>
           ))}
         </div>
+        {todasEtiquetas.length > 0 && (
+          <>
+            <div style={{ fontSize: 12, fontWeight: 700, color: GRAY3, margin: "10px 0 6px" }}>Solo con estas etiquetas (opcional)</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 6 }}>
+              {todasEtiquetas.map(t => (
+                <button key={t} onClick={() => setEtiquetasSel(prev => prev.includes(t) ? prev.filter(x => x !== t) : [...prev, t])} disabled={enviando} className="oft-btn-press"
+                  style={{ fontSize: 12, fontWeight: 700, padding: "5px 10px", borderRadius: 8, border: `1.5px solid ${etiquetasSel.includes(t) ? BLACK : GRAY2}`, background: etiquetasSel.includes(t) ? BLACK : WHITE, color: etiquetasSel.includes(t) ? WHITE : GRAY3, cursor: "pointer" }}>#{t}</button>
+              ))}
+            </div>
+          </>
+        )}
         <div style={{ fontSize: 12.5, color: GRAY3, marginBottom: 24 }}>
           Este broadcast va a llegarle a <strong style={{ color: BLACK }}>{destinatarios.length}</strong> cliente{destinatarios.length !== 1 ? "s" : ""}.
         </div>
-        <div style={{ display: "flex", gap: 8, alignItems: "flex-start", background: "#FEF3C7", color: "#92400E", borderRadius: 10, padding: "9px 12px", fontSize: 12, lineHeight: 1.4, margin: "-12px 0 20px" }}>
-          <Clock size={14} style={{ flexShrink: 0, marginTop: 1 }} />
-          <span>WhatsApp solo entrega mensajes libres a quienes te escribieron en las últimas 24 horas. A los demás les aparecerá "No enviado" en su chat.</span>
-        </div>
+        {modo === "libre" ? (
+          <div style={{ display: "flex", gap: 8, alignItems: "flex-start", background: "#FEF3C7", color: "#92400E", borderRadius: 10, padding: "9px 12px", fontSize: 12, lineHeight: 1.4, margin: "-12px 0 20px" }}>
+            <Clock size={14} style={{ flexShrink: 0, marginTop: 1 }} />
+            <span>WhatsApp solo entrega mensajes libres a quienes te escribieron en las últimas 24 horas. A los demás les aparecerá "No enviado" en su chat. Para llegar a todos, usa una plantilla aprobada.</span>
+          </div>
+        ) : (
+          <div style={{ display: "flex", gap: 8, alignItems: "flex-start", background: GRAY, color: GRAY3, borderRadius: 10, padding: "9px 12px", fontSize: 12, lineHeight: 1.4, margin: "-12px 0 20px" }}>
+            <AlertCircle size={14} style={{ flexShrink: 0, marginTop: 1 }} />
+            <span>Meta cobra cada plantilla enviada y puede limitar cuántos mensajes de marketing recibe cada persona.</span>
+          </div>
+        )}
 
         <button onClick={enviar} disabled={enviando} className="oft-btn-press"
           style={{ width: "100%", padding: 14, borderRadius: 12, border: "none", background: RED, color: WHITE, fontWeight: 800, fontSize: 14.5, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, opacity: enviando ? 0.7 : 1 }}>
@@ -1833,6 +2174,1151 @@ function ComposerBroadcast({ etapas, conversaciones, user, esMobil, onCerrar, on
     </div>
   );
 }
+
+// ═══════════════════════════════════════════════════════════════
+//  ESTADOS DE LA BANDEJA, PLANTILLAS Y RESPUESTAS RÁPIDAS
+// ═══════════════════════════════════════════════════════════════
+const estaAbierta = (c) => c.estado_chat !== "cerrada";
+// "Sin responder" = el último mensaje (que no falló) lo mandó el cliente y la conversación sigue abierta
+const sinResponder = (c) => estaAbierta(c) && c.ultimo_direccion === "entrante";
+
+function tiempoEspera(fecha) {
+  if (!fecha) return "";
+  const min = Math.max(0, Math.floor((Date.now() - new Date(fecha).getTime()) / 60000));
+  if (min < 1) return "ahora";
+  if (min < 60) return `${min} min`;
+  if (min < 1440) return `${Math.floor(min / 60)} h`;
+  return `${Math.floor(min / 1440)} d`;
+}
+
+const primerNombre = (conv) => String(conv?.nombre_contacto || "").trim().split(/\s+/)[0] || "cliente";
+const conNombre = (texto, conv) => String(texto || "").replace(/\{nombre\}/g, primerNombre(conv));
+const contarVariables = (cuerpo) => Math.max(0, ...[...String(cuerpo || "").matchAll(/\{\{(\d+)\}\}/g)].map(m => Number(m[1])));
+const rellenarVariables = (cuerpo, vars) => String(cuerpo || "").replace(/\{\{(\d+)\}\}/g, (_, n) => (vars?.[Number(n) - 1] ?? "") || `{{${n}}}`);
+
+const ESTADO_PLANTILLA = {
+  APPROVED: { texto: "Aprobada", bg: "#D1FAE5", color: "#065F46" },
+  PENDING: { texto: "En revisión", bg: "#FEF3C7", color: "#92400E" },
+  IN_APPEAL: { texto: "En apelación", bg: "#FEF3C7", color: "#92400E" },
+  REJECTED: { texto: "Rechazada", bg: "#FEE2E2", color: "#991B1B" },
+  PAUSED: { texto: "Pausada por Meta", bg: "#FEE2E2", color: "#991B1B" },
+  DISABLED: { texto: "Desactivada", bg: "#FEE2E2", color: "#991B1B" },
+};
+const CATEGORIA_PLANTILLA = { MARKETING: "Marketing", UTILITY: "Utilidad", AUTHENTICATION: "Autenticación" };
+
+// Arma la fila que se guarda (y luego se manda por WhatsApp) para una plantilla.
+// Devuelve { fila } o { error }.
+function armarMensajePlantilla(pl, valor, conv, user, extra = {}) {
+  const n = contarVariables(pl.cuerpo);
+  const vars = Array.from({ length: n }, (_, i) => conNombre(valor?.variables?.[i] || "", conv).trim());
+  if (vars.some(v => !v)) return { error: "Llena todas las variables de la plantilla." };
+  const urlImagen = pl.cabecera_tipo === "IMAGE" ? (pl.cabecera_media_url || valor?.cabecera_url || null) : null;
+  if (pl.cabecera_tipo === "IMAGE" && !urlImagen) return { error: "Esta plantilla lleva imagen. Sube una." };
+  if (["VIDEO", "DOCUMENT"].includes(pl.cabecera_tipo)) return { error: "Esta plantilla lleva video o documento y todavía no se puede enviar desde aquí." };
+  return {
+    fila: {
+      conversacion_id: conv.id, direccion: "saliente", tipo: "plantilla", canal: "whatsapp", estado: "enviado",
+      contenido: rellenarVariables(pl.cuerpo, vars), agente_id: user?.id || null,
+      plantilla: { nombre: pl.nombre, idioma: pl.idioma, variables: vars, cabecera_tipo: pl.cabecera_tipo, cabecera_texto: pl.cabecera_texto, cabecera_url: urlImagen, pie: pl.pie, botones: pl.botones || [] },
+      ...extra,
+    },
+  };
+}
+
+// Plantillas guardadas en el CRM (se mantienen al día con Meta al sincronizar).
+function usePlantillas(soloAprobadas = false) {
+  const [plantillas, setPlantillas] = useState([]);
+  const [cargando, setCargando] = useState(true);
+  const recargar = async () => {
+    try {
+      const filtro = soloAprobadas ? "?estado=eq.APPROVED&order=nombre.asc" : "?order=created_at.desc";
+      setPlantillas((await sb.get("crm_plantillas", filtro)) || []);
+    } catch (e) { setPlantillas([]); }
+    setCargando(false);
+  };
+  useEffect(() => { recargar(); }, []);
+  return { plantillas, setPlantillas, cargando, recargar };
+}
+
+async function llamarFuncion(nombre, cuerpo) {
+  await sb.ensureFreshToken?.();
+  const r = await fetch(`${SUPABASE_URL}/functions/v1/${nombre}`, { method: "POST", headers: sb.functionHeaders(), body: JSON.stringify(cuerpo) });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data?.error || `Error ${r.status}`);
+  return data;
+}
+
+// Vista previa tipo WhatsApp de una plantilla
+function PlantillaVista({ cabeceraTipo, cabeceraTexto, cabeceraUrl, cuerpo, pie, botones = [], compacta = false }) {
+  const lista = (botones || []).filter(b => b.texto);
+  return (
+    <div style={{ background: "#ECE5DD", borderRadius: 12, padding: compacta ? 8 : 14 }}>
+      <div style={{ background: WHITE, borderRadius: "4px 12px 12px 12px", padding: 6, maxWidth: 300, boxShadow: "0 1px 1px rgba(0,0,0,0.12)" }}>
+        {cabeceraTipo === "IMAGE" && (
+          cabeceraUrl
+            ? <img src={cabeceraUrl} style={{ width: "100%", height: compacta ? 110 : 150, objectFit: "cover", borderRadius: 8, display: "block", marginBottom: 6 }} />
+            : <div style={{ height: 90, borderRadius: 8, background: GRAY, display: "flex", alignItems: "center", justifyContent: "center", color: GRAY3, fontSize: 11.5, marginBottom: 6 }}><ImageIcon size={16} style={{ marginRight: 5 }} /> Imagen</div>
+        )}
+        {cabeceraTipo === "TEXT" && cabeceraTexto && <div style={{ fontWeight: 800, fontSize: 13.5, padding: "3px 6px 0" }}>{cabeceraTexto}</div>}
+        <div style={{ fontSize: 13, lineHeight: 1.45, padding: "3px 6px", whiteSpace: "pre-wrap", wordBreak: "break-word", color: BLACK }}>{cuerpo || <span style={{ color: GRAY3 }}>Aquí se verá tu mensaje…</span>}</div>
+        {pie && <div style={{ fontSize: 11, color: GRAY3, padding: "0 6px 3px" }}>{pie}</div>}
+      </div>
+      {lista.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 3, marginTop: 3, maxWidth: 300 }}>
+          {lista.map((b, i) => (
+            <div key={i} style={{ background: WHITE, borderRadius: 8, padding: "7px 8px", textAlign: "center", color: "#1B7BC4", fontWeight: 700, fontSize: 12.5, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, boxShadow: "0 1px 1px rgba(0,0,0,0.12)" }}>
+              {b.tipo === "URL" && <ExternalLink size={12} />}
+              {b.tipo === "PHONE_NUMBER" && <Phone size={12} />}
+              {b.tipo === "QUICK_REPLY" && <ArrowLeft size={12} />}
+              {b.texto}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Elegir una plantilla aprobada y llenar sus variables. Se usa en la Bandeja,
+// los Broadcasts y los Workflows. "valor" = { nombre, idioma, variables, cabecera_url }.
+function PlantillaSelector({ plantillas, valor, onChange, conv = null, permitirNombre = true }) {
+  const [subiendo, setSubiendo] = useState(false);
+  const actual = plantillas.find(p => p.nombre === valor?.nombre && p.idioma === valor?.idioma) || null;
+  const n = actual ? contarVariables(actual.cuerpo) : 0;
+  const vars = Array.from({ length: n }, (_, i) => valor?.variables?.[i] || "");
+  const fijar = (cambios) => onChange({ ...valor, ...cambios });
+
+  const elegir = (clave) => {
+    const p = plantillas.find(x => `${x.nombre}|${x.idioma}` === clave);
+    if (!p) { onChange({ nombre: "", idioma: "", variables: [], cabecera_url: null }); return; }
+    // La primera variable casi siempre es el nombre del cliente: se deja lista
+    const base = Array.from({ length: contarVariables(p.cuerpo) }, (_, i) => (i === 0 && permitirNombre ? "{nombre}" : ""));
+    onChange({ nombre: p.nombre, idioma: p.idioma, variables: base, cabecera_url: null });
+  };
+
+  const subirImagen = async (e) => {
+    const file = e.target.files?.[0]; if (!file) return;
+    setSubiendo(true);
+    try {
+      const comprimida = await comprimirImagen(file);
+      const ruta = `plantillas-envio/${Date.now()}_${comprimida.name.replace(/[^a-zA-Z0-9.]/g, "_")}`;
+      await sb.upload("crm", ruta, comprimida);
+      fijar({ cabecera_url: sb.publicUrl("crm", ruta) });
+    } catch (err) { alert("No se pudo subir la imagen: " + err.message); }
+    setSubiendo(false);
+  };
+
+  const textoVista = actual ? rellenarVariables(actual.cuerpo, vars.map(v => conv ? conNombre(v, conv) : v.replace(/\{nombre\}/g, "Cliente"))) : "";
+
+  return (
+    <div>
+      <EtiquetaCampo>Plantilla aprobada</EtiquetaCampo>
+      <select value={actual ? `${actual.nombre}|${actual.idioma}` : ""} onChange={e => elegir(e.target.value)} style={{ ...S.input, fontSize: 13 }}>
+        <option value="">{plantillas.length === 0 ? "No hay plantillas aprobadas todavía" : "Elige una plantilla..."}</option>
+        {plantillas.map(p => <option key={p.id} value={`${p.nombre}|${p.idioma}`}>{p.nombre} · {CATEGORIA_PLANTILLA[p.categoria] || p.categoria}</option>)}
+      </select>
+      {actual && (
+        <>
+          {n > 0 && (
+            <>
+              <EtiquetaCampo>Datos que cambian en cada mensaje</EtiquetaCampo>
+              {vars.map((v, i) => (
+                <input key={i} value={v} onChange={e => { const nuevas = [...vars]; nuevas[i] = e.target.value; fijar({ variables: nuevas }); }}
+                  placeholder={`Variable {{${i + 1}}}${actual.cuerpo_ejemplos?.[i] ? ` (ej: ${actual.cuerpo_ejemplos[i]})` : ""}`}
+                  style={{ ...S.input, fontSize: 13, marginBottom: 8 }} />
+              ))}
+              {permitirNombre && <div style={{ fontSize: 11.5, color: GRAY3, margin: "-2px 0 12px" }}>Escribe <strong>{"{nombre}"}</strong> y se cambia por el nombre de cada cliente.</div>}
+            </>
+          )}
+          {actual.cabecera_tipo === "IMAGE" && !actual.cabecera_media_url && (
+            <>
+              <EtiquetaCampo>Imagen de la plantilla</EtiquetaCampo>
+              {valor?.cabecera_url ? <img src={valor.cabecera_url} style={{ width: 90, height: 90, objectFit: "cover", borderRadius: 10, marginBottom: 12 }} /> : (
+                <label style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 12px", borderRadius: 9, border: `1.5px dashed ${GRAY2}`, cursor: "pointer", fontSize: 12.5, fontWeight: 700, color: GRAY3, marginBottom: 12 }}>
+                  <Upload size={14} /> {subiendo ? "Subiendo..." : "Subir imagen"}
+                  <input type="file" accept="image/*" onChange={subirImagen} style={{ display: "none" }} disabled={subiendo} />
+                </label>
+              )}
+            </>
+          )}
+          <PlantillaVista cabeceraTipo={actual.cabecera_tipo} cabeceraTexto={actual.cabecera_texto} cabeceraUrl={actual.cabecera_media_url || valor?.cabecera_url} cuerpo={textoVista} pie={actual.pie} botones={actual.botones} compacta />
+        </>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+//  PESTAÑA "PLANTILLAS": plantillas de WhatsApp (se crean aquí y las
+//  aprueba Meta) y respuestas rápidas del equipo.
+// ─────────────────────────────────────────────────────────────
+function PlantillasPanel() {
+  const esMobil = useEsMobil();
+  const { user } = useApp();
+  const esAdmin = !!user?.es_admin;
+  const [seccion, setSeccion] = useState("plantillas");
+  const SECCIONES = [["plantillas", "Plantillas de WhatsApp", FileText], ["rapidas", "Respuestas rápidas", Zap]];
+  return (
+    <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0, minWidth: 0 }}>
+      <div style={{ background: WHITE, borderBottom: `1px solid ${GRAY2}`, padding: esMobil ? "8px 12px" : "10px 24px", display: "flex", gap: 6, overflowX: "auto" }}>
+        {SECCIONES.map(([id, label, Icon]) => (
+          <button key={id} onClick={() => setSeccion(id)} className="oft-btn-press"
+            style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 8, border: "none", fontWeight: 700, fontSize: 12.5, cursor: "pointer", whiteSpace: "nowrap", ...(seccion === id ? ESTILO_TAB_ACTIVO : { color: GRAY3, background: GRAY }) }}>
+            <Icon size={14} /> {label}
+          </button>
+        ))}
+      </div>
+      {seccion === "plantillas" ? <ListaPlantillas esAdmin={esAdmin} esMobil={esMobil} /> : <RespuestasRapidasPanel esMobil={esMobil} user={user} />}
+    </div>
+  );
+}
+
+function ListaPlantillas({ esAdmin, esMobil }) {
+  const { plantillas, setPlantillas, cargando } = usePlantillas(false);
+  const [filtro, setFiltro] = useState("TODAS");
+  const [creando, setCreando] = useState(false);
+  const [sincronizando, setSincronizando] = useState(false);
+  const [aviso, setAviso] = useState(null);
+
+  const sincronizar = async (silencioso = false) => {
+    setSincronizando(true); if (!silencioso) setAviso(null);
+    try {
+      const data = await llamarFuncion("whatsapp-plantillas", { modo: "sincronizar" });
+      setPlantillas(data.plantillas || []);
+      if (!silencioso) setAviso({ tipo: "ok", texto: "Plantillas al día con Meta." });
+    } catch (e) { if (!silencioso) setAviso({ tipo: "error", texto: e.message }); }
+    setSincronizando(false);
+  };
+  // Al entrar se actualiza solo el estado (Meta aprueba o rechaza sin avisar al CRM)
+  useEffect(() => { sincronizar(true); }, []);
+
+  const eliminar = async (p) => {
+    if (!confirm(`¿Borrar la plantilla "${p.nombre}"? También se borra en Meta y no se puede deshacer.`)) return;
+    try {
+      await llamarFuncion("whatsapp-plantillas", { modo: "eliminar", nombre: p.nombre });
+      setPlantillas(prev => prev.filter(x => x.id !== p.id));
+    } catch (e) { setAviso({ tipo: "error", texto: e.message }); }
+  };
+
+  if (creando) {
+    return <EditorPlantilla esMobil={esMobil} onCerrar={() => setCreando(false)}
+      onCreada={(p) => { setPlantillas(prev => [p, ...prev.filter(x => x.id !== p.id)]); setCreando(false); setAviso({ tipo: "ok", texto: "Plantilla enviada a revisión de Meta. Suele tardar de unos minutos a 24 horas; el estado se actualiza solo al entrar aquí o con el botón Sincronizar." }); }} />;
+  }
+
+  const conteo = (e) => plantillas.filter(p => p.estado === e).length;
+  const FILTROS = [["TODAS", "Todas", plantillas.length], ["APPROVED", "Aprobadas", conteo("APPROVED")], ["PENDING", "En revisión", conteo("PENDING")], ["REJECTED", "Rechazadas", plantillas.filter(p => ["REJECTED", "PAUSED", "DISABLED"].includes(p.estado)).length]];
+  const visibles = plantillas.filter(p => filtro === "TODAS" ? true : filtro === "REJECTED" ? ["REJECTED", "PAUSED", "DISABLED"].includes(p.estado) : p.estado === filtro);
+  const colorAviso = aviso?.tipo === "ok" ? { bg: "#D1FAE5", color: "#065F46" } : { bg: "#FEE2E2", color: "#991B1B" };
+
+  return (
+    <div style={{ flex: 1, padding: esMobil ? 14 : 24, overflowY: "auto" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 6 }}>
+        <div>
+          <div style={{ fontWeight: 900, fontSize: 17 }}>Plantillas de WhatsApp</div>
+          <div style={{ fontSize: 12.5, color: GRAY3, maxWidth: 560, lineHeight: 1.45 }}>Son los únicos mensajes que puedes mandar a un cliente cuando pasaron más de 24 horas desde que te escribió. Meta revisa cada una antes de dejarla usar.</div>
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={() => sincronizar(false)} disabled={sincronizando} className="oft-btn-press"
+            style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "9px 13px", borderRadius: 10, border: `1.5px solid ${GRAY2}`, background: WHITE, fontWeight: 700, fontSize: 13, cursor: "pointer", opacity: sincronizando ? 0.6 : 1 }}>
+            <RefreshCw size={14} style={sincronizando ? { animation: "spin 1s linear infinite" } : undefined} /> Sincronizar
+          </button>
+          {esAdmin && (
+            <button onClick={() => { setCreando(true); setAviso(null); }} className="oft-btn-press"
+              style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "9px 14px", borderRadius: 10, border: "none", background: RED, color: WHITE, fontWeight: 800, fontSize: 13, cursor: "pointer" }}>
+              <Plus size={15} /> Crear plantilla
+            </button>
+          )}
+        </div>
+      </div>
+
+      {aviso && (
+        <div style={{ background: colorAviso.bg, color: colorAviso.color, borderRadius: 10, padding: "9px 12px", fontSize: 12.5, lineHeight: 1.45, margin: "12px 0", display: "flex", gap: 7, alignItems: "flex-start" }}>
+          {aviso.tipo === "ok" ? <CheckCircle2 size={15} style={{ flexShrink: 0, marginTop: 1 }} /> : <AlertCircle size={15} style={{ flexShrink: 0, marginTop: 1 }} />}
+          <span>{aviso.texto}</span>
+        </div>
+      )}
+
+      <div style={{ display: "flex", gap: 6, margin: "14px 0", flexWrap: "wrap" }}>
+        {FILTROS.map(([id, label, n]) => (
+          <button key={id} onClick={() => setFiltro(id)} className="oft-btn-press"
+            style={{ fontSize: 12.5, fontWeight: 700, padding: "6px 12px", borderRadius: 8, border: `1.5px solid ${filtro === id ? BLACK : GRAY2}`, background: filtro === id ? BLACK : WHITE, color: filtro === id ? WHITE : GRAY3, cursor: "pointer" }}>
+            {label} <span style={{ opacity: 0.7 }}>{n}</span>
+          </button>
+        ))}
+      </div>
+
+      {cargando ? <Spinner /> : visibles.length === 0 ? (
+        <div style={{ textAlign: "center", padding: "50px 20px", color: GRAY3 }}>
+          <FileText size={36} color={GRAY2} style={{ margin: "0 auto 10px" }} />
+          <div style={{ fontWeight: 800, fontSize: 14, color: BLACK, marginBottom: 4 }}>{plantillas.length === 0 ? "Todavía no hay plantillas" : "No hay plantillas con ese filtro"}</div>
+          <div style={{ fontSize: 12.5, lineHeight: 1.5 }}>{plantillas.length === 0 ? (esAdmin ? "Crea la primera con el botón rojo. Si ya tienes plantillas en Meta, pulsa Sincronizar para traerlas." : "Pídele al administrador que cree una.") : "Prueba con otro filtro."}</div>
+        </div>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: esMobil ? "1fr" : "repeat(auto-fill, minmax(320px, 1fr))", gap: 14, alignItems: "start" }}>
+          {visibles.map(p => {
+            const est = ESTADO_PLANTILLA[p.estado] || { texto: p.estado, bg: GRAY, color: GRAY3 };
+            return (
+              <div key={p.id} style={{ background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 14, padding: 14 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 4 }}>
+                  <div style={{ fontWeight: 800, fontSize: 13.5, wordBreak: "break-all" }}>{p.nombre}</div>
+                  <span style={{ fontSize: 10, fontWeight: 800, padding: "2px 7px", borderRadius: 5, background: est.bg, color: est.color }}>{est.texto}</span>
+                </div>
+                <div style={{ fontSize: 11.5, color: GRAY3, marginBottom: 10 }}>{CATEGORIA_PLANTILLA[p.categoria] || p.categoria} · {p.idioma}</div>
+                {p.motivo_rechazo && <div style={{ fontSize: 12, color: "#991B1B", background: "#FEE2E2", borderRadius: 8, padding: "6px 9px", marginBottom: 10 }}>Motivo de Meta: {p.motivo_rechazo}</div>}
+                <PlantillaVista cabeceraTipo={p.cabecera_tipo} cabeceraTexto={p.cabecera_texto} cabeceraUrl={p.cabecera_media_url}
+                  cuerpo={rellenarVariables(p.cuerpo, p.cuerpo_ejemplos)} pie={p.pie} botones={p.botones} compacta />
+                {esAdmin && (
+                  <button onClick={() => eliminar(p)} className="oft-btn-press" style={{ marginTop: 10, display: "inline-flex", alignItems: "center", gap: 5, background: "none", border: "none", color: GRAY3, fontSize: 12, fontWeight: 700, cursor: "pointer", padding: 0 }}>
+                    <Trash2 size={13} /> Borrar
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const quitarTildes = (s) => s.normalize("NFD").replace(/[̀-ͯ]/g, "");
+
+function EditorPlantilla({ esMobil, onCerrar, onCreada }) {
+  const [nombre, setNombre] = useState("");
+  const [categoria, setCategoria] = useState("MARKETING");
+  const [idioma, setIdioma] = useState("es");
+  const [cabTipo, setCabTipo] = useState("NONE");
+  const [cabTexto, setCabTexto] = useState("");
+  const [cabUrl, setCabUrl] = useState(null);
+  const [cuerpo, setCuerpo] = useState("");
+  const [ejemplos, setEjemplos] = useState([]);
+  const [pie, setPie] = useState("");
+  const [botones, setBotones] = useState([]);
+  const [guardando, setGuardando] = useState(false);
+  const [subiendo, setSubiendo] = useState(false);
+  const [error, setError] = useState("");
+  const areaRef = useRef(null);
+
+  const nVars = contarVariables(cuerpo);
+  const ejemplosVista = Array.from({ length: nVars }, (_, i) => ejemplos[i] || "");
+
+  const agregarVariable = () => {
+    const sig = nVars + 1;
+    const el = areaRef.current;
+    const pos = el ? el.selectionStart : cuerpo.length;
+    setCuerpo(cuerpo.slice(0, pos) + `{{${sig}}}` + cuerpo.slice(pos));
+  };
+  const subirImagen = async (e) => {
+    const file = e.target.files?.[0]; if (!file) return;
+    setSubiendo(true); setError("");
+    try {
+      const comprimida = await comprimirImagen(file, 1200);
+      if (!["image/jpeg", "image/png"].includes(comprimida.type)) throw new Error("Usa una imagen JPG o PNG.");
+      const ruta = `plantillas/${Date.now()}_${comprimida.name.replace(/[^a-zA-Z0-9.]/g, "_")}`;
+      await sb.upload("crm", ruta, comprimida);
+      setCabUrl(sb.publicUrl("crm", ruta));
+    } catch (err) { setError(err.message); }
+    setSubiendo(false);
+  };
+  const actualizarBoton = (i, cambios) => setBotones(prev => prev.map((b, j) => j === i ? { ...b, ...cambios } : b));
+
+  const enviar = async () => {
+    setError("");
+    if (ejemplosVista.some(v => !v.trim())) { setError("Meta pide un ejemplo para cada variable. Llénalos todos."); return; }
+    if (/^\s*\{\{\d+\}\}|\{\{\d+\}\}\s*$/.test(cuerpo)) { setError("El mensaje no puede empezar ni terminar con una variable. Agrega texto antes y después."); return; }
+    setGuardando(true);
+    try {
+      const data = await llamarFuncion("whatsapp-plantillas", {
+        modo: "crear", nombre, idioma, categoria, cuerpo, ejemplos: ejemplosVista, pie,
+        cabecera: { tipo: cabTipo, texto: cabTexto, imagen_url: cabUrl }, botones,
+      });
+      onCreada(data.plantilla);
+    } catch (e) { setError(e.message); }
+    setGuardando(false);
+  };
+
+  const sinResponderBtn = botones.some(b => b.tipo === "QUICK_REPLY");
+  return (
+    <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
+      <div style={{ background: WHITE, borderBottom: `1px solid ${GRAY2}`, padding: esMobil ? "10px 14px" : "14px 24px", display: "flex", alignItems: "center", gap: 12 }}>
+        <button onClick={onCerrar} disabled={guardando} className="oft-btn-press" style={{ background: "none", border: "none", padding: 4, cursor: "pointer", display: "flex" }}><ArrowLeft size={20} /></button>
+        <div style={{ fontWeight: 800, fontSize: 15 }}>Nueva plantilla de WhatsApp</div>
+      </div>
+      <div style={{ flex: 1, overflowY: "auto", padding: esMobil ? 16 : 24 }}>
+        <div style={{ display: "flex", gap: 28, flexWrap: "wrap", alignItems: "flex-start", maxWidth: 940, margin: "0 auto" }}>
+          <div style={{ flex: "1 1 380px", minWidth: 0 }}>
+            <EtiquetaCampo>Nombre (solo para identificarla)</EtiquetaCampo>
+            <input value={nombre} onChange={e => setNombre(quitarTildes(e.target.value).toLowerCase().replace(/[^a-z0-9_ ]/g, "").replace(/ +/g, "_").slice(0, 80))}
+              placeholder="promo_docena_octubre" style={{ ...S.input, fontSize: 13.5 }} disabled={guardando} />
+            <div style={{ fontSize: 11.5, color: GRAY3, margin: "-8px 0 14px" }}>Sin tildes ni espacios; no se puede cambiar después.</div>
+
+            <EtiquetaCampo>¿Para qué es?</EtiquetaCampo>
+            <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
+              {[["MARKETING", "Marketing", "Promos, ofertas, novedades"], ["UTILITY", "Utilidad", "Pedido listo, cotización, seguimiento"]].map(([id, t, d]) => (
+                <button key={id} onClick={() => setCategoria(id)} disabled={guardando} className="oft-btn-press"
+                  style={{ flex: "1 1 160px", textAlign: "left", padding: "9px 11px", borderRadius: 10, border: `1.5px solid ${categoria === id ? BLACK : GRAY2}`, background: categoria === id ? GRAY : WHITE, cursor: "pointer" }}>
+                  <div style={{ fontWeight: 800, fontSize: 13 }}>{t}</div>
+                  <div style={{ fontSize: 11.5, color: GRAY3 }}>{d}</div>
+                </button>
+              ))}
+            </div>
+
+            <EtiquetaCampo>Idioma</EtiquetaCampo>
+            <select value={idioma} onChange={e => setIdioma(e.target.value)} style={{ ...S.input, fontSize: 13 }} disabled={guardando}>
+              <option value="es">Español</option><option value="en_US">Inglés</option>
+            </select>
+
+            <EtiquetaCampo>Encabezado (opcional)</EtiquetaCampo>
+            <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+              {[["NONE", "Ninguno"], ["TEXT", "Título"], ["IMAGE", "Imagen"]].map(([id, t]) => (
+                <button key={id} onClick={() => setCabTipo(id)} disabled={guardando} className="oft-btn-press"
+                  style={{ fontSize: 12.5, fontWeight: 700, padding: "6px 12px", borderRadius: 8, border: `1.5px solid ${cabTipo === id ? BLACK : GRAY2}`, background: cabTipo === id ? BLACK : WHITE, color: cabTipo === id ? WHITE : GRAY3, cursor: "pointer" }}>{t}</button>
+              ))}
+            </div>
+            {cabTipo === "TEXT" && <input value={cabTexto} onChange={e => setCabTexto(e.target.value.slice(0, 60))} placeholder="Ej: Oferta de la semana" style={{ ...S.input, fontSize: 13.5 }} disabled={guardando} />}
+            {cabTipo === "IMAGE" && (
+              cabUrl ? (
+                <div style={{ position: "relative", width: 120, marginBottom: 14 }}>
+                  <img src={cabUrl} style={{ width: 120, height: 120, objectFit: "cover", borderRadius: 10, border: `1px solid ${GRAY2}` }} />
+                  <button onClick={() => setCabUrl(null)} className="oft-btn-press" style={{ position: "absolute", top: -8, right: -8, width: 24, height: 24, borderRadius: "50%", background: WHITE, border: `1.5px solid ${GRAY2}`, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><X size={13} /></button>
+                </div>
+              ) : (
+                <label style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "9px 13px", borderRadius: 10, border: `1.5px dashed ${GRAY2}`, cursor: "pointer", fontSize: 12.5, fontWeight: 700, color: GRAY3, marginBottom: 14 }}>
+                  <Upload size={14} /> {subiendo ? "Subiendo..." : "Subir imagen (JPG o PNG)"}
+                  <input type="file" accept="image/jpeg,image/png" onChange={subirImagen} style={{ display: "none" }} disabled={subiendo || guardando} />
+                </label>
+              )
+            )}
+
+            <EtiquetaCampo>Mensaje</EtiquetaCampo>
+            <textarea ref={areaRef} value={cuerpo} onChange={e => setCuerpo(e.target.value.slice(0, 1024))} rows={6} style={{ ...S.input, resize: "vertical", fontSize: 13.5 }} disabled={guardando}
+              placeholder={"Hola {{1}}, esta semana tenemos docenas de gorras a precio especial. ¿Quieres que te mandemos el catálogo?"} />
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", margin: "-8px 0 14px", gap: 8, flexWrap: "wrap" }}>
+              <button onClick={agregarVariable} disabled={guardando} className="oft-btn-press" style={{ fontSize: 12, fontWeight: 700, padding: "5px 10px", borderRadius: 7, border: `1px solid ${GRAY2}`, background: WHITE, cursor: "pointer" }}>+ Agregar variable {`{{${nVars + 1}}}`}</button>
+              <span style={{ fontSize: 11.5, color: GRAY3 }}>{cuerpo.length}/1024</span>
+            </div>
+
+            {nVars > 0 && (
+              <>
+                <EtiquetaCampo>Ejemplo para cada variable (Meta lo pide para revisarla)</EtiquetaCampo>
+                {ejemplosVista.map((v, i) => (
+                  <input key={i} value={v} onChange={e => { const nuevo = [...ejemplosVista]; nuevo[i] = e.target.value; setEjemplos(nuevo); }}
+                    placeholder={`Ejemplo de {{${i + 1}}}${i === 0 ? " (ej: María)" : ""}`} style={{ ...S.input, fontSize: 13, marginBottom: 8 }} disabled={guardando} />
+                ))}
+              </>
+            )}
+
+            <EtiquetaCampo>Pie de página (opcional)</EtiquetaCampo>
+            <input value={pie} onChange={e => setPie(e.target.value.slice(0, 60))} placeholder="Ej: Ofertodo · Colón, Panamá" style={{ ...S.input, fontSize: 13.5 }} disabled={guardando} />
+
+            <EtiquetaCampo>Botones (opcional)</EtiquetaCampo>
+            {botones.map((b, i) => (
+              <div key={i} style={{ background: GRAY, borderRadius: 10, padding: 10, marginBottom: 8 }}>
+                <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
+                  <select value={b.tipo} onChange={e => actualizarBoton(i, { tipo: e.target.value })} style={{ ...S.input, marginBottom: 0, fontSize: 12.5, flex: "0 0 150px" }} disabled={guardando}>
+                    <option value="QUICK_REPLY">Respuesta rápida</option><option value="URL">Abrir enlace</option><option value="PHONE_NUMBER">Llamar</option>
+                  </select>
+                  <input value={b.texto || ""} onChange={e => actualizarBoton(i, { texto: e.target.value.slice(0, 25) })} placeholder="Texto del botón" style={{ ...S.input, marginBottom: 0, fontSize: 12.5, flex: 1, minWidth: 0 }} disabled={guardando} />
+                  <button onClick={() => setBotones(prev => prev.filter((_, j) => j !== i))} className="oft-btn-press" style={{ background: "none", border: "none", cursor: "pointer", display: "flex", alignItems: "center", padding: 4 }}><X size={16} color={GRAY3} /></button>
+                </div>
+                {b.tipo === "URL" && <input value={b.url || ""} onChange={e => actualizarBoton(i, { url: e.target.value })} placeholder="https://ofertodo.com.pa/ofertas" style={{ ...S.input, marginBottom: 0, fontSize: 12.5 }} disabled={guardando} />}
+                {b.tipo === "PHONE_NUMBER" && <input value={b.telefono || ""} onChange={e => actualizarBoton(i, { telefono: e.target.value })} placeholder="+50767200474" style={{ ...S.input, marginBottom: 0, fontSize: 12.5 }} disabled={guardando} />}
+              </div>
+            ))}
+            {botones.length < 3 && (
+              <button onClick={() => setBotones(prev => [...prev, { tipo: "QUICK_REPLY", texto: "" }])} disabled={guardando} className="oft-btn-press"
+                style={{ fontSize: 12.5, fontWeight: 700, padding: "7px 12px", borderRadius: 8, border: `1.5px dashed ${GRAY2}`, background: WHITE, color: GRAY3, cursor: "pointer", marginBottom: 14 }}>+ Agregar botón</button>
+            )}
+            {sinResponderBtn && <div style={{ fontSize: 11.5, color: GRAY3, margin: "-4px 0 14px" }}>Cuando el cliente toca una respuesta rápida, abre la ventana de 24 horas para conversar.</div>}
+
+            {error && (
+              <div style={{ background: "#FEE2E2", color: "#991B1B", borderRadius: 10, padding: "9px 12px", fontSize: 12.5, lineHeight: 1.45, marginBottom: 12, display: "flex", gap: 7 }}>
+                <AlertCircle size={15} style={{ flexShrink: 0, marginTop: 1 }} /><span>{error}</span>
+              </div>
+            )}
+            <button onClick={enviar} disabled={guardando || subiendo || !nombre || !cuerpo.trim()} className="oft-btn-press"
+              style={{ width: "100%", padding: 14, borderRadius: 12, border: "none", background: RED, color: WHITE, fontWeight: 800, fontSize: 14.5, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, opacity: guardando || !nombre || !cuerpo.trim() ? 0.6 : 1 }}>
+              <Send size={16} /> {guardando ? "Enviando a Meta..." : "Enviar a revisión de Meta"}
+            </button>
+            <div style={{ fontSize: 11.5, color: GRAY3, marginTop: 8, lineHeight: 1.45 }}>Meta la revisa en minutos (a veces hasta 24 h). No puedes editarla una vez enviada: si hay que cambiar algo, se borra y se crea otra.</div>
+          </div>
+
+          <div style={{ flex: "0 1 320px", minWidth: 260, position: esMobil ? "static" : "sticky", top: 0 }}>
+            <EtiquetaCampo>Así se verá</EtiquetaCampo>
+            <PlantillaVista cabeceraTipo={cabTipo} cabeceraTexto={cabTexto} cabeceraUrl={cabUrl} cuerpo={rellenarVariables(cuerpo, ejemplosVista)} pie={pie} botones={botones} />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RespuestasRapidasPanel({ esMobil, user }) {
+  const [lista, setLista] = useState([]);
+  const [cargando, setCargando] = useState(true);
+  const [editando, setEditando] = useState(null); // id o "nueva"
+  const [atajo, setAtajo] = useState("");
+  const [contenido, setContenido] = useState("");
+  const [error, setError] = useState("");
+
+  const cargar = async () => {
+    try { setLista((await sb.get("crm_respuestas_rapidas", "?order=atajo.asc")) || []); } catch (e) { setLista([]); }
+    setCargando(false);
+  };
+  useEffect(() => { cargar(); }, []);
+
+  const abrir = (r) => { setEditando(r ? r.id : "nueva"); setAtajo(r?.atajo || ""); setContenido(r?.contenido || ""); setError(""); };
+  const guardar = async () => {
+    const a = quitarTildes(atajo).toLowerCase().replace(/[^a-z0-9_]/g, "").slice(0, 30);
+    if (!a || !contenido.trim()) { setError("Pon un atajo y el texto de la respuesta."); return; }
+    try {
+      if (editando === "nueva") await sb.post("crm_respuestas_rapidas", { atajo: a, titulo: a, contenido: contenido.trim(), creada_por: user?.id || null });
+      else await sb.patch("crm_respuestas_rapidas", editando, { atajo: a, titulo: a, contenido: contenido.trim() });
+      setEditando(null); await cargar();
+    } catch (e) { setError(/duplicate|unique/i.test(e.message) ? "Ya existe una respuesta con ese atajo." : e.message); }
+  };
+  const borrar = async (r) => {
+    if (!confirm(`¿Borrar la respuesta /${r.atajo}?`)) return;
+    try { await sb.delete("crm_respuestas_rapidas", r.id); setLista(prev => prev.filter(x => x.id !== r.id)); } catch (e) { alert(e.message); }
+  };
+
+  return (
+    <div style={{ flex: 1, padding: esMobil ? 14 : 24, overflowY: "auto" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 14 }}>
+        <div>
+          <div style={{ fontWeight: 900, fontSize: 17 }}>Respuestas rápidas</div>
+          <div style={{ fontSize: 12.5, color: GRAY3, maxWidth: 560, lineHeight: 1.45 }}>Textos que el equipo usa seguido. En la Bandeja escribe <strong>/</strong> y el atajo para insertarlos. Usa <strong>{"{nombre}"}</strong> para el nombre del cliente.</div>
+        </div>
+        <button onClick={() => abrir(null)} className="oft-btn-press" style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "9px 14px", borderRadius: 10, border: "none", background: RED, color: WHITE, fontWeight: 800, fontSize: 13, cursor: "pointer" }}><Plus size={15} /> Nueva respuesta</button>
+      </div>
+
+      {editando && (
+        <div style={{ background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 14, padding: 14, marginBottom: 14, maxWidth: 560 }}>
+          <EtiquetaCampo>Atajo (lo que escribes después de /)</EtiquetaCampo>
+          <input value={atajo} onChange={e => setAtajo(e.target.value)} placeholder="precios" style={{ ...S.input, fontSize: 13.5 }} />
+          <EtiquetaCampo>Respuesta</EtiquetaCampo>
+          <textarea value={contenido} onChange={e => setContenido(e.target.value)} rows={4} placeholder="Hola {nombre}, nuestros precios por docena son..." style={{ ...S.input, resize: "vertical", fontSize: 13.5 }} />
+          {error && <div style={{ color: "#991B1B", fontSize: 12.5, marginBottom: 10 }}>{error}</div>}
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={guardar} className="oft-btn-press" style={{ padding: "9px 16px", borderRadius: 9, border: "none", background: BLACK, color: WHITE, fontWeight: 800, fontSize: 13, cursor: "pointer" }}>Guardar</button>
+            <button onClick={() => setEditando(null)} className="oft-btn-press" style={{ padding: "9px 14px", borderRadius: 9, border: `1.5px solid ${GRAY2}`, background: WHITE, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>Cancelar</button>
+          </div>
+        </div>
+      )}
+
+      {cargando ? <Spinner /> : lista.length === 0 && !editando ? (
+        <div style={{ textAlign: "center", padding: "50px 20px", color: GRAY3 }}>
+          <Zap size={36} color={GRAY2} style={{ margin: "0 auto 10px" }} />
+          <div style={{ fontWeight: 800, fontSize: 14, color: BLACK, marginBottom: 4 }}>Todavía no hay respuestas rápidas</div>
+          <div style={{ fontSize: 12.5 }}>Crea las que más uses: precios, horarios, formas de pago, envíos.</div>
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, maxWidth: 700 }}>
+          {lista.map(r => (
+            <div key={r.id} style={{ background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 12, padding: "11px 13px", display: "flex", gap: 10, alignItems: "flex-start" }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 800, fontSize: 13 }}>/{r.atajo}</div>
+                <div style={{ fontSize: 12.5, color: GRAY3, marginTop: 3, lineHeight: 1.45, whiteSpace: "pre-wrap" }}>{r.contenido}</div>
+              </div>
+              <button onClick={() => abrir(r)} className="oft-btn-press" style={{ background: "none", border: "none", cursor: "pointer", fontSize: 12, fontWeight: 700, color: GRAY3 }}>Editar</button>
+              <button onClick={() => borrar(r)} className="oft-btn-press" style={{ background: "none", border: "none", cursor: "pointer", display: "flex", padding: 2 }}><Trash2 size={14} color={GRAY3} /></button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+//  BARRA LATERAL DE LA BANDEJA (como en respond.io): carpetas, etapas,
+//  etiquetas y líneas, cada una con su número de chats y, en rojo, cuántos
+//  de esos todavía no se han respondido.
+// ─────────────────────────────────────────────────────────────
+function BarraFiltros({ conversaciones, etapas, user, filtro, setFiltro, numeros, esMobil }) {
+  const abiertas = conversaciones.filter(estaAbierta);
+  const cuenta = (lista) => ({ total: lista.length, sin: lista.filter(sinResponder).length });
+  const carpetas = [
+    { id: "todos", label: "Todas las conversaciones", icono: InboxIcon, ...cuenta(abiertas) },
+    { id: "sin_responder", label: "Sin responder", icono: Timer, soloSin: true, ...cuenta(abiertas.filter(sinResponder)) },
+    { id: "mios", label: "Asignadas a mí", icono: User, ...cuenta(abiertas.filter(c => c.agente_id && c.agente_id === user?.id)) },
+    { id: "sin_asignar", label: "Sin asignar", icono: Users, ...cuenta(abiertas.filter(c => !c.agente_id)) },
+    { id: "cerradas", label: "Cerradas", icono: CheckCircle2, total: conversaciones.length - abiertas.length, sin: 0, sinBadge: true },
+  ];
+  const porEtapa = etapas.map(e => ({ id: "etapa:" + e.id, label: e.nombre, color: e.color, ...cuenta(abiertas.filter(c => c.etapa_id === e.id)) }));
+  const sinEtapa = abiertas.filter(c => !c.etapa_id);
+  if (sinEtapa.length > 0) porEtapa.push({ id: "etapa:ninguna", label: "Sin etapa", color: GRAY3, ...cuenta(sinEtapa) });
+  const conteoTags = {};
+  abiertas.forEach(c => (c.etiquetas || []).forEach(t => { conteoTags[t] = conteoTags[t] || []; conteoTags[t].push(c); }));
+  const etiquetas = Object.entries(conteoTags).sort((a, b) => b[1].length - a[1].length).slice(0, 12).map(([t, l]) => ({ id: "tag:" + t, label: t, ...cuenta(l) }));
+  const lineasActivas = numeros.filter(n => n.activo);
+  const lineas = lineasActivas.length > 1 ? lineasActivas.map(n => ({ id: "linea:" + n.id, label: n.etiqueta || n.numero_visible || "Línea", ...cuenta(abiertas.filter(c => c.numero_id === n.id)) })) : [];
+  const anuncios = abiertas.filter(c => c.origen === "anuncio");
+  const origenes = anuncios.length > 0 ? [{ id: "anuncios", label: "Vienen de anuncios", ...cuenta(anuncios) }] : [];
+
+  const Item = ({ it }) => {
+    const activo = filtro === it.id;
+    const Icono = it.icono;
+    return (
+      <button onClick={() => setFiltro(it.id)} className="oft-btn-press"
+        style={{ display: "flex", alignItems: "center", gap: 8, width: esMobil ? "auto" : "100%", padding: esMobil ? "7px 11px" : "8px 10px", borderRadius: 8, border: "none", textAlign: "left", cursor: "pointer", flexShrink: 0, whiteSpace: "nowrap", background: activo ? BLACK : (esMobil ? GRAY : "transparent"), color: activo ? WHITE : BLACK, fontWeight: activo ? 800 : 600, fontSize: 12.5 }}>
+        {Icono ? <Icono size={14} style={{ flexShrink: 0, opacity: 0.8 }} /> : it.color ? <span style={{ width: 9, height: 9, borderRadius: "50%", background: it.color, flexShrink: 0 }} /> : <Hash size={13} style={{ flexShrink: 0, opacity: 0.6 }} />}
+        <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis" }}>{it.label}</span>
+        {!it.soloSin && !it.sinBadge && it.sin > 0 && <span title="Sin responder" style={{ fontSize: 10.5, fontWeight: 800, padding: "1px 6px", borderRadius: 9, background: RED, color: WHITE }}>{it.sin}</span>}
+        <span style={{ fontSize: 11.5, fontWeight: 700, opacity: activo ? 0.85 : 0.55, ...(it.soloSin && it.total > 0 && !activo ? { background: RED, color: WHITE, opacity: 1, padding: "1px 7px", borderRadius: 9 } : {}) }}>{it.total}</span>
+      </button>
+    );
+  };
+  const Titulo = ({ children }) => <div style={{ fontSize: 10.5, fontWeight: 800, color: GRAY3, letterSpacing: 0.6, textTransform: "uppercase", padding: "14px 10px 5px" }}>{children}</div>;
+
+  if (esMobil) {
+    const todos = [...carpetas.slice(0, 5), ...porEtapa, ...origenes, ...etiquetas, ...lineas];
+    return <div style={{ display: "flex", gap: 6, overflowX: "auto", padding: "10px 12px", borderBottom: `1px solid ${GRAY2}`, background: WHITE }}>{todos.map(it => <Item key={it.id} it={it} />)}</div>;
+  }
+  return (
+    <div style={{ width: 218, minWidth: 218, background: WHITE, borderRight: `1px solid ${GRAY2}`, overflowY: "auto", padding: "6px 8px 16px" }}>
+      <Titulo>Bandeja</Titulo>
+      {carpetas.map(it => <Item key={it.id} it={it} />)}
+      <Titulo>Etapas</Titulo>
+      {porEtapa.map(it => <Item key={it.id} it={it} />)}
+      {origenes.length > 0 && <><Titulo>Origen</Titulo>{origenes.map(it => <Item key={it.id} it={it} />)}</>}
+      {etiquetas.length > 0 && <><Titulo>Etiquetas</Titulo>{etiquetas.map(it => <Item key={it.id} it={it} />)}</>}
+      {lineas.length > 0 && <><Titulo>Líneas</Titulo>{lineas.map(it => <Item key={it.id} it={it} />)}</>}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  CONTACTOS Y CAMPOS PERSONALIZADOS
+// ═══════════════════════════════════════════════════════════════
+const TIPOS_CAMPO = { texto: "Texto", numero: "Número", fecha: "Fecha", seleccion: "Lista de opciones", si_no: "Sí / No" };
+
+function useCampos() {
+  const [campos, setCampos] = useState([]);
+  const recargar = async () => {
+    try { setCampos((await sb.get("crm_campos", "?order=orden.asc,created_at.asc")) || []); } catch (e) { setCampos([]); }
+  };
+  useEffect(() => { recargar(); }, []);
+  return { campos, recargar };
+}
+
+function textoDeCampo(campo, valor) {
+  if (valor === undefined || valor === null || valor === "") return "";
+  if (campo.tipo === "si_no") return valor === true ? "Sí" : "No";
+  if (campo.tipo === "fecha") { const d = new Date(valor + "T12:00:00"); return isNaN(d) ? String(valor) : d.toLocaleDateString("es-PA", { day: "numeric", month: "short", year: "numeric" }); }
+  return String(valor);
+}
+
+// Normaliza un teléfono: solo dígitos; si trae 8 (número local de Panamá) le pone el 507.
+function normalizarTelefono(t) {
+  let d = String(t || "").replace(/\D/g, "");
+  if (d.startsWith("00")) d = d.slice(2);
+  if (d.length === 8) d = "507" + d;
+  return d.length >= 10 && d.length <= 15 ? d : "";
+}
+const sinTildes = (s) => String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().trim();
+
+function CampoInput({ campo, valor, onCambio, onConfirmar }) {
+  const base = { ...S.input, marginBottom: 0, fontSize: 13 };
+  if (campo.tipo === "seleccion") return (
+    <select value={valor ?? ""} onChange={e => onConfirmar(e.target.value)} style={base}>
+      <option value="">—</option>
+      {(campo.opciones || []).map(o => <option key={o} value={o}>{o}</option>)}
+    </select>
+  );
+  if (campo.tipo === "si_no") return (
+    <select value={valor === true ? "si" : valor === false ? "no" : ""} onChange={e => onConfirmar(e.target.value === "" ? null : e.target.value === "si")} style={base}>
+      <option value="">—</option><option value="si">Sí</option><option value="no">No</option>
+    </select>
+  );
+  return (
+    <input type={campo.tipo === "numero" ? "number" : campo.tipo === "fecha" ? "date" : "text"} value={valor ?? ""}
+      onChange={e => onCambio(e.target.value)} onBlur={e => onConfirmar(e.target.value)}
+      onKeyDown={e => { if (e.key === "Enter") e.target.blur(); }} style={base} />
+  );
+}
+
+// Nombre + campos personalizados de un contacto. Se guarda al salir de cada casilla.
+// Usar con key={conv.id} para que no arrastre lo escrito de otro contacto.
+function CamposContacto({ conv, campos, onGuardar }) {
+  const [nombre, setNombre] = useState(conv.nombre_contacto || "");
+  const [valores, setValores] = useState(conv.campos || {});
+  useEffect(() => { setValores(conv.campos || {}); }, [conv.campos]);
+
+  const confirmar = (campo, valor) => {
+    const v = campo.tipo === "numero" && valor !== "" && valor !== null ? Number(valor) : valor;
+    const actuales = conv.campos || {};
+    const vacio = v === "" || v === null || v === undefined;
+    if (vacio && !(campo.clave in actuales)) return;
+    if (!vacio && actuales[campo.clave] === v) return;
+    const nuevo = { ...actuales };
+    if (vacio) delete nuevo[campo.clave]; else nuevo[campo.clave] = v;
+    setValores(nuevo);
+    onGuardar({ campos: nuevo });
+  };
+
+  return (
+    <div style={{ marginBottom: 20 }}>
+      <div style={{ fontSize: 11, fontWeight: 800, color: GRAY3, letterSpacing: 0.5, marginBottom: 8 }}>DATOS DEL CONTACTO</div>
+      <div style={{ fontSize: 11.5, color: GRAY3, marginBottom: 3 }}>Nombre</div>
+      <input value={nombre} onChange={e => setNombre(e.target.value)} placeholder="Sin nombre"
+        onBlur={() => { const n = nombre.trim(); if (n !== (conv.nombre_contacto || "")) onGuardar({ nombre_contacto: n || null }); }}
+        onKeyDown={e => { if (e.key === "Enter") e.target.blur(); }} style={{ ...S.input, marginBottom: 10, fontSize: 13 }} />
+      {campos.map(campo => (
+        <div key={campo.id} style={{ marginBottom: 10 }}>
+          <div style={{ fontSize: 11.5, color: GRAY3, marginBottom: 3 }}>{campo.nombre}</div>
+          <CampoInput campo={campo} valor={valores[campo.clave]}
+            onCambio={v => setValores(prev => ({ ...prev, [campo.clave]: v }))} onConfirmar={v => confirmar(campo, v)} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+//  CSV (comillas y separador , o ; detectado solo)
+// ─────────────────────────────────────────────────────────────
+function leerCSV(texto) {
+  const t = String(texto || "").replace(/^﻿/, "");
+  const primera = t.split(/\r?\n/)[0] || "";
+  const sep = (primera.match(/;/g) || []).length > (primera.match(/,/g) || []).length ? ";" : ",";
+  const filas = []; let fila = [], celda = "", comillas = false;
+  for (let i = 0; i < t.length; i++) {
+    const ch = t[i];
+    if (comillas) {
+      if (ch === '"' && t[i + 1] === '"') { celda += '"'; i++; }
+      else if (ch === '"') comillas = false;
+      else celda += ch;
+    } else if (ch === '"') comillas = true;
+    else if (ch === sep) { fila.push(celda); celda = ""; }
+    else if (ch === "\n" || ch === "\r") { if (ch === "\r" && t[i + 1] === "\n") i++; fila.push(celda); celda = ""; if (fila.some(x => x.trim())) filas.push(fila); fila = []; }
+    else celda += ch;
+  }
+  fila.push(celda); if (fila.some(x => x.trim())) filas.push(fila);
+  return filas;
+}
+const celdaCSV = (v) => { const s = String(v ?? ""); return /[;"\n\r,]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+
+function descargarCSV(nombreArchivo, filas) {
+  const contenido = "﻿" + filas.map(f => f.map(celdaCSV).join(";")).join("\r\n");
+  const url = URL.createObjectURL(new Blob([contenido], { type: "text/csv;charset=utf-8" }));
+  const a = document.createElement("a"); a.href = url; a.download = nombreArchivo; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function ModalBase({ titulo, onCerrar, children, ancho = 480 }) {
+  return createPortal(
+    <div onClick={onCerrar} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 260, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: WHITE, borderRadius: 16, width: "100%", maxWidth: ancho, maxHeight: "92vh", overflowY: "auto", padding: 20 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+          <div style={{ fontWeight: 900, fontSize: 16 }}>{titulo}</div>
+          <button onClick={onCerrar} className="oft-btn-press" style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}><X size={18} /></button>
+        </div>
+        {children}
+      </div>
+    </div>, document.body);
+}
+
+// ─────────────────────────────────────────────────────────────
+//  GESTOR DE CAMPOS PERSONALIZADOS (solo administrador)
+// ─────────────────────────────────────────────────────────────
+function GestorCampos({ campos, onCambio, onCerrar }) {
+  const [editando, setEditando] = useState(null); // id | "nuevo" | null
+  const [nombre, setNombre] = useState("");
+  const [tipo, setTipo] = useState("texto");
+  const [opciones, setOpciones] = useState("");
+  const [error, setError] = useState("");
+
+  const abrir = (c) => { setEditando(c ? c.id : "nuevo"); setNombre(c?.nombre || ""); setTipo(c?.tipo || "texto"); setOpciones((c?.opciones || []).join(", ")); setError(""); };
+  const guardar = async () => {
+    const n = nombre.trim();
+    if (!n) { setError("Ponle un nombre al campo."); return; }
+    const lista = opciones.split(",").map(x => x.trim()).filter(Boolean);
+    if (tipo === "seleccion" && lista.length < 2) { setError("Escribe al menos 2 opciones separadas por coma."); return; }
+    try {
+      if (editando === "nuevo") {
+        let clave = sinTildes(n).replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 40) || "campo";
+        if (campos.some(c => c.clave === clave)) clave += "_" + Math.floor(Math.random() * 900 + 100);
+        await sb.post("crm_campos", { clave, nombre: n, tipo, opciones: tipo === "seleccion" ? lista : [], orden: (campos.at(-1)?.orden || 0) + 1 });
+      } else {
+        await sb.patch("crm_campos", editando, { nombre: n, ...(tipo === "seleccion" ? { opciones: lista } : {}) });
+      }
+      setEditando(null); await onCambio();
+    } catch (e) { setError(e.message); }
+  };
+  const borrar = async (c) => {
+    if (!confirm(`¿Borrar el campo "${c.nombre}"? Deja de mostrarse en todos los contactos.`)) return;
+    try { await sb.delete("crm_campos", c.id); await onCambio(); } catch (e) { alert(e.message); }
+  };
+
+  return (
+    <ModalBase titulo="Campos personalizados" onCerrar={onCerrar} ancho={520}>
+      <div style={{ fontSize: 12.5, color: GRAY3, lineHeight: 1.45, marginBottom: 14 }}>Datos extra que guardas de cada cliente (ciudad, tipo de negocio...). Aparecen en el chat, en la lista de contactos y sirven de condición en los workflows.</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 }}>
+        {campos.map(c => (
+          <div key={c.id} style={{ display: "flex", alignItems: "center", gap: 8, border: `1px solid ${GRAY2}`, borderRadius: 10, padding: "8px 11px" }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontWeight: 800, fontSize: 13 }}>{c.nombre}</div>
+              <div style={{ fontSize: 11.5, color: GRAY3 }}>{TIPOS_CAMPO[c.tipo]}{c.tipo === "seleccion" && c.opciones?.length ? ` · ${c.opciones.join(", ")}` : ""}</div>
+            </div>
+            <button onClick={() => abrir(c)} className="oft-btn-press" style={{ background: "none", border: "none", cursor: "pointer", fontSize: 12, fontWeight: 700, color: GRAY3 }}>Editar</button>
+            <button onClick={() => borrar(c)} className="oft-btn-press" style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}><Trash2 size={14} color={GRAY3} /></button>
+          </div>
+        ))}
+        {campos.length === 0 && <div style={{ fontSize: 12.5, color: GRAY3, textAlign: "center", padding: 14 }}>Todavía no hay campos.</div>}
+      </div>
+      {editando ? (
+        <div style={{ background: GRAY, borderRadius: 12, padding: 12 }}>
+          <EtiquetaCampo>Nombre del campo</EtiquetaCampo>
+          <input value={nombre} onChange={e => setNombre(e.target.value)} placeholder="Ej: Zona de entrega" style={{ ...S.input, fontSize: 13 }} />
+          <EtiquetaCampo>Tipo</EtiquetaCampo>
+          <select value={tipo} onChange={e => setTipo(e.target.value)} disabled={editando !== "nuevo"} style={{ ...S.input, fontSize: 13 }}>
+            {Object.entries(TIPOS_CAMPO).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+          </select>
+          {tipo === "seleccion" && (<><EtiquetaCampo>Opciones (separadas por coma)</EtiquetaCampo><input value={opciones} onChange={e => setOpciones(e.target.value)} placeholder="Colón, Panamá, David" style={{ ...S.input, fontSize: 13 }} /></>)}
+          {error && <div style={{ color: "#991B1B", fontSize: 12.5, marginBottom: 8 }}>{error}</div>}
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={guardar} className="oft-btn-press" style={{ padding: "9px 16px", borderRadius: 9, border: "none", background: BLACK, color: WHITE, fontWeight: 800, fontSize: 13, cursor: "pointer" }}>Guardar</button>
+            <button onClick={() => setEditando(null)} className="oft-btn-press" style={{ padding: "9px 14px", borderRadius: 9, border: `1.5px solid ${GRAY2}`, background: WHITE, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>Cancelar</button>
+          </div>
+        </div>
+      ) : (
+        <button onClick={() => abrir(null)} className="oft-btn-press" style={{ width: "100%", padding: "10px 0", borderRadius: 10, border: "none", background: RED, color: WHITE, fontWeight: 800, fontSize: 13.5, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}><Plus size={15} /> Nuevo campo</button>
+      )}
+    </ModalBase>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+//  NUEVO CONTACTO / IMPORTAR
+// ─────────────────────────────────────────────────────────────
+function etapaPorDefecto(etapas) { return etapas.find(e => e.es_default) || etapas[0] || null; }
+
+function NuevoContacto({ etapas, conversaciones, onCreado, onCerrar }) {
+  const [nombre, setNombre] = useState("");
+  const [telefono, setTelefono] = useState("");
+  const [error, setError] = useState("");
+  const [guardando, setGuardando] = useState(false);
+  const crear = async () => {
+    const tel = normalizarTelefono(telefono);
+    if (!tel) { setError("Escribe un teléfono válido con código de país (ej: 50767200474) o de 8 dígitos de Panamá."); return; }
+    if (conversaciones.some(c => c.telefono === tel)) { setError("Ya existe un contacto con ese teléfono."); return; }
+    setGuardando(true); setError("");
+    try {
+      const [fila] = await sb.post("crm_conversaciones", { telefono: tel, nombre_contacto: nombre.trim() || null, etapa_id: etapaPorDefecto(etapas)?.id || null, canal: "whatsapp", origen: "manual", ultimo_mensaje_at: null });
+      onCreado(fila);
+    } catch (e) { setError(/duplicate|unique/i.test(e.message) ? "Ya existe un contacto con ese teléfono." : e.message); }
+    setGuardando(false);
+  };
+  return (
+    <ModalBase titulo="Nuevo contacto" onCerrar={onCerrar}>
+      <EtiquetaCampo>Nombre</EtiquetaCampo>
+      <input value={nombre} onChange={e => setNombre(e.target.value)} placeholder="Ej: María Pérez" style={{ ...S.input, fontSize: 13.5 }} />
+      <EtiquetaCampo>Teléfono de WhatsApp</EtiquetaCampo>
+      <input value={telefono} onChange={e => setTelefono(e.target.value)} placeholder="6720-0474 o 507 6720 0474" inputMode="tel" style={{ ...S.input, fontSize: 13.5 }} />
+      <div style={{ fontSize: 11.5, color: GRAY3, margin: "-8px 0 12px", lineHeight: 1.45 }}>Para escribirle por primera vez usa una plantilla: aún no ha iniciado conversación contigo.</div>
+      {error && <div style={{ color: "#991B1B", fontSize: 12.5, marginBottom: 10, lineHeight: 1.4 }}>{error}</div>}
+      <button onClick={crear} disabled={guardando} className="oft-btn-press" style={{ width: "100%", padding: 12, borderRadius: 11, border: "none", background: RED, color: WHITE, fontWeight: 800, fontSize: 14, cursor: "pointer", opacity: guardando ? 0.6 : 1 }}>{guardando ? "Guardando..." : "Crear contacto"}</button>
+    </ModalBase>
+  );
+}
+
+function ImportarContactos({ etapas, campos, conversaciones, onImportado, onCerrar }) {
+  const [analisis, setAnalisis] = useState(null);
+  const [importando, setImportando] = useState(false);
+  const [resultado, setResultado] = useState("");
+  const [error, setError] = useState("");
+
+  const leer = async (e) => {
+    const file = e.target.files?.[0]; if (!file) return;
+    setError(""); setResultado("");
+    const filas = leerCSV(await file.text());
+    if (filas.length < 2) { setError("El archivo está vacío o no tiene encabezados."); return; }
+    const enc = filas[0].map(sinTildes);
+    const col = (...nombres) => enc.findIndex(h => nombres.includes(h));
+    const iNombre = col("nombre", "name", "cliente"), iTel = col("telefono", "celular", "whatsapp", "phone", "tel", "numero");
+    if (iTel < 0) { setError("No encontré una columna de teléfono. Debe llamarse: telefono, celular o whatsapp."); return; }
+    const iEtapa = col("etapa", "stage"), iTags = col("etiquetas", "tags");
+    const iCampos = campos.map(c => ({ campo: c, i: enc.findIndex(h => h === sinTildes(c.nombre) || h === c.clave) })).filter(x => x.i >= 0);
+    const existentes = new Set(conversaciones.map(c => c.telefono));
+    const vistos = new Set(); const nuevos = []; let duplicados = 0, invalidos = 0;
+    for (const f of filas.slice(1)) {
+      const tel = normalizarTelefono(f[iTel]);
+      if (!tel) { invalidos++; continue; }
+      if (existentes.has(tel) || vistos.has(tel)) { duplicados++; continue; }
+      vistos.add(tel);
+      const vals = {};
+      iCampos.forEach(({ campo, i }) => {
+        const raw = String(f[i] ?? "").trim(); if (!raw) return;
+        if (campo.tipo === "numero") { const n = Number(raw.replace(",", ".")); if (!isNaN(n)) vals[campo.clave] = n; }
+        else if (campo.tipo === "si_no") vals[campo.clave] = ["si", "sí", "yes", "true", "1"].includes(sinTildes(raw));
+        else if (campo.tipo === "seleccion") { const op = (campo.opciones || []).find(o => sinTildes(o) === sinTildes(raw)); if (op) vals[campo.clave] = op; }
+        else vals[campo.clave] = raw;
+      });
+      const etapa = iEtapa >= 0 ? etapas.find(et => sinTildes(et.nombre) === sinTildes(f[iEtapa])) : null;
+      nuevos.push({
+        telefono: tel, nombre_contacto: iNombre >= 0 ? (String(f[iNombre] || "").trim() || null) : null,
+        etapa_id: (etapa || etapaPorDefecto(etapas))?.id || null, canal: "whatsapp", origen: "importado", campos: vals,
+        etiquetas: iTags >= 0 ? String(f[iTags] || "").split(/[|;]/).map(x => x.trim().replace(/^#/, "")).filter(Boolean) : [],
+      });
+    }
+    setAnalisis({ nuevos, duplicados, invalidos, total: filas.length - 1, columnasCampos: iCampos.map(x => x.campo.nombre) });
+  };
+
+  const importar = async () => {
+    setImportando(true); setError("");
+    try {
+      let creados = [];
+      for (let i = 0; i < analisis.nuevos.length; i += 100) {
+        const r = await sb.post("crm_conversaciones", analisis.nuevos.slice(i, i + 100));
+        creados = creados.concat(r || []);
+      }
+      setResultado(`Se importaron ${creados.length} contactos.`);
+      onImportado(creados); setAnalisis(null);
+    } catch (e) { setError(e.message); }
+    setImportando(false);
+  };
+
+  return (
+    <ModalBase titulo="Importar contactos" onCerrar={onCerrar} ancho={520}>
+      <div style={{ fontSize: 12.5, color: GRAY3, lineHeight: 1.5, marginBottom: 12 }}>
+        Sube un archivo CSV (en Excel: Guardar como &gt; CSV). La primera fila son los encabezados. Obligatorio: <strong>telefono</strong>. Opcionales: <strong>nombre</strong>, <strong>etapa</strong>, <strong>etiquetas</strong> (separadas con |){campos.length > 0 && <> y una columna por cada campo personalizado ({campos.map(c => c.nombre).join(", ")})</>}.
+        Los teléfonos de 8 dígitos se toman como de Panamá (507). Los que ya existen se omiten.
+      </div>
+      <label style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "9px 14px", borderRadius: 10, border: `1.5px dashed ${GRAY2}`, cursor: "pointer", fontSize: 13, fontWeight: 700, color: GRAY3, marginBottom: 12 }}>
+        <Upload size={15} /> Elegir archivo CSV
+        <input type="file" accept=".csv,text/csv" onChange={leer} style={{ display: "none" }} />
+      </label>
+      {error && <div style={{ background: "#FEE2E2", color: "#991B1B", borderRadius: 10, padding: "9px 12px", fontSize: 12.5, marginBottom: 10, lineHeight: 1.4 }}>{error}</div>}
+      {resultado && <div style={{ background: "#D1FAE5", color: "#065F46", borderRadius: 10, padding: "9px 12px", fontSize: 12.5, marginBottom: 10 }}>{resultado}</div>}
+      {analisis && (
+        <>
+          <div style={{ background: GRAY, borderRadius: 10, padding: "10px 12px", fontSize: 13, lineHeight: 1.6, marginBottom: 12 }}>
+            <strong>{analisis.nuevos.length}</strong> contactos nuevos para importar<br />
+            {analisis.duplicados > 0 && <span style={{ color: GRAY3 }}>{analisis.duplicados} ya existen (se omiten)<br /></span>}
+            {analisis.invalidos > 0 && <span style={{ color: "#991B1B" }}>{analisis.invalidos} sin teléfono válido (se omiten)<br /></span>}
+            {analisis.columnasCampos.length > 0 && <span style={{ color: GRAY3 }}>Campos detectados: {analisis.columnasCampos.join(", ")}</span>}
+          </div>
+          <button onClick={importar} disabled={importando || analisis.nuevos.length === 0} className="oft-btn-press" style={{ width: "100%", padding: 12, borderRadius: 11, border: "none", background: RED, color: WHITE, fontWeight: 800, fontSize: 14, cursor: "pointer", opacity: importando || analisis.nuevos.length === 0 ? 0.6 : 1 }}>
+            {importando ? "Importando..." : `Importar ${analisis.nuevos.length} contactos`}
+          </button>
+        </>
+      )}
+      <button onClick={() => descargarCSV("plantilla_contactos.csv", [["nombre", "telefono", "etapa", "etiquetas", ...campos.map(c => c.nombre)], ["María Pérez", "67200474", etapas[0]?.nombre || "", "mayorista|colon", ...campos.map(() => "")]])}
+        className="oft-btn-press" style={{ marginTop: 12, background: "none", border: "none", cursor: "pointer", fontSize: 12.5, fontWeight: 700, color: RED, padding: 0 }}>Descargar archivo de ejemplo</button>
+    </ModalBase>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+//  PESTAÑA "CONTACTOS": todos los clientes en una tabla
+// ─────────────────────────────────────────────────────────────
+function ContactosPanel({ conversaciones, setConversaciones, etapas, etapaPorId, agentes, agentePorId, pedidos, user, onAbrirChat }) {
+  const esMobil = useEsMobil();
+  const esAdmin = !!user?.es_admin;
+  const { campos, recargar: recargarCampos } = useCampos();
+  const [busqueda, setBusqueda] = useState("");
+  const [fEtapa, setFEtapa] = useState(""); const [fAgente, setFAgente] = useState(""); const [fTag, setFTag] = useState(""); const [fOrigen, setFOrigen] = useState("");
+  const [orden, setOrden] = useState({ col: "reciente", dir: "desc" });
+  const [columnasExtra, setColumnasExtra] = useState([]); // claves de campos mostrados como columna
+  const [verColumnas, setVerColumnas] = useState(false);
+  const [limite, setLimite] = useState(100);
+  const [detalleId, setDetalleId] = useState(null);
+  const [modal, setModal] = useState(null); // nuevo | importar | campos
+  const [nuevaTag, setNuevaTag] = useState("");
+
+  const todasTags = [...new Set(conversaciones.flatMap(c => c.etiquetas || []))].sort();
+  const textoBusqueda = (c) => [c.nombre_contacto, c.telefono, ...(c.etiquetas || []), ...Object.values(c.campos || {}).map(String)].join(" ").toLowerCase();
+  const filtradas = conversaciones.filter(c => {
+    if (busqueda.trim() && !textoBusqueda(c).includes(busqueda.trim().toLowerCase())) return false;
+    if (fEtapa && (fEtapa === "ninguna" ? c.etapa_id : c.etapa_id !== fEtapa)) return false;
+    if (fAgente && (fAgente === "ninguno" ? c.agente_id : c.agente_id !== fAgente)) return false;
+    if (fTag && !(c.etiquetas || []).includes(fTag)) return false;
+    if (fOrigen === "anuncio" && c.origen !== "anuncio") return false;
+    if (fOrigen === "manual" && !["manual", "importado"].includes(c.origen)) return false;
+    if (fOrigen === "directo" && (c.origen === "anuncio" || ["manual", "importado"].includes(c.origen))) return false;
+    return true;
+  });
+  const valorOrden = (c) => orden.col === "nombre" ? sinTildes(c.nombre_contacto || c.telefono)
+    : orden.col === "telefono" ? c.telefono
+    : orden.col === "creado" ? new Date(c.created_at).getTime()
+    : orden.col.startsWith("campo:") ? String(c.campos?.[orden.col.slice(6)] ?? "").toLowerCase()
+    : new Date(c.ultimo_mensaje_at || 0).getTime();
+  const ordenadas = [...filtradas].sort((a, b) => { const x = valorOrden(a), y = valorOrden(b); const r = x < y ? -1 : x > y ? 1 : 0; return orden.dir === "asc" ? r : -r; });
+  const cambiarOrden = (col) => setOrden(o => o.col === col ? { col, dir: o.dir === "asc" ? "desc" : "asc" } : { col, dir: col === "nombre" || col === "telefono" ? "asc" : "desc" });
+  const camposVisibles = campos.filter(c => columnasExtra.includes(c.clave));
+
+  const guardarConv = async (id, cambios) => {
+    setConversaciones(prev => prev.map(c => c.id === id ? { ...c, ...cambios } : c));
+    try { await sb.patch("crm_conversaciones", id, cambios); } catch (e) { alert("No se pudo guardar: " + e.message); }
+  };
+
+  const exportar = () => {
+    const filas = [["Nombre", "Teléfono", "Etapa", "Agente", "Etiquetas", "Origen", "Último mensaje", "Creado", ...campos.map(c => c.nombre)]];
+    ordenadas.forEach(c => filas.push([
+      c.nombre_contacto || "", c.telefono, etapaPorId[c.etapa_id]?.nombre || "", agentePorId[c.agente_id]?.nombre || "", (c.etiquetas || []).join("|"),
+      c.origen === "anuncio" ? "Anuncio" : c.origen === "importado" ? "Importado" : c.origen === "manual" ? "Manual" : "Chat directo",
+      c.ultimo_mensaje_at ? new Date(c.ultimo_mensaje_at).toLocaleString("es-PA") : "", new Date(c.created_at).toLocaleDateString("es-PA"),
+      ...campos.map(campo => textoDeCampo(campo, c.campos?.[campo.clave])),
+    ]));
+    descargarCSV(`contactos_ofertodo_${new Date().toISOString().slice(0, 10)}.csv`, filas);
+  };
+
+  const detalle = conversaciones.find(c => c.id === detalleId);
+  const pedidosDe = detalle ? pedidos.filter(p => p.telefono === detalle.telefono) : [];
+  const Flecha = ({ col }) => orden.col === col ? <span style={{ marginLeft: 3 }}>{orden.dir === "asc" ? "↑" : "↓"}</span> : null;
+  const th = { textAlign: "left", padding: "9px 12px", fontSize: 11.5, fontWeight: 800, color: GRAY3, cursor: "pointer", whiteSpace: "nowrap", background: GRAY, position: "sticky", top: 0 };
+  const td = { padding: "9px 12px", fontSize: 13, borderBottom: `1px solid ${GRAY}`, whiteSpace: "nowrap", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis" };
+  const selectFiltro = { ...S.input, marginBottom: 0, fontSize: 12.5, padding: "7px 9px", width: "auto", minWidth: 120 };
+
+  return (
+    <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0, minWidth: 0 }}>
+      <div style={{ background: WHITE, borderBottom: `1px solid ${GRAY2}`, padding: esMobil ? "12px 14px" : "14px 24px" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
+          <div>
+            <div style={{ fontWeight: 900, fontSize: 17 }}>Contactos</div>
+            <div style={{ fontSize: 12.5, color: GRAY3 }}>{filtradas.length === conversaciones.length ? `${conversaciones.length} contactos` : `${filtradas.length} de ${conversaciones.length} contactos`}</div>
+          </div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {esAdmin && <button onClick={() => setModal("campos")} className="oft-btn-press" style={{ padding: "8px 12px", borderRadius: 9, border: `1.5px solid ${GRAY2}`, background: WHITE, fontWeight: 700, fontSize: 12.5, cursor: "pointer" }}>Campos</button>}
+            <button onClick={exportar} className="oft-btn-press" style={{ padding: "8px 12px", borderRadius: 9, border: `1.5px solid ${GRAY2}`, background: WHITE, fontWeight: 700, fontSize: 12.5, cursor: "pointer" }}>Exportar</button>
+            <button onClick={() => setModal("importar")} className="oft-btn-press" style={{ padding: "8px 12px", borderRadius: 9, border: `1.5px solid ${GRAY2}`, background: WHITE, fontWeight: 700, fontSize: 12.5, cursor: "pointer" }}>Importar</button>
+            <button onClick={() => setModal("nuevo")} className="oft-btn-press" style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "8px 13px", borderRadius: 9, border: "none", background: RED, color: WHITE, fontWeight: 800, fontSize: 12.5, cursor: "pointer" }}><Plus size={14} /> Nuevo contacto</button>
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <div style={{ position: "relative", flex: "1 1 220px", minWidth: 180 }}>
+            <Search size={15} color={GRAY3} style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)" }} />
+            <input value={busqueda} onChange={e => setBusqueda(e.target.value)} placeholder="Buscar por nombre, teléfono, etiqueta o dato..." style={{ ...S.input, marginBottom: 0, paddingLeft: 32, fontSize: 13 }} />
+          </div>
+          <select value={fEtapa} onChange={e => setFEtapa(e.target.value)} style={selectFiltro}><option value="">Todas las etapas</option>{etapas.map(e => <option key={e.id} value={e.id}>{e.nombre}</option>)}<option value="ninguna">Sin etapa</option></select>
+          <select value={fAgente} onChange={e => setFAgente(e.target.value)} style={selectFiltro}><option value="">Todos los agentes</option>{agentes.map(a => <option key={a.id} value={a.id}>{a.nombre}</option>)}<option value="ninguno">Sin asignar</option></select>
+          {todasTags.length > 0 && <select value={fTag} onChange={e => setFTag(e.target.value)} style={selectFiltro}><option value="">Todas las etiquetas</option>{todasTags.map(t => <option key={t} value={t}>#{t}</option>)}</select>}
+          <select value={fOrigen} onChange={e => setFOrigen(e.target.value)} style={selectFiltro}><option value="">Cualquier origen</option><option value="anuncio">De anuncios</option><option value="directo">Chat directo</option><option value="manual">Agregados a mano</option></select>
+          {!esMobil && campos.length > 0 && (
+            <div style={{ position: "relative" }}>
+              <button onClick={() => setVerColumnas(v => !v)} className="oft-btn-press" style={{ padding: "8px 12px", borderRadius: 9, border: `1.5px solid ${GRAY2}`, background: WHITE, fontWeight: 700, fontSize: 12.5, cursor: "pointer" }}>Columnas</button>
+              {verColumnas && (
+                <div style={{ position: "absolute", right: 0, top: "calc(100% + 6px)", zIndex: 30, background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 12, padding: 10, minWidth: 190, boxShadow: "0 8px 24px rgba(0,0,0,0.12)" }}>
+                  {campos.map(c => (
+                    <label key={c.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 4px", fontSize: 13, cursor: "pointer" }}>
+                      <input type="checkbox" checked={columnasExtra.includes(c.clave)} onChange={() => setColumnasExtra(prev => prev.includes(c.clave) ? prev.filter(x => x !== c.clave) : [...prev, c.clave])} /> {c.nombre}
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div style={{ flex: 1, overflow: "auto", background: WHITE }}>
+        {ordenadas.length === 0 ? (
+          <div style={{ textAlign: "center", padding: "60px 20px", color: GRAY3 }}>
+            <Users size={36} color={GRAY2} style={{ margin: "0 auto 10px" }} />
+            <div style={{ fontWeight: 800, fontSize: 14, color: BLACK, marginBottom: 4 }}>{conversaciones.length === 0 ? "Todavía no hay contactos" : "Ningún contacto coincide"}</div>
+            <div style={{ fontSize: 12.5 }}>{conversaciones.length === 0 ? "Se crean solos cuando alguien te escribe, o los puedes agregar o importar." : "Prueba quitando algún filtro."}</div>
+          </div>
+        ) : esMobil ? (
+          <div>
+            {ordenadas.slice(0, limite).map(c => (
+              <div key={c.id} onClick={() => setDetalleId(c.id)} style={{ padding: "12px 14px", borderBottom: `1px solid ${GRAY}`, cursor: "pointer" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                  <div style={{ fontWeight: 800, fontSize: 14 }}>{c.nombre_contacto || c.telefono}</div>
+                  {etapaPorId[c.etapa_id] && <span style={{ fontSize: 10, fontWeight: 800, padding: "2px 7px", borderRadius: 5, background: etapaPorId[c.etapa_id].color + "22", color: etapaPorId[c.etapa_id].color, flexShrink: 0 }}>{etapaPorId[c.etapa_id].nombre}</span>}
+                </div>
+                <div style={{ fontSize: 12, color: GRAY3, marginTop: 2 }}>{c.telefono}{(c.etiquetas || []).length > 0 ? " · " + c.etiquetas.map(t => "#" + t).join(" ") : ""}</div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead><tr>
+              <th style={th} onClick={() => cambiarOrden("nombre")}>Nombre<Flecha col="nombre" /></th>
+              <th style={th} onClick={() => cambiarOrden("telefono")}>Teléfono<Flecha col="telefono" /></th>
+              <th style={{ ...th, cursor: "default" }}>Etapa</th>
+              <th style={{ ...th, cursor: "default" }}>Agente</th>
+              <th style={{ ...th, cursor: "default" }}>Etiquetas</th>
+              {camposVisibles.map(c => <th key={c.id} style={th} onClick={() => cambiarOrden("campo:" + c.clave)}>{c.nombre}<Flecha col={"campo:" + c.clave} /></th>)}
+              <th style={th} onClick={() => cambiarOrden("reciente")}>Último mensaje<Flecha col="reciente" /></th>
+              <th style={th} onClick={() => cambiarOrden("creado")}>Creado<Flecha col="creado" /></th>
+            </tr></thead>
+            <tbody>
+              {ordenadas.slice(0, limite).map(c => {
+                const et = etapaPorId[c.etapa_id];
+                return (
+                  <tr key={c.id} onClick={() => setDetalleId(c.id)} style={{ cursor: "pointer", background: detalleId === c.id ? GRAY : WHITE }}>
+                    <td style={{ ...td, fontWeight: 700 }}>{c.nombre_contacto || <span style={{ color: GRAY3, fontWeight: 400 }}>Sin nombre</span>}{c.origen === "anuncio" && <span title="Vino de un anuncio" style={{ marginLeft: 6, fontSize: 9.5, fontWeight: 800, padding: "1px 6px", borderRadius: 5, background: "#DBEAFE", color: "#1E40AF" }}>Anuncio</span>}</td>
+                    <td style={td}>{c.telefono}</td>
+                    <td style={td}>{et ? <span style={{ fontSize: 11, fontWeight: 800, padding: "2px 8px", borderRadius: 5, background: et.color + "22", color: et.color }}>{et.nombre}</span> : <span style={{ color: GRAY3 }}>—</span>}</td>
+                    <td style={td}>{agentePorId[c.agente_id]?.nombre || <span style={{ color: GRAY3 }}>—</span>}</td>
+                    <td style={td}>{(c.etiquetas || []).map(t => <span key={t} style={{ fontSize: 11, fontWeight: 700, padding: "2px 7px", borderRadius: 5, background: GRAY2, marginRight: 4 }}>#{t}</span>)}</td>
+                    {camposVisibles.map(campo => <td key={campo.id} style={td}>{textoDeCampo(campo, c.campos?.[campo.clave]) || <span style={{ color: GRAY3 }}>—</span>}</td>)}
+                    <td style={{ ...td, color: GRAY3 }}>{c.ultimo_mensaje_at ? formatoHora(c.ultimo_mensaje_at) : "—"}</td>
+                    <td style={{ ...td, color: GRAY3 }}>{new Date(c.created_at).toLocaleDateString("es-PA", { day: "numeric", month: "short", year: "2-digit" })}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+        {ordenadas.length > limite && (
+          <div style={{ textAlign: "center", padding: 16 }}>
+            <button onClick={() => setLimite(l => l + 100)} className="oft-btn-press" style={{ padding: "9px 18px", borderRadius: 9, border: `1.5px solid ${GRAY2}`, background: WHITE, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>Mostrar más ({ordenadas.length - limite} restantes)</button>
+          </div>
+        )}
+      </div>
+
+      {detalle && createPortal(
+        <div onClick={() => setDetalleId(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", zIndex: 240, display: "flex", justifyContent: "flex-end" }}>
+          <div onClick={e => e.stopPropagation()} className="oft-fade-in" style={{ width: "100%", maxWidth: 400, background: WHITE, height: "100%", overflowY: "auto", padding: 20 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+              <div style={{ fontWeight: 900, fontSize: 16 }}>{detalle.nombre_contacto || detalle.telefono}</div>
+              <button onClick={() => setDetalleId(null)} className="oft-btn-press" style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}><X size={18} /></button>
+            </div>
+            <div style={{ fontSize: 12.5, color: GRAY3, marginBottom: 14 }}>{detalle.telefono}{detalle.origen === "anuncio" && detalle.anuncio_titulo ? ` · Anuncio: ${detalle.anuncio_titulo}` : ""}</div>
+            <button onClick={() => { setDetalleId(null); onAbrirChat(detalle.id); }} className="oft-btn-press" style={{ width: "100%", padding: 11, borderRadius: 10, border: "none", background: BLACK, color: WHITE, fontWeight: 800, fontSize: 13.5, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 7, marginBottom: 18 }}>
+              <MessageCircle size={15} /> {detalle.ultimo_mensaje_at ? "Abrir chat" : "Abrir chat y escribirle"}
+            </button>
+            <div style={{ fontSize: 11, fontWeight: 800, color: GRAY3, letterSpacing: 0.5, marginBottom: 8 }}>ETAPA</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 18 }}>
+              {etapas.map(et => (
+                <button key={et.id} onClick={() => guardarConv(detalle.id, { etapa_id: et.id })} className="oft-btn-press"
+                  style={{ fontSize: 12, fontWeight: 700, padding: "5px 11px", borderRadius: 8, border: `1.5px solid ${detalle.etapa_id === et.id ? et.color : GRAY2}`, background: detalle.etapa_id === et.id ? et.color + "1A" : WHITE, color: detalle.etapa_id === et.id ? et.color : GRAY3, cursor: "pointer" }}>{et.nombre}</button>
+              ))}
+            </div>
+            <div style={{ fontSize: 11, fontWeight: 800, color: GRAY3, letterSpacing: 0.5, marginBottom: 8 }}>AGENTE ASIGNADO</div>
+            <select value={detalle.agente_id || ""} onChange={e => guardarConv(detalle.id, { agente_id: e.target.value || null })} style={{ ...S.input, marginBottom: 18, fontSize: 13 }}>
+              <option value="">Sin asignar</option>{agentes.map(a => <option key={a.id} value={a.id}>{a.nombre}</option>)}
+            </select>
+            <div style={{ fontSize: 11, fontWeight: 800, color: GRAY3, letterSpacing: 0.5, marginBottom: 8 }}>ETIQUETAS</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
+              {(detalle.etiquetas || []).map(t => (
+                <span key={t} style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, fontWeight: 700, padding: "3px 8px", borderRadius: 7, background: GRAY2 }}>#{t}
+                  <button onClick={() => guardarConv(detalle.id, { etiquetas: detalle.etiquetas.filter(x => x !== t) })} className="oft-btn-press" style={{ background: "none", border: "none", cursor: "pointer", padding: 0, display: "flex" }}><X size={11} color={GRAY3} /></button>
+                </span>
+              ))}
+            </div>
+            <input value={nuevaTag} onChange={e => setNuevaTag(e.target.value)} list="oft-etiquetas-contactos" placeholder="Agregar etiqueta y Enter" style={{ ...S.input, marginBottom: 18, fontSize: 13 }}
+              onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); const t = nuevaTag.trim().replace(/^#/, "").slice(0, 30); if (t && !(detalle.etiquetas || []).some(x => x.toLowerCase() === t.toLowerCase())) guardarConv(detalle.id, { etiquetas: [...(detalle.etiquetas || []), t] }); setNuevaTag(""); } }} />
+            <datalist id="oft-etiquetas-contactos">{todasTags.map(t => <option key={t} value={t} />)}</datalist>
+            <CamposContacto key={detalle.id} conv={detalle} campos={campos} onGuardar={(cambios) => guardarConv(detalle.id, cambios)} />
+            <div style={{ fontSize: 11, fontWeight: 800, color: GRAY3, letterSpacing: 0.5, marginBottom: 8 }}>PEDIDOS</div>
+            <div style={{ fontSize: 13, color: GRAY3, marginBottom: 10 }}>{pedidosDe.length === 0 ? "Sin pedidos ni cotizaciones." : `${pedidosDe.length} pedido${pedidosDe.length !== 1 ? "s" : ""} o cotizacion${pedidosDe.length !== 1 ? "es" : ""} · $${pedidosDe.reduce((a, p) => a + Number(p.total || 0), 0).toFixed(2)} en total`}</div>
+            <div style={{ fontSize: 11.5, color: GRAY3 }}>Contacto desde el {new Date(detalle.created_at).toLocaleDateString("es-PA", { day: "numeric", month: "long", year: "numeric" })}</div>
+          </div>
+        </div>, document.body)}
+
+      {modal === "nuevo" && <NuevoContacto etapas={etapas} conversaciones={conversaciones} onCerrar={() => setModal(null)}
+        onCreado={(fila) => { setConversaciones(prev => [fila, ...prev]); setModal(null); setDetalleId(fila.id); }} />}
+      {modal === "importar" && <ImportarContactos etapas={etapas} campos={campos} conversaciones={conversaciones} onCerrar={() => setModal(null)}
+        onImportado={(filas) => setConversaciones(prev => [...filas, ...prev])} />}
+      {modal === "campos" && <GestorCampos campos={campos} onCambio={recargarCampos} onCerrar={() => setModal(null)} />}
+    </div>
+  );
+}
+
+
 
 // ═══════════════════════════════════════════════════════════════
 //  INTEGRACIONES — estado de conexión de WhatsApp e Instagram, en
