@@ -952,7 +952,7 @@ function PromoCarousel({ banners }) {
 }
 
 function HomeView() {
-  const { setView, setCatalogCat, categories, gruposCategorias, products, addToCart, banners, campanaActiva } = useApp();
+  const { setView, setCatalogCat, categories, gruposCategorias, products, addToCart, banners } = useApp();
   // Ordena los destacados según el orden de categorías que configuraste en el
   // admin (Categorías > Orden de las categorías) -- se ve igual que antes, una
   // sola cuadrícula, solo que la SECUENCIA respeta ese orden. Los productos del
@@ -983,25 +983,6 @@ function HomeView() {
           <PromoCarousel banners={banners} />
         </div>
       </div>
-
-      {/* TIRA DE OFERTAS — solo aparece cuando hay una campaña activa */}
-      {campanaActiva && (() => {
-        const cm = campanaActiva.campana, A = cm.color_principal || RED, B = cm.color_secundario || BLACK;
-        const porId = {}; products.forEach(p => { porId[p.id] = p; });
-        const infos = campanaActiva.items.map(it => ofertaInfo(it, porId, campanaActiva.combos)).filter(Boolean);
-        if (infos.length === 0) return null;
-        const maxPct = infos.reduce((m, i) => Math.max(m, i.pct), 0);
-        return (
-          <div className="oft-home-ofertas" onClick={() => { setView("ofertas"); registrarEvento("click_tira_ofertas"); }} style={{ background: `linear-gradient(100deg, ${B}, ${A})`, backgroundSize: "200% 100%", color: WHITE, cursor: "pointer", padding: "16px 20px", display: "flex", alignItems: "center", justifyContent: "center", gap: 16, flexWrap: "wrap", textAlign: "center" }}>
-            <Tag size={26} strokeWidth={2.4} className="oft-home-of-ic" />
-            <div>
-              <div style={{ fontWeight: 900, fontSize: 20, letterSpacing: 0.3 }}>{cm.prefijo} {cm.nombre}</div>
-              <div style={{ fontSize: 13, opacity: 0.9 }}>{infos.length} ofertas y combos{maxPct > 0 ? ` · hasta ${maxPct}% de descuento` : ""}</div>
-            </div>
-            <span className="oft-btn-press" style={{ background: WHITE, color: A, fontWeight: 900, fontSize: 14, padding: "9px 20px", borderRadius: 24, display: "inline-flex", alignItems: "center", gap: 6 }}>Ver ofertas <ChevronRight size={16} /></span>
-          </div>
-        );
-      })()}
 
       {/* BARRA DE MARCA + ACCIONES — complementa el carrusel, minimalista y oscura */}
       <div className="oft-cta-bar">
@@ -4773,11 +4754,6 @@ export default function App() {
       <style>{`
         @keyframes spin { to { transform: rotate(360deg); } }
         .spin { animation: spin 0.8s linear infinite; }
-        @keyframes ofHomeShine { 0% { background-position: 0% 50%; } 100% { background-position: 200% 50%; } }
-        @keyframes ofHomeWiggle { 0%,100% { transform: rotate(-8deg) scale(1); } 50% { transform: rotate(8deg) scale(1.15); } }
-        .oft-home-ofertas { animation: ofHomeShine 6s linear infinite alternate; transition: filter .2s; }
-        .oft-home-ofertas:hover { filter: brightness(1.1); }
-        .oft-home-of-ic { animation: ofHomeWiggle 1.8s ease-in-out infinite; }
         @keyframes ofNavPulse { 0%,100% { box-shadow: 0 0 0 0 rgba(227,30,36,0.45); } 50% { box-shadow: 0 0 0 7px rgba(227,30,36,0); } }
         .oft-nav-ofertas { animation: ofNavPulse 2s ease-out infinite; }
         * { box-sizing: border-box; }
