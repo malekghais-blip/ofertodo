@@ -4821,8 +4821,17 @@ export default function App() {
 
   // "Latido" para saber quién sigue activo en el sitio ahora mismo (visitas en vivo,
   // panel de Analítica) -- uno cada 60 segundos mientras la pestaña siga abierta.
+  // Además de "sigue activo", cada latido dice EN QUÉ sección está (inicio / catálogo / ofertas...),
+  // así Analítica puede calcular cuánto tiempo pasan los clientes en cada una. Y cada vez que
+  // el cliente entra a una sección se registra una "vista de sección".
+  const vistaActualRef = useRef(view);
   useEffect(() => {
-    const latido = setInterval(() => registrarEvento("heartbeat"), 60000);
+    vistaActualRef.current = view;
+    if (["home", "catalogo", "ofertas"].includes(view)) registrarEvento("ver_seccion", view, view === "home" ? "Inicio" : view === "catalogo" ? "Catálogo" : "Ofertas", user?.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view]);
+  useEffect(() => {
+    const latido = setInterval(() => registrarEvento("heartbeat", vistaActualRef.current), 60000);
     return () => clearInterval(latido);
   }, []);
 
