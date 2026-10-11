@@ -472,8 +472,28 @@ export default function CrmView() {
   const etapaPorId = Object.fromEntries(etapas.map(e => [e.id, e]));
   const agentePorId = Object.fromEntries(agentes.map(a => [a.id, a]));
 
+  // En computadora, la bandeja ocupa exactamente la pantalla que queda debajo
+  // del menú del sitio: cada columna (lista, chat, datos) hace scroll por
+  // dentro y la barra de escribir se queda siempre abajo, a la vista.
+  const raizRef = useRef(null);
+  const [alturaDisp, setAlturaDisp] = useState(null);
+  useEffect(() => {
+    const medir = () => {
+      const el = raizRef.current;
+      if (!el) return;
+      const arriba = el.getBoundingClientRect().top + window.scrollY;
+      const h = Math.max(420, Math.round(window.innerHeight - arriba));
+      setAlturaDisp(prev => prev === h ? prev : h);
+    };
+    medir();
+    const t = setTimeout(medir, 400);
+    window.addEventListener("resize", medir);
+    return () => { clearTimeout(t); window.removeEventListener("resize", medir); };
+  }, [tab, esMobil]);
+  const bandejaAjustada = !esMobil && tab === "inbox";
+
   return (
-    <div style={{ minHeight: "calc(100vh - 64px)", background: GRAY, display: "flex", flexDirection: "column" }}>
+    <div ref={raizRef} style={{ ...(bandejaAjustada ? { height: alturaDisp || "calc(100vh - 64px)", overflow: "hidden" } : { minHeight: "calc(100vh - 64px)" }), background: GRAY, display: "flex", flexDirection: "column" }}>
       {/* ENCABEZADO DEL CRM */}
       <div style={{ background: WHITE, borderBottom: `1px solid ${GRAY2}`, padding: esMobil ? "10px 12px" : "14px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
