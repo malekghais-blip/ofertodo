@@ -443,6 +443,22 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
 
   useEffect(() => { if (hiloRef.current) hiloRef.current.scrollTop = hiloRef.current.scrollHeight; }, [mensajes]);
 
+  // Mantiene al día el agente (y otros datos) de la conversación abierta cuando
+  // cambian desde otro lado: otro agente, la asignación automática, un workflow.
+  useEffect(() => {
+    if (!seleccionada) return;
+    const actual = conversaciones.find(c => c.id === seleccionada.id);
+    if (actual && actual.agente_id !== seleccionada.agente_id) setSeleccionada(prev => prev ? { ...prev, agente_id: actual.agente_id } : prev);
+  }, [conversaciones]);
+
+  // Si un agente responde un chat que no tiene dueño, la base de datos se lo
+  // asigna sola. Esto solo refleja ese cambio al instante en pantalla.
+  const reflejarAutoasignacion = () => {
+    if (!seleccionada || seleccionada.agente_id || !user?.id) return;
+    setConversaciones(prev => prev.map(c => c.id === seleccionada.id && !c.agente_id ? { ...c, agente_id: user.id } : c));
+    setSeleccionada(prev => prev && !prev.agente_id ? { ...prev, agente_id: user.id } : prev);
+  };
+
   // URLs firmadas para los archivos del bucket privado "crm-media" -- guardadas
   // en memoria por ruta, para no volver a pedirlas cada vez que se re-dibuja el
   // chat. Cuando llega un mensaje nuevo (por Realtime), este mismo efecto lo
@@ -616,6 +632,7 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
       const fila = Array.isArray(creado) ? creado[0] : null;
       if (!fila) throw new Error("No se pudo guardar el mensaje");
       setMensajes(prev => prev.some(m => m.id === fila.id) ? prev : [...prev, fila]);
+      reflejarAutoasignacion();
       const res = (await enviarPorWhatsApp([fila.id]))[fila.id];
       const actualizado = res?.mensaje || { estado: res?.ok ? "enviado" : "fallido", error_envio: res?.ok ? null : (res?.error || "No se pudo enviar") };
       setMensajes(prev => prev.map(m => m.id === fila.id ? { ...m, ...actualizado } : m));
@@ -643,6 +660,7 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
     const fila = Array.isArray(creado) ? creado[0] : null;
     if (!fila) throw new Error("No se pudo guardar el mensaje");
     setMensajes(prev => prev.some(m => m.id === fila.id) ? prev : [...prev, fila]);
+    reflejarAutoasignacion();
     const res = (await enviarPorWhatsApp([fila.id]))[fila.id];
     const actualizado = res?.mensaje || { ...fila, estado: res?.ok ? "enviado" : "fallido", error_envio: res?.ok ? null : (res?.error || "No se pudo enviar") };
     setMensajes(prev => prev.map(m => m.id === fila.id ? { ...m, ...actualizado } : m));
