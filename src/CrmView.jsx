@@ -137,6 +137,35 @@ function BarraAnimada({ porcentaje, color, alto = 8 }) {
 }
 
 // Mismo punto de quiebre (768px) que usa el resto del sitio en App.jsx/AdminView.jsx.
+// Tamaño de la parte de la pantalla que realmente se ve (en el iPhone, el
+// teclado la achica). Sirve para que el chat ocupe justo lo visible y la barra
+// de escribir quede pegada arriba del teclado, sin que la página se mueva.
+function useVisualViewport() {
+  const leer = () => {
+    const vv = typeof window !== "undefined" ? window.visualViewport : null;
+    return { h: Math.round(vv ? vv.height : (typeof window !== "undefined" ? window.innerHeight : 800)), top: Math.round(vv ? vv.offsetTop : 0) };
+  };
+  const [medida, setMedida] = useState(leer);
+  useEffect(() => {
+    const vv = window.visualViewport;
+    const act = () => setMedida(prev => { const n = leer(); return prev.h === n.h && prev.top === n.top ? prev : n; });
+    act();
+    window.addEventListener("resize", act);
+    if (vv) { vv.addEventListener("resize", act); vv.addEventListener("scroll", act); }
+    return () => {
+      window.removeEventListener("resize", act);
+      if (vv) { vv.removeEventListener("resize", act); vv.removeEventListener("scroll", act); }
+    };
+  }, []);
+  return medida;
+}
+
+// En el celular el chat se dibuja fuera del resto de la página (directo en
+// <body>), para que ninguna animación o contenedor de atrás lo desacomode.
+function PortalMovil({ activo, children }) {
+  return activo && typeof document !== "undefined" ? createPortal(children, document.body) : children;
+}
+
 function useEsMobil() {
   const [esMobil, setEsMobil] = useState(typeof window !== "undefined" ? window.innerWidth <= 768 : false);
   useEffect(() => {
@@ -332,6 +361,7 @@ export default function CrmView() {
 // ─────────────────────────────────────────────────────────────
 function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, agentes, agentePorId, pedidos, user, recargar, sesionLista, abrirConvId, onAbierto }) {
   const esMobil = useEsMobil();
+  const vv = useVisualViewport();
   const { campos: camposPersonalizados } = useCampos();
   const [seleccionada, setSeleccionada] = useState(null);
   const [vistaMobil, setVistaMobil] = useState("hilo"); // hilo | contacto -- solo aplica en móvil cuando hay una conversación abierta
@@ -441,7 +471,16 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
     onAbierto && onAbierto();
   }, [abrirConvId, conversaciones]);
 
-  useEffect(() => { if (hiloRef.current) hiloRef.current.scrollTop = hiloRef.current.scrollHeight; }, [mensajes]);
+  useEffect(() => { if (hiloRef.current) hiloRef.current.scrollTop = hiloRef.current.scrollHeight; }, [mensajes, vv.h]);
+
+  // En el celular, con el chat abierto a pantalla completa, la página de atrás no se mueve.
+  const chatPantallaCompleta = esMobil && !!seleccionada && vistaMobil !== "contacto";
+  useEffect(() => {
+    if (!chatPantallaCompleta) return;
+    const antes = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = antes; };
+  }, [chatPantallaCompleta]);
 
   // Mantiene al día el agente (y otros datos) de la conversación abierta cuando
   // cambian desde otro lado: otro agente, la asignación automática, un workflow.
@@ -792,7 +831,12 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
 
       {/* HILO DE MENSAJES */}
       {hiloVisible && (
-      <div key={esMobil ? (seleccionada?.id || "vacio") : "hilo"} className={esMobil ? "oft-fade-in" : undefined} style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, width: esMobil ? "100%" : "auto" }}>
+      <PortalMovil activo={esMobil && !!seleccionada}>
+      <div key={esMobil ? (seleccionada?.id || "vacio") : "hilo"} className={esMobil && !seleccionada ? "oft-fade-in" : undefined}
+        style={esMobil && seleccionada
+          // Celular: el chat es pantalla completa, del tamaño de lo que se ve (con o sin teclado).
+          ? { position: "fixed", left: 0, right: 0, top: vv.top, height: vv.h, zIndex: 200, background: GRAY, display: "flex", flexDirection: "column", overflow: "hidden" }
+          : { flex: 1, display: "flex", flexDirection: "column", minWidth: 0, width: esMobil ? "100%" : "auto" }}>
         {!seleccionada ? (
           <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", color: GRAY3 }}>
             <MessageCircle size={48} color={GRAY2} style={{ marginBottom: 12 }} />
@@ -832,7 +876,7 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
                 </button>
               )}
             </div>
-            <div ref={hiloRef} style={{ flex: 1, overflowY: "auto", padding: esMobil ? 14 : 20, display: "flex", flexDirection: "column", gap: 8 }}>
+            <div ref={hiloRef} style={{ flex: 1, minHeight: 0, overflowY: "auto", overscrollBehavior: "contain", WebkitOverflowScrolling: "touch", padding: esMobil ? 14 : 20, display: "flex", flexDirection: "column", gap: 8 }}>
               {hilo.length === 0 ? (
                 <div style={{ textAlign: "center", color: GRAY3, fontSize: 13, marginTop: 40 }}>Sin mensajes en esta conversación</div>
               ) : hilo.map(m => {
@@ -1016,7 +1060,7 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
                     style={{ fontSize: 12, fontWeight: 800, padding: "5px 11px", borderRadius: 7, border: "none", cursor: "pointer", background: modoComposer === id ? (id === "nota" ? "#FEF08A" : BLACK) : GRAY, color: modoComposer === id ? (id === "nota" ? "#713F12" : WHITE) : GRAY3 }}>{label}</button>
                 ))}
               </div>
-              <div style={{ padding: "8px 14px 14px", display: "flex", gap: 8, alignItems: "center" }}>
+              <div style={{ padding: esMobil ? "8px 12px calc(10px + env(safe-area-inset-bottom))" : "8px 14px 14px", display: "flex", gap: 8, alignItems: "center", flexShrink: 0 }}>
                 {modoComposer === "responder" && (
                   <>
                     <button onClick={() => setMostrarRapidas(v => !v)} className="oft-btn-press" title="Respuestas rápidas (o escribe /)" style={{ background: mostrarRapidas ? BLACK : GRAY, color: mostrarRapidas ? WHITE : GRAY3, border: "none", borderRadius: 10, width: 38, height: 38, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}><Zap size={16} /></button>
@@ -1027,7 +1071,7 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
                   placeholder={modoComposer === "nota" ? "Nota interna: solo la ve tu equipo..." : ventanaCerrada ? (esInstagram(seleccionada) ? "Pasaron 24 h: espera su próximo mensaje" : "Pasaron 24 h: usa una plantilla") : (esMobil ? "Escribe un mensaje..." : "Escribe un mensaje... (o / para respuestas rápidas)")}
                   disabled={modoComposer === "responder" && ventanaCerrada}
                   onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); enviarYMantenerFoco(); } }}
-                  style={{ ...S.input, marginBottom: 0, flex: 1, minWidth: 0, opacity: modoComposer === "responder" && ventanaCerrada ? 0.6 : 1, background: modoComposer === "nota" ? "#FEFCE8" : undefined, borderColor: modoComposer === "nota" ? "#FDE68A" : undefined }} />
+                  style={{ ...S.input, marginBottom: 0, flex: 1, minWidth: 0, fontSize: esMobil ? 16 : S.input.fontSize, opacity: modoComposer === "responder" && ventanaCerrada ? 0.6 : 1, background: modoComposer === "nota" ? "#FEFCE8" : undefined, borderColor: modoComposer === "nota" ? "#FDE68A" : undefined }} />
                 {/* El botón no le quita el foco al campo: así en el iPhone el teclado
                     se queda abierto y se puede seguir escribiendo sin volver a tocar la barra. */}
                 <button onClick={enviarYMantenerFoco} onMouseDown={e => e.preventDefault()} onPointerDown={e => { if (e.pointerType !== "mouse") e.preventDefault(); }}
@@ -1041,6 +1085,7 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
           </>
         )}
       </div>
+      </PortalMovil>
       )}
 
       {/* PANEL DE CONTACTO */}
