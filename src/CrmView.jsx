@@ -7,7 +7,7 @@ import {
   Timer, AlertCircle, FileText, ExternalLink, Workflow, GitBranch, Plus,
   Trash2, Play, UserCheck, ToggleLeft, ToggleRight, StickyNote,
   Megaphone, Image as ImageIcon, Instagram, Plug, CheckCircle2, Upload,
-  ChevronDown, Power, KeyRound, ShieldCheck, Phone, RotateCcw, Hash,
+  ChevronDown, Power, KeyRound, ShieldCheck, Phone, RotateCcw, Hash, Mic,
 } from "lucide-react";
 import { RED, BLACK, GRAY, GRAY2, GRAY3, WHITE, S, useApp, sb, Spinner, comprimirImagen, supabaseRealtime, SUPABASE_URL } from "./shared.jsx";
 
@@ -137,6 +137,199 @@ function BarraAnimada({ porcentaje, color, alto = 8 }) {
 }
 
 // Mismo punto de quiebre (768px) que usa el resto del sitio en App.jsx/AdminView.jsx.
+// ─────────────────────────────────────────────────────────────────────────
+// NOTAS DE VOZ -- preparación del audio
+// WhatsApp solo acepta ogg/opus (nota de voz de verdad), mp4/aac, mp3, amr.
+// Chrome y Edge graban en webm/opus: se reempaqueta a ogg/opus sin
+// recomprimir (mismo audio, otro contenedor). Instagram no acepta ogg: acepta
+// mp4/m4a/aac/wav, así que lo que no sea mp4 se pasa a WAV.
+// ─────────────────────────────────────────────────────────────────────────
+const TABLA_CRC_OGG = (() => {
+  const t = new Uint32Array(256);
+  for (let i = 0; i < 256; i++) {
+    let r = (i << 24) >>> 0;
+    for (let j = 0; j < 8; j++) r = (r & 0x80000000) ? (((r << 1) ^ 0x04C11DB7) >>> 0) : ((r << 1) >>> 0);
+    t[i] = r;
+  }
+  return t;
+})();
+function crcOgg(bytes) {
+  let c = 0;
+  for (let i = 0; i < bytes.length; i++) c = (((c << 8) >>> 0) ^ TABLA_CRC_OGG[((c >>> 24) ^ bytes[i]) & 0xFF]) >>> 0;
+  return c >>> 0;
+}
+
+function paginaOgg({ tipo, granule, serie, secuencia, paquetes }) {
+  const segs = [];
+  let bytesDatos = 0;
+  for (const p of paquetes) {
+    let n = p.length;
+    while (n >= 255) { segs.push(255); n -= 255; }
+    segs.push(n);
+    bytesDatos += p.length;
+  }
+  const buf = new Uint8Array(27 + segs.length + bytesDatos);
+  const dv = new DataView(buf.buffer);
+  buf.set([0x4F, 0x67, 0x67, 0x53, 0, tipo], 0); // "OggS", versión 0, tipo de página
+  dv.setUint32(6, granule % 4294967296, true);
+  dv.setUint32(10, Math.floor(granule / 4294967296), true);
+  dv.setUint32(14, serie, true);
+  dv.setUint32(18, secuencia, true);
+  dv.setUint32(22, 0, true);
+  buf[26] = segs.length;
+  buf.set(segs, 27);
+  let pos = 27 + segs.length;
+  for (const p of paquetes) { buf.set(p, pos); pos += p.length; }
+  dv.setUint32(22, crcOgg(buf), true);
+  return buf;
+}
+
+// Lee un número de longitud variable de WebM (EBML). Con conservarMarca se
+// devuelve tal cual (para los IDs); sin ella se quita el bit marcador (tamaños).
+function leerVintWebm(b, i, conservarMarca) {
+  const primero = b[i];
+  if (primero === undefined) return null;
+  let largo = 1, mask = 0x80;
+  while (largo <= 8 && !(primero & mask)) { largo++; mask >>= 1; }
+  if (largo > 8 || i + largo > b.length) return null;
+  let valor = conservarMarca ? primero : (primero & (mask - 1));
+  let todosUnos = (primero & (mask - 1)) === (mask - 1);
+  for (let k = 1; k < largo; k++) {
+    valor = valor * 256 + b[i + k];
+    if (b[i + k] !== 0xFF) todosUnos = false;
+  }
+  return { valor, largo, desconocido: !conservarMarca && todosUnos };
+}
+
+// Muestras (a 48 kHz) que dura un paquete de Opus, según su primer byte.
+function muestrasPaqueteOpus(p) {
+  if (!p.length) return 0;
+  const toc = p[0], config = toc >> 3;
+  let ms;
+  if (config < 12) ms = [10, 20, 40, 60][config & 3];
+  else if (config < 16) ms = [10, 20][config & 1];
+  else ms = [2.5, 5, 10, 20][config & 3];
+  const c = toc & 3;
+  const frames = c === 0 ? 1 : (c === 3 ? ((p[1] || 1) & 0x3F) : 2);
+  return Math.round(ms * 48 * frames);
+}
+
+// Saca los paquetes de Opus de un WebM y los reescribe como Ogg Opus.
+function webmOpusAOgg(b) {
+  const MAESTROS = new Set([0x18538067, 0x1F43B675, 0xA0, 0x1654AE6B, 0xAE]); // Segment, Cluster, BlockGroup, Tracks, TrackEntry
+  const paquetes = [];
+  let codecPrivate = null;
+  let i = 0;
+  while (i < b.length) {
+    const id = leerVintWebm(b, i, true);
+    if (!id) break;
+    const sz = leerVintWebm(b, i + id.largo, false);
+    if (!sz) break;
+    const ini = i + id.largo + sz.largo;
+    if (MAESTROS.has(id.valor)) { i = ini; continue; }
+    if (sz.desconocido) break;
+    const fin = Math.min(ini + sz.valor, b.length);
+    if (id.valor === 0xA3 || id.valor === 0xA1) { // SimpleBlock / Block
+      const t = leerVintWebm(b, ini, false);
+      if (t) {
+        const inicioDatos = ini + t.largo + 3; // número de pista + 2 bytes de tiempo + 1 de banderas
+        if (inicioDatos < fin) paquetes.push(b.subarray(inicioDatos, fin));
+      }
+    } else if (id.valor === 0x63A2 && !codecPrivate) {
+      codecPrivate = b.slice(ini, fin);
+    }
+    i = fin;
+  }
+  if (!paquetes.length) throw new Error("El audio grabado está vacío.");
+
+  let cabecera;
+  const esOpusHead = codecPrivate && codecPrivate.length >= 19 && String.fromCharCode(...codecPrivate.subarray(0, 8)) === "OpusHead";
+  if (esOpusHead) cabecera = codecPrivate.slice(0, 19);
+  else {
+    cabecera = new Uint8Array(19);
+    cabecera.set([0x4F, 0x70, 0x75, 0x73, 0x48, 0x65, 0x61, 0x64, 1, 1], 0);
+    const dv = new DataView(cabecera.buffer);
+    dv.setUint16(10, 312, true); dv.setUint32(12, 48000, true);
+  }
+  const preSkip = new DataView(cabecera.buffer, cabecera.byteOffset).getUint16(10, true);
+  const tags = new Uint8Array([0x4F, 0x70, 0x75, 0x73, 0x54, 0x61, 0x67, 0x73, 8, 0, 0, 0, 0x4F, 0x66, 0x65, 0x72, 0x74, 0x6F, 0x64, 0x6F, 0, 0, 0, 0]); // "OpusTags", fabricante "Ofertodo", 0 comentarios
+
+  const serie = (Math.random() * 0xFFFFFFFF) >>> 0;
+  const paginas = [];
+  let sec = 0;
+  paginas.push(paginaOgg({ tipo: 0x02, granule: 0, serie, secuencia: sec++, paquetes: [cabecera] }));
+  paginas.push(paginaOgg({ tipo: 0x00, granule: 0, serie, secuencia: sec++, paquetes: [tags] }));
+  let muestras = 0, k = 0;
+  while (k < paquetes.length) {
+    const grupo = []; let segs = 0;
+    while (k < paquetes.length && grupo.length < 50) {
+      const nSegs = Math.floor(paquetes[k].length / 255) + 1;
+      if (segs + nSegs > 255) break;
+      grupo.push(paquetes[k]); segs += nSegs;
+      muestras += muestrasPaqueteOpus(paquetes[k]); k++;
+    }
+    if (!grupo.length) { grupo.push(paquetes[k]); muestras += muestrasPaqueteOpus(paquetes[k]); k++; }
+    paginas.push(paginaOgg({ tipo: k >= paquetes.length ? 0x04 : 0x00, granule: preSkip + muestras, serie, secuencia: sec++, paquetes: grupo }));
+  }
+  let total = 0; for (const p of paginas) total += p.length;
+  const salida = new Uint8Array(total); let pos = 0;
+  for (const p of paginas) { salida.set(p, pos); pos += p.length; }
+  return salida;
+}
+
+// Qué formato usa el navegador para grabar. Safari: mp4 (AAC). Chrome/Edge:
+// webm/opus (Chrome también dice soportar mp4, pero su mp4 viene en pedacitos
+// y WhatsApp no lo traga bien, por eso se prefiere webm). Firefox: ogg/opus.
+function formatoGrabacion() {
+  if (typeof MediaRecorder === "undefined") return null;
+  const ok = (t) => { try { return MediaRecorder.isTypeSupported(t); } catch (_) { return false; } };
+  const esSafari = /^((?!chrome|chromium|android|crios|fxios|edg).)*safari/i.test(navigator.userAgent || "");
+  const orden = esSafari
+    ? ["audio/mp4", "audio/ogg;codecs=opus", "audio/webm;codecs=opus"]
+    : ["audio/ogg;codecs=opus", "audio/webm;codecs=opus", "audio/mp4"];
+  const mime = orden.find(ok);
+  return { mime: mime || "" };
+}
+
+// Pasa cualquier audio que el navegador sepa abrir a WAV de 16 kHz, mono.
+async function aWav16k(blob) {
+  const datos = await blob.arrayBuffer();
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  const ctx = new Ctx();
+  let decodificado;
+  try {
+    decodificado = await new Promise((ok, mal) => { const p = ctx.decodeAudioData(datos.slice(0), ok, mal); if (p && p.catch) p.catch(mal); });
+  } finally { try { ctx.close(); } catch (_) {} }
+  const sr = 16000;
+  const OfflineCtx = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+  const off = new OfflineCtx(1, Math.max(1, Math.ceil(decodificado.duration * sr)), sr);
+  const fuente = off.createBufferSource();
+  fuente.buffer = decodificado; fuente.connect(off.destination); fuente.start();
+  const pcm = (await off.startRendering()).getChannelData(0);
+  const out = new DataView(new ArrayBuffer(44 + pcm.length * 2));
+  const txt = (pos, s) => { for (let i = 0; i < s.length; i++) out.setUint8(pos + i, s.charCodeAt(i)); };
+  txt(0, "RIFF"); out.setUint32(4, 36 + pcm.length * 2, true); txt(8, "WAVE"); txt(12, "fmt ");
+  out.setUint32(16, 16, true); out.setUint16(20, 1, true); out.setUint16(22, 1, true);
+  out.setUint32(24, sr, true); out.setUint32(28, sr * 2, true); out.setUint16(32, 2, true); out.setUint16(34, 16, true);
+  txt(36, "data"); out.setUint32(40, pcm.length * 2, true);
+  for (let i = 0; i < pcm.length; i++) { const v = Math.max(-1, Math.min(1, pcm[i])); out.setInt16(44 + i * 2, v < 0 ? v * 0x8000 : v * 0x7FFF, true); }
+  return new Blob([out.buffer], { type: "audio/wav" });
+}
+
+// Deja el audio listo para mandarlo: { blob, ext } con el tipo exacto que pide cada canal.
+async function prepararAudio(bruto, paraInstagram) {
+  const base = (bruto.type || "").split(";")[0].toLowerCase();
+  if (base === "audio/mp4" || base === "video/mp4" || base === "audio/x-m4a" || base === "audio/aac")
+    return { blob: new Blob([bruto], { type: "audio/mp4" }), ext: "m4a" }; // lo aceptan WhatsApp e Instagram
+  if (paraInstagram) return { blob: await aWav16k(bruto), ext: "wav" };
+  if (base === "audio/ogg") return { blob: new Blob([bruto], { type: "audio/ogg" }), ext: "ogg" };
+  if (base === "audio/webm" || base === "video/webm") {
+    const ogg = webmOpusAOgg(new Uint8Array(await bruto.arrayBuffer()));
+    return { blob: new Blob([ogg], { type: "audio/ogg" }), ext: "ogg" };
+  }
+  throw new Error("Tu navegador graba en un formato que no se puede enviar. Usa Chrome o Safari.");
+}
+
 // Tamaño de la parte de la pantalla que realmente se ve (en el iPhone, el
 // teclado la achica). Sirve para que el chat ocupe justo lo visible y la barra
 // de escribir quede pegada arriba del teclado, sin que la página se mueva.
@@ -690,11 +883,12 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
   // Guarda el mensaje en el CRM y lo manda de verdad por WhatsApp. Si WhatsApp
   // lo rechaza (por ejemplo, pasaron más de 24 h), el mensaje queda marcado
   // "No enviado" en el chat con el motivo, y esta función devuelve ese motivo.
-  const registrarMensajeSaliente = async (contenido, actualizarPreview = true, respondeAId = null) => {
+  const registrarMensajeSaliente = async (contenido, actualizarPreview = true, respondeAId = null, extra = {}) => {
     const creado = await sb.post("crm_mensajes", {
-      conversacion_id: seleccionada.id, direccion: "saliente", tipo: "texto",
+      conversacion_id: seleccionada.id, direccion: "saliente", tipo: extra.tipo || "texto",
       contenido, agente_id: user?.id || null, estado: "enviado",
       responde_a_id: respondeAId, canal: seleccionada.canal || "whatsapp",
+      ...(extra.media_url ? { media_url: extra.media_url } : {}),
     });
     const fila = Array.isArray(creado) ? creado[0] : null;
     if (!fila) throw new Error("No se pudo guardar el mensaje");
@@ -704,7 +898,7 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
     const actualizado = res?.mensaje || { ...fila, estado: res?.ok ? "enviado" : "fallido", error_envio: res?.ok ? null : (res?.error || "No se pudo enviar") };
     setMensajes(prev => prev.map(m => m.id === fila.id ? { ...m, ...actualizado } : m));
     if (actualizarPreview && res?.ok) {
-      const preview = contenido.length > 60 ? contenido.slice(0, 60) + "…" : contenido;
+      const preview = extra.preview || (contenido.length > 60 ? contenido.slice(0, 60) + "…" : contenido);
       const ahora = new Date().toISOString();
       await sb.patch("crm_conversaciones", seleccionada.id, { ultimo_mensaje_at: ahora, ultimo_mensaje_preview: preview });
       setConversaciones(prev => prev.map(c => c.id === seleccionada.id ? { ...c, ultimo_mensaje_at: ahora, ultimo_mensaje_preview: preview } : c));
@@ -747,6 +941,77 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
     setEnviandoPedidoId(null);
   };
 
+  // ── Notas de voz ──────────────────────────────────────────────────────────
+  // Se toca el micrófono, se graba, y al tocar enviar sale como nota de voz por
+  // WhatsApp (o como audio por Instagram). Se puede descartar antes de enviar.
+  const puedeGrabar = typeof navigator !== "undefined" && !!navigator.mediaDevices?.getUserMedia && typeof MediaRecorder !== "undefined";
+  const [voz, setVoz] = useState({ estado: "idle", seg: 0, error: "" }); // idle | grabando | procesando
+  const vozRef = useRef({ rec: null, stream: null, chunks: [], timer: null, inicio: 0, cancelado: false, mime: "" });
+  const finalizarVozRef = useRef(null);
+
+  const soltarMicrofono = () => {
+    const v = vozRef.current;
+    if (v.timer) { clearInterval(v.timer); v.timer = null; }
+    try { v.stream?.getTracks().forEach(t => t.stop()); } catch (_) {}
+    v.stream = null;
+  };
+  const iniciarVoz = async () => {
+    if (voz.estado !== "idle" || !seleccionada) return;
+    setVoz({ estado: "grabando", seg: 0, error: "" });
+    const v = vozRef.current;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+      const fmt = formatoGrabacion();
+      const rec = fmt?.mime ? new MediaRecorder(stream, { mimeType: fmt.mime }) : new MediaRecorder(stream);
+      v.stream = stream; v.rec = rec; v.chunks = []; v.cancelado = false; v.inicio = Date.now(); v.mime = rec.mimeType || fmt?.mime || "";
+      rec.ondataavailable = (e) => { if (e.data && e.data.size) v.chunks.push(e.data); };
+      rec.onstop = () => finalizarVozRef.current?.();
+      rec.start();
+      v.timer = setInterval(() => {
+        const s = Math.floor((Date.now() - v.inicio) / 1000);
+        setVoz(p => p.estado === "grabando" ? { ...p, seg: s } : p);
+        if (s >= 300 && v.rec?.state === "recording") v.rec.stop(); // máximo 5 minutos
+      }, 250);
+    } catch (e) {
+      soltarMicrofono();
+      const denegado = e?.name === "NotAllowedError" || e?.name === "SecurityError";
+      const sinMic = e?.name === "NotFoundError" || e?.name === "OverconstrainedError";
+      setVoz({ estado: "idle", seg: 0, error: denegado ? "Permite el micrófono en tu navegador para grabar notas de voz." : sinMic ? "No se encontró un micrófono." : "No se pudo usar el micrófono: " + (e?.message || e) });
+    }
+  };
+  const detenerVoz = () => { const v = vozRef.current; if (v.rec?.state === "recording") { v.cancelado = false; v.rec.stop(); } };
+  const cancelarVoz = () => {
+    const v = vozRef.current;
+    v.cancelado = true;
+    if (v.rec?.state === "recording") v.rec.stop(); else { soltarMicrofono(); setVoz({ estado: "idle", seg: 0, error: "" }); }
+  };
+  finalizarVozRef.current = async () => {
+    const v = vozRef.current;
+    soltarMicrofono();
+    const trozos = v.chunks; v.chunks = [];
+    const dur = (Date.now() - v.inicio) / 1000;
+    if (v.cancelado) { setVoz({ estado: "idle", seg: 0, error: "" }); return; }
+    if (dur < 1 || !trozos.length) { setVoz({ estado: "idle", seg: 0, error: "Audio muy corto. Graba al menos un segundo." }); return; }
+    setVoz({ estado: "procesando", seg: Math.round(dur), error: "" });
+    try {
+      const archivo = await prepararAudio(new Blob(trozos, { type: v.mime }), esInstagram(seleccionada));
+      const ruta = `voz/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${archivo.ext}`;
+      await sb.upload("crm", ruta, archivo.blob);
+      const r = await registrarMensajeSaliente(null, true, respondiendoA?.id || null, { tipo: "audio", media_url: sb.publicUrl("crm", ruta), preview: "🎤 Nota de voz" });
+      setRespondiendoA(null);
+      setVoz({ estado: "idle", seg: 0, error: r.ok ? "" : ("No se pudo enviar la nota de voz: " + (r.error || "error desconocido") + ". Queda en el chat para reintentar.") });
+    } catch (e) {
+      setVoz({ estado: "idle", seg: 0, error: "No se pudo enviar la nota de voz: " + (e?.message || e) });
+    }
+  };
+  // Si se cambia de chat o se sale de la pantalla mientras se graba, se descarta.
+  useEffect(() => () => {
+    const v = vozRef.current;
+    v.cancelado = true;
+    try { if (v.rec?.state === "recording") v.rec.stop(); } catch (_) {}
+    soltarMicrofono();
+    setVoz({ estado: "idle", seg: 0, error: "" });
+  }, [seleccionada?.id]);
   // Envía el mensaje (o la nota) y deja el cursor en la barra de escribir.
   // Se vuelve a enfocar dentro del mismo toque, que es lo único que el iPhone
   // permite para no cerrar el teclado.
@@ -760,6 +1025,8 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
   useEffect(() => { if (hiloRef.current) hiloRef.current.scrollTop = hiloRef.current.scrollHeight; }, [notas]);
   const ventanaHoras = horasDeVentana(mensajes);
   const ventanaCerrada = !!seleccionada && mensajes.length > 0 && ventanaHoras <= 0;
+  const mostrarMic = puedeGrabar && modoComposer === "responder" && !texto.trim() && !ventanaCerrada;
+  const tiempoVoz = `${Math.floor(voz.seg / 60)}:${String(voz.seg % 60).padStart(2, "0")}`;
   const pedidosDelContacto = seleccionada ? pedidos.filter(p => p.telefono === seleccionada.telefono) : [];
 
   return (
@@ -1061,6 +1328,22 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
                 ))}
               </div>
               <div style={{ padding: esMobil ? "8px 12px calc(10px + env(safe-area-inset-bottom))" : "8px 14px 14px", display: "flex", gap: 8, alignItems: "center", flexShrink: 0 }}>
+                {voz.estado !== "idle" ? (
+                  <>
+                    <style>{"@keyframes oftPulsoGrabando { 0%,100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.35; transform: scale(0.8); } }"}</style>
+                    <button onClick={cancelarVoz} disabled={voz.estado === "procesando"} className="oft-btn-press" title="Descartar la grabación"
+                      style={{ background: GRAY, color: GRAY3, border: "none", borderRadius: 10, width: 38, height: 38, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0, opacity: voz.estado === "procesando" ? 0.5 : 1 }}><Trash2 size={16} /></button>
+                    <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 10, padding: "0 12px", height: 38, borderRadius: 10, background: "#FEF2F2", border: "1.5px solid #FECACA" }}>
+                      <span style={{ width: 10, height: 10, borderRadius: "50%", background: RED, flexShrink: 0, animation: voz.estado === "grabando" ? "oftPulsoGrabando 1s ease-in-out infinite" : "none" }} />
+                      <span style={{ fontWeight: 800, fontSize: 14, fontVariantNumeric: "tabular-nums" }}>{tiempoVoz}</span>
+                      <span style={{ fontSize: 12.5, color: GRAY3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{voz.estado === "procesando" ? "Enviando nota de voz..." : "Grabando... toca enviar al terminar"}</span>
+                    </div>
+                    <button onClick={detenerVoz} disabled={voz.estado === "procesando"} className="oft-btn-press" title="Enviar la nota de voz"
+                      style={{ background: BLACK, color: WHITE, border: "none", borderRadius: 10, width: 44, height: 38, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0, opacity: voz.estado === "procesando" ? 0.5 : 1 }}>
+                      {voz.estado === "procesando" ? <RefreshCw size={16} style={{ animation: "spin 1s linear infinite" }} /> : <Send size={17} />}
+                    </button>
+                  </>
+                ) : (<>
                 {modoComposer === "responder" && (
                   <>
                     <button onClick={() => setMostrarRapidas(v => !v)} className="oft-btn-press" title="Respuestas rápidas (o escribe /)" style={{ background: mostrarRapidas ? BLACK : GRAY, color: mostrarRapidas ? WHITE : GRAY3, border: "none", borderRadius: 10, width: 38, height: 38, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}><Zap size={16} /></button>
@@ -1072,6 +1355,12 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
                   disabled={modoComposer === "responder" && ventanaCerrada}
                   onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); enviarYMantenerFoco(); } }}
                   style={{ ...S.input, marginBottom: 0, flex: 1, minWidth: 0, fontSize: esMobil ? 16 : S.input.fontSize, opacity: modoComposer === "responder" && ventanaCerrada ? 0.6 : 1, background: modoComposer === "nota" ? "#FEFCE8" : undefined, borderColor: modoComposer === "nota" ? "#FDE68A" : undefined }} />
+                {mostrarMic ? (
+                  <button onClick={iniciarVoz} className="oft-btn-press" title="Grabar una nota de voz"
+                    style={{ background: BLACK, color: WHITE, border: "none", borderRadius: 10, width: 44, height: 38, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+                    <Mic size={18} />
+                  </button>
+                ) : (<>
                 {/* El botón no le quita el foco al campo: así en el iPhone el teclado
                     se queda abierto y se puede seguir escribiendo sin volver a tocar la barra. */}
                 <button onClick={enviarYMantenerFoco} onMouseDown={e => e.preventDefault()} onPointerDown={e => { if (e.pointerType !== "mouse") e.preventDefault(); }}
@@ -1080,7 +1369,15 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
                   style={{ background: modoComposer === "nota" ? "#CA8A04" : BLACK, color: WHITE, border: "none", borderRadius: 10, width: 44, height: 38, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0, opacity: enviando || !texto.trim() || (modoComposer === "responder" && ventanaCerrada) ? 0.5 : 1 }}>
                   {modoComposer === "nota" ? <StickyNote size={17} /> : <Send size={17} />}
                 </button>
+                </>)}
+                </>)}
               </div>
+              {voz.error && (
+                <div style={{ padding: esMobil ? "0 12px 10px" : "0 14px 12px", fontSize: 12, fontWeight: 700, color: "#991B1B", display: "flex", alignItems: "flex-start", gap: 6 }}>
+                  <AlertCircle size={13} style={{ flexShrink: 0, marginTop: 1 }} /> <span style={{ flex: 1 }}>{voz.error}</span>
+                  <button onClick={() => setVoz(p => ({ ...p, error: "" }))} style={{ background: "none", border: "none", cursor: "pointer", padding: 0, display: "flex", color: "#991B1B" }}><X size={13} /></button>
+                </div>
+              )}
             </div>
           </>
         )}
