@@ -708,6 +708,15 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
     setEnviandoPedidoId(null);
   };
 
+  // Envía el mensaje (o la nota) y deja el cursor en la barra de escribir.
+  // Se vuelve a enfocar dentro del mismo toque, que es lo único que el iPhone
+  // permite para no cerrar el teclado.
+  const inputComposerRef = useRef(null);
+  const enviarYMantenerFoco = () => {
+    if (modoComposer === "nota") enviarNota(); else enviarMensaje();
+    inputComposerRef.current?.focus({ preventScroll: true });
+  };
+
   const hilo = [...mensajes, ...notas.map(n => ({ ...n, _nota: true }))].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
   useEffect(() => { if (hiloRef.current) hiloRef.current.scrollTop = hiloRef.current.scrollHeight; }, [notas]);
   const ventanaHoras = horasDeVentana(mensajes);
@@ -1014,12 +1023,16 @@ function InboxPanel({ conversaciones, setConversaciones, etapas, etapaPorId, age
                     {!esInstagram(seleccionada) && <button onClick={() => { setModalPlantilla(true); setErrorPlantilla(""); }} className="oft-btn-press" title="Enviar una plantilla de WhatsApp" style={{ background: GRAY, color: GRAY3, border: "none", borderRadius: 10, width: 38, height: 38, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}><FileText size={16} /></button>}
                   </>
                 )}
-                <input value={texto} onChange={e => setTexto(e.target.value)}
+                <input ref={inputComposerRef} value={texto} onChange={e => setTexto(e.target.value)} enterKeyHint="send" autoComplete="off"
                   placeholder={modoComposer === "nota" ? "Nota interna: solo la ve tu equipo..." : ventanaCerrada ? (esInstagram(seleccionada) ? "Pasaron 24 h: espera su próximo mensaje" : "Pasaron 24 h: usa una plantilla") : (esMobil ? "Escribe un mensaje..." : "Escribe un mensaje... (o / para respuestas rápidas)")}
                   disabled={modoComposer === "responder" && ventanaCerrada}
-                  onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); modoComposer === "nota" ? enviarNota() : enviarMensaje(); } }}
+                  onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); enviarYMantenerFoco(); } }}
                   style={{ ...S.input, marginBottom: 0, flex: 1, minWidth: 0, opacity: modoComposer === "responder" && ventanaCerrada ? 0.6 : 1, background: modoComposer === "nota" ? "#FEFCE8" : undefined, borderColor: modoComposer === "nota" ? "#FDE68A" : undefined }} />
-                <button onClick={modoComposer === "nota" ? enviarNota : enviarMensaje} disabled={enviando || !texto.trim() || (modoComposer === "responder" && ventanaCerrada)} className="oft-btn-press"
+                {/* El botón no le quita el foco al campo: así en el iPhone el teclado
+                    se queda abierto y se puede seguir escribiendo sin volver a tocar la barra. */}
+                <button onClick={enviarYMantenerFoco} onMouseDown={e => e.preventDefault()} onPointerDown={e => { if (e.pointerType !== "mouse") e.preventDefault(); }}
+                  onTouchEnd={e => { e.preventDefault(); if (!(enviando || !texto.trim() || (modoComposer === "responder" && ventanaCerrada))) enviarYMantenerFoco(); }}
+                  disabled={enviando || !texto.trim() || (modoComposer === "responder" && ventanaCerrada)} className="oft-btn-press"
                   style={{ background: modoComposer === "nota" ? "#CA8A04" : BLACK, color: WHITE, border: "none", borderRadius: 10, width: 44, height: 38, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0, opacity: enviando || !texto.trim() || (modoComposer === "responder" && ventanaCerrada) ? 0.5 : 1 }}>
                   {modoComposer === "nota" ? <StickyNote size={17} /> : <Send size={17} />}
                 </button>
