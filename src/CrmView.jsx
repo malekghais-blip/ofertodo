@@ -9,7 +9,7 @@ import {
   Megaphone, Image as ImageIcon, Instagram, Plug, CheckCircle2, Upload,
   ChevronDown, Power, KeyRound, ShieldCheck, Phone, RotateCcw, Hash, Mic,
 } from "lucide-react";
-import { RED, BLACK, GRAY, GRAY2, GRAY3, WHITE, S, useApp, sb, Spinner, comprimirImagen, supabaseRealtime, SUPABASE_URL } from "./shared.jsx";
+import { RED, BLACK, GRAY, GRAY2, GRAY3, WHITE, S, useApp, sb, Spinner, comprimirImagen, supabaseRealtime, SUPABASE_URL, useCambiosEnVivo, useRefrescoPeriodico } from "./shared.jsx";
 
 // ═══════════════════════════════════════════════════════════════
 //  CRM — bandeja de WhatsApp, etapas de cliente, equipo de agentes,
@@ -430,6 +430,22 @@ export default function CrmView() {
       });
     return () => { supabaseRealtime.removeChannel(canal); };
   }, [sesionLista]);
+
+  // Pedidos y cotizaciones (los que se ven en el panel de cada chat): cuando otro
+  // agente crea o cambia uno, se actualizan solos.
+  const timerPedidosRef = useRef(null);
+  const refrescarPedidos = async () => {
+    try {
+      const d = await sb.get("pedidos", "?select=id,codigo,nombre_cliente,telefono,total,tipo,pagado,created_at,creado_por_usuario_id&order=created_at.desc");
+      if (Array.isArray(d)) setPedidos(prev => JSON.stringify(prev) === JSON.stringify(d) ? prev : d);
+    } catch (_) {}
+  };
+  useCambiosEnVivo(["pedidos"], () => {
+    clearTimeout(timerPedidosRef.current);
+    timerPedidosRef.current = setTimeout(refrescarPedidos, 600);
+  }, sesionLista);
+  useRefrescoPeriodico(refrescarPedidos, 30000, sesionLista);
+  useEffect(() => () => clearTimeout(timerPedidosRef.current), []);
 
   // Red de seguridad del "en vivo": el canal en tiempo real puede caerse en
   // silencio (el token de sesión vence cada hora, la conexión se corta al
