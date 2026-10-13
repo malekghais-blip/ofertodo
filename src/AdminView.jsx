@@ -16,7 +16,7 @@ import {
   DistribucionEditor, GRAY, GRAY2, GRAY3, Logo,
   RED, RED_D, S, SUPABASE_URL, ShippingLabelModal, NOTAS_FRAGANCIA,
   Spinner, StatusBadge, WHITE, comprimirImagen, estadosDe,
-  imagenOptimizada, resolverAreaVenta, sb, useApp, useLockBodyScroll,
+  imagenOptimizada, resolverAreaVenta, sb, useApp, useLockBodyScroll, useCambiosEnVivo, useRefrescoPeriodico,
   agregarCanvasComoPaginasPdf, ofertaInfo, precioNormalPiezas, piezasDePresentacion, presUnitPrice, idVisitante,
 } from "./shared.jsx";
 
@@ -1607,9 +1607,9 @@ function AnalyticsPanel() {
   // respuesta vieja pero más rápida terminaba pisando a la más nueva pero más
   // lenta, dejando pegados los números de "Hoy" sin importar qué se eligiera.
   const idPeticionRef = useRef(0);
-  const cargarDatos = async () => {
+  const cargarDatos = async (silencioso = false) => {
     const miId = ++idPeticionRef.current;
-    setCargando(true);
+    if (silencioso !== true) setCargando(true);
     try {
       const desdeISO = `${desde}T00:00:00`, hastaISO = `${hasta}T23:59:59`;
       const desdeAntISO = `${desdeAnt}T00:00:00`, hastaAntISO = `${hastaAnt}T23:59:59`;
@@ -1662,6 +1662,17 @@ function AnalyticsPanel() {
   };
 
   useEffect(() => { cargarDatos(); }, [desde, hasta]);
+
+  // En vivo: cuando entra un pedido, una cotización o un cliente nuevo, los
+  // números se actualizan solos (sin el "cargando"), con un respiro de 4
+  // segundos para no recargar mil veces si llegan varios seguidos.
+  const timerVivoRef = useRef(null);
+  useCambiosEnVivo(["pedidos", "usuarios"], () => {
+    clearTimeout(timerVivoRef.current);
+    timerVivoRef.current = setTimeout(() => cargarDatos(true), 4000);
+  });
+  useRefrescoPeriodico(() => cargarDatos(true), 60000);
+  useEffect(() => () => clearTimeout(timerVivoRef.current), []);
 
   // Visitas en vivo: independiente del filtro de fecha. Se refresca cada 5 segundos y
   // también al instante cuando vuelves a esta pestaña del navegador (los navegadores
@@ -3604,6 +3615,168 @@ function AdminView() {
     };
     load();
   }, []);
+
+  // ── EN VIVO: pedidos, cotizaciones, clientes y listas del panel ──────────
+  // Lo que hace otro agente (crear un pedido o una cotización, registrar un
+  // cliente, cambiar un estado, pagar) aparece solo aquí, sin recargar la
+  // página. Dos mecanismos a la vez: los avisos de la base de datos (llegan al
+  // instante) y una revisión de respaldo cada 15 segundos por si algún aviso
+  // se pierde (el internet se cortó, la pestaña estuvo dormida, etc.).
+  const ordersRef = useRef([]);
+  ordersRef.current = orders;
+  const usersRef = useRef([]);
+  usersRef.current = users;
+  const vivoActivo = !loadingData;
+
+  // Si el mismo pedido llega por dos caminos (el aviso en vivo y el formulario
+  // que lo creó), se queda una sola copia -- la que trae más productos.
+  useEffect(() => {
+    const vistos = new Set();
+    if (!orders.some(o => (vistos.has(o.id) ? true : (vistos.add(o.id), false)))) return;
+    setOrders(prev => {
+      const mejor = new Map();
+      prev.forEach(o => { const x = mejor.get(o.id); if (!x || (o.items?.length || 0) > (x.items?.length || 0)) mejor.set(o.id, x ? { ...x, ...o } : o); });
+      const usados = new Set();
+      return prev.filter(o => (usados.has(o.id) ? false : (usados.add(o.id), true))).map(o => mejor.get(o.id));
+    });
+  }, [orders]);
+
+  const itemsPendientesRef = useRef(new Set());
+  const timerItemsRef = useRef(null);
+  const refrescarItemsDe = (pedidoId) => {
+    itemsPendientesRef.current.add(pedidoId);
+    clearTimeout(timerItemsRef.current);
+    timerItemsRef.current = setTimeout(async () => {
+      const ids = [...itemsPendientesRef.current];
+      itemsPendientesRef.current.clear();
+      for (const id of ids) {
+        try {
+          const items = await sb.get("pedido_items", `?pedido_id=eq.${id}`);
+          setOrders(prev => prev.map(o => o.id === id ? { ...o, items: items || [] } : o));
+        } catch (_) {}
+      }
+    }, 500);
+  };
+  useEffect(() => () => { clearTimeout(timerItemsRef.current); }, []);
+
+  const traerPedidoConItems = async (fila) => {
+    const items = await sb.get("pedido_items", `?pedido_id=eq.${fila.id}`).catch(() => []);
+    return { ...fila, items: items || [] };
+  };
+
+  const alCambiarPedido = async (ev) => {
+    const nuevo = ev.new, viejo = ev.old;
+    if (ev.eventType === "DELETE") { setOrders(prev => prev.filter(o => o.id !== viejo?.id)); return; }
+    if (!nuevo?.id) return;
+    const yaEsta = ordersRef.current.some(o => o.id === nuevo.id);
+    if (yaEsta) { setOrders(prev => prev.map(o => o.id === nuevo.id ? { ...o, ...nuevo } : o)); return; }
+    const completo = await traerPedidoConItems(nuevo);
+    setOrders(prev => prev.some(o => o.id === nuevo.id) ? prev : [completo, ...prev]);
+    if (ev.eventType === "INSERT" && nuevo.creado_por_usuario_id !== user?.id) {
+      const quien = nuevo.nombre_cliente ? ` de ${nuevo.nombre_cliente}` : "";
+      showToast(nuevo.tipo === "cotizacion" ? `Nueva cotización ${nuevo.codigo || ""}${quien}` : `Nuevo pedido ${nuevo.codigo || ""}${quien}`);
+    }
+  };
+  const alCambiarItem = (ev) => {
+    const fila = ev.new && ev.new.pedido_id ? ev.new : ev.old;
+    let pedidoId = fila?.pedido_id;
+    if (!pedidoId && ev.eventType === "DELETE" && ev.old?.id) {
+      // Al borrarse un producto de un pedido, la base solo avisa el id del producto:
+      // se busca a qué pedido pertenecía.
+      const duenoPedido = ordersRef.current.find(o => (o.items || []).some(it => it.id === ev.old.id));
+      pedidoId = duenoPedido?.id;
+    }
+    if (pedidoId) refrescarItemsDe(pedidoId);
+  };
+  const alCambiarUsuario = (ev) => {
+    const nuevo = ev.new, viejo = ev.old;
+    if (ev.eventType === "DELETE") { setUsers(prev => prev.filter(u => u.id !== viejo?.id)); return; }
+    if (!nuevo?.id) return;
+    const yaEsta = usersRef.current.some(u => u.id === nuevo.id);
+    setUsers(prev => prev.some(u => u.id === nuevo.id) ? prev.map(u => u.id === nuevo.id ? { ...u, ...nuevo } : u) : [nuevo, ...prev]);
+    if (!yaEsta && ev.eventType === "INSERT" && nuevo.origen_cuenta === "web") showToast(`Nuevo cliente registrado: ${nuevo.nombre || nuevo.email || ""}`);
+  };
+  const timerListasRef = useRef({});
+  const refrescarLista = (clave, tabla, query, setter) => {
+    clearTimeout(timerListasRef.current[clave]);
+    timerListasRef.current[clave] = setTimeout(() => { sb.get(tabla, query).then(d => setter(d || [])).catch(() => {}); }, 400);
+  };
+  useEffect(() => () => { Object.values(timerListasRef.current).forEach(clearTimeout); }, []);
+
+  useCambiosEnVivo(["pedidos"], alCambiarPedido, vivoActivo);
+  useCambiosEnVivo(["pedido_items"], alCambiarItem, vivoActivo);
+  useCambiosEnVivo(["usuarios"], alCambiarUsuario, vivoActivo);
+  useCambiosEnVivo(["descuentos"], () => refrescarLista("descuentos", "descuentos", "?order=created_at.desc", setDescuentos), vivoActivo);
+  useCambiosEnVivo(["retornos"], () => refrescarLista("retornos", "retornos", "?order=created_at.desc", setRetornos), vivoActivo);
+  useCambiosEnVivo(["proveedores"], () => refrescarLista("proveedores", "proveedores", "?order=nombre.asc", setProveedores), vivoActivo);
+  useCambiosEnVivo(["flexpack_grupos"], () => refrescarLista("flexpack", "flexpack_grupos", "?order=nombre.asc", setFlexpackGrupos), vivoActivo);
+
+  // Respaldo: compara con lo que hay en la base cada 15 segundos y corrige
+  // lo que falte, haya cambiado o ya no exista.
+  const difiere = (a, b) => Object.keys(b).some(k => {
+    const x = a[k], y = b[k];
+    if (x === y) return false;
+    if (x && y && typeof x === "object" && typeof y === "object") return JSON.stringify(x) !== JSON.stringify(y);
+    return true;
+  });
+  const reconciliandoRef = useRef(false);
+  const reconciliar = async () => {
+    if (reconciliandoRef.current) return;
+    reconciliandoRef.current = true;
+    try {
+      await sb.ensureFreshToken();
+      const [peds, usrs] = await Promise.all([
+        sb.get("pedidos", "?order=created_at.desc"),
+        sb.get("usuarios", "?order=created_at.desc").catch(() => null),
+      ]);
+      if (Array.isArray(peds)) {
+        const conocidos = new Set(ordersRef.current.map(o => o.id));
+        const faltan = peds.filter(r => !conocidos.has(r.id)).slice(0, 30);
+        const completos = await Promise.all(faltan.map(traerPedidoConItems));
+        const idsServidor = new Set(peds.map(r => r.id));
+        const lista_completa = peds.length < 1000; // si llegó al tope, no se borra nada por seguridad
+        setOrders(prev => {
+          const porId = new Map(prev.map(o => [o.id, o]));
+          const agregados = completos.filter(o => !porId.has(o.id));
+          let cambio = agregados.length > 0;
+          let resultado = prev.map(o => {
+            const r = peds.find(x => x.id === o.id);
+            if (!r) return o;
+            if (difiere(o, r)) { cambio = true; return { ...o, ...r }; }
+            return o;
+          });
+          if (lista_completa) {
+            const antes = resultado.length;
+            // (lo creado hace menos de un minuto no se borra: puede que la lista de la base se pidió justo antes)
+            resultado = resultado.filter(o => idsServidor.has(o.id) || (Date.now() - new Date(o.created_at).getTime() < 60000));
+            if (resultado.length !== antes) cambio = true;
+          }
+          if (!cambio) return prev;
+          return [...agregados, ...resultado].sort((x, y) => new Date(y.created_at) - new Date(x.created_at));
+        });
+      }
+      if (Array.isArray(usrs)) {
+        setUsers(prev => {
+          const porId = new Map(prev.map(u => [u.id, u]));
+          const idsServidor = new Set(usrs.map(u => u.id));
+          let cambio = false;
+          let resultado = prev.map(u => {
+            const r = usrs.find(x => x.id === u.id);
+            if (!r) return u;
+            if (difiere(u, r)) { cambio = true; return { ...u, ...r }; }
+            return u;
+          });
+          const agregados = usrs.filter(r => !porId.has(r.id));
+          if (agregados.length) cambio = true;
+          if (usrs.length < 1000) { const antes = resultado.length; resultado = resultado.filter(u => idsServidor.has(u.id) || (Date.now() - new Date(u.created_at).getTime() < 60000)); if (resultado.length !== antes) cambio = true; }
+          if (!cambio) return prev;
+          return [...agregados, ...resultado].sort((x, y) => new Date(y.created_at) - new Date(x.created_at));
+        });
+      }
+    } catch (_) { /* no es crítico, se reintenta solo */ }
+    reconciliandoRef.current = false;
+  };
+  useRefrescoPeriodico(reconciliar, 15000, vivoActivo);
 
   // ── SEPARAR PEDIDOS REALES DE COTIZACIONES ─────────────────────
   // Las cotizaciones NO cuentan como ventas ni en métricas.
