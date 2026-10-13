@@ -43,6 +43,63 @@ export const supabaseRealtime = createClient(SUPABASE_URL, SUPABASE_KEY, {
   accessToken: async () => sb.session?.access_token ?? null,
 });
 
+// ─────────────────────────────────────────────────────────────
+//  EN VIVO: avisos de la base de datos (Realtime) para que lo que hace un
+//  agente aparezca solo en la pantalla de los demás, sin recargar la página.
+// ─────────────────────────────────────────────────────────────
+
+// Escucha cambios (INSERT / UPDATE / DELETE) en las tablas indicadas y llama a
+// "alCambiar" con cada uno. También le pasa al canal el token de sesión
+// renovado cada pocos minutos, para que no se corte al pasar la hora.
+export function useCambiosEnVivo(tablas, alCambiar, activo = true) {
+  const ref = useRef(alCambiar);
+  ref.current = alCambiar;
+  const clave = tablas.join(",");
+  useEffect(() => {
+    if (!activo || !clave) return;
+    const nombre = `vivo_${clave.replace(/,/g, "_")}_${Math.random().toString(36).slice(2, 7)}`;
+    let canal = supabaseRealtime.channel(nombre);
+    clave.split(",").forEach(t => {
+      canal = canal.on("postgres_changes", { event: "*", schema: "public", table: t }, (payload) => {
+        try { ref.current(payload); } catch (e) { console.warn("En vivo:", e); }
+      });
+    });
+    canal.subscribe((estado, err) => {
+      if (estado === "CHANNEL_ERROR" || estado === "TIMED_OUT") console.warn("En vivo (" + clave + "):", estado, err?.message || "");
+    });
+    const renovarToken = async () => {
+      try {
+        await sb.ensureFreshToken();
+        if (sb.session?.access_token) await supabaseRealtime.realtime.setAuth(sb.session.access_token);
+      } catch (_) {}
+    };
+    const t = setInterval(renovarToken, 3 * 60 * 1000);
+    return () => { clearInterval(t); supabaseRealtime.removeChannel(canal); };
+  }, [clave, activo]);
+}
+
+// Respaldo del "en vivo": corre "fn" cada cierto tiempo (solo con la pestaña a
+// la vista) y al instante cuando se vuelve a la pestaña o regresa el internet.
+// Así la pantalla se actualiza aunque el canal en vivo se haya caído.
+export function useRefrescoPeriodico(fn, ms, activo = true) {
+  const ref = useRef(fn);
+  ref.current = fn;
+  useEffect(() => {
+    if (!activo) return;
+    const correr = () => { if (!document.hidden) ref.current(); };
+    const t = setInterval(correr, ms);
+    document.addEventListener("visibilitychange", correr);
+    window.addEventListener("focus", correr);
+    window.addEventListener("online", correr);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener("visibilitychange", correr);
+      window.removeEventListener("focus", correr);
+      window.removeEventListener("online", correr);
+    };
+  }, [ms, activo]);
+}
+
 export const sb = {
   // Sesión del usuario logueado (se llena con setSession al iniciar sesión o al restaurar
   // desde localStorage). Mientras no haya sesión, se usa la llave pública (anon) normal.
