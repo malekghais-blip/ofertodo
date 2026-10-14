@@ -18,6 +18,7 @@ import {
   Spinner, StatusBadge, WHITE, comprimirImagen, estadosDe,
   imagenOptimizada, resolverAreaVenta, sb, useApp, useLockBodyScroll, useCambiosEnVivo, useRefrescoPeriodico,
   agregarCanvasComoPaginasPdf, ofertaInfo, precioNormalPiezas, piezasDePresentacion, presUnitPrice, idVisitante,
+  normalizarEnvioPerfumes,
 } from "./shared.jsx";
 
 // "YYYY-MM-DD" según la hora de PANAMÁ (America/Panama, UTC-5), sin importar la
@@ -2829,6 +2830,74 @@ function EditorCostoPuertaAPuerta({ showToast }) {
         <button onClick={guardar} disabled={guardando} className="oft-btn-press" style={{ ...S.btnRed, padding: "8px 16px", opacity: guardando ? 0.6 : 1 }}>
           {guardando ? "..." : "Guardar"}
         </button>
+      </div>
+    </div>
+  );
+}
+
+// Precio de envío especial para PERFUMES (envío a sucursal): si el pedido es solo de
+// perfumes y la cantidad está entre el mínimo y el máximo, se cobra este precio.
+function EditorEnvioPerfumes({ showToast }) {
+  const [cfg, setCfg] = useState({ activo: false, precio: "5", min: "1", max: "3" });
+  const [cargando, setCargando] = useState(true);
+  const [guardando, setGuardando] = useState(false);
+
+  useEffect(() => {
+    sb.get("configuracion", "?clave=eq.envio_perfumes&limit=1")
+      .then(data => {
+        const v = normalizarEnvioPerfumes(data?.[0]?.valor);
+        setCfg({ activo: v.activo, precio: String(v.precio), min: String(v.min), max: String(v.max) });
+      })
+      .catch(() => {})
+      .finally(() => setCargando(false));
+  }, []);
+
+  const guardar = async () => {
+    const precio = Number(cfg.precio), min = Math.floor(Number(cfg.min)), max = Math.floor(Number(cfg.max));
+    if (isNaN(precio) || precio < 0) { showToast("Pon un precio válido (0 o más)"); return; }
+    if (!min || min < 1 || !max || max < 1) { showToast("La cantidad mínima y máxima deben ser 1 o más"); return; }
+    if (min > max) { showToast("La cantidad mínima no puede ser mayor que la máxima"); return; }
+    setGuardando(true);
+    try {
+      const resp = await fetch(`${SUPABASE_URL}/rest/v1/configuracion?on_conflict=clave`, {
+        method: "POST",
+        headers: { ...sb.dataHeaders(), Prefer: "resolution=merge-duplicates,return=representation" },
+        body: JSON.stringify({ clave: "envio_perfumes", valor: { activo: cfg.activo, precio, min, max }, updated_at: new Date().toISOString() }),
+      });
+      if (!resp.ok) throw new Error(await resp.text());
+      showToast(cfg.activo ? "Envío de perfumes guardado y activo" : "Envío de perfumes guardado (desactivado)");
+    } catch (e) { showToast("Error al guardar: " + e.message); }
+    setGuardando(false);
+  };
+
+  if (cargando) return null;
+  const campo = { width: 70, padding: "8px 10px", borderRadius: 8, border: `1px solid ${GRAY2}`, fontSize: 14, textAlign: "center" };
+  return (
+    <div style={{ background: WHITE, borderRadius: 16, padding: 20, marginBottom: 20, border: `1px solid ${cfg.activo ? "#0F6E56" : GRAY2}` }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+        <Truck size={22} color={RED} style={{ flexShrink: 0 }} />
+        <div style={{ flex: 1, minWidth: 220 }}>
+          <div style={{ fontWeight: 800, fontSize: 14 }}>Envío especial para perfumes (a sucursal)</div>
+          <div style={{ fontSize: 12, color: GRAY3 }}>Si el cliente pide solo perfumes y la cantidad está dentro del rango, el envío a sucursal cuesta este precio en vez del de la sucursal.</div>
+        </div>
+        <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13, fontWeight: 700 }}>
+          <input type="checkbox" checked={cfg.activo} onChange={e => setCfg(c => ({ ...c, activo: e.target.checked }))} style={{ width: 18, height: 18 }} />
+          {cfg.activo ? "Activo" : "Desactivado"}
+        </label>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 14, fontSize: 13 }}>
+        <span>Cuando pidan de</span>
+        <input type="number" min="1" step="1" value={cfg.min} onChange={e => setCfg(c => ({ ...c, min: e.target.value }))} style={campo} />
+        <span>a</span>
+        <input type="number" min="1" step="1" value={cfg.max} onChange={e => setCfg(c => ({ ...c, max: e.target.value }))} style={campo} />
+        <span>perfumes, el envío cuesta $</span>
+        <input type="number" min="0" step="0.01" value={cfg.precio} onChange={e => setCfg(c => ({ ...c, precio: e.target.value }))} style={{ ...campo, width: 80 }} />
+        <button onClick={guardar} disabled={guardando} className="oft-btn-press" style={{ ...S.btnRed, padding: "8px 16px", opacity: guardando ? 0.6 : 1, marginLeft: "auto" }}>
+          {guardando ? "..." : "Guardar"}
+        </button>
+      </div>
+      <div style={{ fontSize: 11, color: GRAY3, marginTop: 10 }}>
+        Cuenta como perfume cualquier producto de presentación "perfumería" (1 unidad = 1 perfume; ½ docena = 3; docena = 6). Si el pedido lleva algo que no es perfume, o más perfumes del máximo, se cobra el precio normal de la sucursal. No afecta puerta a puerta ni retiro en local.
       </div>
     </div>
   );
@@ -8097,6 +8166,7 @@ function AdminView() {
             <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 24, display: "flex", alignItems: "center", gap: 10 }}><Truck size={24} color={RED} /> Empresas de Envío</div>
 
             <EditorCostoPuertaAPuerta showToast={showToast} />
+            <EditorEnvioPerfumes showToast={showToast} />
 
             {/* AGREGAR EMPRESA */}
             <div style={{ background: WHITE, borderRadius: 16, padding: 20, marginBottom: 20, border: `1px solid ${GRAY2}`, display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap" }}>
