@@ -2107,7 +2107,7 @@ function FloatingCart() {
 function esc(s) { return String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase(); }
 
 function OfertaCard({ info, delay, vigente, campana }) {
-  const { agregarOfertaAlCarrito, cart, showToast } = useApp();
+  const { agregarOfertaAlCarrito, cart, showToast, setQuickView } = useApp();
   // Ropa / calzado (productos con tallas o colores): por ahora se elige talla y color y se consulta por WhatsApp
   const tieneTallas = (p) => p.tiene_tallas && (p.tallas || "").trim();
   const tieneColores = (p) => p.tiene_colores && (p.colores || "").trim();
@@ -2156,11 +2156,15 @@ function OfertaCard({ info, delay, vigente, campana }) {
   };
   const imgs = info.imagenes.slice(0, 4);
   const esCombo = o.tipo === "combo";
+  // Igual que en el catálogo: al tocar la foto o el nombre se abre el detalle del producto.
+  // Si la oferta es de un solo producto se abre ese; si es un combo, cada línea de "Incluye" abre el suyo.
+  const unico = info.lineas.length === 1 ? info.lineas[0].product : null;
+  const verProducto = () => { if (unico) setQuickView(unico); };
   const ultimas = !agotado && stock <= 5 && Number.isFinite(stock);
 
   return (
     <div className="oft-of-card" style={{ animationDelay: `${Math.min(delay * 0.06, 0.6)}s`, opacity: agotado || !vigente ? 0.75 : 1 }}>
-      <div className="oft-of-img">
+      <div className="oft-of-img" onClick={unico ? verProducto : undefined} title={unico ? "Ver detalle" : undefined} style={unico ? { cursor: "pointer" } : undefined}>
         {o.imagen_url || !esCombo || imgs.length < 2
           ? (info.imagen ? <img src={imagenOptimizada(info.imagen, 500)} alt={info.titulo} loading="lazy" /> : <div className="oft-of-noimg"><Package size={40} color={GRAY3} /></div>)
           : (
@@ -2174,11 +2178,12 @@ function OfertaCard({ info, delay, vigente, campana }) {
         {agotado && <div className="oft-of-agotado">AGOTADO</div>}
       </div>
       <div className="oft-of-body">
-        <div className="oft-of-title">{info.titulo}</div>
+        <div className="oft-of-title" onClick={unico ? verProducto : undefined} style={unico ? { cursor: "pointer" } : undefined}>{info.titulo}</div>
+        {unico && <div onClick={verProducto} style={{ fontSize: 12, fontWeight: 700, color: RED, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4, width: "fit-content" }}><Eye size={13} /> Ver producto</div>}
         {esCombo ? (
           <div className="oft-of-incluye">
             <div style={{ fontWeight: 800, fontSize: 11, color: GRAY3, marginBottom: 3 }}>INCLUYE · {info.totalPiezas} piezas</div>
-            {info.lineas.map((l, i) => <div key={i} className="oft-of-linea"><b>{l.piezas}×</b> {l.product.nombre}</div>)}
+            {info.lineas.map((l, i) => <div key={i} className="oft-of-linea" onClick={() => setQuickView(l.product)} title="Ver detalle" style={{ cursor: "pointer", textDecoration: "underline", textDecorationColor: GRAY2, textUnderlineOffset: 2 }}><b>{l.piezas}×</b> {l.product.nombre}</div>)}
             {o.descripcion && <div style={{ fontSize: 11.5, color: GRAY3, marginTop: 4 }}>{o.descripcion}</div>}
           </div>
         ) : (
