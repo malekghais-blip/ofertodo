@@ -1874,6 +1874,128 @@ function CatalogoView() {
 // ═══════════════════════════════════════════════════════════════
 //  MODAL DE DETALLE DEL PRODUCTO (Quick View)
 // ═══════════════════════════════════════════════════════════════
+// Caja de compra que reemplaza "Elige como comprar" cuando el producto se abre desde una OFERTA:
+// muestra el precio de esa oferta/sección (detal o mayor), no el de pieza/3/6/media/docena.
+function OfertaCompraBox({ ofe, onCerrar }) {
+  const { agregarOfertaAlCarrito, cart, showToast } = useApp();
+  const { info, vigente, campana } = ofe;
+  const o = info.oferta;
+  const esCombo = o.tipo === "combo";
+  const tieneTallas = (p) => p.tiene_tallas && (p.tallas || "").trim();
+  const tieneColores = (p) => p.tiene_colores && (p.colores || "").trim();
+  const lineasConVariantes = info.lineas.filter(l => tieneTallas(l.product) || tieneColores(l.product));
+  const modoConsulta = lineasConVariantes.length > 0;
+  const [sel, setSel] = useState({});
+  const setVar = (pid, campo, valor) => setSel(prev => ({ ...prev, [pid]: { ...(prev[pid] || {}), [campo]: valor } }));
+  const [uni, setUni] = useState(1);
+  const [okAnim, setOkAnim] = useState(false);
+  const enCarrito = cart.filter(i => i.esOferta && i.ofertaId === o.id).reduce((s, i) => s + i.unidades, 0);
+  const limite = o.limite_por_pedido ? Math.max(0, o.limite_por_pedido - enCarrito) : Infinity;
+  const stock = Number.isFinite(info.stockMax) ? Math.max(0, info.stockMax) : Infinity;
+  const maxAhora = Math.min(limite, stock);
+  const agotado = stock === 0;
+  const sinMas = !agotado && maxAhora <= 0;
+  const topeUni = Number.isFinite(maxAhora) ? Math.max(1, maxAhora) : 99;
+  useEffect(() => { if (uni > topeUni) setUni(topeUni); }, [topeUni]);
+  const seccion = o.seccion === "mayor" ? "al mayor" : "al detal";
+  const unidadTxt = (n) => esCombo ? (n === 1 ? "combo" : "combos") : (n === 1 ? "oferta" : "ofertas");
+
+  const agregar = () => {
+    if (!vigente) return;
+    const ok = agregarOfertaAlCarrito(info, uni);
+    if (ok) { setOkAnim(true); setTimeout(() => setOkAnim(false), 1400); setUni(1); }
+  };
+  const consultarWhatsApp = () => {
+    if (!vigente) return;
+    for (const l of lineasConVariantes) {
+      const v = sel[l.product.id] || {};
+      if (tieneTallas(l.product) && !v.talla) { showToast(`Elige la talla${info.lineas.length > 1 ? ` de ${l.product.nombre}` : ""} primero`); return; }
+      if (tieneColores(l.product) && !v.color) { showToast(`Elige el color${info.lineas.length > 1 ? ` de ${l.product.nombre}` : ""} primero`); return; }
+    }
+    let msg = `Hola Ofertodo, quiero consultar disponibilidad de esta oferta:\n\n*${campana ? `${campana.prefijo} ${campana.nombre}` : "Oferta"}*\n*${info.titulo}* (${esCombo ? "Combo" : "Oferta"} ${seccion})`;
+    msg += `\nPrecio de oferta: $${info.precioOferta.toFixed(2)}${info.precioNormal > info.precioOferta ? ` (antes $${info.precioNormal.toFixed(2)})` : ""}`;
+    msg += `\nCantidad: ${uni} ${unidadTxt(uni)}`;
+    msg += `\n\nIncluye:`;
+    for (const l of info.lineas) {
+      const v = sel[l.product.id] || {};
+      msg += `\n• ${l.piezas * uni}x ${l.product.nombre}${l.product.referencia ? ` (Ref: ${l.product.referencia})` : ""}`;
+      if (v.talla) msg += ` — Talla: ${v.talla}`;
+      if (v.color) msg += ` — Color: ${v.color}`;
+    }
+    if (info.lineas.length === 1) msg += `\n\nVer producto: ${window.location.origin}/producto/${info.lineas[0].product.id}`;
+    registrarEvento("consulta_whatsapp", o.id, `Consulta de oferta: ${info.titulo}`);
+    window.open(`https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(msg)}`, "_blank");
+  };
+  const total = Math.round(info.precioOferta * uni * 100) / 100;
+  const presTxt = o.presentacion === "pieza" ? "Por pieza" : `${info.totalPiezas} piezas · ${o.presentacion === "media" ? "media docena" : "docena"}`;
+
+  return (
+    <div style={{ background: "#FFF5F5", border: `1.5px solid ${RED}`, borderRadius: 12, padding: 16, margin: "8px 0 16px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, marginBottom: 10 }}>
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 800, color: RED, display: "flex", alignItems: "center", gap: 5 }}>
+            {esCombo ? <Boxes size={13} /> : <Sparkles size={13} />} {esCombo ? "COMBO" : "OFERTA"} {seccion.toUpperCase()}{campana ? ` · ${campana.nombre}` : ""}
+          </div>
+          <div style={{ fontSize: 15, fontWeight: 800, marginTop: 3 }}>{info.titulo}</div>
+          <div style={{ fontSize: 12, color: GRAY3, marginTop: 2 }}>
+            {esCombo ? `${info.totalPiezas} piezas en total` : presTxt}
+            {!esCombo && info.totalPiezas > 1 && <> · ${(info.precioOferta / info.totalPiezas).toFixed(2)} c/u</>}
+          </div>
+        </div>
+        <div style={{ textAlign: "right", flexShrink: 0 }}>
+          {info.precioNormal > info.precioOferta && <div style={{ fontSize: 13, color: GRAY3, textDecoration: "line-through", fontWeight: 600 }}>${info.precioNormal.toFixed(2)}</div>}
+          <div style={{ fontSize: 26, color: RED, fontWeight: 900, lineHeight: 1 }}>${info.precioOferta.toFixed(2)}</div>
+          {info.pct > 0 && <div style={{ fontSize: 11, fontWeight: 800, color: "#0F6E56", marginTop: 3 }}>-{info.pct}%{info.ahorro > 0.005 ? ` · ahorras $${info.ahorro.toFixed(2)}` : ""}</div>}
+        </div>
+      </div>
+
+      {esCombo && (
+        <div style={{ background: WHITE, borderRadius: 8, padding: "10px 12px", marginBottom: 10, fontSize: 13 }}>
+          <div style={{ fontWeight: 800, fontSize: 11, color: GRAY3, marginBottom: 4 }}>INCLUYE</div>
+          {info.lineas.map((l, i) => <div key={i}><b>{l.piezas}×</b> {l.product.nombre}</div>)}
+          {o.descripcion && <div style={{ fontSize: 12, color: GRAY3, marginTop: 6 }}>{o.descripcion}</div>}
+        </div>
+      )}
+
+      {modoConsulta && (
+        <div style={{ background: WHITE, borderRadius: 8, padding: 12, marginBottom: 10 }}>
+          {lineasConVariantes.map(l => (
+            <div key={l.product.id} style={{ marginTop: 4 }}>
+              {info.lineas.length > 1 && <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 4 }}>{l.product.nombre}</div>}
+              <VariantPicker product={l.product} talla={(sel[l.product.id] || {}).talla || ""} setTalla={v => setVar(l.product.id, "talla", v)} color={(sel[l.product.id] || {}).color || ""} setColor={v => setVar(l.product.id, "color", v)} />
+            </div>
+          ))}
+          <div style={{ fontSize: 11, color: GRAY3, marginTop: 6 }}>¿Necesitas varias tallas o colores? Indícalo en el mensaje de WhatsApp.</div>
+        </div>
+      )}
+
+      {info.stockMax !== undefined && Number.isFinite(stock) && !agotado && stock <= 5 && (
+        <div style={{ fontSize: 12, fontWeight: 800, color: "#B45309", marginBottom: 8, display: "flex", alignItems: "center", gap: 5 }}><AlertTriangle size={13} /> ¡Quedan solo {stock}!</div>
+      )}
+      {o.limite_por_pedido && <div style={{ fontSize: 11, color: GRAY3, marginBottom: 8 }}>Máx. {o.limite_por_pedido} por pedido</div>}
+
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 10, overflow: "hidden" }}>
+          <button onClick={() => setUni(u => Math.max(1, u - 1))} disabled={uni <= 1 || agotado} aria-label="Menos" style={{ width: 40, height: 44, border: "none", background: "transparent", fontSize: 20, cursor: "pointer", opacity: uni <= 1 || agotado ? 0.35 : 1 }}>−</button>
+          <span style={{ minWidth: 30, textAlign: "center", fontWeight: 800 }}>{uni}</span>
+          <button onClick={() => setUni(u => Math.min(topeUni, u + 1))} disabled={uni >= topeUni || agotado || (sinMas && !modoConsulta)} aria-label="Más" style={{ width: 40, height: 44, border: "none", background: "transparent", fontSize: 20, cursor: "pointer", opacity: uni >= topeUni || agotado ? 0.35 : 1 }}>+</button>
+        </div>
+        {modoConsulta ? (
+          <button className="oft-btn-press" onClick={consultarWhatsApp} disabled={agotado || !vigente}
+            style={{ ...S.btnWA, flex: 1, justifyContent: "center", padding: 13, fontSize: 15, opacity: agotado || !vigente ? 0.6 : 1 }}>
+            {agotado ? "Agotado" : !vigente ? "Terminó" : <><MessageCircle size={17} /> Consultar disponibilidad</>}
+          </button>
+        ) : (
+          <button className="oft-btn-press" onClick={agregar} disabled={agotado || sinMas || !vigente}
+            style={{ ...S.btnRed, flex: 1, justifyContent: "center", padding: 13, fontSize: 15, background: agotado || sinMas || !vigente ? GRAY3 : (okAnim ? "#25D366" : RED), transition: "background 0.2s" }}>
+            {agotado ? "Agotado" : !vigente ? "Terminó" : sinMas ? "Límite en tu pedido" : okAnim ? <><CheckCircle2 size={17} /> ¡Agregado!</> : <><ShoppingCart size={16} /> Agregar · ${total.toFixed(2)}</>}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ProductModal() {
   const { quickView: product, setQuickView, addToCart, showToast, flexpackGrupos } = useApp();
   const [pres, setPres] = useState("docena"); // siempre abre en Docena por defecto, incluso si "venta_por_unidad" está activo
@@ -1882,6 +2004,7 @@ function ProductModal() {
   const [talla, setTalla] = useState("");
   const [color, setColor] = useState("");
   const [mostrarFlexPack, setMostrarFlexPack] = useState(false);
+  const ofe = product?.__oferta || null; // { info, vigente, campana } cuando se abre desde la página de Ofertas
   const coloresDisponibles = product?.tiene_colores ? (product.colores || "").split(",").map(s => s.trim()).filter(Boolean) : [];
   const grupoFlexPack = product?.flexpack_grupo_id ? flexpackGrupos.find(g => g.id === product.flexpack_grupo_id) : null;
 
@@ -1959,6 +2082,7 @@ function ProductModal() {
             ? <img src={imgUrl} alt={product.nombre} decoding="async" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
             : <Package size={80} color={GRAY3} strokeWidth={1.2} />
           }
+          {ofe && ofe.info.pct > 0 && <span style={{ position: "absolute", top: 14, right: 60, background: RED, color: WHITE, fontSize: 12, fontWeight: 900, padding: "4px 10px", borderRadius: 4 }}>-{ofe.info.pct}%</span>}
           {product.badge && <span style={{ position: "absolute", top: 14, left: 14, background: RED, color: WHITE, fontSize: 11, fontWeight: 800, padding: "4px 10px", borderRadius: 4, display: "inline-flex", alignItems: "center", gap: 4 }}><Sparkles size={12} /> {product.badge}</span>}
         </div>
 
@@ -2005,7 +2129,11 @@ function ProductModal() {
             </div>
           )}
 
+          {/* Abierto desde una OFERTA: precio de esa oferta/sección en vez de pieza/3/6/media/docena */}
+          {ofe && <OfertaCompraBox key={ofe.info.oferta.id} ofe={ofe} />}
+
           {/* SELECTOR DE PRESENTACIÓN + CANTIDAD + TOTAL */}
+          {!ofe && (
           <div style={{ background: GRAY, borderRadius: 12, padding: 16, margin: "8px 0 16px" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
               <span style={{ fontSize: 15, fontWeight: 700 }}>Elige como comprar</span>
@@ -2029,9 +2157,15 @@ function ProductModal() {
             )}
             <DistribucionInfo key={product?.id} product={product} pres={pres} count={count} />
           </div>
+          )}
 
           {/* BOTONES */}
-          {modoConsulta ? (
+          {ofe ? (
+            <div style={{ display: "flex", gap: 10 }}>
+              <button className="oft-btn-press" style={{ ...S.btnWA, flex: 1, justifyContent: "center", padding: "12px 16px" }} onClick={() => { registrarEvento("consulta_whatsapp", product.id, "Interés en producto (oferta)"); window.open(`https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(`Hola Ofertodo, me interesa esta oferta: ${ofe.info.titulo} ($${ofe.info.precioOferta.toFixed(2)})\n${window.location.origin}/producto/${product.id}`)}`, "_blank"); }}><MessageCircle size={17} /> Preguntar por WhatsApp</button>
+              <button className="oft-btn-press" style={{ ...S.btnWA, padding: "12px 16px", background: GRAY2, color: BLACK }} title="Compartir producto" onClick={() => compartirProducto(product, showToast)}><Share2 size={18} /></button>
+            </div>
+          ) : modoConsulta ? (
             <button className="oft-btn-press" style={{ ...S.btnWA, width: "100%", justifyContent: "center", padding: 14, fontSize: 15 }} onClick={consultarWhatsApp}>
               <MessageCircle size={18} /> Consultar disponibilidad
             </button>
@@ -2159,7 +2293,8 @@ function OfertaCard({ info, delay, vigente, campana }) {
   // Igual que en el catálogo: al tocar la foto o el nombre se abre el detalle del producto.
   // Si la oferta es de un solo producto se abre ese; si es un combo, cada línea de "Incluye" abre el suyo.
   const unico = info.lineas.length === 1 ? info.lineas[0].product : null;
-  const verProducto = () => { if (unico) setQuickView(unico); };
+  const abrir = (prod) => setQuickView({ ...prod, __oferta: { info, vigente, campana } });
+  const verProducto = () => { if (unico) abrir(unico); };
   const ultimas = !agotado && stock <= 5 && Number.isFinite(stock);
 
   return (
@@ -2183,7 +2318,7 @@ function OfertaCard({ info, delay, vigente, campana }) {
         {esCombo ? (
           <div className="oft-of-incluye">
             <div style={{ fontWeight: 800, fontSize: 11, color: GRAY3, marginBottom: 3 }}>INCLUYE · {info.totalPiezas} piezas</div>
-            {info.lineas.map((l, i) => <div key={i} className="oft-of-linea" onClick={() => setQuickView(l.product)} title="Ver detalle" style={{ cursor: "pointer", textDecoration: "underline", textDecorationColor: GRAY2, textUnderlineOffset: 2 }}><b>{l.piezas}×</b> {l.product.nombre}</div>)}
+            {info.lineas.map((l, i) => <div key={i} className="oft-of-linea" onClick={() => abrir(l.product)} title="Ver detalle" style={{ cursor: "pointer", textDecoration: "underline", textDecorationColor: GRAY2, textUnderlineOffset: 2 }}><b>{l.piezas}×</b> {l.product.nombre}</div>)}
             {o.descripcion && <div style={{ fontSize: 11.5, color: GRAY3, marginTop: 4 }}>{o.descripcion}</div>}
           </div>
         ) : (
