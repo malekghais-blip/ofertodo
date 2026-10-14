@@ -1061,6 +1061,9 @@ export function CrearPedidoView({ onCreado } = {}) {
   const descPct = Math.min(Math.max(Number(descuento) || 0, 0), 100);
   const descMonto = subtotal * (descPct / 100);
   const costoEnvio = Number(envio) || 0;
+  // Envío especial de perfumes: solo se SUGIERE (el admin decide si lo aplica) cuando va a sucursal
+  const cfgEnvioPerf = useEnvioPerfumes();
+  const envioPerfumesOk = !retiroLocal && !!sucursalId && flexPacks.length === 0 && envioPerfumesAplica(cfgEnvioPerf, items.map(it => ({ product: it.product, piezas: piezasDePresentacion(it.product, it.pres) * (Number(it.count) || 0) })));
   const totalReal = subtotal - descMonto + costoEnvio;
   // Redondeo al 0.50 o entero más cercano. Arriba: 120.10→120.50, 120.60→121.00. Abajo: 120.40→120.00, 120.90→120.50
   const totalArriba = Math.ceil(totalReal * 2) / 2;
@@ -1879,6 +1882,12 @@ export function CrearPedidoView({ onCreado } = {}) {
                 <div>
                   <label style={{ ...S.label, fontSize: 11 }}>Costo de envío ($)</label>
                   <input style={{ ...S.input, marginBottom: 0 }} type="number" min="0" placeholder="0.00" value={envio} onChange={e => setEnvio(e.target.value)} />
+                  {envioPerfumesOk && Number(envio) !== cfgEnvioPerf.precio && (
+                    <button type="button" onClick={() => setEnvio(String(cfgEnvioPerf.precio))} className="oft-btn-press"
+                      style={{ marginTop: 6, width: "100%", padding: "7px 10px", borderRadius: 8, border: "1.5px dashed #0F6E56", background: "#E8F6F1", color: "#0F6E56", fontSize: 12, fontWeight: 800, cursor: "pointer" }}>
+                      Envío de perfumes a sucursal: {money(cfgEnvioPerf.precio)} — aplicar
+                    </button>
+                  )}
                 </div>
               </div>
               {/* RESUMEN */}
@@ -2937,6 +2946,49 @@ function piezasDePresentacion(product, pres) {
   return 1;
 }
 
+// ═══ ENVÍO DIFERENCIADO PARA PERFUMES (envío a sucursal) ═══
+// Se guarda en configuracion (clave "envio_perfumes"): { activo, precio, min, max }
+// Aplica solo al envío a SUCURSAL, cuando TODO el pedido son perfumes y la cantidad
+// de piezas está entre min y max. Si hay otros productos o más piezas, rige el precio normal.
+const ENVIO_PERFUMES_DEFAULT = { activo: false, precio: 5, min: 1, max: 3 };
+function normalizarEnvioPerfumes(v) {
+  const o = (v && typeof v === "object") ? v : {};
+  const n = (x, d) => (x === undefined || x === null || x === "" || isNaN(Number(x))) ? d : Number(x);
+  return {
+    activo: o.activo === true,
+    precio: Math.max(0, n(o.precio, ENVIO_PERFUMES_DEFAULT.precio)),
+    min: Math.max(1, Math.floor(n(o.min, ENVIO_PERFUMES_DEFAULT.min))),
+    max: Math.max(1, Math.floor(n(o.max, ENVIO_PERFUMES_DEFAULT.max))),
+  };
+}
+// lineas: [{ product, piezas }] -- cualquier línea sin producto (oferta, Flex Pack) cuenta como "no perfume"
+function envioPerfumesAplica(cfg, lineas) {
+  if (!cfg || !cfg.activo || !Array.isArray(lineas) || lineas.length === 0) return false;
+  let piezas = 0;
+  for (const l of lineas) {
+    if (!l || !l.product || l.product.modalidad_presentacion !== "perfumeria") return false;
+    piezas += Number(l.piezas) || 0;
+  }
+  return piezas >= cfg.min && piezas <= cfg.max;
+}
+function piezasDeLineasPerfume(lineas) {
+  return (lineas || []).reduce((s, l) => s + (Number(l?.piezas) || 0), 0);
+}
+// Carga la configuración (pública) y la mantiene al día
+function useEnvioPerfumes() {
+  const [cfg, setCfg] = useState(ENVIO_PERFUMES_DEFAULT);
+  useEffect(() => {
+    let vivo = true;
+    const cargar = () => sb.get("configuracion", "?clave=eq.envio_perfumes&limit=1")
+      .then(d => { if (vivo) setCfg(normalizarEnvioPerfumes(d?.[0]?.valor)); })
+      .catch(() => {});
+    cargar();
+    const t = setInterval(cargar, 60000);
+    return () => { vivo = false; clearInterval(t); };
+  }, []);
+  return cfg;
+}
+
 // oferta: fila de ofertas_items. comboRows: filas de ofertas_combo_productos (de TODAS las
 // ofertas o solo de esta). productosPorId: { [id]: producto }.
 // Devuelve null si falta algún producto (no se puede mostrar ni vender).
@@ -3042,5 +3094,5 @@ export {
   presLabelPlural, presUnitPrice, presToPiezas, parseDistribucion,
   PANAMA_ZONAS, mediaDocenaDesdeDistribucion, COLOR_HEX, colorToHex,
   InvoiceModal, SUPABASE_KEY,
-  precioNormalPiezas, piezasDePresentacion, ofertaInfo, ofertaALineaCarrito, prorratearLinea, tiempoRestante,
+  precioNormalPiezas, piezasDePresentacion, ENVIO_PERFUMES_DEFAULT, normalizarEnvioPerfumes, envioPerfumesAplica, piezasDeLineasPerfume, useEnvioPerfumes, ofertaInfo, ofertaALineaCarrito, prorratearLinea, tiempoRestante,
 };
