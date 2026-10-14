@@ -21,6 +21,7 @@ import {
   imagenOptimizada, mediaDocenaDesdeDistribucion, parseDistribucion, presLabelPlural, presToPiezas,
   presUnitPrice, sb, useApp, useLockBodyScroll, supabaseRealtime,
   ofertaInfo, ofertaALineaCarrito, prorratearLinea, tiempoRestante,
+  envioPerfumesAplica, useEnvioPerfumes,
 } from "./shared.jsx";
 
 // El panel de administrador vive en su propio archivo y solo se descarga cuando
@@ -3231,9 +3232,15 @@ function CheckoutView() {
 
   // Costo de envío según el modo elegido: gratis en retiro local, fijo en puerta a
   // puerta, o el que tenga configurada la sucursal elegida (puede ser $0 también)
+  // Envío especial de perfumes: solo a sucursal, si TODO el carrito son perfumes y la cantidad
+  // cae dentro del rango que se configura en el admin (ej. 1 a 3 perfumes = $5)
+  const cfgEnvioPerf = useEnvioPerfumes();
+  const envioPerfumesActivo = modoEntrega === "sucursal"
+    && envioPerfumesAplica(cfgEnvioPerf, cart.map(i => (i.esOferta || i.esFlexPack) ? { product: null } : { product: i.product, piezas: i.qty }));
+  const costoSucursal = (suc) => envioPerfumesActivo ? cfgEnvioPerf.precio : (Number(suc?.costo_envio) || 0);
   const costoEnvioFinal = modoEntrega === "local" ? 0
     : modoEntrega === "puerta" ? costoEnvioPuerta
-    : Number(sucursalSel?.costo_envio) || 0;
+    : (sucursalSel ? costoSucursal(sucursalSel) : 0);
   const totalConEnvio = total + costoEnvioFinal;
 
   const [pedidoPendiente, setPedidoPendiente] = useState(null); // pedido guardado, esperando pago Yappy
@@ -3663,6 +3670,11 @@ function CheckoutView() {
         {empresaId && sucursalesEmpresa.length > 0 && (
           <div style={{ marginTop: 18 }}>
             <label style={S.label}>Elige la sucursal de {empresaSel?.nombre} *</label>
+            {envioPerfumesActivo && (
+              <div style={{ background: "#E8F6F1", border: "1px solid #0F6E56", color: "#0F6E56", borderRadius: 8, padding: "8px 12px", fontSize: 12.5, fontWeight: 700, marginBottom: 10 }}>
+                Envío especial por pedir perfumes: {money(cfgEnvioPerf.precio)} a cualquier sucursal
+              </div>
+            )}
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {sucursalesEmpresa.map(suc => (
                 <div key={suc.id}
@@ -3675,8 +3687,11 @@ function CheckoutView() {
                     {suc.direccion && <div style={{ fontSize: 12, color: GRAY3 }}>{suc.direccion}</div>}
                     {suc.telefono && <div style={{ fontSize: 12, color: GRAY3 }}>Tel: {suc.telefono}</div>}
                   </div>
-                  <span style={{ fontSize: 13, fontWeight: 800, color: Number(suc.costo_envio) > 0 ? BLACK : "#0F6E56" }}>
-                    {Number(suc.costo_envio) > 0 ? money(suc.costo_envio) : "Gratis"}
+                  <span style={{ fontSize: 13, fontWeight: 800, color: costoSucursal(suc) > 0 ? BLACK : "#0F6E56", textAlign: "right" }}>
+                    {envioPerfumesActivo && Number(suc.costo_envio) > costoSucursal(suc) && (
+                      <span style={{ display: "block", fontSize: 11, fontWeight: 600, color: GRAY3, textDecoration: "line-through" }}>{money(suc.costo_envio)}</span>
+                    )}
+                    {costoSucursal(suc) > 0 ? money(costoSucursal(suc)) : "Gratis"}
                   </span>
                   {sucursalId === suc.id && <CheckCircle2 size={18} color={RED} />}
                 </div>
