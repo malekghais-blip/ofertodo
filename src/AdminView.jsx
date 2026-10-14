@@ -2835,6 +2835,84 @@ function EditorCostoPuertaAPuerta({ showToast }) {
   );
 }
 
+// ═══ NÚMEROS ANIMADOS DEL DASHBOARD ═══
+// Cuando un número cambia (por ejemplo, entra una venta nueva), "rueda" hasta el valor
+// nuevo, brilla en verde y, si subió, aparece un "+$X" que flota y se desvanece.
+// Si el cambio viene de que el usuario cambió el filtro (día/semana/mes...), el número
+// solo rueda suave, sin brillo ni "+X" (para no confundir con una venta nueva).
+let _estiloNumAnimado = false;
+function asegurarEstiloNumAnimado() {
+  if (_estiloNumAnimado || typeof document === "undefined") return;
+  _estiloNumAnimado = true;
+  const st = document.createElement("style");
+  st.textContent = `
+    @keyframes oftNumUp { 0% { transform: scale(1); } 28% { transform: scale(1.16); color: #0FA85A; text-shadow: 0 0 16px rgba(15,168,90,.5); } 100% { transform: scale(1); } }
+    @keyframes oftNumDown { 0% { transform: scale(1); } 28% { transform: scale(0.93); color: #B01519; } 100% { transform: scale(1); } }
+    @keyframes oftNumDelta { 0% { opacity: 0; transform: translateY(-6px) scale(.85); } 14% { opacity: 1; transform: translateY(2px) scale(1); } 78% { opacity: 1; transform: translateY(2px); } 100% { opacity: 0; transform: translateY(8px); } }
+    .oft-numa { position: relative; display: inline-block; font-variant-numeric: tabular-nums; }
+    .oft-numa-val { display: inline-block; transform-origin: left center; }
+    .oft-numa-up { animation: oftNumUp 1.1s ease-out; }
+    .oft-numa-down { animation: oftNumDown 1.1s ease-out; }
+    .oft-numa-delta { position: absolute; left: 0; top: 100%; margin-top: 2px; font-size: 12px; font-weight: 800; line-height: 1; color: #0F6E56; background: #E3F6EC; border: 1px solid #A8E0C3; padding: 3px 8px; border-radius: 12px; white-space: nowrap; pointer-events: none; animation: oftNumDelta 2.4s ease-out forwards; }
+    @media (prefers-reduced-motion: reduce) { .oft-numa-up, .oft-numa-down, .oft-numa-delta { animation: none; }
+    .oft-numa-delta.lado { left: 100%; top: 50%; margin: -9px 0 0 8px; } .oft-numa-delta { display: none; } }
+  `;
+  document.head.appendChild(st);
+}
+
+function CifraViva({ valor, formato, decimales = 0, contexto = "", mostrarDelta = true, deltaLado = false, duracion = 900 }) {
+  const num = Number(valor) || 0;
+  const fmt = formato || ((n) => String(n));
+  const [mostrado, setMostrado] = useState(num);
+  const [destello, setDestello] = useState({ id: 0, sube: true });
+  const [delta, setDelta] = useState(null);
+  const previo = useRef(num);
+  const ctxPrev = useRef(contexto);
+  const actual = useRef(num);
+  const raf = useRef(0);
+  const tDelta = useRef(0);
+  useEffect(() => { asegurarEstiloNumAnimado(); }, []);
+  useEffect(() => () => { cancelAnimationFrame(raf.current); clearTimeout(tDelta.current); }, []);
+  useEffect(() => {
+    const ctxCambio = ctxPrev.current !== contexto;
+    ctxPrev.current = contexto;
+    const anterior = previo.current;
+    if (anterior === num) return;
+    previo.current = num;
+    const desde = actual.current;
+    const sube = num > anterior;
+    const reducir = typeof window !== "undefined" && window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (!ctxCambio) {
+      setDestello(d => ({ id: d.id + 1, sube }));
+      if (sube && mostrarDelta && !reducir) {
+        setDelta({ id: Date.now(), n: num - anterior });
+        clearTimeout(tDelta.current);
+        tDelta.current = setTimeout(() => setDelta(null), 2500);
+      }
+    }
+    cancelAnimationFrame(raf.current);
+    if (reducir) { actual.current = num; setMostrado(num); return; }
+    const t0 = performance.now();
+    const paso = (t) => {
+      const p = Math.min(1, (t - t0) / duracion);
+      const e = 1 - Math.pow(1 - p, 3); // easeOutCubic
+      const v = p >= 1 ? num : desde + (num - desde) * e;
+      actual.current = v;
+      setMostrado(v);
+      if (p < 1) raf.current = requestAnimationFrame(paso);
+    };
+    raf.current = requestAnimationFrame(paso);
+  }, [num, contexto]);
+
+  const redondeado = Number(mostrado.toFixed(decimales));
+  return (
+    <span className="oft-numa">
+      <span key={destello.id} className={"oft-numa-val" + (destello.id > 0 ? (destello.sube ? " oft-numa-up" : " oft-numa-down") : "")}>{fmt(redondeado)}</span>
+      {delta && <span key={delta.id} className={"oft-numa-delta" + (deltaLado ? " lado" : "")}>+{fmt(Number(delta.n.toFixed(decimales)))}</span>}
+    </span>
+  );
+}
+
 // Precio de envío especial para PERFUMES (envío a sucursal): si el pedido es solo de
 // perfumes y la cantidad está entre el mínimo y el máximo, se cobra este precio.
 function EditorEnvioPerfumes({ showToast }) {
@@ -5430,17 +5508,17 @@ function AdminView() {
                 {/* TARJETAS DE MÉTRICAS */}
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 16, marginBottom: 20 }}>
                   {[
-                    ["Ingresos totales", money(ingresoTotal), DollarSign, RED],
-                    ["Órdenes totales", ordenesTotal, ShoppingBag, "#004085"],
-                    ["Clientes", clientesTotal, Users, "#155724"],
-                    ["Clientes que regresan", returningRate.toFixed(0) + "%", RefreshCw, "#6f42c1"],
-                    ["Mi balance", money(balance), Wallet, "#856404"],
-                  ].map(([label, val, Icon, color], i) => (
+                    ["Ingresos totales", ingresoTotal, money, 2, true, DollarSign, RED],
+                    ["Órdenes totales", ordenesTotal, null, 0, true, ShoppingBag, "#004085"],
+                    ["Clientes", clientesTotal, null, 0, true, Users, "#155724"],
+                    ["Clientes que regresan", Math.round(returningRate), (n) => n + "%", 0, false, RefreshCw, "#6f42c1"],
+                    ["Mi balance", balance, money, 2, true, Wallet, "#856404"],
+                  ].map(([label, val, fmtNum, dec, conDelta, Icon, color], i) => (
                     <div key={label} className="oft-widget" style={{ background: WHITE, borderRadius: 14, padding: 20, border: `1px solid ${GRAY2}`, transition: "transform 0.2s, box-shadow 0.2s", animationDelay: `${i * 0.07}s` }}>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                         <div>
                           <div style={{ fontSize: 13, color: GRAY3, marginBottom: 6 }}>{label}</div>
-                          <div style={{ fontSize: 26, fontWeight: 900, color }}>{val}</div>
+                          <div style={{ fontSize: 26, fontWeight: 900, color }}><CifraViva valor={val} formato={fmtNum} decimales={dec} mostrarDelta={conDelta} contexto={`${rangoVentas}|${fechaPersonalizada}|${rangoInicio}|${rangoFin}`} /></div>
                         </div>
                         <div style={{ background: color + "15", borderRadius: 10, padding: 10 }}>
                           <Icon size={22} color={color} strokeWidth={2} />
@@ -5457,7 +5535,7 @@ function AdminView() {
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4 }}>
                       <div style={{ fontWeight: 800, display: "flex", alignItems: "center", gap: 8 }}><TrendingUp size={18} color={RED} /> Valor promedio por orden</div>
                       <div style={{ textAlign: "right" }}>
-                        <div className="oft-total-pop" style={{ fontSize: 24, fontWeight: 900, color: RED }}>{money(aovActual)}</div>
+                        <div style={{ fontSize: 24, fontWeight: 900, color: RED }}><CifraViva valor={aovActual} formato={money} decimales={2} mostrarDelta={false} contexto={`${rangoVentas}|${fechaPersonalizada}|${rangoInicio}|${rangoFin}`} /></div>
                         <div style={{ fontSize: 11, color: GRAY3 }}>promedio actual</div>
                       </div>
                     </div>
@@ -5521,7 +5599,7 @@ function AdminView() {
                               {proximamente && <span style={{ fontSize: 9, background: "#FFF3CD", color: "#856404", padding: "1px 5px", borderRadius: 6, fontWeight: 700 }}>próximamente</span>}
                             </span>
                             <span style={{ fontSize: esTotal ? 16 : 13, fontWeight: (esTotal || esNeta) ? 900 : 600, color: esTotal ? RED : esResta && val > 0 ? "#B01519" : BLACK }}>
-                              {esResta && val > 0 ? "−" : ""}{money(val)}
+                              {esResta && val > 0 ? "−" : ""}<CifraViva valor={val} formato={money} decimales={2} mostrarDelta={false} contexto={`${rangoVentas}|${fechaPersonalizada}|${rangoInicio}|${rangoFin}`} />
                             </span>
                           </div>
                         );
@@ -5677,11 +5755,11 @@ function AdminView() {
                       const pedidosHoy = pedidosReales.filter(o => new Date(o.created_at).toDateString() === hoyStr);
                       const ventasHoyTotal = pedidosHoy.reduce((s, o) => s + (Number(o.total) || 0), 0);
                       return [
-                        ["Ventas de hoy", money(ventasHoyTotal), DollarSign, RED],
-                        ["Pedidos de hoy", pedidosHoy.length, ShoppingBag, "#004085"],
-                        ["Cotizaciones activas", cotizaciones.length, FileText, "#856404"],
-                      ].map(([label, val, Icon, color]) => (
-                        <div key={label} style={S.statCard}><Icon size={20} color={color} strokeWidth={1.8} /><div style={{ fontSize: 28, fontWeight: 900, color }}>{val}</div><div style={{ fontSize: 13, color: GRAY3 }}>{label}</div></div>
+                        ["Ventas de hoy", ventasHoyTotal, money, 2, DollarSign, RED],
+                        ["Pedidos de hoy", pedidosHoy.length, null, 0, ShoppingBag, "#004085"],
+                        ["Cotizaciones activas", cotizaciones.length, null, 0, FileText, "#856404"],
+                      ].map(([label, val, fmtNum, dec, Icon, color]) => (
+                        <div key={label} style={S.statCard}><Icon size={20} color={color} strokeWidth={1.8} /><div style={{ fontSize: 28, fontWeight: 900, color }}><CifraViva valor={val} formato={fmtNum} decimales={dec} deltaLado /></div><div style={{ fontSize: 13, color: GRAY3 }}>{label}</div></div>
                       ));
                     })()}
                   </div>
