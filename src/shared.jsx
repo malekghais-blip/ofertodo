@@ -930,7 +930,7 @@ function ModalElegirPresentacion({ producto, onElegir, onCerrar }) {
 }
 
 export function CrearPedidoView({ onCreado } = {}) {
-  const { products, empresas, sucursales, localesRetiro, showToast, user } = useApp();
+  const { products, empresas, sucursales, setSucursales, localesRetiro, showToast, user } = useApp();
   const [items, setItems] = useState([]); // { product, pres, count }
   const [search, setSearch] = useState("");
   const [cliente, setCliente] = useState({ id: null, nombre: "", telefono: "", direccion: "" });
@@ -1169,6 +1169,28 @@ export function CrearPedidoView({ onCreado } = {}) {
     }));
   };
   const removeItem = (idx) => setItems(prev => prev.filter((_, i) => i !== idx));
+
+  // Deja el costo escrito como el precio fijo de la sucursal elegida (o de puerta a puerta) para los próximos pedidos
+  const [guardandoPrecio, setGuardandoPrecio] = useState(false);
+  const guardarPrecioEnvio = async () => {
+    const valor = Number(envio);
+    if (isNaN(valor) || valor < 0) { showToast("Pon un costo válido"); return; }
+    setGuardandoPrecio(true);
+    try {
+      if (modoEnvio === "puerta") {
+        const r = await fetch(`${SUPABASE_URL}/rest/v1/configuracion?clave=eq.costo_envio_puerta_a_puerta`, { method: "PATCH", headers: sb.dataHeaders(), body: JSON.stringify({ valor }) });
+        if (!r.ok) throw new Error(await r.text());
+        setCostoPuertaCfg(valor);
+        showToast("Precio de puerta a puerta actualizado");
+      } else if (sucursalSel) {
+        await sb.patch("sucursales", sucursalSel.id, { costo_envio: valor });
+        if (typeof setSucursales === "function") setSucursales(prev => prev.map(su => su.id === sucursalSel.id ? { ...su, costo_envio: valor } : su));
+        showToast(`Precio de ${sucursalSel.nombre} actualizado`);
+      }
+      setEnvioManual(false);
+    } catch (e) { showToast("No se pudo guardar: " + (e.message || e)); }
+    setGuardandoPrecio(false);
+  };
 
   const handleGenerate = async () => {
     const hayNormales = items.length > 0;
@@ -2163,6 +2185,33 @@ export function CrearPedidoView({ onCreado } = {}) {
                   value={cliente.direccion} onChange={e => setCliente({ ...cliente, direccion: e.target.value })} />
               </div>
             )}
+
+            {/* COSTO DE ENVÍO EDITABLE (sucursal elegida o puerta a puerta) */}
+            {(modoEnvio === "puerta" || (modoEnvio === "sucursal" && sucursalSel)) && (() => {
+              const guardado = modoEnvio === "puerta" ? costoPuertaCfg : (Number(sucursalSel?.costo_envio) || 0);
+              const actual = Number(envio) || 0;
+              const cambiado = envioManual && Math.abs(actual - Number(envioAuto || 0)) > 0.004;
+              const puedeGuardar = envioManual && Math.abs(actual - guardado) > 0.004 && !(modoEnvio === "sucursal" && envioPerfumesOk);
+              return (
+                <div style={{ marginTop: 12, background: GRAY, borderRadius: 10, padding: "10px 12px" }}>
+                  <label style={{ ...S.label, fontSize: 11, marginBottom: 6 }}>Costo de envío ($) · {modoEnvio === "puerta" ? "puerta a puerta" : sucursalSel.nombre}</label>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                    <input type="number" min="0" step="0.01" value={envio} placeholder="0.00"
+                      onChange={e => { setEnvio(e.target.value); setEnvioManual(true); }}
+                      style={{ ...S.input, marginBottom: 0, width: 110, textAlign: "center", fontWeight: 800, background: WHITE }} />
+                    <span style={{ fontSize: 12, color: GRAY3 }}>{envioPerfumesOk && modoEnvio === "sucursal" ? `Precio especial de perfumes: ${money(cfgEnvioPerf.precio)}` : `Precio actual: ${money(guardado)}`}</span>
+                    {cambiado && <button type="button" onClick={() => setEnvioManual(false)} className="oft-btn-press" style={{ background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 8, padding: "6px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Restablecer</button>}
+                  </div>
+                  {puedeGuardar && (
+                    <button type="button" onClick={guardarPrecioEnvio} disabled={guardandoPrecio} className="oft-btn-press"
+                      style={{ marginTop: 8, width: "100%", padding: "8px 10px", borderRadius: 8, border: `1.5px dashed ${RED}`, background: "#FFF5F5", color: RED, fontSize: 12, fontWeight: 800, cursor: "pointer", opacity: guardandoPrecio ? 0.6 : 1 }}>
+                      {guardandoPrecio ? "Guardando..." : `Guardar ${money(actual)} como precio ${modoEnvio === "puerta" ? "de puerta a puerta" : "de esta sucursal"} para siempre`}
+                    </button>
+                  )}
+                  <div style={{ fontSize: 11, color: GRAY3, marginTop: 6 }}>{envioManual ? "Solo para este pedido, a menos que lo guardes como precio fijo." : "Puedes cambiarlo solo para este pedido."}</div>
+                </div>
+              );
+            })()}
 
             {/* RETIRO EN EL LOCAL */}
             {modoEnvio === "local" && (
