@@ -1206,7 +1206,7 @@ export function CrearPedidoView({ onCreado } = {}) {
     } else if (modoEnvio === "local") {
       if (localesRetiro.length > 1 && !localRetiroId) { alert("Elige en cuál local retira el cliente."); return; }
     }
-    if (tipo === "pedido" && !metodoPago) { alert("Elige cómo pagó el cliente: Yappy, Tarjeta o Transferencia."); return; }
+    if (!metodoPago) { alert(tipo === "cotizacion" ? "Elige cómo va a pagar el cliente: Yappy, Tarjeta o Transferencia." : "Elige cómo pagó el cliente: Yappy, Tarjeta o Transferencia."); return; }
     // Validar que cada FLEXPACK esté completo
     for (let i = 0; i < flexPacks.length; i++) {
       const pack = flexPacks[i];
@@ -1281,7 +1281,7 @@ export function CrearPedidoView({ onCreado } = {}) {
         local_retiro_id: localElegidoAdmin?.id || null, local_retiro_nombre: localElegidoAdmin?.nombre || null,
         tipo, num_factura: numFactura, creado_por_admin: true, costo_envio: costoEnvio,
         creado_por_usuario_id: user?.id || null,
-        metodo_pago: tipo === "cotizacion" ? null : metodoPago,
+        metodo_pago: metodoPago,
         // Las cotizaciones se marcan pagadas de una vez (no son ventas reales).
         // Los PEDIDOS se insertan como NO pagados y se marcan pagados en un segundo paso
         // (más abajo, después de crear los items) — igual que el flujo web con Yappy.
@@ -2229,10 +2229,9 @@ export function CrearPedidoView({ onCreado } = {}) {
             {modoEnvio === null && <div style={{ fontSize: 12, color: GRAY3 }}>Elige cómo se entrega el pedido, o déjalo sin envío.</div>}
           </div>
 
-          {tipo === "pedido" && (
           <div style={{ background: WHITE, borderRadius: 16, padding: 20, border: `1px solid ${metodoPago ? GRAY2 : RED}` }}>
-            <div style={{ fontWeight: 800, marginBottom: 4, display: "flex", alignItems: "center", gap: 8 }}><CreditCard size={18} color={RED} /> ¿Cómo pagó el cliente? *</div>
-            <div style={{ fontSize: 12, color: GRAY3, marginBottom: 12 }}>Queda registrado en el pedido y en el dashboard.</div>
+            <div style={{ fontWeight: 800, marginBottom: 4, display: "flex", alignItems: "center", gap: 8 }}><CreditCard size={18} color={RED} /> {tipo === "cotizacion" ? "¿Cómo va a pagar el cliente? *" : "¿Cómo pagó el cliente? *"}</div>
+            <div style={{ fontSize: 12, color: GRAY3, marginBottom: 12 }}>{tipo === "cotizacion" ? "Queda guardado en la cotización y pasa al pedido cuando se convierta." : "Queda registrado en el pedido y en el dashboard."}</div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
               {Object.entries(METODOS_PAGO).map(([k, m]) => (
                 <button key={k} type="button" onClick={() => setMetodoPago(k)} className="oft-btn-press"
@@ -2242,7 +2241,6 @@ export function CrearPedidoView({ onCreado } = {}) {
               ))}
             </div>
           </div>
-          )}
 
           <div style={{ background: WHITE, borderRadius: 16, padding: 20, border: `1px solid ${GRAY2}` }}>
             <div style={{ fontWeight: 800, marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}><FileText size={18} color={RED} /> Notas</div>
