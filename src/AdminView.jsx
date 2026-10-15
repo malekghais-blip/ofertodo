@@ -18,7 +18,7 @@ import {
   Spinner, StatusBadge, WHITE, comprimirImagen, estadosDe,
   imagenOptimizada, resolverAreaVenta, sb, useApp, useLockBodyScroll, useCambiosEnVivo, useRefrescoPeriodico,
   agregarCanvasComoPaginasPdf, ofertaInfo, precioNormalPiezas, piezasDePresentacion, presUnitPrice, idVisitante,
-  normalizarEnvioPerfumes,
+  normalizarEnvioPerfumes, METODOS_PAGO, BadgeMetodoPago,
 } from "./shared.jsx";
 
 // "YYYY-MM-DD" según la hora de PANAMÁ (America/Panama, UTC-5), sin importar la
@@ -225,7 +225,7 @@ function OrderImageModal({ order, onClose }) {
                   <span>TOTAL</span><span>{money(total)}</span>
                 </div>
                 {order.pagado === true && !esCot && (
-                  <div style={{ textAlign: "center", marginTop: 6, fontSize: 11, fontWeight: 800, color: "#155724" }}>✓ PAGADO</div>
+                  <div style={{ textAlign: "center", marginTop: 6, fontSize: 11, fontWeight: 800, color: "#155724" }}>✓ PAGADO{METODOS_PAGO[order.metodo_pago] ? ` · ${METODOS_PAGO[order.metodo_pago].label}` : ""}</div>
                 )}
               </div>
             </div>
@@ -3724,6 +3724,7 @@ function AdminView() {
   const [eliminando, setEliminando] = useState(false);
   // Filtro de ventas por periodo en el dashboard
   const [rangoVentas, setRangoVentas] = useState("todo"); // dia | semana | mes | anio | todo | personalizado | rango
+  const [filtroMetodo, setFiltroMetodo] = useState("todos"); // "todos" | "yappy" | "tarjeta" | "transferencia" | "sin" -- filtra la pestaña Pedidos por cómo se pagó
   const [busquedaPedidos, setBusquedaPedidos] = useState(""); // busca por # de pedido o nombre de cliente, en la pestaña Pedidos
   const [soloSinImprimir, setSoloSinImprimir] = useState(false); // filtro rápido: solo pedidos con la guía pendiente de imprimir
   const [fechaPersonalizada, setFechaPersonalizada] = useState(null); // Date seleccionada en el calendario
@@ -3956,6 +3957,7 @@ function AdminView() {
   // "Pedidos", no los números del Dashboard ni del Reporte de Ventas
   const pedidosFiltrados = pedidosReales.filter(o => {
     if (soloSinImprimir && o.guia_impresa) return false;
+    if (filtroMetodo === "sin" ? !!METODOS_PAGO[o.metodo_pago] : (filtroMetodo !== "todos" && o.metodo_pago !== filtroMetodo)) return false;
     const texto = busquedaPedidos.trim().toLowerCase();
     if (!texto) return true;
     return (o.codigo || "").toLowerCase().includes(texto) || (o.nombre_cliente || "").toLowerCase().includes(texto);
@@ -4182,6 +4184,15 @@ function AdminView() {
   };
 
   // Guarda (opcionalmente) quién está autorizado a recoger un pedido de retiro en local
+  // Cambia el método de pago de un pedido (manual: Yappy / Tarjeta / Transferencia)
+  const cambiarMetodoPago = async (orderId, metodo) => {
+    try {
+      await sb.patch("pedidos", orderId, { metodo_pago: metodo || null });
+      setOrders(prev => prev.map(o => o.id === orderId ? { ...o, metodo_pago: metodo || null } : o));
+      showToast("Método de pago guardado");
+    } catch(e) { showToast("No se pudo guardar: " + e.message); }
+  };
+
   const handleGuardarQuienRecoge = async (orderId, nombre) => {
     try {
       await sb.patch("pedidos", orderId, { retiro_nombre_autorizado: nombre || null });
@@ -5528,6 +5539,34 @@ function AdminView() {
                   ))}
                 </div>
 
+                {/* VENTAS POR MÉTODO DE PAGO */}
+                {(() => {
+                  const ctx = `${rangoVentas}|${fechaPersonalizada}|${rangoInicio}|${rangoFin}`;
+                  const filas = [...Object.entries(METODOS_PAGO).map(([k, m]) => ({ k, label: m.label, color: m.color, bg: m.bg, lista: pedidosReales.filter(o => o.metodo_pago === k) })),
+                    { k: "sin", label: "Sin registrar", color: "#777", bg: "#F1F1F1", lista: pedidosReales.filter(o => !METODOS_PAGO[o.metodo_pago]) }]
+                    .filter(f => f.k !== "sin" || f.lista.length > 0)
+                    .map(f => ({ ...f, total: f.lista.reduce((a, o) => a + Number(o.total || 0), 0) }));
+                  const suma = filas.reduce((a, f) => a + f.total, 0) || 1;
+                  return (
+                    <div className="oft-widget" style={{ background: WHITE, borderRadius: 14, padding: 20, border: `1px solid ${GRAY2}`, marginBottom: 20 }}>
+                      <div style={{ fontWeight: 800, display: "flex", alignItems: "center", gap: 8, marginBottom: 2 }}><CreditCard size={18} color={RED} /> Ventas por método de pago</div>
+                      <div style={{ fontSize: 12, color: GRAY3, marginBottom: 14 }}>Cuánto se cobró por cada medio en el periodo</div>
+                      <div style={{ display: "flex", height: 10, borderRadius: 6, overflow: "hidden", background: GRAY, marginBottom: 14 }}>
+                        {filas.map(f => f.total > 0 && <div key={f.k} title={`${f.label}: ${money(f.total)}`} style={{ width: `${(f.total / suma) * 100}%`, background: f.color, transition: "width 0.6s ease" }} />)}
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12 }}>
+                        {filas.map(f => (
+                          <div key={f.k} onClick={() => { setFiltroMetodo(f.k); setTab("orders"); }} title="Ver estos pedidos" style={{ cursor: "pointer", background: f.bg, borderRadius: 10, padding: "12px 14px" }}>
+                            <div style={{ fontSize: 12, fontWeight: 800, color: f.color }}>{f.label}</div>
+                            <div style={{ fontSize: 22, fontWeight: 900, color: f.color, marginTop: 2 }}><CifraViva valor={f.total} formato={money} decimales={2} contexto={ctx} /></div>
+                            <div style={{ fontSize: 12, color: GRAY3 }}><CifraViva valor={f.lista.length} decimales={0} mostrarDelta={false} contexto={ctx} /> pedido{f.lista.length === 1 ? "" : "s"} · {Math.round((f.total / suma) * 100)}%</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })()}
+
                 {/* WIDGET: AOV OVER TIME + MINI-TABLA DE VENTAS */}
                 <div className="oft-dash-grid-2" style={{ display: "grid", gridTemplateColumns: "1.3fr 1fr", gap: 16, marginBottom: 28 }}>
                   {/* AVERAGE ORDER VALUE OVER TIME */}
@@ -5875,6 +5914,19 @@ function AdminView() {
                   style={{ ...S.input, marginBottom: 0, paddingLeft: 36 }}
                 />
               </div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                {[["todos", "Todos", null], ...Object.entries(METODOS_PAGO).map(([k, m]) => [k, m.label, m]), ["sin", "Sin registrar", null]].map(([k, label, m]) => {
+                  const n = k === "todos" ? pedidosReales.length : k === "sin" ? pedidosReales.filter(o => !METODOS_PAGO[o.metodo_pago]).length : pedidosReales.filter(o => o.metodo_pago === k).length;
+                  if (k === "sin" && n === 0 && filtroMetodo !== "sin") return null;
+                  const act = filtroMetodo === k;
+                  return (
+                    <button key={k} onClick={() => setFiltroMetodo(k)} className="oft-btn-press"
+                      style={{ padding: "8px 12px", borderRadius: 20, cursor: "pointer", fontSize: 12.5, fontWeight: 800, border: `1.5px solid ${act ? (m ? m.color : BLACK) : GRAY2}`, background: act ? (m ? m.bg : BLACK) : WHITE, color: act ? (m ? m.color : WHITE) : BLACK }}>
+                      {label} <span style={{ opacity: 0.7, fontWeight: 700 }}>{n}</span>
+                    </button>
+                  );
+                })}
+              </div>
               <button onClick={() => setSoloSinImprimir(v => !v)} className="oft-btn-press"
                 style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "10px 14px", borderRadius: 10, border: `1.5px solid ${soloSinImprimir ? "#856404" : GRAY2}`, background: soloSinImprimir ? "#FFF8E1" : WHITE, color: soloSinImprimir ? "#856404" : GRAY3, fontWeight: 700, fontSize: 13, cursor: "pointer", whiteSpace: "nowrap" }}>
                 <AlertTriangle size={15} /> Solo guías sin imprimir {soloSinImprimir ? `(${pedidosReales.filter(o => !o.guia_impresa).length})` : ""}
@@ -5896,6 +5948,12 @@ function AdminView() {
                           {o.codigo}
                           {o.pagado === false && <div style={{ marginTop: 3, display: "inline-block", background: "#FFF3CD", color: "#856404", fontSize: 10, fontWeight: 800, padding: "2px 6px", borderRadius: 6 }}>SIN PAGAR</div>}
                           {o.pagado === true && <div style={{ marginTop: 3, display: "inline-block", background: "#D4EDDA", color: "#155724", fontSize: 10, fontWeight: 800, padding: "2px 6px", borderRadius: 6 }}>PAGADO</div>}
+                          <div style={{ marginTop: 3 }}><BadgeMetodoPago metodo={o.metodo_pago} sinRegistrar={o.pagado !== false} />{o.creado_por_admin && (
+                            <select value={METODOS_PAGO[o.metodo_pago] ? o.metodo_pago : ""} onChange={e => cambiarMetodoPago(o.id, e.target.value)} title="Cambiar método de pago"
+                              style={{ marginLeft: 5, fontSize: 10, padding: "1px 2px", borderRadius: 6, border: `1px solid ${GRAY2}`, background: WHITE, color: GRAY3, maxWidth: 74 }}>
+                              <option value="">{METODOS_PAGO[o.metodo_pago] ? "Quitar" : "Elegir…"}</option>
+                              {Object.entries(METODOS_PAGO).map(([k, m]) => <option key={k} value={k}>{m.label}</option>)}
+                            </select>)}</div>
                           <div style={{ marginTop: 3 }}>
                             {o.creado_por_admin
                               ? <span style={{ display: "inline-block", background: GRAY, color: GRAY3, fontSize: 10, fontWeight: 800, padding: "2px 6px", borderRadius: 6 }}>MANUAL</span>
@@ -5955,6 +6013,15 @@ function AdminView() {
                         <div style={{ fontSize: 12, color: GRAY3 }}>{o.telefono}</div>
                         {o.pagado === false && <span style={{ display: "inline-block", marginTop: 4, background: "#FFF3CD", color: "#856404", fontSize: 10, fontWeight: 800, padding: "2px 7px", borderRadius: 6 }}>SIN PAGAR</span>}
                         {o.pagado === true && <span style={{ display: "inline-block", marginTop: 4, background: "#D4EDDA", color: "#155724", fontSize: 10, fontWeight: 800, padding: "2px 7px", borderRadius: 6 }}>PAGADO</span>}
+                        {" "}
+                        <BadgeMetodoPago metodo={o.metodo_pago} sinRegistrar={o.pagado !== false} style={{ marginTop: 4 }} />{" "}
+                        {o.creado_por_admin && (
+                          <select value={METODOS_PAGO[o.metodo_pago] ? o.metodo_pago : ""} onChange={e => cambiarMetodoPago(o.id, e.target.value)} title="Cambiar método de pago"
+                            style={{ marginTop: 4, fontSize: 11, padding: "2px 4px", borderRadius: 6, border: `1px solid ${GRAY2}`, background: WHITE, color: GRAY3 }}>
+                            <option value="">{METODOS_PAGO[o.metodo_pago] ? "Quitar" : "Elegir pago…"}</option>
+                            {Object.entries(METODOS_PAGO).map(([k, m]) => <option key={k} value={k}>{m.label}</option>)}
+                          </select>
+                        )}
                         {" "}
                         {o.creado_por_admin
                           ? <span style={{ display: "inline-block", marginTop: 4, background: GRAY, color: GRAY3, fontSize: 10, fontWeight: 800, padding: "2px 7px", borderRadius: 6 }}>MANUAL</span>
