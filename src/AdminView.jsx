@@ -955,6 +955,7 @@ function EditCotizacionModal({ cotizacion, empresas, sucursales, onClose, onSave
   const [empresaId, setEmpresaId] = useState(cotizacion.empresa_envio_id || null);
   const [sucursalId, setSucursalId] = useState(cotizacion.sucursal_id || null);
   const [envio, setEnvio] = useState(cotizacion.costo_envio ? String(cotizacion.costo_envio) : "");
+  const [metodoPago, setMetodoPago] = useState(METODOS_PAGO[cotizacion.metodo_pago] ? cotizacion.metodo_pago : ""); // cómo va a pagar el cliente
   const [redondeo, setRedondeo] = useState("no");
   const [guardando, setGuardando] = useState(false);
 
@@ -986,12 +987,13 @@ function EditCotizacionModal({ cotizacion, empresas, sucursales, onClose, onSave
   const guardar = async () => {
     if (!cliente.nombre.trim()) { showToast("Escribe el nombre del cliente"); return; }
     if (lineas.length === 0) { showToast("La cotización debe tener al menos un producto"); return; }
+    if (!metodoPago) { showToast("Elige cómo va a pagar el cliente: Yappy, Tarjeta o Transferencia"); return; }
     setGuardando(true);
     try {
       // 1) Actualiza los datos del pedido
       await sb.patch("pedidos", cotizacion.id, {
         nombre_cliente: cliente.nombre, telefono: cliente.telefono, direccion: cliente.direccion,
-        notas, total, costo_envio: costoEnvio,
+        notas, total, costo_envio: costoEnvio, metodo_pago: metodoPago,
         empresa_envio_id: empresaId, empresa_envio_nombre: empresaSel?.nombre || "",
         sucursal_id: sucursalId, sucursal_nombre: sucursalSel?.nombre || "",
       });
@@ -1011,7 +1013,7 @@ function EditCotizacionModal({ cotizacion, empresas, sucursales, onClose, onSave
         if (Array.isArray(creado) && creado[0]) nuevosItems.push(creado[0]);
       }
       showToast("Cotización actualizada");
-      onSaved({ ...cotizacion, nombre_cliente: cliente.nombre, telefono: cliente.telefono, direccion: cliente.direccion, notas, total, costo_envio: costoEnvio, empresa_envio_id: empresaId, empresa_envio_nombre: empresaSel?.nombre || "", sucursal_id: sucursalId, sucursal_nombre: sucursalSel?.nombre || "", items: nuevosItems });
+      onSaved({ ...cotizacion, metodo_pago: metodoPago, nombre_cliente: cliente.nombre, telefono: cliente.telefono, direccion: cliente.direccion, notas, total, costo_envio: costoEnvio, empresa_envio_id: empresaId, empresa_envio_nombre: empresaSel?.nombre || "", sucursal_id: sucursalId, sucursal_nombre: sucursalSel?.nombre || "", items: nuevosItems });
     } catch(e) { showToast("Error al guardar: " + (e.message || "intenta de nuevo")); }
     setGuardando(false);
   };
@@ -1070,6 +1072,15 @@ function EditCotizacionModal({ cotizacion, empresas, sucursales, onClose, onSave
           <input style={S.input} value={cliente.direccion} onChange={e => setCliente({ ...cliente, direccion: e.target.value })} />
 
           {/* ENVÍO */}
+          <div style={{ fontWeight: 800, fontSize: 14, margin: "8px 0" }}>¿Cómo va a pagar el cliente? *</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginBottom: 12 }}>
+            {Object.entries(METODOS_PAGO).map(([k, m]) => (
+              <button key={k} type="button" onClick={() => setMetodoPago(k)} className="oft-btn-press"
+                style={{ padding: "10px 6px", borderRadius: 10, cursor: "pointer", fontWeight: 800, fontSize: 13, border: `2px solid ${metodoPago === k ? m.color : (metodoPago ? GRAY2 : RED)}`, background: metodoPago === k ? m.bg : WHITE, color: metodoPago === k ? m.color : BLACK }}>
+                {m.label}
+              </button>
+            ))}
+          </div>
           <div style={{ fontWeight: 800, fontSize: 14, margin: "8px 0" }}>Envío</div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
             <div>
@@ -2832,6 +2843,18 @@ function EditorCostoPuertaAPuerta({ showToast }) {
         </button>
       </div>
     </div>
+  );
+}
+
+// Desplegable chico para elegir/cambiar cómo se pagó un pedido o cotización
+function SelectorMetodoPago({ value, onChange, style }) {
+  const valido = !!METODOS_PAGO[value];
+  return (
+    <select value={valido ? value : ""} onChange={e => onChange(e.target.value)} title="Cambiar método de pago"
+      style={{ fontSize: 11, padding: "2px 4px", borderRadius: 6, border: `1px solid ${GRAY2}`, background: WHITE, color: GRAY3, maxWidth: 110, ...style }}>
+      <option value="" disabled={valido}>{valido ? "Cambiar pago…" : "Elegir pago…"}</option>
+      {Object.entries(METODOS_PAGO).map(([k, m]) => <option key={k} value={k}>{m.label}</option>)}
+    </select>
   );
 }
 
@@ -5759,6 +5782,7 @@ function AdminView() {
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <div style={{ fontWeight: 700, fontSize: 14 }}>{o.codigo} · {o.nombre_cliente}</div>
                             <div style={{ fontSize: 12, color: GRAY3 }}>{(o.items || []).length} producto(s) · {new Date(o.created_at).toLocaleDateString()}</div>
+                              <div style={{ marginTop: 4, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}><BadgeMetodoPago metodo={o.metodo_pago} sinRegistrar /><SelectorMetodoPago value={o.metodo_pago} onChange={v => cambiarMetodoPago(o.id, v)} /></div>
                           </div>
                           <div style={{ fontWeight: 800, color: "#856404" }}>{money(o.total)}</div>
                           <span style={{ background: "#FFF3CD", color: "#856404", padding: "3px 10px", borderRadius: 12, fontSize: 11, fontWeight: 700 }}>Cotización</span>
@@ -5868,6 +5892,7 @@ function AdminView() {
                             <div style={{ flex: 1, minWidth: 0 }}>
                               <div style={{ fontWeight: 700, fontSize: 14 }}>{o.codigo} · {o.nombre_cliente}</div>
                               <div style={{ fontSize: 12, color: GRAY3 }}>{(o.items || []).length} producto(s) · {new Date(o.created_at).toLocaleDateString()}</div>
+                              <div style={{ marginTop: 4, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}><BadgeMetodoPago metodo={o.metodo_pago} sinRegistrar /><SelectorMetodoPago value={o.metodo_pago} onChange={v => cambiarMetodoPago(o.id, v)} /></div>
                             </div>
                             <div style={{ fontWeight: 800, color: "#856404" }}>{money(o.total)}</div>
                             <span style={{ background: "#FFF3CD", color: "#856404", padding: "3px 10px", borderRadius: 12, fontSize: 11, fontWeight: 700 }}>Cotización</span>
@@ -5948,12 +5973,7 @@ function AdminView() {
                           {o.codigo}
                           {o.pagado === false && <div style={{ marginTop: 3, display: "inline-block", background: "#FFF3CD", color: "#856404", fontSize: 10, fontWeight: 800, padding: "2px 6px", borderRadius: 6 }}>SIN PAGAR</div>}
                           {o.pagado === true && <div style={{ marginTop: 3, display: "inline-block", background: "#D4EDDA", color: "#155724", fontSize: 10, fontWeight: 800, padding: "2px 6px", borderRadius: 6 }}>PAGADO</div>}
-                          <div style={{ marginTop: 3 }}><BadgeMetodoPago metodo={o.metodo_pago} sinRegistrar={o.pagado !== false} />{o.creado_por_admin && (
-                            <select value={METODOS_PAGO[o.metodo_pago] ? o.metodo_pago : ""} onChange={e => cambiarMetodoPago(o.id, e.target.value)} title="Cambiar método de pago"
-                              style={{ marginLeft: 5, fontSize: 10, padding: "1px 2px", borderRadius: 6, border: `1px solid ${GRAY2}`, background: WHITE, color: GRAY3, maxWidth: 74 }}>
-                              <option value="">{METODOS_PAGO[o.metodo_pago] ? "Quitar" : "Elegir…"}</option>
-                              {Object.entries(METODOS_PAGO).map(([k, m]) => <option key={k} value={k}>{m.label}</option>)}
-                            </select>)}</div>
+                          <div style={{ marginTop: 3 }}><BadgeMetodoPago metodo={o.metodo_pago} sinRegistrar={o.pagado !== false} /><SelectorMetodoPago value={o.metodo_pago} onChange={v => cambiarMetodoPago(o.id, v)} style={{ marginLeft: 5 }} /></div>
                           <div style={{ marginTop: 3 }}>
                             {o.creado_por_admin
                               ? <span style={{ display: "inline-block", background: GRAY, color: GRAY3, fontSize: 10, fontWeight: 800, padding: "2px 6px", borderRadius: 6 }}>MANUAL</span>
@@ -6015,13 +6035,7 @@ function AdminView() {
                         {o.pagado === true && <span style={{ display: "inline-block", marginTop: 4, background: "#D4EDDA", color: "#155724", fontSize: 10, fontWeight: 800, padding: "2px 7px", borderRadius: 6 }}>PAGADO</span>}
                         {" "}
                         <BadgeMetodoPago metodo={o.metodo_pago} sinRegistrar={o.pagado !== false} style={{ marginTop: 4 }} />{" "}
-                        {o.creado_por_admin && (
-                          <select value={METODOS_PAGO[o.metodo_pago] ? o.metodo_pago : ""} onChange={e => cambiarMetodoPago(o.id, e.target.value)} title="Cambiar método de pago"
-                            style={{ marginTop: 4, fontSize: 11, padding: "2px 4px", borderRadius: 6, border: `1px solid ${GRAY2}`, background: WHITE, color: GRAY3 }}>
-                            <option value="">{METODOS_PAGO[o.metodo_pago] ? "Quitar" : "Elegir pago…"}</option>
-                            {Object.entries(METODOS_PAGO).map(([k, m]) => <option key={k} value={k}>{m.label}</option>)}
-                          </select>
-                        )}
+                        <SelectorMetodoPago value={o.metodo_pago} onChange={v => cambiarMetodoPago(o.id, v)} style={{ marginTop: 4 }} />
                         {" "}
                         {o.creado_por_admin
                           ? <span style={{ display: "inline-block", marginTop: 4, background: GRAY, color: GRAY3, fontSize: 10, fontWeight: 800, padding: "2px 7px", borderRadius: 6 }}>MANUAL</span>
