@@ -948,6 +948,7 @@ export function CrearPedidoView({ onCreado } = {}) {
   const [tipo, setTipo] = useState("pedido"); // 'pedido' | 'cotizacion'
   const [descuento, setDescuento] = useState(""); // porcentaje
   const [envio, setEnvio] = useState(""); // costo de envío
+  const [metodoPago, setMetodoPago] = useState(""); // "yappy" | "tarjeta" | "transferencia" -- cómo pagó el cliente (obligatorio en pedidos)
   const [retiroLocal, setRetiroLocal] = useState(false); // true = el cliente retira en el local, sin envío
   const [retiroNombreAutorizado, setRetiroNombreAutorizado] = useState(""); // opcional -- quién recoge, si no es el mismo cliente
   const [localRetiroId, setLocalRetiroId] = useState(null); // en cuál local específico (si hay más de uno)
@@ -1150,6 +1151,7 @@ export function CrearPedidoView({ onCreado } = {}) {
     const hayFlex = flexPacks.length > 0;
     if (!hayNormales && !hayFlex) { alert("Agrega al menos un producto."); return; }
     if (!cliente.nombre.trim()) { alert("Escribe el nombre del cliente."); return; }
+    if (tipo === "pedido" && !metodoPago) { alert("Elige cómo pagó el cliente: Yappy, Tarjeta o Transferencia."); return; }
     // Validar que cada FLEXPACK esté completo
     for (let i = 0; i < flexPacks.length; i++) {
       const pack = flexPacks[i];
@@ -1224,6 +1226,7 @@ export function CrearPedidoView({ onCreado } = {}) {
         local_retiro_id: localElegidoAdmin?.id || null, local_retiro_nombre: localElegidoAdmin?.nombre || null,
         tipo, num_factura: numFactura, creado_por_admin: true, costo_envio: costoEnvio,
         creado_por_usuario_id: user?.id || null,
+        metodo_pago: tipo === "cotizacion" ? null : metodoPago,
         // Las cotizaciones se marcan pagadas de una vez (no son ventas reales).
         // Los PEDIDOS se insertan como NO pagados y se marcan pagados en un segundo paso
         // (más abajo, después de crear los items) — igual que el flujo web con Yappy.
@@ -1453,7 +1456,7 @@ export function CrearPedidoView({ onCreado } = {}) {
 
   const resetForm = () => {
     setItems([]); setFlexPacks([]); setFlexActiveId(null); setCliente({ nombre: "", telefono: "", direccion: "" }); setNotas("");
-    setEmpresaId(null); setSucursalId(null); setRetiroLocal(false); setRetiroNombreAutorizado(""); setLocalRetiroId(null); setTipo("pedido"); setDescuento(""); setEnvio(""); setRedondeo("arriba"); setInvoice(null);
+    setEmpresaId(null); setSucursalId(null); setRetiroLocal(false); setRetiroNombreAutorizado(""); setLocalRetiroId(null); setTipo("pedido"); setMetodoPago(""); setDescuento(""); setEnvio(""); setRedondeo("arriba"); setInvoice(null);
   };
 
   return (
@@ -2058,6 +2061,21 @@ export function CrearPedidoView({ onCreado } = {}) {
               </select>
             )}
           </div>
+
+          {tipo === "pedido" && (
+          <div style={{ background: WHITE, borderRadius: 16, padding: 20, border: `1px solid ${metodoPago ? GRAY2 : RED}` }}>
+            <div style={{ fontWeight: 800, marginBottom: 4, display: "flex", alignItems: "center", gap: 8 }}><CreditCard size={18} color={RED} /> ¿Cómo pagó el cliente? *</div>
+            <div style={{ fontSize: 12, color: GRAY3, marginBottom: 12 }}>Queda registrado en el pedido y en el dashboard.</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
+              {Object.entries(METODOS_PAGO).map(([k, m]) => (
+                <button key={k} type="button" onClick={() => setMetodoPago(k)} className="oft-btn-press"
+                  style={{ padding: "12px 6px", borderRadius: 10, cursor: "pointer", fontWeight: 800, fontSize: 13, border: `2px solid ${metodoPago === k ? m.color : GRAY2}`, background: metodoPago === k ? m.bg : WHITE, color: metodoPago === k ? m.color : BLACK }}>
+                  {m.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          )}
 
           <div style={{ background: WHITE, borderRadius: 16, padding: 20, border: `1px solid ${GRAY2}` }}>
             <div style={{ fontWeight: 800, marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}><FileText size={18} color={RED} /> Notas</div>
@@ -2946,6 +2964,22 @@ function piezasDePresentacion(product, pres) {
   return 1;
 }
 
+// ═══ MÉTODO DE PAGO DE LOS PEDIDOS ═══
+// Web: solo "yappy" o "tarjeta". Pedidos manuales (admin): "yappy", "tarjeta" o "transferencia".
+const METODOS_PAGO = {
+  yappy: { label: "Yappy", color: "#0E7490", bg: "#CFFAFE" },
+  tarjeta: { label: "Tarjeta", color: "#6D28D9", bg: "#EDE9FE" },
+  transferencia: { label: "Transferencia", color: "#B45309", bg: "#FEF3C7" },
+};
+function BadgeMetodoPago({ metodo, sinRegistrar = false, style }) {
+  const m = METODOS_PAGO[metodo];
+  if (!m) {
+    if (!sinRegistrar) return null;
+    return <span style={{ display: "inline-block", background: "#F1F1F1", color: "#777", fontSize: 10, fontWeight: 800, padding: "2px 7px", borderRadius: 6, ...style }}>PAGO SIN REGISTRAR</span>;
+  }
+  return <span style={{ display: "inline-block", background: m.bg, color: m.color, fontSize: 10, fontWeight: 800, padding: "2px 7px", borderRadius: 6, textTransform: "uppercase", ...style }}>{m.label}</span>;
+}
+
 // ═══ ENVÍO DIFERENCIADO PARA PERFUMES (envío a sucursal) ═══
 // Se guarda en configuracion (clave "envio_perfumes"): { activo, precio, min, max }
 // Aplica solo al envío a SUCURSAL, cuando TODO el pedido son perfumes y la cantidad
@@ -3094,5 +3128,5 @@ export {
   presLabelPlural, presUnitPrice, presToPiezas, parseDistribucion,
   PANAMA_ZONAS, mediaDocenaDesdeDistribucion, COLOR_HEX, colorToHex,
   InvoiceModal, SUPABASE_KEY,
-  precioNormalPiezas, piezasDePresentacion, ENVIO_PERFUMES_DEFAULT, normalizarEnvioPerfumes, envioPerfumesAplica, piezasDeLineasPerfume, useEnvioPerfumes, ofertaInfo, ofertaALineaCarrito, prorratearLinea, tiempoRestante,
+  precioNormalPiezas, piezasDePresentacion, METODOS_PAGO, BadgeMetodoPago, ENVIO_PERFUMES_DEFAULT, normalizarEnvioPerfumes, envioPerfumesAplica, piezasDeLineasPerfume, useEnvioPerfumes, ofertaInfo, ofertaALineaCarrito, prorratearLinea, tiempoRestante,
 };
