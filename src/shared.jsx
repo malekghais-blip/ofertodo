@@ -949,7 +949,17 @@ export function CrearPedidoView({ onCreado } = {}) {
   const [descuento, setDescuento] = useState(""); // porcentaje
   const [envio, setEnvio] = useState(""); // costo de envío
   const [metodoPago, setMetodoPago] = useState(""); // "yappy" | "tarjeta" | "transferencia" -- cómo pagó el cliente (obligatorio en pedidos)
-  const [retiroLocal, setRetiroLocal] = useState(false); // true = el cliente retira en el local, sin envío
+  // Tipo de envío del pedido manual: null (sin envío) | "sucursal" | "puerta" | "local"
+  const [modoEnvio, setModoEnvio] = useState(null);
+  const retiroLocal = modoEnvio === "local"; // el cliente retira en el local, sin envío
+  const [busquedaSuc, setBusquedaSuc] = useState(""); // buscador de sucursales
+  const [envioManual, setEnvioManual] = useState(false); // true cuando se escribió el costo a mano (ya no se autocalcula)
+  const [costoPuertaCfg, setCostoPuertaCfg] = useState(0);
+  useEffect(() => {
+    sb.get("configuracion", "?clave=eq.costo_envio_puerta_a_puerta&limit=1")
+      .then(d => { if (d?.[0]?.valor != null) setCostoPuertaCfg(Number(d[0].valor) || 0); })
+      .catch(() => {});
+  }, []);
   const [retiroNombreAutorizado, setRetiroNombreAutorizado] = useState(""); // opcional -- quién recoge, si no es el mismo cliente
   const [localRetiroId, setLocalRetiroId] = useState(null); // en cuál local específico (si hay más de uno)
   const [redondeo, setRedondeo] = useState("arriba"); // "arriba" | "abajo" | "no"
@@ -965,6 +975,7 @@ export function CrearPedidoView({ onCreado } = {}) {
   const sucursalesEmpresa = sucursales.filter(s => s.empresa_id === empresaId && s.activa !== false);
   const empresaSel = empresas.find(e => e.id === empresaId);
   const sucursalSel = sucursales.find(s => s.id === sucursalId);
+  const servientregaEmp = empresas.find(e => (e.nombre || "").toLowerCase().includes("servientrega"));
 
   // Precio por pieza de un producto según el modo del pack (docena ÷12, media ÷6)
   const flexUnitPrice = (product, modo) => modo === "media" ? Number(product.precio_media_docena) / 6 : Number(product.precio_docena) / 12;
@@ -1065,6 +1076,19 @@ export function CrearPedidoView({ onCreado } = {}) {
   // Envío especial de perfumes: solo se SUGIERE (el admin decide si lo aplica) cuando va a sucursal
   const cfgEnvioPerf = useEnvioPerfumes();
   const envioPerfumesOk = !retiroLocal && !!sucursalId && flexPacks.length === 0 && envioPerfumesAplica(cfgEnvioPerf, items.map(it => ({ product: it.product, piezas: piezasDePresentacion(it.product, it.pres) * (Number(it.count) || 0) })));
+  // El costo de envío se calcula solo según el tipo de envío (se puede corregir a mano):
+  // sucursal = precio de la sucursal (o el especial de perfumes), puerta a puerta = precio fijo, local = sin costo
+  const envioAuto = modoEnvio === "sucursal" ? (sucursalSel ? (envioPerfumesOk ? cfgEnvioPerf.precio : (Number(sucursalSel.costo_envio) || 0)) : null)
+    : modoEnvio === "puerta" ? costoPuertaCfg
+    : modoEnvio === "local" ? 0 : null;
+  // Puerta a puerta siempre va por Servientrega (se selecciona sola)
+  useEffect(() => {
+    if (modoEnvio === "puerta" && servientregaEmp && empresaId !== servientregaEmp.id) { setEmpresaId(servientregaEmp.id); setSucursalId(null); }
+  }, [modoEnvio, servientregaEmp?.id]);
+  useEffect(() => {
+    if (envioManual || envioAuto === null) return;
+    setEnvio(envioAuto > 0 ? String(envioAuto) : "");
+  }, [envioAuto, envioManual, modoEnvio]);
   const totalReal = subtotal - descMonto + costoEnvio;
   // Redondeo al 0.50 o entero más cercano. Arriba: 120.10→120.50, 120.60→121.00. Abajo: 120.40→120.00, 120.90→120.50
   const totalArriba = Math.ceil(totalReal * 2) / 2;
@@ -1151,6 +1175,15 @@ export function CrearPedidoView({ onCreado } = {}) {
     const hayFlex = flexPacks.length > 0;
     if (!hayNormales && !hayFlex) { alert("Agrega al menos un producto."); return; }
     if (!cliente.nombre.trim()) { alert("Escribe el nombre del cliente."); return; }
+    if (modoEnvio === "sucursal") {
+      if (!empresaId) { alert("Elige la empresa de envío (Servientrega o Ferguson)."); return; }
+      if (sucursalesEmpresa.length > 0 && !sucursalId) { alert("Elige la sucursal donde se va a recoger el pedido."); return; }
+    } else if (modoEnvio === "puerta") {
+      if (!servientregaEmp) { alert("No se encontró la empresa Servientrega para el envío puerta a puerta."); return; }
+      if (!cliente.direccion.trim()) { alert("Para puerta a puerta, escribe la dirección de entrega."); return; }
+    } else if (modoEnvio === "local") {
+      if (localesRetiro.length > 1 && !localRetiroId) { alert("Elige en cuál local retira el cliente."); return; }
+    }
     if (tipo === "pedido" && !metodoPago) { alert("Elige cómo pagó el cliente: Yappy, Tarjeta o Transferencia."); return; }
     // Validar que cada FLEXPACK esté completo
     for (let i = 0; i < flexPacks.length; i++) {
@@ -1220,7 +1253,7 @@ export function CrearPedidoView({ onCreado } = {}) {
         codigo, usuario_id: cliente.id || null, nombre_cliente: cliente.nombre, telefono: cliente.telefono,
         direccion: cliente.direccion, notas, total, estado: 0,
         empresa_envio_id: empresaId, empresa_envio_nombre: empresaSel?.nombre || "",
-        sucursal_id: sucursalId, sucursal_nombre: sucursalSel?.nombre || "",
+        sucursal_id: sucursalId, sucursal_nombre: modoEnvio === "puerta" ? "Puerta a puerta" : (sucursalSel?.nombre || ""),
         retiro_local: retiroLocal,
         retiro_nombre_autorizado: retiroLocal ? (retiroNombreAutorizado.trim() || null) : null,
         local_retiro_id: localElegidoAdmin?.id || null, local_retiro_nombre: localElegidoAdmin?.nombre || null,
@@ -1441,7 +1474,7 @@ export function CrearPedidoView({ onCreado } = {}) {
       setInvoice({
         codigo, numFactura, tipo, fecha: new Date(),
         cliente: { ...cliente }, notas,
-        empresa: empresaSel?.nombre || "", sucursal: sucursalSel?.nombre || "",
+        empresa: empresaSel?.nombre || "", sucursal: modoEnvio === "puerta" ? "Puerta a puerta" : (sucursalSel?.nombre || ""),
         items: invoiceItems,
         subtotal, descPct, descMonto, costoEnvio, total,
       });
@@ -1456,7 +1489,7 @@ export function CrearPedidoView({ onCreado } = {}) {
 
   const resetForm = () => {
     setItems([]); setFlexPacks([]); setFlexActiveId(null); setCliente({ nombre: "", telefono: "", direccion: "" }); setNotas("");
-    setEmpresaId(null); setSucursalId(null); setRetiroLocal(false); setRetiroNombreAutorizado(""); setLocalRetiroId(null); setTipo("pedido"); setMetodoPago(""); setDescuento(""); setEnvio(""); setRedondeo("arriba"); setInvoice(null);
+    setEmpresaId(null); setSucursalId(null); setModoEnvio(null); setBusquedaSuc(""); setEnvioManual(false); setRetiroNombreAutorizado(""); setLocalRetiroId(null); setTipo("pedido"); setMetodoPago(""); setDescuento(""); setEnvio(""); setRedondeo("arriba"); setInvoice(null);
   };
 
   return (
@@ -1884,9 +1917,9 @@ export function CrearPedidoView({ onCreado } = {}) {
                 </div>
                 <div>
                   <label style={{ ...S.label, fontSize: 11 }}>Costo de envío ($)</label>
-                  <input style={{ ...S.input, marginBottom: 0 }} type="number" min="0" placeholder="0.00" value={envio} onChange={e => setEnvio(e.target.value)} />
-                  {envioPerfumesOk && Number(envio) !== cfgEnvioPerf.precio && (
-                    <button type="button" onClick={() => setEnvio(String(cfgEnvioPerf.precio))} className="oft-btn-press"
+                  <input style={{ ...S.input, marginBottom: 0 }} type="number" min="0" placeholder="0.00" value={envio} onChange={e => { setEnvio(e.target.value); setEnvioManual(true); }} />
+                  {envioPerfumesOk && envioManual && Number(envio) !== cfgEnvioPerf.precio && (
+                    <button type="button" onClick={() => { setEnvio(String(cfgEnvioPerf.precio)); setEnvioManual(false); }} className="oft-btn-press"
                       style={{ marginTop: 6, width: "100%", padding: "7px 10px", borderRadius: 8, border: "1.5px dashed #0F6E56", background: "#E8F6F1", color: "#0F6E56", fontSize: 12, fontWeight: 800, cursor: "pointer" }}>
                       Envío de perfumes a sucursal: {money(cfgEnvioPerf.precio)} — aplicar
                     </button>
@@ -2026,40 +2059,125 @@ export function CrearPedidoView({ onCreado } = {}) {
 
           <div style={{ background: WHITE, borderRadius: 16, padding: 20, border: `1px solid ${GRAY2}` }}>
             <div style={{ fontWeight: 800, marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}><Truck size={18} color={RED} /> Envío (opcional)</div>
-            <div onClick={() => { setRetiroLocal(v => !v); setEmpresaId(null); setSucursalId(null); setEnvio(""); }}
-              style={{ display: "flex", alignItems: "center", gap: 10, background: retiroLocal ? "#FFF5F5" : GRAY, border: `1.5px solid ${retiroLocal ? RED : GRAY2}`, borderRadius: 10, padding: "10px 14px", marginBottom: 12, cursor: "pointer" }}>
-              <input type="checkbox" checked={retiroLocal} onChange={() => {}} style={{ width: 18, height: 18, pointerEvents: "none" }} />
-              <div>
-                <div style={{ fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}><Home size={14} color={retiroLocal ? RED : GRAY3} /> Retiro en el local</div>
-                <div style={{ fontSize: 11, color: GRAY3 }}>El cliente pasa a recogerlo, sin empresa de envío ni costo</div>
-              </div>
+            {/* TIPO DE ENVÍO */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginBottom: 14 }}>
+              {[["sucursal", "A sucursal", Building2], ["puerta", "Puerta a puerta", MapPin], ["local", "Retiro en el local", Home]].map(([k, label, Icon]) => {
+                const act = modoEnvio === k;
+                return (
+                  <button key={k} type="button" className="oft-btn-press"
+                    onClick={() => {
+                      const nuevo = act ? null : k;
+                      setModoEnvio(nuevo); setEnvioManual(false); setBusquedaSuc(""); setSucursalId(null);
+                      if (nuevo === "puerta") setEmpresaId(servientregaEmp?.id || null);
+                      else if (nuevo !== "sucursal") setEmpresaId(null);
+                      if (nuevo === null || nuevo === "local") setEnvio("");
+                    }}
+                    style={{ padding: "12px 6px", borderRadius: 10, cursor: "pointer", border: `2px solid ${act ? RED : GRAY2}`, background: act ? "#FFF5F5" : WHITE, color: act ? RED : BLACK, display: "flex", flexDirection: "column", alignItems: "center", gap: 6, fontWeight: 800, fontSize: 12.5, lineHeight: 1.2 }}>
+                    <Icon size={22} strokeWidth={1.8} /> {label}
+                  </button>
+                );
+              })}
             </div>
-            {retiroLocal && (
-              <div style={{ marginBottom: 12 }} onClick={e => e.stopPropagation()}>
-                <label style={{ ...S.label, fontSize: 11 }}>¿Quién lo recoge? (opcional, si no es el mismo cliente)</label>
-                <input style={{ ...S.input, marginBottom: 0 }} placeholder="Nombre de la persona autorizada..." value={retiroNombreAutorizado} onChange={e => setRetiroNombreAutorizado(e.target.value)} />
+
+            {/* A SUCURSAL: empresa + buscador de sucursal */}
+            {modoEnvio === "sucursal" && (
+              <div>
+                <label style={{ ...S.label, fontSize: 11 }}>Empresa de envío *</label>
+                <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.max(1, Math.min(empresasActivas.length, 3))}, 1fr)`, gap: 8, marginBottom: 12 }}>
+                  {empresasActivas.map(emp => {
+                    const act = empresaId === emp.id;
+                    return (
+                      <button key={emp.id} type="button" className="oft-btn-press" onClick={() => { setEmpresaId(emp.id); setSucursalId(null); setBusquedaSuc(""); setEnvioManual(false); }}
+                        style={{ padding: "10px 8px", borderRadius: 10, cursor: "pointer", border: `2px solid ${act ? RED : GRAY2}`, background: act ? "#FFF5F5" : WHITE, color: act ? RED : BLACK, fontWeight: 800, fontSize: 13 }}>
+                        {emp.nombre}
+                      </button>
+                    );
+                  })}
+                </div>
+                {empresaId && sucursalesEmpresa.length > 0 && (() => {
+                  const norm = (t) => String(t || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+                  const q = norm(busquedaSuc).trim();
+                  const lista = q ? sucursalesEmpresa.filter(su => norm(su.nombre + " " + (su.direccion || "")).includes(q)) : sucursalesEmpresa;
+                  if (sucursalSel && sucursalSel.empresa_id === empresaId) {
+                    return (
+                      <div>
+                        <label style={{ ...S.label, fontSize: 11 }}>Sucursal *</label>
+                        <div style={{ display: "flex", alignItems: "center", gap: 10, border: `2px solid ${RED}`, background: "#FFF5F5", borderRadius: 10, padding: "10px 12px" }}>
+                          <CheckCircle2 size={18} color={RED} style={{ flexShrink: 0 }} />
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontWeight: 800, fontSize: 14 }}>{sucursalSel.nombre}</div>
+                            {sucursalSel.direccion && <div style={{ fontSize: 12, color: GRAY3 }}>{sucursalSel.direccion}</div>}
+                          </div>
+                          <span style={{ fontWeight: 800, fontSize: 13 }}>{money(sucursalSel.costo_envio || 0)}</span>
+                          <button type="button" onClick={() => { setSucursalId(null); setBusquedaSuc(""); setEnvioManual(false); }} className="oft-btn-press"
+                            style={{ background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 8, padding: "6px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Cambiar</button>
+                        </div>
+                      </div>
+                    );
+                  }
+                  return (
+                    <div>
+                      <label style={{ ...S.label, fontSize: 11 }}>Sucursal * <span style={{ color: GRAY3, fontWeight: 500 }}>({sucursalesEmpresa.length} disponibles)</span></label>
+                      <div style={{ position: "relative", marginBottom: 8 }}>
+                        <Search size={15} color={GRAY3} style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)" }} />
+                        <input style={{ ...S.input, marginBottom: 0, paddingLeft: 34 }} placeholder="Escribe para buscar la sucursal..." value={busquedaSuc} onChange={e => setBusquedaSuc(e.target.value)} />
+                      </div>
+                      <div style={{ maxHeight: 230, overflowY: "auto", border: `1px solid ${GRAY2}`, borderRadius: 10 }}>
+                        {lista.length === 0 ? (
+                          <div style={{ padding: 14, fontSize: 13, color: GRAY3, textAlign: "center" }}>No se encontró ninguna sucursal con "{busquedaSuc}"</div>
+                        ) : lista.map(su => (
+                          <div key={su.id} onClick={() => { setSucursalId(su.id); setBusquedaSuc(""); setEnvioManual(false); }}
+                            style={{ padding: "10px 12px", cursor: "pointer", borderBottom: `1px solid ${GRAY}`, display: "flex", alignItems: "center", gap: 10 }}>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontWeight: 700, fontSize: 13.5 }}>{su.nombre}</div>
+                              {su.direccion && <div style={{ fontSize: 11.5, color: GRAY3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{su.direccion}</div>}
+                            </div>
+                            <span style={{ fontSize: 12.5, fontWeight: 800, color: Number(su.costo_envio) > 0 ? BLACK : "#0F6E56" }}>{Number(su.costo_envio) > 0 ? money(su.costo_envio) : "Gratis"}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })()}
+                {empresaId && sucursalesEmpresa.length === 0 && (
+                  <div style={{ fontSize: 12.5, color: GRAY3, background: GRAY, borderRadius: 8, padding: 10 }}>Esta empresa no tiene sucursales registradas.</div>
+                )}
+                {envioPerfumesOk && sucursalSel && (
+                  <div style={{ marginTop: 10, fontSize: 12, fontWeight: 700, color: "#0F6E56", background: "#E8F6F1", border: "1px solid #0F6E56", borderRadius: 8, padding: "7px 10px" }}>Envío especial de perfumes aplicado: {money(cfgEnvioPerf.precio)}</div>
+                )}
               </div>
             )}
-            {!retiroLocal && (
-              <>
-                <select style={S.input} value={empresaId || ""} onChange={e => { setEmpresaId(e.target.value ? Number(e.target.value) : null); setSucursalId(null); }}>
-                  <option value="">Sin empresa de envío</option>
-                  {empresasActivas.map(emp => <option key={emp.id} value={emp.id}>{emp.nombre}</option>)}
-                </select>
-                {empresaId && sucursalesEmpresa.length > 0 && (
-                  <select style={{ ...S.input, marginBottom: 0 }} value={sucursalId || ""} onChange={e => setSucursalId(e.target.value ? Number(e.target.value) : null)}>
-                    <option value="">Elige sucursal</option>
-                    {sucursalesEmpresa.map(suc => <option key={suc.id} value={suc.id}>{suc.nombre}</option>)}
+
+            {/* PUERTA A PUERTA: Servientrega automático + dirección */}
+            {modoEnvio === "puerta" && (
+              <div>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, background: "#FFF5F5", border: `1.5px solid ${RED}`, borderRadius: 10, padding: "10px 12px", marginBottom: 12 }}>
+                  <Truck size={18} color={RED} style={{ flexShrink: 0 }} />
+                  <div style={{ flex: 1, fontSize: 13 }}>
+                    <b>{servientregaEmp ? servientregaEmp.nombre : "Servientrega"}</b> · puerta a puerta · {money(costoPuertaCfg)}
+                  </div>
+                </div>
+                {!servientregaEmp && <div style={{ fontSize: 12, color: RED, marginBottom: 10 }}>No se encontró la empresa Servientrega en la lista de empresas de envío.</div>}
+                <label style={{ ...S.label, fontSize: 11 }}>Dirección de entrega *</label>
+                <textarea style={{ ...S.input, marginBottom: 0, resize: "vertical", borderColor: cliente.direccion.trim() ? GRAY2 : RED }} rows={2} placeholder="Dirección completa para la entrega..."
+                  value={cliente.direccion} onChange={e => setCliente({ ...cliente, direccion: e.target.value })} />
+              </div>
+            )}
+
+            {/* RETIRO EN EL LOCAL */}
+            {modoEnvio === "local" && (
+              <div>
+                {localesRetiro.length > 1 && (
+                  <select style={S.input} value={localRetiroId || ""} onChange={e => setLocalRetiroId(e.target.value ? Number(e.target.value) : null)}>
+                    <option value="">¿En cuál local retira? *</option>
+                    {localesRetiro.map(loc => <option key={loc.id} value={loc.id}>{loc.nombre}</option>)}
                   </select>
                 )}
-              </>
+                <label style={{ ...S.label, fontSize: 11 }}>¿Quién lo retira? (opcional, si no es el mismo cliente)</label>
+                <input style={{ ...S.input, marginBottom: 0 }} placeholder="Nombre de la persona que retira..." value={retiroNombreAutorizado} onChange={e => setRetiroNombreAutorizado(e.target.value)} />
+              </div>
             )}
-            {retiroLocal && localesRetiro.length > 1 && (
-              <select style={{ ...S.input, marginBottom: 0 }} value={localRetiroId || ""} onChange={e => setLocalRetiroId(e.target.value ? Number(e.target.value) : null)}>
-                <option value="">¿En cuál local retira?</option>
-                {localesRetiro.map(loc => <option key={loc.id} value={loc.id}>{loc.nombre}</option>)}
-              </select>
-            )}
+            {modoEnvio === null && <div style={{ fontSize: 12, color: GRAY3 }}>Elige cómo se entrega el pedido, o déjalo sin envío.</div>}
           </div>
 
           {tipo === "pedido" && (
