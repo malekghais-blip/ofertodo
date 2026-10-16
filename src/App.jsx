@@ -3255,7 +3255,7 @@ function YappyButton({ pedido, onExito, onCancelar }) {
 function CheckoutView() {
   const { cart, setCart, user, setView, showToast, empresas, sucursales, localesRetiro, retiroLocalHabilitado, setShowLogin, setPendingCheckout, sincronizarOfertasCarrito } = useApp();
   const [localRetiroId, setLocalRetiroId] = useState(null);
-  const [address, setAddress] = useState(""), [notes, setNotes] = useState(""), [loading, setLoading] = useState(false), [placed, setPlaced] = useState(null);
+  const [address, setAddress] = useState(""), [areaEnvio, setAreaEnvio] = useState(""), [notes, setNotes] = useState(""), [loading, setLoading] = useState(false), [placed, setPlaced] = useState(null);
   const [avisoValidacion, setAvisoValidacion] = useState(null); // mensaje del pop-up de validación (reemplaza alert() nativo)
   const [nombre, setNombre] = useState(user?.nombre || "");
   const [telefono, setTelefono] = useState(user?.telefono || "");
@@ -3429,7 +3429,8 @@ function CheckoutView() {
     } else if (modoEntrega === "puerta") {
       // Puerta a puerta: Servientrega automático + dirección obligatoria + sin sucursal
       if (!servientrega) { setAvisoValidacion("El envío puerta a puerta no está disponible por ahora. Por favor elige una sucursal."); return; }
-      if (!address.trim()) { setAvisoValidacion("Para envío puerta a puerta, la dirección es obligatoria."); return; }
+      if (!areaEnvio.trim()) { setAvisoValidacion("Para envío puerta a puerta, escribe tu provincia o área."); return; }
+      if (!address.trim()) { setAvisoValidacion("Para envío puerta a puerta, escribe tu dirección exacta."); return; }
       empresaFinalId = servientrega.id;
       empresaFinalNombre = servientrega.nombre;
       sucursalFinalId = null;
@@ -3443,6 +3444,10 @@ function CheckoutView() {
       sucursalFinalId = sucursalId;
       sucursalFinalNombre = sucursalSel?.nombre || "";
     }
+
+    // La dirección solo existe en puerta a puerta (provincia/área + dirección exacta);
+    // en sucursal o retiro en local no se envía ninguna, aunque se haya escrito antes.
+    const direccionFinal = modoEntrega === "puerta" ? `${areaEnvio.trim()} — ${address.trim()}` : "";
 
     const localElegido = modoEntrega === "local" ? (localesRetiro.find(l => l.id === localRetiroId) || localesRetiro[0] || null) : null;
 
@@ -3492,7 +3497,7 @@ function CheckoutView() {
           method: "POST", headers: sb.functionHeaders(),
           body: JSON.stringify({
             usuario_id: user?.id || null, cliente: esInvitado ? { nombre: nombre.trim(), email: email.trim(), telefono: telefono.trim() } : undefined,
-            nombre_cliente: nombre, telefono, direccion: address, notas: notes, total: totalConEnvio,
+            nombre_cliente: nombre, telefono, direccion: direccionFinal, notas: notes, total: totalConEnvio,
             items: itemsPayload,
             empresa_envio_id: empresaFinalId, empresa_envio_nombre: empresaFinalNombre,
             sucursal_id: sucursalFinalId, sucursal_nombre: sucursalFinalNombre,
@@ -3525,7 +3530,7 @@ function CheckoutView() {
           method: "POST", headers: sb.functionHeaders(),
           body: JSON.stringify({
             cliente: { nombre: nombre.trim(), email: email.trim(), telefono: telefono.trim() },
-            nombre_cliente: nombre, telefono, direccion: address, notas: notes, total: totalConEnvio,
+            nombre_cliente: nombre, telefono, direccion: direccionFinal, notas: notes, total: totalConEnvio,
             items: construirItemsPayload(),
             empresa_envio_id: empresaFinalId, empresa_envio_nombre: empresaFinalNombre,
             sucursal_id: sucursalFinalId, sucursal_nombre: sucursalFinalNombre,
@@ -3545,7 +3550,7 @@ function CheckoutView() {
         const codigo = `OFT-${Date.now().toString().slice(-6)}`;
         const pedido = await sb.post("pedidos", {
           codigo, usuario_id: user.id, nombre_cliente: nombre, telefono: telefono,
-          direccion: address, notas: notes, total: totalConEnvio, estado: 0,
+          direccion: direccionFinal, notas: notes, total: totalConEnvio, estado: 0,
           empresa_envio_id: empresaFinalId, empresa_envio_nombre: empresaFinalNombre,
           sucursal_id: sucursalFinalId, sucursal_nombre: sucursalFinalNombre,
           retiro_local: modoEntrega === "local",
@@ -3852,7 +3857,7 @@ function CheckoutView() {
         <div style={{ background: "#FFF5F5", border: `1.5px solid ${RED}`, borderRadius: 12, padding: 16, marginBottom: 16, display: "flex", alignItems: "center", gap: 12 }}>
           <Truck size={22} color={RED} />
           <div style={{ fontSize: 13 }}>
-            <strong>Envío puerta a puerta por Servientrega — {costoEnvioPuerta > 0 ? money(costoEnvioPuerta) : "Gratis"}.</strong> Te lo llevamos a la dirección que indiques abajo. <span style={{ color: RED, fontWeight: 700 }}>La dirección es obligatoria.</span>
+            <strong>Envío puerta a puerta por Servientrega — {costoEnvioPuerta > 0 ? money(costoEnvioPuerta) : "Gratis"}.</strong> Te lo llevamos a la dirección que indiques abajo. <span style={{ color: RED, fontWeight: 700 }}>La provincia o área y la dirección exacta son obligatorias.</span>
           </div>
         </div>
       )}
@@ -3877,8 +3882,14 @@ function CheckoutView() {
             <div style={{ fontSize: 11, color: GRAY3, marginTop: -6, marginBottom: 10 }}>Ahí te enviamos la confirmación de tu pedido.</div>
           </>
         )}
-        <label style={S.label}>Dirección {modoEntrega === "puerta" ? "*" : "(opcional)"}</label>
-        <input style={{ ...S.input, borderColor: modoEntrega === "puerta" && !address.trim() ? RED : GRAY2 }} placeholder={modoEntrega === "puerta" ? "Dirección completa para la entrega..." : "Ej: cerca del parque central..."} value={address} onChange={e => setAddress(e.target.value)} />
+        {modoEntrega === "puerta" && (
+          <>
+            <label style={S.label}>Provincia o área *</label>
+            <input style={{ ...S.input, borderColor: !areaEnvio.trim() ? RED : GRAY2 }} placeholder="Ej: Colón, Costa Arriba, Panamá Oeste..." value={areaEnvio} onChange={e => setAreaEnvio(e.target.value)} autoComplete="address-level1" />
+            <label style={S.label}>Dirección exacta *</label>
+            <input style={{ ...S.input, borderColor: !address.trim() ? RED : GRAY2 }} placeholder="Calle, casa o edificio, punto de referencia..." value={address} onChange={e => setAddress(e.target.value)} autoComplete="street-address" />
+          </>
+        )}
         <label style={S.label}>Notas (tallas, colores, referencias)</label>
         <input style={S.input} placeholder="Opcional..." value={notes} onChange={e => setNotes(e.target.value)} />
       </div>
