@@ -1015,16 +1015,40 @@ export function CrearPedidoView({ onCreado } = {}) {
   };
   const removeFlexPack = (id) => setFlexPacks(prev => prev.filter(p => p.id !== id));
   const addFlexLine = (packId, product) => {
-    setFlexPacks(prev => prev.map(pack => {
-      if (pack.id !== packId) return pack;
-      if (flexPiezas(pack) >= FLEX_META[pack.modo]) return pack; // ya está lleno
-      const ex = pack.lineas.find(l => l.product.id === product.id);
-      if (ex) return { ...pack, lineas: pack.lineas.map(l => l.product.id === product.id ? { ...l, piezas: l.piezas + 1, variantes: [...(l.variantes || []), { talla: "", color: "" }] } : l) };
-      return { ...pack, lineas: [...pack.lineas, { product, piezas: 1, variantes: [{ talla: "", color: "" }] }] };
-    }));
-    setFlexSearch("");
+    const ejecutar = () => {
+      setFlexPacks(prev => prev.map(pack => {
+        if (pack.id !== packId) return pack;
+        if (flexPiezas(pack) >= FLEX_META[pack.modo]) return pack; // ya está lleno
+        const ex = pack.lineas.find(l => l.product.id === product.id);
+        if (ex) return { ...pack, lineas: pack.lineas.map(l => l.product.id === product.id ? { ...l, piezas: l.piezas + 1, variantes: [...(l.variantes || []), { talla: "", color: "" }] } : l) };
+        return { ...pack, lineas: [...pack.lineas, { product, piezas: 1, variantes: [{ talla: "", color: "" }] }] };
+      }));
+      setFlexSearch("");
+    };
+    // Si el pack ya está lleno no se agrega nada, así que tampoco se avisa
+    const packActual = flexPacks.find(p => p.id === packId);
+    if (packActual && flexPiezas(packActual) < FLEX_META[packActual.modo]) {
+      // Avisa si no hay stock (o no alcanza) para esta pieza, sumando lo que ya va en el pedido
+      const chequeo = checarStock(product, 1);
+      if (chequeo.excede) { setAvisoStock({ ...chequeo, onConfirmar: ejecutar }); return; }
+    }
+    ejecutar();
   };
   const updateFlexLine = (packId, prodId, piezas) => {
+    // Solo avisa cuando la cantidad SUBE (bajar nunca puede exceder el stock)
+    const packActual = flexPacks.find(p => p.id === packId);
+    const lineaActual = packActual?.lineas.find(l => l.product.id === prodId);
+    if (packActual && lineaActual && piezas > lineaActual.piezas) {
+      const otras = packActual.lineas.filter(l => l.product.id !== prodId).reduce((s, l) => s + l.piezas, 0);
+      const nuevas = Math.min(piezas, FLEX_META[packActual.modo] - otras);
+      if (nuevas > lineaActual.piezas) {
+        const chequeo = checarStock(lineaActual.product, nuevas, -1, { packId, prodId });
+        if (chequeo.excede) { setAvisoStock({ ...chequeo, onConfirmar: () => aplicarFlexLine(packId, prodId, piezas) }); return; }
+      }
+    }
+    aplicarFlexLine(packId, prodId, piezas);
+  };
+  const aplicarFlexLine = (packId, prodId, piezas) => {
     setFlexPacks(prev => prev.map(pack => {
       if (pack.id !== packId) return pack;
       if (piezas <= 0) return { ...pack, lineas: pack.lineas.filter(l => l.product.id !== prodId) };
@@ -1099,16 +1123,19 @@ export function CrearPedidoView({ onCreado } = {}) {
 
   // Cuántas piezas de este producto ya están en el carrito (en otras líneas) -- para
   // sumarlas antes de avisar, por si ya se agregó en más de una presentación.
-  const piezasYaEnCarrito = (productId, excluirIdx = -1) =>
-    items.reduce((s, it, i) => i === excluirIdx || it.product.id !== productId ? s : s + presToPiezas(it.pres, it.count, it.product), 0);
+  // Incluye también las piezas del mismo producto que ya van dentro de un FlexPack.
+  const piezasYaEnCarrito = (productId, excluirIdx = -1, excluirFlex = null) =>
+    items.reduce((s, it, i) => i === excluirIdx || it.product.id !== productId ? s : s + presToPiezas(it.pres, it.count, it.product), 0)
+    + flexPacks.reduce((s, pack) => s + pack.lineas.reduce((s2, l) =>
+        l.product.id !== productId || (excluirFlex && excluirFlex.packId === pack.id && excluirFlex.prodId === l.product.id) ? s2 : s2 + l.piezas, 0), 0);
 
   // Solo INFORMA si algo excede el stock -- ya no decide qué hacer (antes usaba
   // confirm() del navegador, que bloquea todo; ahora se muestra un modal propio,
   // así que la acción real se guarda en "avisoStock" y se ejecuta solo si se confirma).
-  const checarStock = (product, piezasNuevas, excluirIdx = -1) => {
+  const checarStock = (product, piezasNuevas, excluirIdx = -1, excluirFlex = null) => {
     if (!product.stock_actualizado_at) return { excede: false };
     const stockDisponible = Number(product.stock || 0);
-    const yaEnCarrito = piezasYaEnCarrito(product.id, excluirIdx);
+    const yaEnCarrito = piezasYaEnCarrito(product.id, excluirIdx, excluirFlex);
     const totalConEsto = yaEnCarrito + piezasNuevas;
     if (totalConEsto <= stockDisponible) return { excede: false };
     return {
@@ -1798,7 +1825,11 @@ export function CrearPedidoView({ onCreado } = {}) {
                           {l.product.imagen_url ? <img src={l.product.imagen_url} style={{ width: 34, height: 34, borderRadius: 6, objectFit: "cover" }} /> : <div style={{ width: 34, height: 34, borderRadius: 6, background: GRAY, display: "flex", alignItems: "center", justifyContent: "center" }}><Package size={15} color={GRAY3} /></div>}
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <div style={{ fontWeight: 700, fontSize: 13 }}>{l.product.nombre}</div>
-                            <div style={{ fontSize: 11, color: GRAY3 }}>{money(precioLinea)}/pza · {l.product.referencia || "—"}</div>
+                            <div style={{ fontSize: 11, color: GRAY3 }}>{money(precioLinea)}/pza · {l.product.referencia || "—"}
+                              {l.product.stock_actualizado_at && (
+                                <span style={{ fontWeight: 800, color: Number(l.product.stock) <= 0 ? RED : Number(l.product.stock) <= 5 ? "#856404" : "#0F6E56" }}> · {Number(l.product.stock) <= 0 ? "Sin stock" : `Stock: ${l.product.stock}`}</span>
+                              )}
+                            </div>
                           </div>
                           <div style={{ display: "flex", alignItems: "center", gap: 6, border: `1.5px solid ${GRAY2}`, borderRadius: 8, padding: "2px 6px" }}>
                             <button onClick={() => updateFlexLine(pack.id, l.product.id, l.piezas - 1)} style={{ border: "none", background: "none", fontSize: 16, cursor: "pointer", color: BLACK, width: 22 }}>−</button>
