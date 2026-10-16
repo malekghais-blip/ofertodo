@@ -3253,7 +3253,7 @@ function YappyButton({ pedido, onExito, onCancelar }) {
 //  CHECKOUT
 // ═══════════════════════════════════════════════════════════════
 function CheckoutView() {
-  const { cart, setCart, user, setView, showToast, empresas, sucursales, localesRetiro, retiroLocalHabilitado, setShowLogin, setPendingCheckout, sincronizarOfertasCarrito } = useApp();
+  const { cart, setCart, user, setView, showToast, products, categories, empresas, sucursales, localesRetiro, retiroLocalHabilitado, setShowLogin, setPendingCheckout, sincronizarOfertasCarrito } = useApp();
   const [localRetiroId, setLocalRetiroId] = useState(null);
   const [address, setAddress] = useState(""), [areaEnvio, setAreaEnvio] = useState(""), [notes, setNotes] = useState(""), [loading, setLoading] = useState(false), [placed, setPlaced] = useState(null);
   const [avisoValidacion, setAvisoValidacion] = useState(null); // mensaje del pop-up de validación (reemplaza alert() nativo)
@@ -3376,7 +3376,13 @@ function CheckoutView() {
   // cae dentro del rango que se configura en el admin (ej. 1 a 3 perfumes = $5)
   const cfgEnvioPerf = useEnvioPerfumes();
   const envioPerfumesActivo = modoEntrega === "sucursal"
-    && envioPerfumesAplica(cfgEnvioPerf, cart.map(i => (i.esOferta || i.esFlexPack) ? { product: null } : { product: i.product, piezas: i.qty }));
+    && envioPerfumesAplica(cfgEnvioPerf, cart.flatMap(i => {
+      // Una oferta o combo también se revisa producto por producto (piezas × unidades pedidas)
+      if (i.esOferta) return (i.lineas || []).map(l => ({ product: products.find(p => p.id === l.productId) || null, piezas: (Number(l.piezas) || 0) * (Number(i.unidades) || 1) }));
+      // Un Flex Pack se revisa producto por producto: si todos son perfumes cuenta como perfumes
+      if (i.esFlexPack) return (i.items || []).map(it => ({ product: products.find(p => p.id === it.productId) || null, piezas: it.cantidad }));
+      return [{ product: i.product, piezas: i.qty }];
+    }), categories);
   const costoSucursal = (suc) => envioPerfumesActivo ? cfgEnvioPerf.precio : (Number(suc?.costo_envio) || 0);
   const costoEnvioFinal = modoEntrega === "local" ? 0
     : modoEntrega === "puerta" ? costoEnvioPuerta
