@@ -21,7 +21,7 @@ import {
   imagenOptimizada, mediaDocenaDesdeDistribucion, parseDistribucion, presLabelPlural, presToPiezas,
   presUnitPrice, sb, useApp, useLockBodyScroll, supabaseRealtime,
   ofertaInfo, ofertaALineaCarrito, prorratearLinea, tiempoRestante,
-  envioPerfumesAplica, useEnvioPerfumes,
+  envioPerfumesAplica, useEnvioPerfumes, stockWeb,
 } from "./shared.jsx";
 
 // El panel de administrador vive en su propio archivo y solo se descarga cuando
@@ -371,7 +371,7 @@ function actualizarSEO({ title, description, image, url, productoParaSchema }) {
         "@type": "Offer",
         priceCurrency: "USD",
         price: Number(p.precio_pieza || 0).toFixed(2),
-        availability: (p.stock_actualizado_at && Number(p.stock) <= 0) ? "https://schema.org/OutOfStock" : "https://schema.org/InStock",
+        availability: (p.stock_actualizado_at && stockWeb(p) <= 0) ? "https://schema.org/OutOfStock" : "https://schema.org/InStock",
         ...(url ? { url } : {}),
       },
     };
@@ -1130,7 +1130,7 @@ function QtySelector({ product, pres, setPres, count, setCount, size = "normal" 
   // de Odoo — los de proveedor (bajo pedido) nunca se restringen por este motivo.
   // Aplica reglas de stock si es producto propio, O si es de proveedor pero ya lo tenemos en stock físico
   const respetaStockQty = (!product.proveedor_id || product.tiene_stock_fisico) && product.stock_actualizado_at;
-  const stockConocido = respetaStockQty ? Number(product.stock) : null;
+  const stockConocido = respetaStockQty ? stockWeb(product) : null;
   const docenaDeshabilitada = stockConocido !== null && stockConocido < piezasDocena;
   const mediaDeshabilitada = stockConocido !== null && stockConocido < piezasMedia;
 
@@ -1252,7 +1252,7 @@ function FlexPackBadge({ onAbrir, tamano = "normal" }) {
 }
 
 function FilaProductoFlexPack({ producto, cantidad, onCambiar, espacioDisponibleGlobal }) {
-  const stockConocido = producto.stock_actualizado_at ? Number(producto.stock) : null;
+  const stockConocido = producto.stock_actualizado_at ? stockWeb(producto) : null;
   const maxPorStock = stockConocido !== null ? stockConocido : Infinity;
   const maxAquí = Math.min(maxPorStock, cantidad + espacioDisponibleGlobal);
   const sinStock = stockConocido !== null && stockConocido <= 0;
@@ -1322,7 +1322,7 @@ function PanelFlexPack({ grupo, onClose }) {
     return productosDeEsaModalidad.reduce((suma, p) => {
       if (suma === Infinity) return suma;
       if (!p.stock_actualizado_at) return Infinity;
-      return suma + Math.max(0, Number(p.stock) || 0);
+      return suma + stockWeb(p);
     }, 0);
   };
 
@@ -1607,7 +1607,7 @@ function ProductCard({ product }) {
   // Los productos de proveedor externo siempre se pueden comprar — el stock ahí
   // se maneja yendo a comprarle al proveedor cuando llega el pedido.
   const respetaStock = (!product.proveedor_id || product.tiene_stock_fisico);
-  const agotadoBloqueado = respetaStock && product.stock_actualizado_at && Number(product.stock) <= 0;
+  const agotadoBloqueado = respetaStock && product.stock_actualizado_at && stockWeb(product) <= 0;
 
   // ¿Este producto tiene variantes y el cliente eligió "Por pieza"?
   const tieneVariantes = (product.tiene_tallas && (product.tallas || "").trim()) || (product.tiene_colores && (product.colores || "").trim());
@@ -1670,9 +1670,9 @@ function ProductCard({ product }) {
         {product.badge && <span style={{ position: "absolute", top: 10, left: 10, background: RED, color: WHITE, fontSize: 11, fontWeight: 800, padding: "4px 10px", borderRadius: 10, display: "inline-flex", alignItems: "center", gap: 4 }}><Sparkles size={11} /> {product.badge}</span>}
         {/* Indicador de stock — solo se muestra si el producto está sincronizado con Odoo */}
         {product.stock_actualizado_at && (
-          Number(product.stock) <= 0
+          stockWeb(product) <= 0
             ? <span style={{ position: "absolute", top: 10, right: 10, background: "#721C24", color: WHITE, fontSize: 11, fontWeight: 800, padding: "4px 10px", borderRadius: 10 }}>Agotado</span>
-            : Number(product.stock) <= 5
+            : stockWeb(product) <= 5
               ? <span style={{ position: "absolute", top: 10, right: 10, background: "#856404", color: WHITE, fontSize: 11, fontWeight: 800, padding: "4px 10px", borderRadius: 10 }}>Pocas unidades</span>
               : null
         )}
@@ -2040,7 +2040,7 @@ function ProductModal() {
   const total = presTotal(product, pres, count);
   const imgUrl = product.imagen_url ? imagenOptimizada(product.imagen_url, 700) : null;
   const respetaStock = (!product.proveedor_id || product.tiene_stock_fisico);
-  const agotadoBloqueado = respetaStock && product.stock_actualizado_at && Number(product.stock) <= 0;
+  const agotadoBloqueado = respetaStock && product.stock_actualizado_at && stockWeb(product) <= 0;
 
   const tieneVariantes = (product.tiene_tallas && (product.tallas || "").trim()) || (product.tiene_colores && (product.colores || "").trim());
   const modoConsulta = pres === "pieza" && tieneVariantes && !product.venta_por_unidad;
@@ -3455,6 +3455,29 @@ function CheckoutView() {
     // en sucursal o retiro en local no se envía ninguna, aunque se haya escrito antes.
     const direccionFinal = modoEntrega === "puerta" ? `${areaEnvio.trim()} — ${address.trim()}` : "";
 
+    // Muestras abiertas: si algún perfume del pedido tiene una pieza de muestra (no vendible) y
+    // lo que pide el cliente ya no cabe, se frena aquí aunque el carrito se haya armado antes de
+    // que se marcara la muestra. Odoo no se toca; solo la web deja de venderla.
+    try {
+      const pedidas = {};
+      for (const i of cart) {
+        if (i.esOferta) (i.lineas || []).forEach(l => { pedidas[l.productId] = (pedidas[l.productId] || 0) + (Number(l.piezas) || 0) * (Number(i.unidades) || 1); });
+        else if (i.esFlexPack) (i.items || []).forEach(it => { pedidas[it.productId] = (pedidas[it.productId] || 0) + (Number(it.cantidad) || 0); });
+        else if (i.product) pedidas[i.product.id] = (pedidas[i.product.id] || 0) + (Number(i.qty) || 0);
+      }
+      const ids = Object.keys(pedidas);
+      let frescos = products;
+      try { const r = await sb.get("productos", `?id=in.(${ids.join(",")})&select=id,nombre,stock,piezas_muestra,stock_actualizado_at,proveedor_id,tiene_stock_fisico`); if (Array.isArray(r) && r.length) frescos = r; } catch (e) { /* si no se puede consultar, se usa lo que ya tiene la página */ }
+      const sinCupo = [];
+      for (const id of ids) {
+        const p = frescos.find(x => String(x.id) === String(id));
+        if (!p || !(Number(p.piezas_muestra) > 0) || !p.stock_actualizado_at || (p.proveedor_id && !p.tiene_stock_fisico)) continue;
+        const disponibles = stockWeb(p);
+        if (pedidas[id] > disponibles) sinCupo.push(`${p.nombre}: ${disponibles > 0 ? `solo quedan ${disponibles} disponibles` : "ya no está disponible"}`);
+      }
+      if (sinCupo.length) { setAvisoValidacion("Algunos productos ya no tienen la cantidad que pediste:\n\n" + sinCupo.join("\n") + "\n\nAjusta tu pedido y vuelve a intentarlo."); return; }
+    } catch (e) { /* esta revisión nunca debe impedir una compra normal */ }
+
     const localElegido = modoEntrega === "local" ? (localesRetiro.find(l => l.id === localRetiroId) || localesRetiro[0] || null) : null;
 
     setLoading(true);
@@ -3663,7 +3686,7 @@ function CheckoutView() {
               <AlertTriangle size={28} color={RED} strokeWidth={2} />
             </div>
             <div style={{ fontWeight: 900, fontSize: 17, marginBottom: 8 }}>Falta un dato</div>
-            <p style={{ fontSize: 14, color: GRAY3, marginBottom: 22, lineHeight: 1.5 }}>{avisoValidacion}</p>
+            <p style={{ fontSize: 14, color: GRAY3, marginBottom: 22, lineHeight: 1.5, whiteSpace: "pre-line" }}>{avisoValidacion}</p>
             <button onClick={() => setAvisoValidacion(null)} className="oft-btn-press" style={{ ...S.btnRed, width: "100%", justifyContent: "center", padding: 13 }}>
               Entendido
             </button>
@@ -4651,7 +4674,7 @@ export default function App() {
     for (const l of info.lineas) {
       const p = l.product;
       if (!((!p.proveedor_id || p.tiene_stock_fisico) && p.stock_actualizado_at)) continue;
-      const libre = Math.max(0, (Number(p.stock) || 0) - piezasEnCarritoDe(p.id, o.id));
+      const libre = Math.max(0, stockWeb(p) - piezasEnCarritoDe(p.id, o.id));
       const caben = Math.floor(libre / l.piezas) - yaUni;
       if (caben < nuevas) {
         if (caben <= 0) { showToast(`Ya no queda stock suficiente de "${p.nombre}" para esta oferta`); return false; }
@@ -4695,7 +4718,7 @@ export default function App() {
     // siempre a un número completo de la unidad elegida (no medias docenas
     // sueltas por quedar cortos de stock).
     if (product.stock_actualizado_at) {
-      const stockDisponible = Number(product.stock || 0);
+      const stockDisponible = stockWeb(product);
       const yaEnCarrito = piezasEnCarritoDe(product.id, null, false);
       const disponibleParaAgregar = Math.max(0, stockDisponible - yaEnCarrito);
       const esPerfumeria = product.modalidad_presentacion === "perfumeria";
