@@ -16,10 +16,11 @@ import {
   DistribucionEditor, GRAY, GRAY2, GRAY3, Logo,
   RED, RED_D, S, SUPABASE_URL, ShippingLabelModal, NOTAS_FRAGANCIA,
   Spinner, StatusBadge, WHITE, comprimirImagen, estadosDe,
-  imagenOptimizada, resolverAreaVenta, sb, useApp, useLockBodyScroll, useCambiosEnVivo, useRefrescoPeriodico,
+  imagenOptimizada, resolverAreaVenta, sb, useApp, useLockBodyScroll, useRefrescoPeriodico,
   agregarCanvasComoPaginasPdf, ofertaInfo, precioNormalPiezas, piezasDePresentacion, presUnitPrice, idVisitante,
   normalizarEnvioPerfumes, METODOS_PAGO, BadgeMetodoPago, stockWeb,
 } from "./shared.jsx";
+import { useCambiosEnVivo } from "./clienteEnVivo.jsx";
 
 // "YYYY-MM-DD" según la hora de PANAMÁ (America/Panama, UTC-5), sin importar la
 // zona horaria del navegador o servidor. Se usa en vez de .toISOString().slice(0,10)
@@ -1618,6 +1619,21 @@ function AnalyticsPanel() {
   // que "Semana" o "Mes" aunque se haya pedido antes -- y sin este control, esa
   // respuesta vieja pero más rápida terminaba pisando a la más nueva pero más
   // lenta, dejando pegados los números de "Hoy" sin importar qué se eligiera.
+  // Los eventos vienen ya agrupados desde la base de datos (por dia, visitante, tipo y valor, con
+  // el numero de veces "n"), en una sola peticion. Antes se bajaban uno por uno, de 1000 en 1000,
+  // y se cortaban en 20.000: en una semana o un mes con mas visitas, los numeros salian incompletos.
+  // Aqui cada grupo se vuelve a repetir "n" veces para que el resto de la pantalla cuente igual que siempre.
+  const cargarEventosCompactos = async (desdeISO, hastaISO) => {
+    await sb.ensureFreshToken();
+    const r = await fetch(`${SUPABASE_URL}/rest/v1/rpc/analitica_eventos`, {
+      method: "POST", headers: sb.dataHeaders(), body: JSON.stringify({ p_desde: desdeISO, p_hasta: hastaISO }),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    const filas = await r.json();
+    const out = [];
+    for (const f of filas || []) { const n = Number(f.n) || 1; for (let i = 0; i < n; i++) out.push(f); }
+    return out;
+  };
   const idPeticionRef = useRef(0);
   const cargarDatos = async (silencioso = false) => {
     const miId = ++idPeticionRef.current;
@@ -1634,7 +1650,7 @@ function AnalyticsPanel() {
       const FECHA_INICIO_SEGUIMIENTO_COTIZACIONES = "2026-08-15T17:50:01";
       const desdeCotizacionesISO = desdeISO > FECHA_INICIO_SEGUIMIENTO_COTIZACIONES ? desdeISO : FECHA_INICIO_SEGUIMIENTO_COTIZACIONES;
       const [evts, usrs, manuales, pedItems, cotizacionesData, equipo, evtsAnt, usrsAnt, manualesAnt] = await Promise.all([
-        sb.getTodo("eventos_analytics", `?created_at=gte.${desdeISO}&created_at=lte.${hastaISO}&order=created_at.desc`),
+        cargarEventosCompactos(desdeISO, hastaISO),
         // Solo cuentas con origen_cuenta='web' -- el cliente se registró solo en la
         // página (o con Google). Excluye las que TÚ creas al hacer un pedido manual,
         // y las que se generan solas al pagar como invitado.
@@ -1653,7 +1669,7 @@ function AnalyticsPanel() {
         // Cuentas del equipo (admin/operadores), para poder mostrar el nombre de cada uno
         sb.get("usuarios", `?or=(rol.not.is.null,es_admin.eq.true)&select=id,nombre`),
         // Mismo trío, pero del periodo anterior -- para calcular el % de cambio
-        sb.getTodo("eventos_analytics", `?created_at=gte.${desdeAntISO}&created_at=lte.${hastaAntISO}`),
+        cargarEventosCompactos(desdeAntISO, hastaAntISO),
         sb.get("usuarios", `?created_at=gte.${desdeAntISO}&created_at=lte.${hastaAntISO}&origen_cuenta=eq.web`),
         sb.get("usuarios", `?created_at=gte.${desdeAntISO}&created_at=lte.${hastaAntISO}&origen_cuenta=eq.admin_manual`),
       ]);
