@@ -855,6 +855,11 @@ const colorToHex = (nombre) => {
 // nombre -- el círculo de color ya muestra el tono exacto, no hace falta repetirlo en texto.
 export const nombreColorLimpio = (nombre) => (nombre || "").replace(/\s*\(#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})\)\s*$/, "").trim() || nombre;
 
+// Disponibilidad para el CLIENTE EN LA WEB: el stock de Odoo menos las piezas abiertas como
+// muestra (siguen contando en Odoo, que mantiene el inventario real, pero la web no las vende).
+// No toca el campo stock. El personal en el pedido manual del admin sigue viendo el stock real.
+export const stockWeb = (p) => Math.max(0, (Number(p?.stock) || 0) - (Number(p?.piezas_muestra) || 0));
+
 // Aviso de stock insuficiente al armar un pedido manual -- reemplaza el confirm()
 // del navegador por algo consistente con el resto de la web, con su misma animación.
 function ModalAvisoStock({ aviso, onConfirmar, onCancelar }) {
@@ -865,21 +870,26 @@ function ModalAvisoStock({ aviso, onConfirmar, onCancelar }) {
         <div style={{ width: 56, height: 56, borderRadius: "50%", background: "#FFF3CD", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 14px" }}>
           <AlertTriangle size={28} color="#856404" />
         </div>
-        <div style={{ fontSize: 17, fontWeight: 900, marginBottom: 8 }}>Stock insuficiente</div>
+        <div style={{ fontSize: 17, fontWeight: 900, marginBottom: 8 }}>{aviso.esMuestra ? "Estás vendiendo una muestra" : "Stock insuficiente"}</div>
         <div style={{ fontSize: 13.5, color: GRAY3, lineHeight: 1.5, marginBottom: 20 }}>
-          {aviso.stockDisponible <= 0 ? (
+          {aviso.esMuestra ? (
+            <>"<strong style={{ color: BLACK }}>{aviso.producto}</strong>" tiene <strong style={{ color: BLACK }}>{aviso.muestra}</strong> {aviso.muestra === 1 ? "pieza abierta" : "piezas abiertas"} de <strong style={{ color: BLACK }}>muestra</strong>, que no se debe vender.
+            Sin contar la muestra quedan <strong style={{ color: BLACK }}>{aviso.disponiblesSinMuestra}</strong>
+            {aviso.yaEnCarrito > 0 && <> (ya hay {aviso.yaEnCarrito} en este pedido)</>}, y con esto el pedido llevaría <strong style={{ color: BLACK }}>{aviso.totalConEsto}</strong>.</>
+          ) : aviso.stockDisponible <= 0 ? (
             <>"<strong style={{ color: BLACK }}>{aviso.producto}</strong>" muestra <strong style={{ color: BLACK }}>0</strong> en stock, según la última sincronización.</>
           ) : (
             <>"<strong style={{ color: BLACK }}>{aviso.producto}</strong>" tiene <strong style={{ color: BLACK }}>{aviso.stockDisponible}</strong> en stock
             {aviso.yaEnCarrito > 0 && <> (ya hay {aviso.yaEnCarrito} en este pedido)</>}, y esto lo dejaría en <strong style={{ color: BLACK }}>{aviso.totalConEsto}</strong> piezas.</>
           )}
+          {!aviso.esMuestra && aviso.muestra > 0 && <div style={{ marginTop: 8 }}>Además, {aviso.muestra === 1 ? "1 pieza de este producto está abierta" : `${aviso.muestra} piezas de este producto están abiertas`} como <strong style={{ color: BLACK }}>muestra</strong>.</div>}
         </div>
         <div style={{ display: "flex", gap: 10 }}>
           <button onClick={onCancelar} className="oft-btn-press" style={{ flex: 1, padding: "11px", borderRadius: 10, border: `1.5px solid ${GRAY2}`, background: WHITE, fontWeight: 700, fontSize: 14, cursor: "pointer" }}>
             Cancelar
           </button>
           <button onClick={onConfirmar} className="oft-btn-press" style={{ flex: 1, padding: "11px", borderRadius: 10, border: "none", background: "#856404", color: WHITE, fontWeight: 700, fontSize: 14, cursor: "pointer" }}>
-            Agregar igual
+            {aviso.esMuestra ? "Aceptar y continuar" : "Agregar igual"}
           </button>
         </div>
       </div>
@@ -930,7 +940,7 @@ function ModalElegirPresentacion({ producto, onElegir, onCerrar }) {
 }
 
 export function CrearPedidoView({ onCreado } = {}) {
-  const { products, empresas, sucursales, setSucursales, localesRetiro, showToast, user } = useApp();
+  const { products, categories, empresas, sucursales, setSucursales, localesRetiro, showToast, user } = useApp();
   const [items, setItems] = useState([]); // { product, pres, count }
   const [search, setSearch] = useState("");
   const [cliente, setCliente] = useState({ id: null, nombre: "", telefono: "", direccion: "" });
@@ -1099,7 +1109,10 @@ export function CrearPedidoView({ onCreado } = {}) {
   const costoEnvio = Number(envio) || 0;
   // Envío especial de perfumes: solo se SUGIERE (el admin decide si lo aplica) cuando va a sucursal
   const cfgEnvioPerf = useEnvioPerfumes();
-  const envioPerfumesOk = !retiroLocal && !!sucursalId && flexPacks.length === 0 && envioPerfumesAplica(cfgEnvioPerf, items.map(it => ({ product: it.product, piezas: piezasDePresentacion(it.product, it.pres) * (Number(it.count) || 0) })));
+  const envioPerfumesOk = !retiroLocal && !!sucursalId && envioPerfumesAplica(cfgEnvioPerf, [
+    ...items.map(it => ({ product: it.product, piezas: piezasDePresentacion(it.product, it.pres) * (Number(it.count) || 0) })),
+    ...flexPacks.flatMap(pack => pack.lineas.map(l => ({ product: l.product, piezas: l.piezas }))),
+  ], categories);
   // El costo de envío se calcula solo según el tipo de envío (se puede corregir a mano):
   // sucursal = precio de la sucursal (o el especial de perfumes), puerta a puerta = precio fijo, local = sin costo
   const envioAuto = modoEnvio === "sucursal" ? (sucursalSel ? (envioPerfumesOk ? cfgEnvioPerf.precio : (Number(sucursalSel.costo_envio) || 0)) : null)
@@ -1137,13 +1150,23 @@ export function CrearPedidoView({ onCreado } = {}) {
     const stockDisponible = Number(product.stock || 0);
     const yaEnCarrito = piezasYaEnCarrito(product.id, excluirIdx, excluirFlex);
     const totalConEsto = yaEnCarrito + piezasNuevas;
-    if (totalConEsto <= stockDisponible) return { excede: false };
+    const muestra = Number(product.piezas_muestra) || 0;
+    // Dentro de lo vendible (sin contar la muestra): sin aviso
+    if (totalConEsto <= stockDisponible - muestra) return { excede: false };
+    if (totalConEsto <= stockDisponible) {
+      // Alcanza el stock real, pero ya se estaría vendiendo la pieza de muestra.
+      // Si ya se aceptó para este producto en este pedido, no se vuelve a preguntar en cada cambio.
+      if (muestrasAceptadas.current.has(product.id)) return { excede: false };
+      return { excede: true, esMuestra: true, productId: product.id, muestra, producto: product.nombre, stockDisponible, disponiblesSinMuestra: Math.max(0, stockDisponible - muestra), yaEnCarrito, totalConEsto };
+    }
     return {
-      excede: true, producto: product.nombre, stockDisponible, yaEnCarrito, totalConEsto,
+      excede: true, productId: product.id, muestra, producto: product.nombre, stockDisponible, yaEnCarrito, totalConEsto,
     };
   };
 
   const [avisoStock, setAvisoStock] = useState(null); // null | { ...datos del checarStock, onConfirmar }
+  // Productos con muestra abierta cuya venta (de la pieza de muestra) ya se aceptó en este pedido
+  const muestrasAceptadas = useRef(new Set());
   const [productoParaElegir, setProductoParaElegir] = useState(null); // null | producto -- para el popup de Pieza/Media/Docena
 
   const addItem = (product, pres = "docena") => {
@@ -1279,6 +1302,25 @@ export function CrearPedidoView({ onCreado } = {}) {
       const totalActual = variantesDisponibles.reduce((s, v) => s + (Number(it.distribucionPersonalizada[v]) || 0), 0);
       if (totalActual !== totalObjetivo) {
         alert(`La distribución personalizada de "${it.product.nombre}" suma ${totalActual}, pero debe sumar exactamente ${totalObjetivo}. Ajústala antes de generar el pedido.`);
+        return;
+      }
+    }
+    // Última revisión: si el pedido incluye la pieza de muestra de algún producto y todavía no se
+    // aceptó (por ejemplo, la muestra se marcó después de agregarlo), se pregunta antes de guardar.
+    const piezasPorProducto = new Map();
+    const sumar = (prod, n) => piezasPorProducto.set(prod.id, { prod, n: (piezasPorProducto.get(prod.id)?.n || 0) + n });
+    items.forEach(it => sumar(it.product, presToPiezas(it.pres, it.count, it.product)));
+    flexPacks.forEach(pack => pack.lineas.forEach(l => sumar(l.product, l.piezas)));
+    for (const { prod, n } of piezasPorProducto.values()) {
+      const muestra = Number(prod.piezas_muestra) || 0;
+      const stockReal = Number(prod.stock) || 0;
+      if (!muestra || !prod.stock_actualizado_at || muestrasAceptadas.current.has(prod.id)) continue;
+      if (n > stockReal - muestra) {
+        setAvisoStock({
+          excede: true, esMuestra: n <= stockReal, productId: prod.id, muestra, producto: prod.nombre, stockDisponible: stockReal,
+          disponiblesSinMuestra: Math.max(0, stockReal - muestra), yaEnCarrito: 0, totalConEsto: n,
+          onConfirmar: () => { muestrasAceptadas.current.add(prod.id); handleGenerate(); },
+        });
         return;
       }
     }
@@ -1537,7 +1579,7 @@ export function CrearPedidoView({ onCreado } = {}) {
   };
 
   const resetForm = () => {
-    setItems([]); setFlexPacks([]); setFlexActiveId(null); setCliente({ nombre: "", telefono: "", direccion: "" }); setNotas("");
+    muestrasAceptadas.current = new Set(); setItems([]); setFlexPacks([]); setFlexActiveId(null); setCliente({ nombre: "", telefono: "", direccion: "" }); setNotas("");
     setEmpresaId(null); setSucursalId(null); setModoEnvio(null); setBusquedaSuc(""); setEnvioManual(false); setRetiroNombreAutorizado(""); setLocalRetiroId(null); setTipo("pedido"); setMetodoPago(""); setDescuento(""); setEnvio(""); setRedondeo("arriba"); setInvoice(null);
   };
 
@@ -1575,7 +1617,7 @@ export function CrearPedidoView({ onCreado } = {}) {
                       <div style={{ fontSize: 11, color: GRAY3 }}>
                         {p.referencia || "—"} · Docena ${p.precio_docena}
                         {p.stock_actualizado_at && (
-                          <span style={{ fontWeight: 800, color: Number(p.stock) <= 0 ? RED : Number(p.stock) <= 5 ? "#856404" : "#0F6E56" }}> · Stock: {p.stock}</span>
+                          <span style={{ fontWeight: 800, color: Number(p.stock) <= 0 ? RED : Number(p.stock) <= 5 ? "#856404" : "#0F6E56" }}> · Stock: {Number(p.stock)}</span>
                         )}
                       </div>
                     </div>
@@ -1606,7 +1648,7 @@ export function CrearPedidoView({ onCreado } = {}) {
                       <div style={{ fontSize: 11, color: GRAY3 }}>
                         {it.count} × {money(precioActual)} {presLabelPlural(it.pres, it.count, it.product)}
                         {it.product.stock_actualizado_at && (
-                          <span style={{ fontWeight: 800, color: Number(it.product.stock) <= 0 ? RED : Number(it.product.stock) <= 5 ? "#856404" : "#0F6E56" }}> · Stock: {it.product.stock}</span>
+                          <span style={{ fontWeight: 800, color: Number(it.product.stock) <= 0 ? RED : Number(it.product.stock) <= 5 ? "#856404" : "#0F6E56" }}> · Stock: {Number(it.product.stock)}</span>
                         )}
                       </div>
                     </div>
@@ -1827,7 +1869,7 @@ export function CrearPedidoView({ onCreado } = {}) {
                             <div style={{ fontWeight: 700, fontSize: 13 }}>{l.product.nombre}</div>
                             <div style={{ fontSize: 11, color: GRAY3 }}>{money(precioLinea)}/pza · {l.product.referencia || "—"}
                               {l.product.stock_actualizado_at && (
-                                <span style={{ fontWeight: 800, color: Number(l.product.stock) <= 0 ? RED : Number(l.product.stock) <= 5 ? "#856404" : "#0F6E56" }}> · {Number(l.product.stock) <= 0 ? "Sin stock" : `Stock: ${l.product.stock}`}</span>
+                                <span style={{ fontWeight: 800, color: Number(l.product.stock) <= 0 ? RED : Number(l.product.stock) <= 5 ? "#856404" : "#0F6E56" }}> · {Number(l.product.stock) <= 0 ? "Sin stock" : `Stock: ${Number(l.product.stock)}`}</span>
                               )}
                             </div>
                           </div>
@@ -1936,7 +1978,7 @@ export function CrearPedidoView({ onCreado } = {}) {
                                   <div style={{ fontSize: 10, color: GRAY3 }}>
                                     {p.referencia || "—"} · {money(flexUnitPrice(p, pack.modo))}/pza
                                     {p.stock_actualizado_at && (
-                                      <span style={{ fontWeight: 800, color: Number(p.stock) <= 0 ? RED : Number(p.stock) <= 5 ? "#856404" : "#0F6E56" }}> · Stock: {p.stock}</span>
+                                      <span style={{ fontWeight: 800, color: Number(p.stock) <= 0 ? RED : Number(p.stock) <= 5 ? "#856404" : "#0F6E56" }}> · Stock: {Number(p.stock)}</span>
                                     )}
                                   </div>
                                 </div>
@@ -2300,7 +2342,7 @@ export function CrearPedidoView({ onCreado } = {}) {
         <ModalAvisoStock
           aviso={avisoStock}
           onCancelar={() => setAvisoStock(null)}
-          onConfirmar={() => { avisoStock.onConfirmar(); setAvisoStock(null); }}
+          onConfirmar={() => { if (avisoStock.muestra > 0) muestrasAceptadas.current.add(avisoStock.productId); avisoStock.onConfirmar(); setAvisoStock(null); }}
         />
       )}
     </>
@@ -3192,11 +3234,19 @@ function normalizarEnvioPerfumes(v) {
   };
 }
 // lineas: [{ product, piezas }] -- cualquier línea sin producto (oferta, Flex Pack) cuenta como "no perfume"
-function envioPerfumesAplica(cfg, lineas) {
+// Un producto cuenta como perfume si está marcado como "perfumería" O si está en una
+// categoría de perfumes (ej. "Perfumes de Dama"), aunque se venda como producto normal.
+function esProductoPerfume(product, categorias) {
+  if (!product) return false;
+  if (product.modalidad_presentacion === "perfumeria") return true;
+  const cat = (categorias || []).find(c => c.id === product.categoria_id);
+  return !!cat && /^\s*perfum/i.test(cat.nombre || "");
+}
+function envioPerfumesAplica(cfg, lineas, categorias) {
   if (!cfg || !cfg.activo || !Array.isArray(lineas) || lineas.length === 0) return false;
   let piezas = 0;
   for (const l of lineas) {
-    if (!l || !l.product || l.product.modalidad_presentacion !== "perfumeria") return false;
+    if (!l || !l.product || !esProductoPerfume(l.product, categorias)) return false;
     piezas += Number(l.piezas) || 0;
   }
   return piezas >= cfg.min && piezas <= cfg.max;
@@ -3251,7 +3301,7 @@ function ofertaInfo(oferta, productosPorId, comboRows) {
   for (const l of lineas) {
     const p = l.product;
     const respeta = (!p.proveedor_id || p.tiene_stock_fisico) && p.stock_actualizado_at;
-    if (respeta) stockMax = Math.min(stockMax, Math.floor(Math.max(0, Number(p.stock) || 0) / l.piezas));
+    if (respeta) stockMax = Math.min(stockMax, Math.floor(stockWeb(p) / l.piezas));
   }
   const nombrePres = { pieza: "pieza", media: "media docena", docena: "docena" }[oferta.presentacion] || "";
   const titulo = (oferta.titulo && oferta.titulo.trim()) || (lineas[0].product.nombre + (oferta.tipo === "producto" && nombrePres && oferta.presentacion !== "pieza" ? ` (${nombrePres})` : ""));
@@ -3324,5 +3374,5 @@ export {
   presLabelPlural, presUnitPrice, presToPiezas, parseDistribucion,
   PANAMA_ZONAS, mediaDocenaDesdeDistribucion, COLOR_HEX, colorToHex,
   InvoiceModal, SUPABASE_KEY,
-  precioNormalPiezas, piezasDePresentacion, METODOS_PAGO, BadgeMetodoPago, ENVIO_PERFUMES_DEFAULT, normalizarEnvioPerfumes, envioPerfumesAplica, piezasDeLineasPerfume, useEnvioPerfumes, ofertaInfo, ofertaALineaCarrito, prorratearLinea, tiempoRestante,
+  precioNormalPiezas, piezasDePresentacion, METODOS_PAGO, BadgeMetodoPago, ENVIO_PERFUMES_DEFAULT, normalizarEnvioPerfumes, envioPerfumesAplica, esProductoPerfume, piezasDeLineasPerfume, useEnvioPerfumes, ofertaInfo, ofertaALineaCarrito, prorratearLinea, tiempoRestante,
 };
