@@ -9,7 +9,8 @@ import {
   Megaphone, Image as ImageIcon, Instagram, Plug, CheckCircle2, Upload,
   ChevronDown, Power, KeyRound, ShieldCheck, Phone, RotateCcw, Hash, Mic,
 } from "lucide-react";
-import { RED, BLACK, GRAY, GRAY2, GRAY3, WHITE, S, useApp, sb, Spinner, comprimirImagen, supabaseRealtime, SUPABASE_URL, useCambiosEnVivo, useRefrescoPeriodico } from "./shared.jsx";
+import { RED, BLACK, GRAY, GRAY2, GRAY3, WHITE, S, useApp, sb, Spinner, comprimirImagen, SUPABASE_URL, useRefrescoPeriodico } from "./shared.jsx";
+import { supabaseRealtime, useCambiosEnVivo } from "./clienteEnVivo.jsx";
 
 // ═══════════════════════════════════════════════════════════════
 //  CRM — bandeja de WhatsApp, etapas de cliente, equipo de agentes,
