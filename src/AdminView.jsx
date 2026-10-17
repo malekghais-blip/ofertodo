@@ -9,7 +9,7 @@ import {
   TrendingUp, Wallet, ShoppingBag, Pencil as PencilIcon, Save,
   Building2, MapPin as MapPinIcon, Send, FilePlus, Download, FileText, Receipt,
   Calendar as CalendarIcon, Eye, EyeOff, Share2, AlertTriangle, ChevronRight,
-  ArrowUpRight, ArrowDownRight, MousePointerClick, Target, Printer, Boxes, GitMerge
+  ArrowUpRight, ArrowDownRight, MousePointerClick, Target, Printer, Boxes, GitMerge, Droplets
 } from "lucide-react";
 import {
   BLACK, CategoryIcon, ChipAdder, ClienteFormModal, CrearPedidoView, SelectorColores,
@@ -18,7 +18,7 @@ import {
   Spinner, StatusBadge, WHITE, comprimirImagen, estadosDe,
   imagenOptimizada, resolverAreaVenta, sb, useApp, useLockBodyScroll, useCambiosEnVivo, useRefrescoPeriodico,
   agregarCanvasComoPaginasPdf, ofertaInfo, precioNormalPiezas, piezasDePresentacion, presUnitPrice, idVisitante,
-  normalizarEnvioPerfumes, METODOS_PAGO, BadgeMetodoPago,
+  normalizarEnvioPerfumes, METODOS_PAGO, BadgeMetodoPago, stockWeb,
 } from "./shared.jsx";
 
 // "YYYY-MM-DD" según la hora de PANAMÁ (America/Panama, UTC-5), sin importar la
@@ -3665,7 +3665,7 @@ function AdminView() {
   const [bulkLoading, setBulkLoading] = useState(false);
   const [newCatName, setNewCatName] = useState("");
   const [catUploading, setCatUploading] = useState(null); // id de categoría subiendo icono
-  const emptyProd = { referencia: "", nombre: "", descripcion: "", categoria_id: categories[0]?.id || 1, precio_pieza: "", precio_media_docena: "", precio_docena: "", precio_minimo: "", precio_especial: "", badge: "", activo: true, destacado: false, imagen_url: "", tiene_tallas: false, tiene_colores: false, tallas: "", colores: "", distribucion_docena: "", distribucion_eje: "", proveedor_id: null, venta_por_unidad: false, tiene_stock_fisico: false, notas_fragancia: "", modalidad_presentacion: "estandar", flexpack_grupo_id: null };
+  const emptyProd = { referencia: "", nombre: "", descripcion: "", categoria_id: categories[0]?.id || 1, precio_pieza: "", precio_media_docena: "", precio_docena: "", precio_minimo: "", precio_especial: "", badge: "", activo: true, destacado: false, imagen_url: "", tiene_tallas: false, tiene_colores: false, tallas: "", colores: "", distribucion_docena: "", distribucion_eje: "", proveedor_id: null, venta_por_unidad: false, tiene_stock_fisico: false, piezas_muestra: 0, notas_fragancia: "", modalidad_presentacion: "estandar", flexpack_grupo_id: null };
   const [prodForm, setProdForm] = useState(emptyProd);
   const fileInputRef = useRef(null);
   const catFileRef = useRef(null);
@@ -4575,7 +4575,7 @@ function AdminView() {
   // ── GUARDAR / EDITAR PRODUCTO ──────────────────────────────────
   const openNewProduct = () => { setProdForm(emptyProd); setEditingId(null); setShowProdForm(true); setShowBulk(false); };
   const openEditProduct = (p) => {
-    setProdForm({ referencia: p.referencia || "", nombre: p.nombre || "", descripcion: p.descripcion || "", categoria_id: p.categoria_id || categories[0]?.id || 1, precio_pieza: p.precio_pieza, precio_media_docena: p.precio_media_docena, precio_docena: p.precio_docena, precio_minimo: p.precio_minimo ?? "", precio_especial: p.precio_especial ?? "", badge: p.badge || "", activo: p.activo, destacado: p.destacado || false, imagen_url: p.imagen_url || "", tiene_tallas: p.tiene_tallas || false, tiene_colores: p.tiene_colores || false, tallas: p.tallas || "", colores: p.colores || "", distribucion_docena: p.distribucion_docena || "", distribucion_eje: p.distribucion_eje || "", proveedor_id: p.proveedor_id || null, venta_por_unidad: p.venta_por_unidad || false, tiene_stock_fisico: p.tiene_stock_fisico || false, notas_fragancia: p.notas_fragancia || "", modalidad_presentacion: p.modalidad_presentacion || "estandar", flexpack_grupo_id: p.flexpack_grupo_id || null });
+    setProdForm({ referencia: p.referencia || "", nombre: p.nombre || "", descripcion: p.descripcion || "", categoria_id: p.categoria_id || categories[0]?.id || 1, precio_pieza: p.precio_pieza, precio_media_docena: p.precio_media_docena, precio_docena: p.precio_docena, precio_minimo: p.precio_minimo ?? "", precio_especial: p.precio_especial ?? "", badge: p.badge || "", activo: p.activo, destacado: p.destacado || false, imagen_url: p.imagen_url || "", tiene_tallas: p.tiene_tallas || false, tiene_colores: p.tiene_colores || false, tallas: p.tallas || "", colores: p.colores || "", distribucion_docena: p.distribucion_docena || "", distribucion_eje: p.distribucion_eje || "", proveedor_id: p.proveedor_id || null, venta_por_unidad: p.venta_por_unidad || false, tiene_stock_fisico: p.tiene_stock_fisico || false, piezas_muestra: Number(p.piezas_muestra) || 0, notas_fragancia: p.notas_fragancia || "", modalidad_presentacion: p.modalidad_presentacion || "estandar", flexpack_grupo_id: p.flexpack_grupo_id || null });
     setEditingId(p.id);
     setShowProdForm(true);
     setShowBulk(false);
@@ -4609,6 +4609,17 @@ function AdminView() {
       setProducts(prev => prev.map(p => p.id === product.id ? { ...p, visible_web: nuevoVisibleWeb } : p));
       showToast(nuevoVisibleWeb ? "Producto visible en la web" : "Producto oculto de la web");
     } catch(e) { alert("Error al cambiar visibilidad"); }
+  };
+
+  // Marca/desmarca que este producto tiene una pieza abierta de muestra (no vendible):
+  // la web la resta de la disponibilidad, sin tocar el stock que viene de Odoo.
+  const guardarMuestra = async (product, piezas) => {
+    const nuevas = Math.max(0, Math.floor(Number(piezas) || 0));
+    try {
+      await sb.patch("productos", product.id, { piezas_muestra: nuevas });
+      setProducts(prev => prev.map(p => p.id === product.id ? { ...p, piezas_muestra: nuevas } : p));
+      showToast(nuevas > 0 ? `Muestra marcada: la web ahora muestra ${stockWeb({ ...product, piezas_muestra: nuevas })} disponibles` : "Muestra quitada: vuelve a contar como disponible");
+    } catch(e) { alert("No se pudo guardar la muestra: " + (e.message || e)); }
   };
 
   // Sincronizar stock con Odoo (botón manual en Productos)
@@ -6553,6 +6564,21 @@ function AdminView() {
                       <div style={{ fontSize: 11, color: GRAY3, fontWeight: 400 }}>Actívalo si ya tienes esta mercancía contigo, la hayas comprado a un proveedor o no — aplican los mismos bloqueos por stock que el resto del catálogo (agotado, límites de docena/media docena). Si todavía la compras bajo pedido, déjalo apagado.</div>
                     </label>
                   </div>
+                  <div style={{ background: WHITE, border: `1.5px solid ${Number(prodForm.piezas_muestra) > 0 ? "#D97706" : GRAY2}`, borderRadius: 10, padding: "10px 14px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <input type="checkbox" id="tiene_muestra" checked={Number(prodForm.piezas_muestra) > 0} onChange={e => setProdForm({...prodForm, piezas_muestra: e.target.checked ? 1 : 0})} style={{ width: 18, height: 18 }} />
+                      <label htmlFor="tiene_muestra" style={{ fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+                        Tiene una pieza abierta de muestra
+                        <div style={{ fontSize: 11, color: GRAY3, fontWeight: 400 }}>Actívalo si abriste un perfume para que los clientes lo huelan. Esa pieza no se puede vender: la web la resta de la disponibilidad (el stock de Odoo no cambia).</div>
+                      </label>
+                    </div>
+                    {Number(prodForm.piezas_muestra) > 0 && (
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10, marginLeft: 28, fontSize: 13 }}>
+                        <span>Piezas abiertas:</span>
+                        <input type="number" min="1" step="1" value={prodForm.piezas_muestra} onChange={e => setProdForm({...prodForm, piezas_muestra: Math.max(1, Math.floor(Number(e.target.value) || 1))})} style={{ ...S.input, width: 80, marginBottom: 0, padding: "6px 8px" }} />
+                      </div>
+                    )}
+                  </div>
                   <div style={{ display: "flex", alignItems: "center", gap: 10, background: WHITE, border: `1.5px solid ${GRAY2}`, borderRadius: 10, padding: "10px 14px" }}>
                     <input type="checkbox" id="venta_por_unidad" checked={!!prodForm.venta_por_unidad} onChange={e => setProdForm({...prodForm, venta_por_unidad: e.target.checked})} style={{ width: 18, height: 18 }} />
                     <label htmlFor="venta_por_unidad" style={{ fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
@@ -6731,6 +6757,14 @@ function AdminView() {
                             {Number(p.stock) > 0 ? Number(p.stock) : "Agotado"}
                           </span>
                         ) : <span style={{ color: GRAY3, fontSize: 12 }}>Sin Odoo</span>}
+                        {p.stock_actualizado_at && !(p.proveedor_id && !p.tiene_stock_fisico) && (
+                          <div style={{ marginTop: 4 }}>
+                            {Number(p.piezas_muestra) > 0 && <div style={{ fontSize: 11, fontWeight: 700, color: "#92400E", marginBottom: 2 }}>Web: {stockWeb(p) > 0 ? stockWeb(p) : "Agotado"} · {p.piezas_muestra} de muestra</div>}
+                            <button onClick={() => guardarMuestra(p, Number(p.piezas_muestra) > 0 ? 0 : 1)} title={Number(p.piezas_muestra) > 0 ? "Quitar la muestra: vuelve a contar como disponible" : "Marcar que hay una pieza abierta de muestra"} style={{ background: Number(p.piezas_muestra) > 0 ? "#FEF3C7" : "none", border: `1px solid ${Number(p.piezas_muestra) > 0 ? "#D97706" : GRAY2}`, color: Number(p.piezas_muestra) > 0 ? "#92400E" : GRAY3, borderRadius: 6, padding: "2px 7px", fontSize: 11, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                              <Droplets size={11} /> {Number(p.piezas_muestra) > 0 ? "Quitar muestra" : "Muestra"}
+                            </button>
+                          </div>
+                        )}
                       </td>
                       <td style={S.td}><span style={{ background: p.activo ? "#D4EDDA" : GRAY2, color: p.activo ? "#155724" : BLACK, padding: "3px 8px", borderRadius: 12, fontSize: 12, fontWeight: 700 }}>{p.activo ? "Activo" : "Borrador"}</span></td>
                       <td style={S.td}>
@@ -6797,6 +6831,12 @@ function AdminView() {
                         Stock: {p.stock_actualizado_at
                           ? <strong style={{ color: Number(p.stock) > 5 ? "#155724" : Number(p.stock) > 0 ? "#856404" : RED }}>{Number(p.stock) > 0 ? Number(p.stock) : "Agotado"}</strong>
                           : <span style={{ color: GRAY3 }}>Sin Odoo</span>}
+                        {p.stock_actualizado_at && Number(p.piezas_muestra) > 0 && <span style={{ color: "#92400E", fontWeight: 700 }}> · Web: {stockWeb(p) > 0 ? stockWeb(p) : "Agotado"} ({p.piezas_muestra} de muestra)</span>}
+                        {p.stock_actualizado_at && !(p.proveedor_id && !p.tiene_stock_fisico) && (
+                          <button onClick={() => guardarMuestra(p, Number(p.piezas_muestra) > 0 ? 0 : 1)} style={{ marginLeft: 8, background: Number(p.piezas_muestra) > 0 ? "#FEF3C7" : "none", border: `1px solid ${Number(p.piezas_muestra) > 0 ? "#D97706" : GRAY2}`, color: Number(p.piezas_muestra) > 0 ? "#92400E" : GRAY3, borderRadius: 6, padding: "2px 7px", fontSize: 11, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                            <Droplets size={11} /> {Number(p.piezas_muestra) > 0 ? "Quitar muestra" : "Muestra"}
+                          </button>
+                        )}
                       </span>
                       <button onClick={() => handleToggleWeb(p)} style={{ background: "none", border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 4, color: p.visible_web !== false ? "#155724" : GRAY3, fontSize: 12, fontWeight: 700 }}>
                         {p.visible_web !== false ? <Eye size={15} /> : <EyeOff size={15} />} {p.visible_web !== false ? "Visible en web" : "Oculto de web"}
