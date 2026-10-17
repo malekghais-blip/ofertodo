@@ -3645,9 +3645,8 @@ function CheckoutView() {
 
   // Cuando el pago de Yappy se confirma con éxito
   const onPagoExitoso = async () => {
-    // Respaldo: marcamos el pedido como pagado también desde el front (la confirmación
-    // oficial viene del IPN de Yappy, pero así el cliente lo ve de inmediato).
-    try { if (pedidoPendiente?.id) await sb.patch("pedidos", pedidoPendiente.id, { pagado: true }); } catch(e) {}
+    // La confirmación oficial del pago la hace el IPN de Yappy en el servidor (con firma).
+    // El navegador ya NO marca el pedido como pagado: la base de datos lo bloquea por seguridad.
     setPlaced(pedidoPendiente.codigo);
     trackCompra({
       codigo: pedidoPendiente.codigo, total: pedidoPendiente.total,
