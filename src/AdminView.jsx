@@ -3185,6 +3185,7 @@ function OfertasAdmin() {
   const [guardando, setGuardando] = useState(false);
   const [subiendoImg, setSubiendoImg] = useState(false);
   const [busquedaProd, setBusquedaProd] = useState("");
+  const [busquedaOferta, setBusquedaOferta] = useState(""); // buscador de la lista de ofertas de la campaña
   const imgRef = useRef(null);
 
   const productosPorId = {};
@@ -3350,17 +3351,31 @@ function OfertasAdmin() {
 
   if (cargando) return <Spinner />;
 
+  // Buscador: ignora mayúsculas y acentos; busca en el título de la oferta, el nombre y la
+  // referencia de cada producto (también los de un combo), la etiqueta y la descripción.
+  const sinAcentos = (t) => String(t || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const palabrasBusqueda = sinAcentos(busquedaOferta).split(/\s+/).filter(Boolean);
+  const ofertaCoincide = (o) => {
+    if (palabrasBusqueda.length === 0) return true;
+    const info = ofertaInfo(o, productosPorId, comboRows);
+    const partes = [o.titulo, o.etiqueta, o.descripcion, info?.titulo];
+    (info?.lineas || []).forEach(l => { partes.push(l.product?.nombre, l.product?.referencia); });
+    const texto = sinAcentos(partes.filter(Boolean).join(" "));
+    return palabrasBusqueda.every(w => texto.includes(w));
+  };
+
   const renderSeccion = (seccion, titulo, ayuda) => {
-    const lista = itemsSel.filter(i => i.seccion === seccion);
+    const todasSeccion = itemsSel.filter(i => i.seccion === seccion);
+    const lista = todasSeccion.filter(ofertaCoincide);
     return (
       <div style={{ marginBottom: 28 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 6 }}>
-          <div style={{ fontSize: 17, fontWeight: 900 }}>{titulo} <span style={{ fontSize: 12, color: GRAY3, fontWeight: 700 }}>({lista.length})</span></div>
+          <div style={{ fontSize: 17, fontWeight: 900 }}>{titulo} <span style={{ fontSize: 12, color: GRAY3, fontWeight: 700 }}>({palabrasBusqueda.length ? `${lista.length} de ${todasSeccion.length}` : lista.length})</span></div>
           <button onClick={() => nuevaOferta(seccion)} className="oft-btn-press" style={{ ...S.btnRed, padding: "8px 14px", fontSize: 13 }}><Plus size={15} /> Agregar oferta o combo</button>
         </div>
         <div style={{ fontSize: 12, color: GRAY3, marginBottom: 12 }}>{ayuda}</div>
         {lista.length === 0 ? (
-          <div style={{ border: `1px dashed ${GRAY2}`, borderRadius: 12, padding: 22, textAlign: "center", color: GRAY3, fontSize: 13 }}>Aún no hay ofertas en esta sección.</div>
+          <div style={{ border: `1px dashed ${GRAY2}`, borderRadius: 12, padding: 22, textAlign: "center", color: GRAY3, fontSize: 13 }}>{palabrasBusqueda.length ? `Ninguna oferta de esta sección coincide con "${busquedaOferta.trim()}".` : "Aún no hay ofertas en esta sección."}</div>
         ) : (
           <div style={{ display: "grid", gap: 10 }}>
             {lista.map(o => {
@@ -3485,6 +3500,14 @@ function OfertasAdmin() {
                   <button onClick={() => duplicarCampana(sel)} className="oft-btn-press" style={{ background: WHITE, border: `1.5px solid ${GRAY2}`, borderRadius: 8, padding: "8px 12px", cursor: "pointer", fontWeight: 700, fontSize: 13 }}>Duplicar</button>
                   <button onClick={() => eliminarCampana(sel)} className="oft-btn-press" style={{ background: WHITE, border: `1.5px solid ${RED}`, color: RED, borderRadius: 8, padding: "8px 12px", cursor: "pointer", display: "flex" }}><Trash2 size={15} /></button>
                 </div>
+              </div>
+              <div style={{ position: "relative", marginBottom: 18, maxWidth: 460 }}>
+                <Search size={16} color={GRAY3} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)" }} />
+                <input value={busquedaOferta} onChange={e => setBusquedaOferta(e.target.value)} placeholder="Buscar oferta por producto, referencia o título…"
+                  style={{ ...S.input, paddingLeft: 36, paddingRight: busquedaOferta ? 34 : 12, marginBottom: 0, background: WHITE }} />
+                {busquedaOferta && (
+                  <button onClick={() => setBusquedaOferta("")} title="Borrar búsqueda" style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", display: "flex", padding: 4 }}><X size={16} color={GRAY3} /></button>
+                )}
               </div>
               {renderSeccion("detal", "Ofertas al detal", "Para clientes que compran pocas piezas o por unidad.")}
               {renderSeccion("mayor", "Ofertas al mayor", "Para docenas, medias docenas y combos de volumen.")}
