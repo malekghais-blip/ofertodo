@@ -198,12 +198,10 @@ function OrderImageModal({ order, onClose }) {
                     <tr key={it.id || i} style={{ borderBottom: `1px solid ${GRAY2}` }}>
                       <td style={{ padding: "9px 10px", fontSize: 12 }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                          {/* Solo en cotizaciones: foto chica del producto al lado del nombre */}
-                          {esCot && (
-                            <div style={{ width: 42, height: 42, borderRadius: 6, background: GRAY, overflow: "hidden", flexShrink: 0 }}>
-                              {prod?.imagen_url && <img src={prod.imagen_url} alt="" crossOrigin="anonymous" style={{ width: 42, height: 42, objectFit: "cover", display: "block" }} />}
-                            </div>
-                          )}
+                          {/* Foto chica del producto al lado del nombre (cotización y factura) */}
+                          <div style={{ width: 42, height: 42, borderRadius: 6, background: GRAY, overflow: "hidden", flexShrink: 0 }}>
+                            {prod?.imagen_url && <img src={prod.imagen_url} alt="" crossOrigin="anonymous" style={{ width: 42, height: 42, objectFit: "cover", display: "block" }} />}
+                          </div>
                           <div style={{ minWidth: 0 }}>
                             <div style={{ fontWeight: 700 }}>{it.nombre_producto}</div>
                             {prod?.referencia && <div style={{ fontSize: 10, color: GRAY3 }}>Ref: {prod.referencia}</div>}
