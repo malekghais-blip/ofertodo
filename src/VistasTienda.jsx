@@ -1,7 +1,7 @@
 // Pantallas de compra y cuenta del cliente. Se descargan solo cuando alguien entra a ellas.
 import { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
-import { MessageCircle, X, Package, CheckCircle2, MapPin, CreditCard, Truck, Headphones, RefreshCw, ChevronDown, ChevronUp, User, Home, Sparkles, ClipboardList, Lock, Pencil as PencilIcon, Building2, MapPin as MapPinIcon, AlertTriangle } from "lucide-react";
+import { Search, Check, MessageCircle, X, Package, CheckCircle2, MapPin, CreditCard, Truck, Headphones, RefreshCw, ChevronDown, ChevronUp, User, Home, Sparkles, ClipboardList, Lock, Pencil as PencilIcon, Building2, MapPin as MapPinIcon, AlertTriangle } from "lucide-react";
 import { BLACK, GRAY, GRAY2, GRAY3, ORDER_STATUS_ENVIO, ORDER_STATUS_RETIRO, RED, RED_D, S, STATUS_ICONS_ENVIO, STATUS_ICONS_RETIRO, SUPABASE_KEY, SUPABASE_URL, Spinner, StatusBadge, WHITE, idVisitante, registrarEvento, obtenerTokenRecaptcha, trackIniciarCheckout, trackCompra, imagenOptimizada, sb, useApp, prorratearLinea, envioPerfumesAplica, useEnvioPerfumes, stockWeb } from "./shared.jsx";
 import { WA_NUMBER, cartItemTotal, cartItemLabel } from "./tiendaComun.jsx";
 
@@ -442,6 +442,120 @@ function YappyButton({ pedido, onExito, onCancelar }) {
 }
 
 // ═══════════════════════════════════════════════════════════════
+//  PROVINCIAS DE PANAMÁ (para el envío puerta a puerta)
+//  Las 10 provincias y las 3 comarcas con rango de provincia. "zonas" son ciudades,
+//  distritos y corregimientos conocidos: sirven para que el cliente encuentre su
+//  provincia escribiendo el lugar donde vive (ej. "La Chorrera" → Panamá Oeste).
+// ═══════════════════════════════════════════════════════════════
+const PROVINCIAS_PANAMA = [
+  { nombre: "Bocas del Toro", zonas: ["Changuinola", "Almirante", "Isla Colón", "Bastimentos", "Chiriquí Grande", "Isla Carenero"] },
+  { nombre: "Chiriquí", zonas: ["David", "Boquete", "Volcán", "Puerto Armuelles", "Bugaba", "Dolega", "Barú", "Renacimiento", "Concepción", "Gualaca", "Alanje", "San Félix", "Tolé"] },
+  { nombre: "Coclé", zonas: ["Penonomé", "Aguadulce", "Antón", "Natá", "Olá", "La Pintada"] },
+  { nombre: "Colón", zonas: ["Colón ciudad", "Sabanitas", "Cristóbal", "Cativá", "Portobelo", "Costa Arriba", "Costa Abajo", "Santa Isabel", "Nombre de Dios", "Puerto Pilón", "Escobal", "Margarita", "María Chiquita", "Buenaventura"] },
+  { nombre: "Darién", zonas: ["Metetí", "La Palma", "Yaviza", "Santa Fe", "Chepigana", "Pinogana", "Garachiné", "Sambú"] },
+  { nombre: "Herrera", zonas: ["Chitré", "Ocú", "Los Pozos", "Parita", "Pesé", "Santa María", "Las Minas"] },
+  { nombre: "Los Santos", zonas: ["Las Tablas", "Guararé", "Pedasí", "Tonosí", "Macaracas", "Los Santos", "La Villa", "Pocrí"] },
+  { nombre: "Panamá", zonas: ["Ciudad de Panamá", "San Miguelito", "Tocumen", "Pacora", "Chilibre", "Las Cumbres", "Juan Díaz", "Chepo", "Calidonia", "Costa del Este", "Albrook", "Bella Vista", "Betania", "Pedregal", "24 de Diciembre", "Las Garzas", "Ancón", "Curundú", "Río Abajo", "Madungandí", "Taboga"] },
+  { nombre: "Panamá Oeste", zonas: ["La Chorrera", "Arraiján", "Capira", "Chame", "San Carlos", "Vacamonte", "Veracruz", "Howard", "Coronado", "Playa Leona", "Burunga", "Barrio Colón"] },
+  { nombre: "Veraguas", zonas: ["Santiago", "Soná", "Atalaya", "Santa Fe", "La Mesa", "Montijo", "Calobre", "Las Palmas", "Cañazas", "San Francisco", "Río de Jesús"] },
+  { nombre: "Comarca Guna Yala", zonas: ["San Blas", "Guna Yala", "Kuna Yala", "El Porvenir", "Narganá"] },
+  { nombre: "Comarca Emberá-Wounaan", zonas: ["Emberá", "Wounaan", "Cémaco", "Sambú"] },
+  { nombre: "Comarca Ngäbe-Buglé", zonas: ["Ngäbe", "Buglé", "Besiko", "Mironó", "Nole Duima", "Kankintú", "Müna", "Ñürüm", "Jirondai", "Kusapín", "Santa Catalina"] },
+];
+
+const sinAcentosBusqueda = (t) => String(t || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+
+// Selector de provincia con buscador: al tocar el campo se ve la lista completa; al escribir se
+// filtra (ignora mayúsculas y tildes) y también encuentra la provincia por ciudad o distrito.
+function SelectorProvincia({ value, onChange, invalido }) {
+  const [texto, setTexto] = useState(value || "");
+  const [abierto, setAbierto] = useState(false);
+  const [activo, setActivo] = useState(0);
+  const cajaRef = useRef(null);
+  const listaRef = useRef(null);
+
+  // Si el valor cambia desde afuera (ej. se limpia el formulario), el texto lo sigue
+  useEffect(() => { if (value) setTexto(value); }, [value]);
+
+  const q = sinAcentosBusqueda(texto);
+  const filtradas = PROVINCIAS_PANAMA.map(pv => {
+    if (!q || value === pv.nombre) return { ...pv, coincide: null, visible: true };
+    const porNombre = sinAcentosBusqueda(pv.nombre).includes(q);
+    const zona = pv.zonas.find(z => sinAcentosBusqueda(z).includes(q));
+    return { ...pv, coincide: porNombre ? null : (zona || null), visible: porNombre || !!zona };
+  }).filter(pv => pv.visible)
+    // Primero las provincias cuyo NOMBRE coincide (y las que empiezan con lo escrito), luego las que coinciden por ciudad
+    .sort((a, b) => {
+      const rango = (pv) => pv.coincide ? 2 : (q && sinAcentosBusqueda(pv.nombre).startsWith(q) ? 0 : 1);
+      return rango(a) - rango(b);
+    });
+
+  const elegir = (pv) => { setTexto(pv.nombre); onChange(pv.nombre); setAbierto(false); };
+
+  // Cierra al tocar fuera. Si lo escrito es exactamente el nombre de una provincia, la toma.
+  useEffect(() => {
+    const fuera = (e) => {
+      if (cajaRef.current && !cajaRef.current.contains(e.target)) {
+        setAbierto(false);
+        const exacta = PROVINCIAS_PANAMA.find(pv => sinAcentosBusqueda(pv.nombre) === sinAcentosBusqueda(texto));
+        if (exacta && exacta.nombre !== value) { setTexto(exacta.nombre); onChange(exacta.nombre); }
+      }
+    };
+    document.addEventListener("mousedown", fuera);
+    document.addEventListener("touchstart", fuera);
+    return () => { document.removeEventListener("mousedown", fuera); document.removeEventListener("touchstart", fuera); };
+  }, [texto, value]);
+
+  useEffect(() => { setActivo(0); }, [q]);
+  useEffect(() => {
+    const el = listaRef.current?.children?.[activo];
+    if (el && el.scrollIntoView) el.scrollIntoView({ block: "nearest" });
+  }, [activo, abierto]);
+
+  const alTeclear = (e) => {
+    if (e.key === "ArrowDown") { e.preventDefault(); setAbierto(true); setActivo(i => Math.min(i + 1, Math.max(filtradas.length - 1, 0))); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); setActivo(i => Math.max(i - 1, 0)); }
+    else if (e.key === "Enter") { if (abierto && filtradas[activo]) { e.preventDefault(); elegir(filtradas[activo]); } }
+    else if (e.key === "Escape") { setAbierto(false); }
+  };
+
+  return (
+    <div ref={cajaRef} style={{ position: "relative", marginBottom: 14 }}>
+      <Search size={16} color={GRAY3} style={{ position: "absolute", left: 12, top: 15, pointerEvents: "none" }} />
+      <input
+        role="combobox" aria-expanded={abierto} aria-autocomplete="list" aria-label="Provincia"
+        style={{ ...S.input, marginBottom: 0, paddingLeft: 36, paddingRight: value ? 36 : 12, borderColor: invalido ? RED : GRAY2 }}
+        placeholder="Busca o elige tu provincia"
+        value={texto} autoComplete="off"
+        onFocus={() => setAbierto(true)}
+        onChange={e => { setTexto(e.target.value); setAbierto(true); if (value) onChange(""); }}
+        onKeyDown={alTeclear}
+      />
+      {value && <Check size={18} color="#1F8A4C" style={{ position: "absolute", right: 12, top: 14, pointerEvents: "none" }} />}
+      {abierto && filtradas.length === 0 && (
+        <div style={{ marginTop: 6, fontSize: 12.5, color: RED, lineHeight: 1.4 }}>No encontramos "{texto.trim()}". Prueba con el nombre de la provincia (ej. Panamá Oeste) o de tu ciudad.</div>
+      )}
+      {!abierto && !value && texto.trim() && (
+        <div style={{ marginTop: 6, fontSize: 12.5, color: RED }}>Elige tu provincia de la lista.</div>
+      )}
+      {abierto && filtradas.length > 0 && (
+        <div ref={listaRef} role="listbox" style={{ position: "absolute", left: 0, right: 0, top: "calc(100% + 4px)", zIndex: 30, background: WHITE, border: `1.5px solid ${GRAY2}`, borderRadius: 10, boxShadow: "0 8px 24px rgba(0,0,0,0.12)", maxHeight: 260, overflowY: "auto" }}>
+          {filtradas.map((pv, i) => (
+            <div key={pv.nombre} role="option" aria-selected={value === pv.nombre}
+              onMouseDown={e => e.preventDefault()} onClick={() => elegir(pv)} onMouseEnter={() => setActivo(i)}
+              style={{ padding: "11px 14px", cursor: "pointer", background: i === activo ? "#FFF5F5" : WHITE, borderBottom: i < filtradas.length - 1 ? `1px solid ${GRAY}` : "none", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+              <span style={{ fontSize: 14, fontWeight: value === pv.nombre ? 800 : 600 }}>{pv.nombre}</span>
+              {pv.coincide && <span style={{ fontSize: 12, color: GRAY3 }}>incluye {pv.coincide}</span>}
+              {value === pv.nombre && !pv.coincide && <Check size={16} color="#1F8A4C" />}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
 //  CHECKOUT
 // ═══════════════════════════════════════════════════════════════
 export function CheckoutView() {
@@ -627,7 +741,7 @@ export function CheckoutView() {
     } else if (modoEntrega === "puerta") {
       // Puerta a puerta: Servientrega automático + dirección obligatoria + sin sucursal
       if (!servientrega) { setAvisoValidacion("El envío puerta a puerta no está disponible por ahora. Por favor elige una sucursal."); return; }
-      if (!areaEnvio.trim()) { setAvisoValidacion("Para envío puerta a puerta, escribe tu provincia o área."); return; }
+      if (!PROVINCIAS_PANAMA.some(pv => pv.nombre === areaEnvio)) { setAvisoValidacion("Para envío puerta a puerta, elige tu provincia de la lista."); return; }
       if (!address.trim()) { setAvisoValidacion("Para envío puerta a puerta, escribe tu dirección exacta."); return; }
       empresaFinalId = servientrega.id;
       empresaFinalNombre = servientrega.nombre;
@@ -1077,7 +1191,7 @@ export function CheckoutView() {
         <div style={{ background: "#FFF5F5", border: `1.5px solid ${RED}`, borderRadius: 12, padding: 16, marginBottom: 16, display: "flex", alignItems: "center", gap: 12 }}>
           <Truck size={22} color={RED} />
           <div style={{ fontSize: 13 }}>
-            <strong>Envío puerta a puerta por Servientrega — {costoEnvioPuerta > 0 ? money(costoEnvioPuerta) : "Gratis"}.</strong> Te lo llevamos a la dirección que indiques abajo. <span style={{ color: RED, fontWeight: 700 }}>La provincia o área y la dirección exacta son obligatorias.</span>
+            <strong>Envío puerta a puerta por Servientrega — {costoEnvioPuerta > 0 ? money(costoEnvioPuerta) : "Gratis"}.</strong> Te lo llevamos a la dirección que indiques abajo. <span style={{ color: RED, fontWeight: 700 }}>La provincia y la dirección exacta son obligatorias.</span>
           </div>
         </div>
       )}
@@ -1104,8 +1218,8 @@ export function CheckoutView() {
         )}
         {modoEntrega === "puerta" && (
           <>
-            <label style={S.label}>Provincia o área *</label>
-            <input style={{ ...S.input, borderColor: !areaEnvio.trim() ? RED : GRAY2 }} placeholder="Ej: Colón, Costa Arriba, Panamá Oeste..." value={areaEnvio} onChange={e => setAreaEnvio(e.target.value)} autoComplete="address-level1" />
+            <label style={S.label}>Provincia *</label>
+            <SelectorProvincia value={areaEnvio} onChange={setAreaEnvio} invalido={!areaEnvio.trim()} />
             <label style={S.label}>Dirección exacta *</label>
             <input style={{ ...S.input, borderColor: !address.trim() ? RED : GRAY2 }} placeholder="Calle, casa o edificio, punto de referencia..." value={address} onChange={e => setAddress(e.target.value)} autoComplete="street-address" />
           </>
