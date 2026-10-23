@@ -378,6 +378,34 @@ function agruparPorFlexPack(productos) {
 }
 
 
+// Igual que en el inicio y el catálogo, pero para la lista de ofertas: las ofertas de productos del
+// mismo grupo Flex Pack quedan una al lado de la otra. El grupo aparece en el lugar de su primera
+// oferta, y dentro del grupo se respeta el orden que ya tenían. Un combo cuenta como parte de un
+// grupo solo si TODOS sus productos son de ese mismo grupo.
+function agruparOfertasPorFlexPack(ofertas) {
+  const grupoDe = (info) => {
+    const ids = new Set((info.lineas || []).map(l => l.product?.flexpack_grupo_id || null));
+    return ids.size === 1 ? ([...ids][0] || null) : null;
+  };
+  const yaColocadas = new Set();
+  const resultado = [];
+  for (const o of ofertas) {
+    if (yaColocadas.has(o.oferta.id)) continue;
+    resultado.push(o);
+    yaColocadas.add(o.oferta.id);
+    const g = grupoDe(o);
+    if (g) {
+      for (const otra of ofertas) {
+        if (!yaColocadas.has(otra.oferta.id) && grupoDe(otra) === g) {
+          resultado.push(otra);
+          yaColocadas.add(otra.oferta.id);
+        }
+      }
+    }
+  }
+  return resultado;
+}
+
 // Texto descriptivo del desglose (incluye precio por pieza)
 function presBreakdown(pres, count, product) {
   const piezas = presToPiezas(pres, count, product);
@@ -2109,7 +2137,7 @@ function OfertasView() {
     if (orden === "descuento") a.sort((x, y) => y.pct - x.pct);
     else if (orden === "menor") a.sort((x, y) => x.precioOferta - y.precioOferta);
     else if (orden === "mayor") a.sort((x, y) => y.precioOferta - x.precioOferta);
-    return a;
+    return agruparOfertasPorFlexPack(a);
   };
   const detal = ordenar(filtradas.filter(i => i.oferta.seccion === "detal"));
   const mayor = ordenar(filtradas.filter(i => i.oferta.seccion === "mayor"));
