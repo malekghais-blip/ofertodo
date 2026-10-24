@@ -509,6 +509,43 @@ export function registrarEvento(tipo, valor = null, valorNombre = null, usuarioI
   } catch (e) { /* nunca truena la app por esto */ }
 }
 
+// ── Carga bajo demanda de librerías pesadas ────────────────────────────────────
+// html2canvas y jsPDF (generar PDF/imagen de facturas y reportes) y el botón de
+// Yappy ya NO se descargan al abrir la tienda: solo cuando de verdad se usan.
+// Antes iban en el <head> y frenaban la carga de todos los visitantes.
+const _scriptsCargando = {};
+function cargarScriptExterno(url, { modulo = false, listo = null } = {}) {
+  if (typeof window === "undefined") return Promise.resolve();
+  if (listo && listo()) return Promise.resolve();
+  if (_scriptsCargando[url]) return _scriptsCargando[url];
+  _scriptsCargando[url] = new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = url;
+    if (modulo) s.type = "module";
+    s.async = true;
+    s.onload = () => resolve();
+    s.onerror = () => { delete _scriptsCargando[url]; reject(new Error("No se pudo cargar " + url)); };
+    document.head.appendChild(s);
+  });
+  return _scriptsCargando[url];
+}
+// Devuelve true si html2canvas y jsPDF quedaron listos; si no hay internet, avisa y devuelve false.
+export async function asegurarLibsPdf({ soloImagen = false } = {}) {
+  try {
+    await Promise.all([
+      cargarScriptExterno("https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js", { listo: () => !!window.html2canvas }),
+      soloImagen ? Promise.resolve() : cargarScriptExterno("https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js", { listo: () => !!window.jspdf }),
+    ]);
+    return !!window.html2canvas && (soloImagen || !!window.jspdf);
+  } catch (e) {
+    alert("No se pudo cargar el generador. Revisa tu conexión a internet e intenta de nuevo.");
+    return false;
+  }
+}
+export function cargarYappyBoton() {
+  return cargarScriptExterno("https://bt-cdn.yappy.cloud/v1/cdn/web-component-btn-yappy.js", { modulo: true }).catch(() => {});
+}
+
 // ── reCAPTCHA v3 (protección antibots en el checkout, pedido por BAC) ──────────
 // Carga el script de Google solo una vez, la primera vez que hace falta (no en
 // cada visita), y nunca bloquea la compra si algo sale mal cargándolo.
@@ -2331,7 +2368,7 @@ function InvoiceModal({ invoice, onClose }) {
   const isMobile = typeof window !== "undefined" && window.innerWidth <= 768;
 
   const downloadPNG = async () => {
-    if (!window.html2canvas) { alert("Cargando generador de imagen, intenta de nuevo en unos segundos."); return; }
+    if (!(await asegurarLibsPdf({ soloImagen: true }))) return;
     setBusy(true);
     try {
       const canvas = await renderCanvas();
@@ -2358,7 +2395,7 @@ function InvoiceModal({ invoice, onClose }) {
   };
 
   const downloadPDF = async () => {
-    if (!window.html2canvas || !window.jspdf) { alert("Cargando generador de PDF, intenta de nuevo en unos segundos."); return; }
+    if (!(await asegurarLibsPdf())) return;
     setBusy(true);
     try {
       const canvas = await renderCanvas();
@@ -2581,7 +2618,7 @@ export function ShippingLabelModal({ order, onClose, onGuiaImpresa }) {
   };
 
   const downloadPDF = async () => {
-    if (!window.html2canvas || !window.jspdf) { alert("Cargando generador, intenta de nuevo en unos segundos."); return; }
+    if (!(await asegurarLibsPdf())) return;
     setBusy(true);
     try {
       const canvas = await renderCanvas();
