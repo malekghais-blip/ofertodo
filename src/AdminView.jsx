@@ -18,7 +18,7 @@ import {
   Spinner, StatusBadge, WHITE, comprimirImagen, estadosDe,
   imagenOptimizada, resolverAreaVenta, sb, useApp, useLockBodyScroll, useRefrescoPeriodico,
   agregarCanvasComoPaginasPdf, ofertaInfo, precioNormalPiezas, piezasDePresentacion, presUnitPrice, idVisitante,
-  normalizarEnvioPerfumes, METODOS_PAGO, BadgeMetodoPago, stockWeb,
+  normalizarEnvioPerfumes, METODOS_PAGO, BadgeMetodoPago, stockWeb, asegurarLibsPdf,
 } from "./shared.jsx";
 import { useCambiosEnVivo } from "./clienteEnVivo.jsx";
 
@@ -86,7 +86,7 @@ function OrderImageModal({ order, onClose }) {
   const isMobile = typeof window !== "undefined" && window.innerWidth <= 768;
 
   const downloadPNG = async () => {
-    if (!window.html2canvas) { alert("Cargando generador de imagen, intenta de nuevo en unos segundos."); return; }
+    if (!(await asegurarLibsPdf({ soloImagen: true }))) return;
     setBusy(true);
     try {
       const canvas = await renderCanvas();
@@ -111,7 +111,7 @@ function OrderImageModal({ order, onClose }) {
   };
 
   const downloadPDF = async () => {
-    if (!window.html2canvas || !window.jspdf) { alert("Cargando generador de PDF, intenta de nuevo en unos segundos."); return; }
+    if (!(await asegurarLibsPdf())) return;
     setBusy(true);
     try {
       const canvas = await renderCanvas();
@@ -5344,7 +5344,7 @@ function AdminView() {
 
   const reporteVentasRef = useRef(null);
   const descargarReporteVentasPDF = async () => {
-    if (!window.html2canvas || !window.jspdf) { alert("Cargando generador de PDF, intenta de nuevo en unos segundos."); return; }
+    if (!(await asegurarLibsPdf())) return;
     setReporteBusy(true);
     try {
       const source = reporteVentasRef.current;
@@ -5375,7 +5375,7 @@ function AdminView() {
 
   const reportePorOperadorRef = useRef(null);
   const descargarReporteOperadorPDF = async () => {
-    if (!window.html2canvas || !window.jspdf) { alert("Cargando generador de PDF, intenta de nuevo en unos segundos."); return; }
+    if (!(await asegurarLibsPdf())) return;
     setReporteOperadorBusy(true);
     try {
       const source = reportePorOperadorRef.current;
