@@ -40,7 +40,8 @@ if (typeof window !== "undefined") setTimeout(() => { import("./VistasTienda.jsx
 import { cartItemLabel, cartItemTotal, calcPrice, presTotal, WA_NUMBER } from "./tiendaComun.jsx";
 
                         // ← Tu número WhatsApp
-const FLEXPACK_ICON_URL = "https://esezhctdiucwovbvxmou.supabase.co/storage/v1/object/public/brand/flex-pack/flex-pack-icon.png";
+const FLEXPACK_ICON_ORIGINAL = "https://esezhctdiucwovbvxmou.supabase.co/storage/v1/object/public/brand/flex-pack/flex-pack-icon.png";
+const FLEXPACK_ICON_URL = imagenOptimizada(FLEXPACK_ICON_ORIGINAL, 160); // versión liviana (WebP) del ícono
 const YAPPY_DIRECTORIO = "@ofertodopanama";                // Edge Function que crea la orden de pago en Yappy
 
 // ─── Supabase client minimalista (sin instalar paquetes) ────────
@@ -635,9 +636,9 @@ function PromoCarousel({ banners }) {
   return (
     <div className="oft-carousel" onMouseEnter={() => setPausado(true)} onMouseLeave={() => setPausado(false)}>
       <div className="oft-carousel-track" style={{ transform: `translateX(-${indice * 100}%)` }} onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
-        {activos.map(b => (
+        {activos.map((b, idxB) => (
           <div key={b.id} className="oft-carousel-slide" onClick={() => irAlDestino(b)} role="button" tabIndex={0}>
-            <img src={imagenOptimizada(b.imagen_url, 1400)} alt={b.titulo || "Promoción"} loading="eager" decoding="async" />
+            <img src={imagenOptimizada(b.imagen_url, 1400)} alt={b.titulo || "Promoción"} loading={idxB === 0 ? "eager" : "lazy"} fetchpriority={idxB === 0 ? "high" : "auto"} decoding="async" />
             {(b.titulo || b.subtitulo) && (
               <div className="oft-carousel-caption">
                 {b.titulo && <div className="oft-carousel-title">{b.titulo}</div>}
@@ -968,7 +969,7 @@ function FilaProductoFlexPack({ producto, cantidad, onCambiar, espacioDisponible
   return (
     <div className="oft-fade-in" style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 4px", borderBottom: `1px solid ${GRAY}`, opacity: sinStock ? 0.5 : 1 }}>
       {producto.imagen_url ? (
-        <img src={producto.imagen_url} style={{ width: 52, height: 52, borderRadius: 10, objectFit: "cover", flexShrink: 0 }} />
+        <img src={imagenOptimizada(producto.imagen_url, 120)} alt="" loading="lazy" decoding="async" style={{ width: 52, height: 52, borderRadius: 10, objectFit: "cover", flexShrink: 0 }} />
       ) : (
         <div style={{ width: 52, height: 52, borderRadius: 10, background: GRAY, flexShrink: 0 }} />
       )}
@@ -2338,7 +2339,7 @@ function CartModal() {
               item.esOferta ? (
                 <div key={idx} style={{ display: "flex", gap: 12, alignItems: "flex-start", padding: "12px 0", borderBottom: `1px solid ${GRAY2}` }}>
                   {item.imagen
-                    ? <img src={item.imagen} style={{ width: 36, height: 36, borderRadius: 6, objectFit: "cover", flexShrink: 0 }} />
+                    ? <img src={imagenOptimizada(item.imagen, 100)} alt="" loading="lazy" decoding="async" style={{ width: 36, height: 36, borderRadius: 6, objectFit: "cover", flexShrink: 0 }} />
                     : <div style={{ width: 36, height: 36, borderRadius: 6, background: GRAY, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Tag size={18} color={RED} /></div>}
                   <div style={{ flex: 1 }}>
                     <div style={{ fontWeight: 700, fontSize: 14 }}>{item.tipo === "combo" ? "Combo" : "Oferta"} · {item.titulo}</div>
@@ -2368,7 +2369,7 @@ function CartModal() {
               ) : (
               <div key={idx} style={{ display: "flex", gap: 12, alignItems: "center", padding: "12px 0", borderBottom: `1px solid ${GRAY2}` }}>
                 {item.product.imagen_url
-                  ? <img src={item.product.imagen_url} style={{ width: 36, height: 36, borderRadius: 6, objectFit: "cover" }} />
+                  ? <img src={imagenOptimizada(item.product.imagen_url, 100)} alt="" loading="lazy" decoding="async" style={{ width: 36, height: 36, borderRadius: 6, objectFit: "cover" }} />
                   : <div style={{ width: 36, height: 36, borderRadius: 6, background: GRAY, display: "flex", alignItems: "center", justifyContent: "center" }}><Package size={18} color={GRAY3} /></div>
                 }
                 <div style={{ flex: 1 }}>
