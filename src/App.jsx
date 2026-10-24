@@ -1375,16 +1375,16 @@ function ProductCard({ product }) {
           ? <img src={imgUrl} alt={product.nombre} loading="lazy" decoding="async" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
           : <Package size={56} color={GRAY3} strokeWidth={1.3} />
         }
-        {product.badge && <span style={{ position: "absolute", top: 10, left: 10, background: RED, color: WHITE, fontSize: 11, fontWeight: 800, padding: "4px 10px", borderRadius: 10, display: "inline-flex", alignItems: "center", gap: 4 }}><Sparkles size={11} /> {product.badge}</span>}
+        {product.badge && <span className="oft-ptag oft-ptag-badge" style={{ position: "absolute", top: 10, left: 10, background: RED, color: WHITE, fontSize: 11, fontWeight: 800, padding: "4px 10px", borderRadius: 10, display: "inline-flex", alignItems: "center", gap: 4 }}><Sparkles size={11} /> {product.badge}</span>}
         {/* Indicador de stock — solo se muestra si el producto está sincronizado con Odoo */}
         {product.stock_actualizado_at && (
           stockWeb(product) <= 0
-            ? <span style={{ position: "absolute", top: 10, right: 10, background: "#721C24", color: WHITE, fontSize: 11, fontWeight: 800, padding: "4px 10px", borderRadius: 10 }}>Agotado</span>
+            ? <span className="oft-ptag oft-ptag-stock" style={{ position: "absolute", top: 10, right: 10, background: "#721C24", color: WHITE, fontSize: 11, fontWeight: 800, padding: "4px 10px", borderRadius: 10 }}>Agotado</span>
             : stockWeb(product) <= 5
-              ? <span style={{ position: "absolute", top: 10, right: 10, background: "#856404", color: WHITE, fontSize: 11, fontWeight: 800, padding: "4px 10px", borderRadius: 10 }}>Pocas unidades</span>
+              ? <span className="oft-ptag oft-ptag-stock" style={{ position: "absolute", top: 10, right: 10, background: "#856404", color: WHITE, fontSize: 11, fontWeight: 800, padding: "4px 10px", borderRadius: 10 }}>Pocas unidades</span>
               : null
         )}
-        <span style={{ position: "absolute", bottom: 8, right: 8, background: "rgba(0,0,0,0.55)", color: WHITE, fontSize: 10, fontWeight: 700, padding: "3px 8px", borderRadius: 12, display: "inline-flex", alignItems: "center", gap: 4 }}><Search size={11} /> Ver</span>
+        <span className="oft-ptag oft-ptag-ver" style={{ position: "absolute", bottom: 8, right: 8, background: "rgba(0,0,0,0.55)", color: WHITE, fontSize: 10, fontWeight: 700, padding: "3px 8px", borderRadius: 12, display: "inline-flex", alignItems: "center", gap: 4 }}><Search size={11} /> Ver</span>
       </div>
       <div className="oft-prod-body" style={{ padding: 16, display: "flex", flexDirection: "column", flex: 1 }}>
         <div style={{ fontSize: 11, color: GRAY3, fontWeight: 600, marginBottom: 4 }}>REF: {product.referencia || "—"}</div>
@@ -3689,6 +3689,12 @@ export default function App() {
           .oft-tool { padding: 10px 12px; position: static; box-shadow: none; }
           .oft-tool .oft-cat-trigger { min-width: 0; width: 100% !important; max-width: none !important; }
           .oft-pcard { border-radius: 16px; }
+          /* Etiquetas sobre la foto (Nuevo, Original, Pocas unidades...) más chicas en celular para no tapar el producto */
+          .oft-ptag { font-size: 9px !important; padding: 2px 6px !important; border-radius: 7px !important; line-height: 1.25 !important; gap: 3px !important; max-width: 62%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+          .oft-ptag svg { width: 8px !important; height: 8px !important; }
+          .oft-ptag-badge { top: 6px !important; left: 6px !important; }
+          .oft-ptag-stock { top: 6px !important; right: 6px !important; }
+          .oft-ptag-ver { bottom: 6px !important; right: 6px !important; padding: 2px 5px !important; font-size: 8.5px !important; }
           .oft-pcard-name { font-size: 14px; }
           .oft-pcard-total { font-size: 22px; }
           .oft-pcard-add { font-size: 13px; }
