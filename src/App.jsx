@@ -1388,7 +1388,7 @@ function ProductCard({ product }) {
       </div>
       <div className="oft-prod-body" style={{ padding: 16, display: "flex", flexDirection: "column", flex: 1 }}>
         <div style={{ fontSize: 11, color: GRAY3, fontWeight: 600, marginBottom: 4 }}>REF: {product.referencia || "—"}</div>
-        <div className="oft-pcard-name" onClick={() => setQuickView(product)} style={{ marginBottom: 6, cursor: "pointer", height: 40, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{product.nombre}</div>
+        <div className="oft-pcard-name" onClick={() => setQuickView(product)} style={{ marginBottom: 6, cursor: "pointer", overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{product.nombre}</div>
         {coloresDisponibles.length > 0 && (
           <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 8 }}>
             {coloresDisponibles.slice(0, 5).map((c, i) => (
@@ -1400,9 +1400,9 @@ function ProductCard({ product }) {
             {coloresDisponibles.length > 5 && <span style={{ fontSize: 10.5, color: GRAY3, fontWeight: 800, marginLeft: 2 }}>+{coloresDisponibles.length - 5}</span>}
           </div>
         )}
-        <div style={{ fontSize: 13, color: GRAY3, marginBottom: 12, lineHeight: 1.4, height: 36, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{product.descripcion}</div>
-        {/* SELECTOR DE PRESENTACIÓN + CANTIDAD + TOTAL */}
-        <div style={{ marginBottom: 10 }}>
+        {(product.descripcion || "").trim() && <div style={{ fontSize: 13, color: GRAY3, marginBottom: 12, lineHeight: 1.4, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{product.descripcion}</div>}
+        {/* SELECTOR DE PRESENTACIÓN + CANTIDAD + TOTAL (marginTop:auto = se pega al fondo de la tarjeta, sin hueco fijo arriba) */}
+        <div style={{ marginBottom: 10, marginTop: "auto", paddingTop: 4 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: "4px 8px", marginBottom: 10 }}>
             <span style={{ fontSize: 13, fontWeight: 800, paddingBottom: 2 }}>Elige cómo comprar</span>
             <div style={{ textAlign: "right", marginLeft: "auto" }}>
