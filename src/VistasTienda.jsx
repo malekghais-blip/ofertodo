@@ -2,7 +2,7 @@
 import { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { Search, Check, MessageCircle, X, Package, CheckCircle2, MapPin, CreditCard, Truck, Headphones, RefreshCw, ChevronDown, ChevronUp, User, Home, Sparkles, ClipboardList, Lock, Pencil as PencilIcon, Building2, MapPin as MapPinIcon, AlertTriangle } from "lucide-react";
-import { BLACK, GRAY, GRAY2, GRAY3, ORDER_STATUS_ENVIO, ORDER_STATUS_RETIRO, RED, RED_D, S, STATUS_ICONS_ENVIO, STATUS_ICONS_RETIRO, SUPABASE_KEY, SUPABASE_URL, Spinner, StatusBadge, WHITE, idVisitante, registrarEvento, obtenerTokenRecaptcha, trackIniciarCheckout, trackCompra, imagenOptimizada, sb, useApp, prorratearLinea, envioPerfumesAplica, useEnvioPerfumes, stockWeb } from "./shared.jsx";
+import { BLACK, GRAY, GRAY2, GRAY3, ORDER_STATUS_ENVIO, ORDER_STATUS_RETIRO, RED, RED_D, S, STATUS_ICONS_ENVIO, STATUS_ICONS_RETIRO, SUPABASE_KEY, SUPABASE_URL, Spinner, StatusBadge, WHITE, idVisitante, registrarEvento, obtenerTokenRecaptcha, trackIniciarCheckout, trackCompra, imagenOptimizada, sb, useApp, prorratearLinea, envioPerfumesAplica, useEnvioPerfumes, stockWeb, cargarYappyBoton } from "./shared.jsx";
 import { WA_NUMBER, cartItemTotal, cartItemLabel } from "./tiendaComun.jsx";
 
 // ← Tu usuario en el Directorio de Yappy, para que el cliente te pague
@@ -358,6 +358,9 @@ function YappyButton({ pedido, onExito, onCancelar }) {
   const esperandoRef = useRef(false); // evita el cierre obsoleto en handleError
   const [estado, setEstado] = useState("listo"); // listo | enviando | esperando | error
   const [errorMsg, setErrorMsg] = useState("");
+
+  // El script del botón de Yappy se descarga solo cuando de verdad se muestra el botón
+  useEffect(() => { cargarYappyBoton(); }, []);
 
   useEffect(() => {
     const btn = ref.current;
@@ -1136,7 +1139,7 @@ export function CheckoutView() {
                 style={{ border: `2px solid ${empresaId === emp.id ? RED : GRAY2}`, background: empresaId === emp.id ? "#FFF5F5" : WHITE, borderRadius: 10, padding: 14, cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 8, textAlign: "center" }}
               >
                 {emp.logo_url
-                  ? <img src={emp.logo_url} alt={emp.nombre} style={{ height: 36, objectFit: "contain" }} />
+                  ? <img src={emp.logo_url} alt={emp.nombre} loading="lazy" decoding="async" style={{ height: 36, objectFit: "contain" }} />
                   : <Building2 size={30} color={empresaId === emp.id ? RED : GRAY3} strokeWidth={1.6} />
                 }
                 <span style={{ fontWeight: 700, fontSize: 13 }}>{emp.nombre}</span>
@@ -1450,7 +1453,7 @@ export function DashboardView() {
   const entregados = orders.filter(o => o.estado === 3);
 
   // Busca imagen de producto por id
-  const prodImg = (pid) => products.find(p => p.id === pid)?.imagen_url || null;
+  const prodImg = (pid) => { const u = products.find(p => p.id === pid)?.imagen_url; return u ? imagenOptimizada(u, 100) : null; };
 
   // "Comprar otra vez": productos que ya compró antes, del más reciente al más viejo
   // "Tus intereses": otros productos de esas mismas categorías que todavía no ha comprado
@@ -1633,7 +1636,7 @@ export function DashboardView() {
                         const img = prodImg(item.producto_id);
                         return (
                           <div key={i} style={{ width: 44, height: 44, borderRadius: 10, background: GRAY, border: `2px solid ${WHITE}`, marginLeft: i > 0 ? -12 : 0, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", boxShadow: "0 1px 4px rgba(0,0,0,0.1)" }}>
-                            {img ? <img src={img} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <Package size={18} color={GRAY3} />}
+                            {img ? <img src={img} alt="" loading="lazy" decoding="async" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <Package size={18} color={GRAY3} />}
                           </div>
                         );
                       })}
@@ -1668,7 +1671,7 @@ export function DashboardView() {
                           return (
                             <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, background: WHITE, borderRadius: 10, padding: 10, border: `1px solid ${GRAY2}` }}>
                               <div style={{ width: 48, height: 48, borderRadius: 8, background: GRAY, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", flexShrink: 0 }}>
-                                {img ? <img src={img} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <Package size={20} color={GRAY3} />}
+                                {img ? <img src={img} alt="" loading="lazy" decoding="async" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <Package size={20} color={GRAY3} />}
                               </div>
                               <div style={{ flex: 1, minWidth: 0 }}>
                                 <div style={{ fontWeight: 700, fontSize: 14 }}>{item.nombre_producto}</div>
