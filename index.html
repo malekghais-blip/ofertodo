@@ -52,9 +52,9 @@
     }
     </script>
 
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script type="module" src="https://bt-cdn.yappy.cloud/v1/cdn/web-component-btn-yappy.js"></script>
+    <!-- Conexión anticipada a la base de datos/imágenes: ahorra ~100-300 ms en la primera carga.
+         (html2canvas, jsPDF y el botón de Yappy ya no se cargan aquí: se descargan solo cuando se usan) -->
+    <link rel="preconnect" href="https://esezhctdiucwovbvxmou.supabase.co" crossorigin />
   </head>
   <body>
     <div id="root"></div>
