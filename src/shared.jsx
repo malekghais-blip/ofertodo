@@ -887,7 +887,7 @@ function ModalAvisoStock({ aviso, onConfirmar, onCancelar }) {
 // Popup para elegir con qué presentación se agrega un producto al pedido manual --
 // aparece justo al seleccionarlo en la búsqueda, en vez de agregarlo directo con
 // una presentación por defecto que luego hay que cambiar.
-function ModalElegirPresentacion({ producto, onElegir, onCerrar }) {
+export function ModalElegirPresentacion({ producto, onElegir, onCerrar }) {
   useLockBodyScroll();
   const esPerfumeria = producto.modalidad_presentacion === "perfumeria";
   const opciones = [
