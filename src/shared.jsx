@@ -2552,11 +2552,13 @@ const escHtml = (v) => String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt
 
 export function ShippingLabelModal({ order, onClose, onGuiaImpresa }) {
   useLockBodyScroll();
-  const { products } = useApp();
+  const { products, empresas } = useApp();
   const ref = useRef(null);
   const [busy, setBusy] = useState(false);
   const [impresa, setImpresa] = useState(!!order.guia_impresa);
   const [cajas, setCajas] = useState(1); // cuántas cajas/bultos lleva el pedido (una etiqueta por caja)
+  // Empresa que se imprime en la etiqueta de caja: arranca con la del pedido, pero se puede escribir cualquiera (a veces se envía con otra)
+  const [empresaCaja, setEmpresaCaja] = useState(order.retiro_local ? "" : (order.empresa_envio_nombre || ""));
   const fecha = order.created_at ? new Date(order.created_at) : new Date();
 
   // Marca el pedido como "guía ya impresa" -- se llama sola al usar cualquiera de
@@ -2756,7 +2758,7 @@ export function ShippingLabelModal({ order, onClose, onGuiaImpresa }) {
       if (partes.length > 1) { destinoGrande = partes[0]; destinoChico = partes.slice(1).join(" — "); }
       else { destinoGrande = order.direccion || "—"; }
     }
-    const empresa = order.retiro_local ? "RETIRO EN LOCAL" : (order.empresa_envio_nombre || "—");
+    const empresa = empresaCaja.trim() || (order.retiro_local ? "RETIRO EN LOCAL" : (order.empresa_envio_nombre || "—"));
     const tamNombre = tamanoPor(order.nombre_cliente, [[14, 34], [22, 28], [32, 22], [48, 17], [999, 13]]);
     const tamDestino = tamanoPor(destinoGrande, [[14, 30], [24, 24], [36, 19], [60, 15], [999, 12]]);
     const tamEmpresa = tamanoPor(empresa, [[12, 30], [20, 24], [999, 16]]);
@@ -2816,13 +2818,21 @@ export function ShippingLabelModal({ order, onClose, onGuiaImpresa }) {
             <button onClick={printEtiquetaCliente} className="oft-btn-press" style={{ background: BLACK, color: WHITE, border: "none", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}>
               <Truck size={14} /> Etiqueta (rollo 4x6")
             </button>
-            <div style={{ display: "inline-flex", alignItems: "center", gap: 6, border: `1.5px solid ${BLACK}`, borderRadius: 8, padding: "3px 4px 3px 10px", background: WHITE }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", border: `1.5px solid ${BLACK}`, borderRadius: 8, padding: "6px 8px", background: WHITE }}>
+              <label style={{ fontSize: 12, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 5 }} title="Empresa que se imprime en la etiqueta de la caja. Puedes escribir cualquiera.">
+                Empresa
+                <input type="text" list="oft-empresas-caja" value={empresaCaja} onChange={e => setEmpresaCaja(e.target.value)} placeholder="Ej: Servientrega" maxLength={40}
+                  style={{ width: 150, border: `1px solid ${GRAY2}`, borderRadius: 6, padding: "4px 8px", fontSize: 13, fontWeight: 700 }} />
+                <datalist id="oft-empresas-caja">
+                  {(empresas || []).filter(e => e.activa !== false).map(e => <option key={e.id} value={e.nombre} />)}
+                </datalist>
+              </label>
               <label style={{ fontSize: 12, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 5 }} title="Cuántas cajas lleva el pedido: se imprime una etiqueta por caja">
                 Cajas
                 <input type="number" min={1} max={50} value={cajas} onChange={e => setCajas(e.target.value)} onBlur={() => setCajas(c => Math.max(1, Math.min(50, Math.floor(Number(c)) || 1)))}
                   style={{ width: 44, border: `1px solid ${GRAY2}`, borderRadius: 6, padding: "4px 6px", fontSize: 13, fontWeight: 800, textAlign: "center" }} />
               </label>
-              <button onClick={printEtiquetaCaja} className="oft-btn-press" style={{ background: RED, color: WHITE, border: "none", borderRadius: 6, padding: "6px 12px", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <button onClick={printEtiquetaCaja} className="oft-btn-press" style={{ background: RED, color: WHITE, border: "none", borderRadius: 6, padding: "7px 12px", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}>
                 <Package size={14} /> Etiqueta de caja
               </button>
             </div>
