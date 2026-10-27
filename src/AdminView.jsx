@@ -18,7 +18,7 @@ import {
   Spinner, StatusBadge, WHITE, comprimirImagen, estadosDe,
   imagenOptimizada, resolverAreaVenta, sb, useApp, useLockBodyScroll, useRefrescoPeriodico,
   agregarCanvasComoPaginasPdf, ofertaInfo, precioNormalPiezas, piezasDePresentacion, presUnitPrice, idVisitante,
-  normalizarEnvioPerfumes, METODOS_PAGO, BadgeMetodoPago, stockWeb, asegurarLibsPdf,
+  normalizarEnvioPerfumes, METODOS_PAGO, BadgeMetodoPago, stockWeb, asegurarLibsPdf, ModalElegirPresentacion,
 } from "./shared.jsx";
 import { useCambiosEnVivo } from "./clienteEnVivo.jsx";
 
@@ -949,6 +949,7 @@ function StockRankingModal({ tipo, items, itemsSinFiltroNiLimite, proveedores, p
 // ═══════════════════════════════════════════════════════════════
 function EditCotizacionModal({ cotizacion, empresas, sucursales, onClose, onSaved, showToast }) {
   useLockBodyScroll();
+  const { products } = useApp();
   const money = (n) => "$" + Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   // Líneas editables (a partir de los items guardados)
   const [lineas, setLineas] = useState(() => (cotizacion.items || []).map(it => ({
@@ -976,13 +977,34 @@ function EditCotizacionModal({ cotizacion, empresas, sucursales, onClose, onSave
   const setLinea = (idx, campo, val) => setLineas(prev => prev.map((l, i) => i === idx ? { ...l, [campo]: val } : l));
   const quitarLinea = (idx) => setLineas(prev => prev.filter((_, i) => i !== idx));
 
+  // ── Agregar un producto a la cotización ya hecha ──
+  const [busqueda, setBusqueda] = useState("");
+  const [productoParaElegir, setProductoParaElegir] = useState(null);
+  const resultadosBusqueda = busqueda.trim()
+    ? products.filter(p => p.activo !== false && (p.nombre + " " + (p.referencia || "")).toLowerCase().includes(busqueda.trim().toLowerCase())).slice(0, 6)
+    : [];
+  const agregarProducto = (prod, pres) => {
+    const unidades = piezasDePresentacion(prod, pres);
+    setLineas(prev => {
+      // Si ya está el mismo producto con la misma presentación, suma una unidad más en vez de duplicar la línea
+      const i = prev.findIndex(l => l.producto_id === prod.id && l.nueva && l.presentacion === pres);
+      if (i >= 0) return prev.map((l, k) => k === i ? { ...l, cantidad: (Number(l.cantidad) || 0) + unidades } : l);
+      return [...prev, { id: null, nueva: true, producto_id: prod.id, nombre: prod.nombre, cantidad: unidades, precio: presUnitPrice(prod, pres), presentacion: pres, distribucion_tallas: null }];
+    });
+    setBusqueda(""); setProductoParaElegir(null);
+  };
+
   // "cantidad" siempre se guarda en PIEZAS (12 para una docena, 6 para media) pero
   // "precio" es el precio de la presentación COMPLETA (ej. $84 la docena), no por
   // pieza suelta -- por eso no se puede multiplicar cantidad × precio directo para
   // docena/media, o el total sale 12 veces más grande de lo que debería.
-  const unidadesPresentacion = (pres) => pres === "docena" ? 12 : pres === "media" ? 6 : 1;
+  // En perfumería la "docena" son 6 piezas y la "media" 3 (igual que al crear la cotización).
+  const unidadesPresentacion = (pres, productoId) => {
+    const prod = productoId ? products.find(p => p.id === productoId) : null;
+    return prod ? piezasDePresentacion(prod, pres) : (pres === "docena" ? 12 : pres === "media" ? 6 : 1);
+  };
   const subtotalLinea = (l) => {
-    const unidades = unidadesPresentacion(l.presentacion);
+    const unidades = unidadesPresentacion(l.presentacion, l.producto_id);
     return (Number(l.precio) || 0) * ((Number(l.cantidad) || 0) / unidades);
   };
 
@@ -1007,19 +1029,27 @@ function EditCotizacionModal({ cotizacion, empresas, sucursales, onClose, onSave
         sucursal_id: sucursalId, sucursal_nombre: sucursalSel?.nombre || "",
       });
       // 2) Borra los items viejos y crea los nuevos
+      let viejos = [];
       try {
-        const viejos = await sb.get("pedido_items", `?pedido_id=eq.${cotizacion.id}`);
-        for (const v of (viejos || [])) { if (v.id) await sb.delete("pedido_items", v.id); }
+        viejos = (await sb.get("pedido_items", `?pedido_id=eq.${cotizacion.id}`)) || [];
+        for (const v of viejos) { if (v.id) await sb.delete("pedido_items", v.id); }
       } catch(e) {}
       const nuevosItems = [];
-      for (const l of lineas) {
-        const sub = subtotalLinea(l);
-        const creado = await sb.post("pedido_items", {
-          pedido_id: cotizacion.id, producto_id: l.producto_id, nombre_producto: l.nombre,
-          cantidad: Number(l.cantidad) || 0, precio_unitario: Number(l.precio) || 0, subtotal: sub,
-          presentacion: l.presentacion || null, distribucion_tallas: l.distribucion_tallas || null,
-        });
-        if (Array.isArray(creado) && creado[0]) nuevosItems.push(creado[0]);
+      try {
+        for (const l of lineas) {
+          const sub = subtotalLinea(l);
+          const creado = await sb.post("pedido_items", {
+            pedido_id: cotizacion.id, producto_id: l.producto_id, nombre_producto: l.nombre,
+            cantidad: Number(l.cantidad) || 0, precio_unitario: Number(l.precio) || 0, subtotal: sub,
+            presentacion: l.presentacion || null, distribucion_tallas: l.distribucion_tallas || null,
+          });
+          if (Array.isArray(creado) && creado[0]) nuevosItems.push(creado[0]);
+        }
+      } catch(errItems) {
+        // Si algo falla a medias, deja la cotización como estaba (borra lo creado y vuelve a poner las líneas originales)
+        for (const c of nuevosItems) { try { if (c.id) await sb.delete("pedido_items", c.id); } catch(e) {} }
+        for (const v of viejos) { try { const { id, ...resto } = v; await sb.post("pedido_items", resto); } catch(e) {} }
+        throw errItems;
       }
       showToast("Cotización actualizada");
       onSaved({ ...cotizacion, metodo_pago: metodoPago, nombre_cliente: cliente.nombre, telefono: cliente.telefono, direccion: cliente.direccion, notas, total, costo_envio: costoEnvio, empresa_envio_id: empresaId, empresa_envio_nombre: empresaSel?.nombre || "", sucursal_id: sucursalId, sucursal_nombre: sucursalSel?.nombre || "", items: nuevosItems });
@@ -1038,6 +1068,25 @@ function EditCotizacionModal({ cotizacion, empresas, sucursales, onClose, onSave
         <div style={{ padding: 18, maxHeight: "72vh", overflowY: "auto" }}>
           {/* PRODUCTOS */}
           <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 8 }}>Productos</div>
+          {/* Buscador para agregar productos */}
+          <div style={{ position: "relative", marginBottom: 10 }}>
+            <Search size={16} color={GRAY3} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)" }} />
+            <input style={{ ...S.input, paddingLeft: 36, marginBottom: 0 }} placeholder="Agregar producto: busca por nombre o referencia..." value={busqueda} onChange={e => setBusqueda(e.target.value)} />
+            {resultadosBusqueda.length > 0 && (
+              <div style={{ position: "absolute", top: "100%", left: 0, right: 0, background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 10, marginTop: 4, zIndex: 20, boxShadow: "0 8px 24px rgba(0,0,0,0.12)", overflow: "hidden" }}>
+                {resultadosBusqueda.map(p => (
+                  <div key={p.id} onClick={() => setProductoParaElegir(p)} className="oft-cat-chip" style={{ padding: 10, display: "flex", alignItems: "center", gap: 10, cursor: "pointer", borderBottom: `1px solid ${GRAY}` }}>
+                    {p.imagen_url ? <img src={imagenOptimizada(p.imagen_url, 150)} alt="" style={{ width: 36, height: 36, borderRadius: 6, objectFit: "cover" }} /> : <div style={{ width: 36, height: 36, borderRadius: 6, background: GRAY }} />}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 700, fontSize: 13 }}>{p.nombre}</div>
+                      <div style={{ fontSize: 11, color: GRAY3 }}>{p.referencia || "—"} · Docena ${p.precio_docena}</div>
+                    </div>
+                    <Plus size={18} color={RED} />
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
             {lineas.map((l, idx) => (
               <div key={idx} style={{ border: `1px solid ${GRAY2}`, borderRadius: 10, padding: 10 }}>
@@ -1051,7 +1100,7 @@ function EditCotizacionModal({ cotizacion, empresas, sucursales, onClose, onSave
                     <input type="number" min="0" value={l.cantidad} onChange={e => setLinea(idx, "cantidad", e.target.value)} style={{ ...S.input, marginBottom: 0 }} />
                     {(l.presentacion === "docena" || l.presentacion === "media") && (
                       <div style={{ fontSize: 10, color: GRAY3, marginTop: 2 }}>
-                        = {((Number(l.cantidad) || 0) / unidadesPresentacion(l.presentacion)).toFixed(2)} {l.presentacion === "docena" ? "docena(s)" : "media(s) docena"}
+                        = {((Number(l.cantidad) || 0) / unidadesPresentacion(l.presentacion, l.producto_id)).toFixed(2)} {l.presentacion === "docena" ? "docena(s)" : "media(s) docena"}
                       </div>
                     )}
                   </div>
@@ -1140,6 +1189,9 @@ function EditCotizacionModal({ cotizacion, empresas, sucursales, onClose, onSave
           </button>
         </div>
       </div>
+      {productoParaElegir && (
+        <ModalElegirPresentacion producto={productoParaElegir} onCerrar={() => setProductoParaElegir(null)} onElegir={(pres) => agregarProducto(productoParaElegir, pres)} />
+      )}
     </div>
   , document.body);
 }
