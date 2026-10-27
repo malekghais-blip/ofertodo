@@ -2546,12 +2546,17 @@ function InvoiceModal({ invoice, onClose }) {
   , document.body);
 }
 
+// Escapa texto antes de meterlo en el HTML de una etiqueta que se imprime: el nombre y la
+// dirección los escribe el cliente, y NO deben poder colar código dentro del panel.
+const escHtml = (v) => String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+
 export function ShippingLabelModal({ order, onClose, onGuiaImpresa }) {
   useLockBodyScroll();
   const { products } = useApp();
   const ref = useRef(null);
   const [busy, setBusy] = useState(false);
   const [impresa, setImpresa] = useState(!!order.guia_impresa);
+  const [cajas, setCajas] = useState(1); // cuántas cajas/bultos lleva el pedido (una etiqueta por caja)
   const fecha = order.created_at ? new Date(order.created_at) : new Date();
 
   // Marca el pedido como "guía ya impresa" -- se llama sola al usar cualquiera de
@@ -2651,7 +2656,7 @@ export function ShippingLabelModal({ order, onClose, onGuiaImpresa }) {
     document.body.appendChild(iframe);
     const doc = iframe.contentWindow.document;
     doc.open();
-    doc.write(`<html><head><title>Guía ${order.codigo}</title>${estilos}</head><body>${contenido}</body></html>`);
+    doc.write(`<html><head><title>Guía ${escHtml(order.codigo)}</title>${estilos}</head><body>${contenido}</body></html>`);
     doc.close();
     // Esperar a que cargue el contenido (imágenes) antes de imprimir
     const lanzarImpresion = () => {
@@ -2690,24 +2695,24 @@ export function ShippingLabelModal({ order, onClose, onGuiaImpresa }) {
         <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:3px solid #111;padding-bottom:0.1in;margin-bottom:0.14in;flex-shrink:0;">
           <div style="font-size:20pt;font-weight:900;color:#111;">Ofer<span style="background:#E31E24;color:#fff;padding:0 7px;border-radius:4px;">todo</span></div>
           <div style="text-align:right;">
-            <div style="font-size:10pt;font-weight:700;color:#666;">${order.codigo}</div>
+            <div style="font-size:10pt;font-weight:700;color:#666;">${escHtml(order.codigo)}</div>
             <div style="font-size:8pt;color:#999;">${new Date(order.created_at || Date.now()).toLocaleDateString("es-PA")}</div>
           </div>
         </div>
         <div style="background:#111;color:#fff;padding:0.09in 0.13in;border-radius:6px;margin-bottom:0.1in;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-shrink:0;">
           <span style="font-size:9.5pt;font-weight:700;letter-spacing:1px;opacity:0.8;flex-shrink:0;">ENVIAR POR</span>
-          <span style="font-size:${tamEmpresa}pt;font-weight:900;text-align:right;">${order.empresa_envio_nombre || (order.retiro_local ? "RETIRO EN LOCAL" : "—")}</span>
+          <span style="font-size:${tamEmpresa}pt;font-weight:900;text-align:right;">${escHtml(order.empresa_envio_nombre || (order.retiro_local ? "RETIRO EN LOCAL" : "—"))}</span>
         </div>
         ${!order.retiro_local ? `
         <div style="background:${envioPagado ? "#155724" : "#856404"};color:#fff;padding:0.07in 0.13in;border-radius:6px;margin-bottom:0.16in;text-align:center;flex-shrink:0;">
           <span style="font-size:11.5pt;font-weight:900;letter-spacing:0.5px;">${envioPagado ? "✓ ENVÍO PAGADO" : "⚠ COBRAR ENVÍO AL ENTREGAR"}</span>
         </div>` : `<div style="margin-bottom:0.08in;flex-shrink:0;"></div>`}
         <div style="font-size:10.5pt;font-weight:800;color:#999;letter-spacing:1px;margin-bottom:0.06in;flex-shrink:0;">ENVIAR A:</div>
-        <div style="font-size:${tamNombre}pt;font-weight:900;color:#111;line-height:1.15;margin-bottom:0.18in;word-break:break-word;flex-shrink:0;">${order.nombre_cliente || "—"}</div>
+        <div style="font-size:${tamNombre}pt;font-weight:900;color:#111;line-height:1.15;margin-bottom:0.18in;word-break:break-word;flex-shrink:0;">${escHtml(order.nombre_cliente || "—")}</div>
         <div style="font-size:10.5pt;font-weight:800;color:#999;letter-spacing:1px;margin-bottom:0.06in;flex-shrink:0;">TELÉFONO:</div>
-        <div style="font-size:22pt;font-weight:900;color:#111;margin-bottom:0.18in;flex-shrink:0;">${order.telefono || "—"}</div>
+        <div style="font-size:22pt;font-weight:900;color:#111;margin-bottom:0.18in;flex-shrink:0;">${escHtml(order.telefono || "—")}</div>
         <div style="font-size:10.5pt;font-weight:800;color:#999;letter-spacing:1px;margin-bottom:0.06in;flex-shrink:0;">DIRECCIÓN:</div>
-        <div style="font-size:${tamDireccion}pt;font-weight:700;color:#111;line-height:1.32;flex:1;overflow:hidden;word-break:break-word;">${direccionCompleta || "Retiro en local"}</div>
+        <div style="font-size:${tamDireccion}pt;font-weight:700;color:#111;line-height:1.32;flex:1;overflow:hidden;word-break:break-word;">${escHtml(direccionCompleta || "Retiro en local")}</div>
         <div style="border-top:2px solid #ccc;padding-top:0.1in;font-size:9pt;color:#999;text-align:center;flex-shrink:0;">ofertodo.com.pa</div>
       </div>`;
     const estilos = `
@@ -2722,10 +2727,75 @@ export function ShippingLabelModal({ order, onClose, onGuiaImpresa }) {
     document.body.appendChild(iframe);
     const doc = iframe.contentWindow.document;
     doc.open();
-    doc.write(`<html><head><title>Etiqueta ${order.codigo}</title>${estilos}</head><body>${contenido}</body></html>`);
+    doc.write(`<html><head><title>Etiqueta ${escHtml(order.codigo)}</title>${estilos}</head><body>${contenido}</body></html>`);
     doc.close();
     setTimeout(() => {
       try { iframe.contentWindow.focus(); iframe.contentWindow.print(); marcarComoImpresa(); } catch(e) {}
+      setTimeout(() => { try { document.body.removeChild(iframe); } catch(e) {} }, 1000);
+    }, 400);
+  };
+
+  // Etiqueta para pegar en cada CAJA / bulto (rollo 4x6"): marca, cliente, destino y empresa de envío,
+  // todo en letra grande para leerlo de lejos. Imprime una etiqueta por caja ("CAJA 2 de 3").
+  // No marca la guía como impresa: esa marca es de la guía interna / etiqueta de cliente.
+  const printEtiquetaCaja = () => {
+    const n = Math.max(1, Math.min(50, Math.floor(Number(cajas)) || 1));
+    const tamanoPor = (texto, umbrales) => {
+      const largo = (texto || "").length;
+      for (const [max, tam] of umbrales) if (largo <= max) return tam;
+      return umbrales[umbrales.length - 1][1];
+    };
+    // DESTINO: sucursal si va a sucursal; si es puerta a puerta, la provincia (lo que va antes de " — ") y la dirección debajo.
+    let destinoGrande = "", destinoChico = "";
+    if (order.retiro_local) {
+      destinoGrande = "RETIRO EN LOCAL"; destinoChico = order.local_retiro_nombre || "";
+    } else if (order.sucursal_nombre) {
+      destinoGrande = order.sucursal_nombre; destinoChico = order.direccion || "";
+    } else {
+      const partes = String(order.direccion || "").split(" — ");
+      if (partes.length > 1) { destinoGrande = partes[0]; destinoChico = partes.slice(1).join(" — "); }
+      else { destinoGrande = order.direccion || "—"; }
+    }
+    const empresa = order.retiro_local ? "RETIRO EN LOCAL" : (order.empresa_envio_nombre || "—");
+    const tamNombre = tamanoPor(order.nombre_cliente, [[14, 34], [22, 28], [32, 22], [48, 17], [999, 13]]);
+    const tamDestino = tamanoPor(destinoGrande, [[14, 30], [24, 24], [36, 19], [60, 15], [999, 12]]);
+    const tamEmpresa = tamanoPor(empresa, [[12, 30], [20, 24], [999, 16]]);
+    const una = (i) => `
+      <div style="width:4in;height:6in;box-sizing:border-box;padding:0.3in;display:flex;flex-direction:column;font-family:Helvetica,Arial,sans-serif;overflow:hidden;page-break-after:${i < n ? "always" : "auto"};break-after:${i < n ? "page" : "auto"};">
+        <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:4px solid #111;padding-bottom:0.12in;margin-bottom:0.2in;flex-shrink:0;">
+          <div style="font-size:30pt;font-weight:900;color:#111;letter-spacing:-1px;">Ofer<span style="background:#E31E24;color:#fff;padding:0 9px;border-radius:5px;margin-left:2px;">todo</span></div>
+          <div style="text-align:right;">
+            <div style="font-size:10pt;font-weight:700;color:#666;">${escHtml(order.codigo)}</div>
+            ${n > 1 ? `<div style="font-size:14pt;font-weight:900;color:#111;margin-top:2px;">CAJA ${i} de ${n}</div>` : ""}
+          </div>
+        </div>
+        <div style="font-size:10.5pt;font-weight:800;color:#999;letter-spacing:1px;margin-bottom:0.05in;flex-shrink:0;">CLIENTE</div>
+        <div style="font-size:${tamNombre}pt;font-weight:900;color:#111;line-height:1.12;margin-bottom:0.24in;word-break:break-word;flex-shrink:0;">${escHtml(order.nombre_cliente || "—")}</div>
+        <div style="font-size:10.5pt;font-weight:800;color:#999;letter-spacing:1px;margin-bottom:0.05in;flex-shrink:0;">DESTINO</div>
+        <div style="font-size:${tamDestino}pt;font-weight:900;color:#111;line-height:1.15;word-break:break-word;flex-shrink:0;">${escHtml(destinoGrande)}</div>
+        ${destinoChico ? `<div style="font-size:11pt;font-weight:600;color:#444;line-height:1.3;margin-top:0.07in;overflow:hidden;word-break:break-word;flex:1;">${escHtml(destinoChico)}</div>` : `<div style="flex:1;"></div>`}
+        <div style="background:#111;color:#fff;border-radius:8px;padding:0.14in 0.18in;text-align:center;flex-shrink:0;">
+          <div style="font-size:9.5pt;font-weight:700;letter-spacing:1.5px;opacity:0.8;">ENVIAR POR</div>
+          <div style="font-size:${tamEmpresa}pt;font-weight:900;line-height:1.1;margin-top:2px;">${escHtml(empresa)}</div>
+        </div>
+      </div>`;
+    const contenido = Array.from({ length: n }, (_, k) => una(k + 1)).join("");
+    const estilos = `
+      <style>
+        * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; box-sizing: border-box; }
+        @page { size: 4in 6in; margin: 0; }
+        html, body { margin: 0; padding: 0; background: #ffffff; width: 4in; }
+      </style>`;
+    const iframe = document.createElement("iframe");
+    iframe.style.position = "fixed"; iframe.style.right = "0"; iframe.style.bottom = "0";
+    iframe.style.width = "0"; iframe.style.height = "0"; iframe.style.border = "0";
+    document.body.appendChild(iframe);
+    const doc = iframe.contentWindow.document;
+    doc.open();
+    doc.write(`<html><head><title>Etiqueta de caja ${escHtml(order.codigo)}</title>${estilos}</head><body>${contenido}</body></html>`);
+    doc.close();
+    setTimeout(() => {
+      try { iframe.contentWindow.focus(); iframe.contentWindow.print(); } catch(e) {}
       setTimeout(() => { try { document.body.removeChild(iframe); } catch(e) {} }, 1000);
     }, 400);
   };
@@ -2746,6 +2816,16 @@ export function ShippingLabelModal({ order, onClose, onGuiaImpresa }) {
             <button onClick={printEtiquetaCliente} className="oft-btn-press" style={{ background: BLACK, color: WHITE, border: "none", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}>
               <Truck size={14} /> Etiqueta (rollo 4x6")
             </button>
+            <div style={{ display: "inline-flex", alignItems: "center", gap: 6, border: `1.5px solid ${BLACK}`, borderRadius: 8, padding: "3px 4px 3px 10px", background: WHITE }}>
+              <label style={{ fontSize: 12, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 5 }} title="Cuántas cajas lleva el pedido: se imprime una etiqueta por caja">
+                Cajas
+                <input type="number" min={1} max={50} value={cajas} onChange={e => setCajas(e.target.value)} onBlur={() => setCajas(c => Math.max(1, Math.min(50, Math.floor(Number(c)) || 1)))}
+                  style={{ width: 44, border: `1px solid ${GRAY2}`, borderRadius: 6, padding: "4px 6px", fontSize: 13, fontWeight: 800, textAlign: "center" }} />
+              </label>
+              <button onClick={printEtiquetaCaja} className="oft-btn-press" style={{ background: RED, color: WHITE, border: "none", borderRadius: 6, padding: "6px 12px", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}>
+                <Package size={14} /> Etiqueta de caja
+              </button>
+            </div>
             <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", display: "flex", padding: 4 }}><X size={22} /></button>
           </div>
         </div>
