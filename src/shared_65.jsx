@@ -1,0 +1,3518 @@
+import { useState, useEffect, useRef, useContext, createContext, Fragment } from "react";
+import { createPortal } from "react-dom";
+import {
+  ShoppingCart, Search, Trash2, MessageCircle, X, Package, CheckCircle2,
+  MapPin, CreditCard, LayoutGrid, FolderOpen, Tag, Truck, Headphones,
+  Plus, Pencil, Upload, RefreshCw, ChevronDown, ChevronUp, LogOut, User, Home,
+  Shirt, Footprints, Watch, Sparkles, ClipboardList, Image as ImageIcon,
+  FileSpreadsheet, FolderPlus, Zap, Lock, Users, BarChart3, DollarSign,
+  TrendingUp, Wallet, ShoppingBag, Pencil as PencilIcon, Save,
+  Building2, MapPin as MapPinIcon, Send, FilePlus, Download, FileText, Receipt,
+  Calendar as CalendarIcon, Eye, EyeOff, Share2, AlertTriangle, ChevronRight,
+  Citrus, Flower2, Flower, Cherry, TreePine, Trees, Feather, Flame, Sun,
+  Droplets, Leaf, Cookie, Coffee, CloudFog, Wind, Shield,
+} from "lucide-react";
+
+// ═══════════════════════════════════════════════════════════════
+//  ARCHIVO COMPARTIDO — piezas que usan TANTO App.jsx (la tienda,
+//  para el cliente) COMO AdminView.jsx (el panel de administrador).
+//  Vive separado de los dos para que ninguno dependa directamente
+//  del otro (evita el problema de "dependencia circular").
+// ═══════════════════════════════════════════════════════════════
+
+export const SUPABASE_URL = "https://esezhctdiucwovbvxmou.supabase.co";  // ← Cambia esto
+// Site Key de reCAPTCHA v3 -- esta SÍ es pública, va en el navegador de todos (a
+// diferencia de la Secret Key, que solo vive en Supabase y nunca sale de ahí).
+export const RECAPTCHA_SITE_KEY = "6Lc3L4YtAAAAAH6ljusZwZJ9itAforC5p-RAYii3";
+
+const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVzZXpoY3RkaXVjd292YnZ4bW91Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODExMDY0NjgsImV4cCI6MjA5NjY4MjQ2OH0.5u--RCUEWH6hBrH0EFnmW1hZhuVjzqMbJax1qQh7zNo";                  // ← Cambia esto
+
+// Respaldo del "en vivo": corre "fn" cada cierto tiempo (solo con la pestaña a
+// la vista) y al instante cuando se vuelve a la pestaña o regresa el internet.
+// Así la pantalla se actualiza aunque el canal en vivo se haya caído.
+export function useRefrescoPeriodico(fn, ms, activo = true) {
+  const ref = useRef(fn);
+  ref.current = fn;
+  useEffect(() => {
+    if (!activo) return;
+    const correr = () => { if (!document.hidden) ref.current(); };
+    const t = setInterval(correr, ms);
+    document.addEventListener("visibilitychange", correr);
+    window.addEventListener("focus", correr);
+    window.addEventListener("online", correr);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener("visibilitychange", correr);
+      window.removeEventListener("focus", correr);
+      window.removeEventListener("online", correr);
+    };
+  }, [ms, activo]);
+}
+
+export const sb = {
+  // Sesión del usuario logueado (se llena con setSession al iniciar sesión o al restaurar
+  // desde localStorage). Mientras no haya sesión, se usa la llave pública (anon) normal.
+  session: null,
+
+  setSession(s) {
+    if (!s || !s.access_token) { this.session = null; return; }
+    this.session = {
+      access_token: s.access_token,
+      refresh_token: s.refresh_token || null,
+      // expires_at viene en segundos-epoch desde Supabase; si solo viene expires_in, lo calculamos
+      expires_at: s.expires_at || (s.expires_in ? Math.floor(Date.now() / 1000) + Number(s.expires_in) : null),
+    };
+  },
+  clearSession() { this.session = null; },
+
+  // Antes de cada petición, si el token está por vencer (o ya venció), lo renueva
+  // usando el refresh_token. Si algo falla, sigue con lo que haya (nunca rompe la petición).
+  async ensureFreshToken() {
+    if (!this.session || !this.session.refresh_token) return;
+    const margenSeg = 60;
+    const ahora = Math.floor(Date.now() / 1000);
+    if (this.session.expires_at && this.session.expires_at - ahora > margenSeg) return;
+    try {
+      const r = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
+        method: "POST",
+        headers: { "apikey": SUPABASE_KEY, "Content-Type": "application/json" },
+        body: JSON.stringify({ refresh_token: this.session.refresh_token }),
+      });
+      const data = await r.json();
+      if (data.access_token) {
+        this.setSession(data);
+        // Actualiza también lo guardado en localStorage para que sobreviva un refresh de página
+        try {
+          const stored = JSON.parse(localStorage.getItem("oft_user") || "null");
+          if (stored) {
+            stored.token = data.access_token;
+            stored.refresh_token = data.refresh_token || stored.refresh_token;
+            stored.expires_at = this.session.expires_at;
+            localStorage.setItem("oft_user", JSON.stringify(stored));
+          }
+        } catch(e) {}
+      }
+    } catch(e) { /* si falla la renovación, se sigue con el token anterior */ }
+  },
+
+  // Headers para peticiones de datos: usan el token de la persona logueada si existe
+  // Y todavía es válido, o la llave pública (anon) si nadie ha iniciado sesión O si el
+  // token venció y por algún motivo no se pudo renovar (ensureFreshToken ya lo intentó
+  // antes de esto, pero si esa renovación falló, aquí es donde se evita mandar un token
+  // vencido -- mandarlo hace que Supabase rechace la petición por completo).
+  dataHeaders() {
+    const ahora = Math.floor(Date.now() / 1000);
+    const tokenSigueValido = this.session?.access_token && this.session.expires_at && this.session.expires_at > ahora;
+    const token = tokenSigueValido ? this.session.access_token : SUPABASE_KEY;
+    return { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${token}`, "Content-Type": "application/json", "Prefer": "return=representation" };
+  },
+  // Headers para llamar Edge Functions (Odoo, crear equipo, etc.) — igual que dataHeaders
+  // pero SIN "Prefer", que es un header solo para tablas (PostgREST) y que las Edge Functions
+  // no permiten en su configuración CORS — mandarlo hace que el navegador bloquee la petición.
+  functionHeaders() {
+    const ahora = Math.floor(Date.now() / 1000);
+    const tokenSigueValido = this.session?.access_token && this.session.expires_at && this.session.expires_at > ahora;
+    const token = tokenSigueValido ? this.session.access_token : SUPABASE_KEY;
+    return { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${token}`, "Content-Type": "application/json" };
+  },
+  // Headers para login/registro: siempre con la llave pública (antes de tener sesión propia)
+  authHeaders() {
+    return { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Content-Type": "application/json" };
+  },
+
+  url: (table, query = "") => `${SUPABASE_URL}/rest/v1/${table}${query}`,
+
+  async get(table, query = "") {
+    await this.ensureFreshToken();
+    const r = await fetch(this.url(table, query), { headers: this.dataHeaders() });
+    if (!r.ok) throw new Error(await r.text());
+    return r.json();
+  },
+  // Como sb.get(), pero trae TODAS las filas que hagan falta, sin importar cuántas
+  // sean -- Supabase nunca regresa más de 1000 filas por petición aunque se le pida
+  // "limit=8000" en la URL (lo ignora en silencio), así que para tablas grandes
+  // (como eventos_analytics) hay que pedir por bloques de 1000 hasta completar el
+  // total real. "query" no debe traer su propio &limit=, este método pone el suyo.
+  async getTodo(table, query = "", maxFilas = 20000) {
+    await this.ensureFreshToken();
+    const TAMANO_BLOQUE = 1000;
+    let desde = 0, todas = [], total = Infinity;
+    while (desde < total && todas.length < maxFilas) {
+      const r = await fetch(this.url(table, query), {
+        headers: {
+          ...this.dataHeaders(),
+          Range: `${desde}-${desde + TAMANO_BLOQUE - 1}`,
+          // "count=exact" es indispensable -- sin esto, Supabase regresa el total
+          // como "*" (desconocido) en vez del número real, y sin saber cuántas
+          // filas hay en total, no hay forma de saber cuándo parar de pedir más
+          // páginas -- se quedaba cortando después del primer bloque de 1000, el
+          // mismo problema de siempre, con un arreglo que nunca llegaba a aplicarse.
+          Prefer: "count=exact",
+        },
+      });
+      if (!r.ok) throw new Error(await r.text());
+      const bloque = await r.json();
+      todas = todas.concat(bloque);
+      const contentRange = r.headers.get("content-range"); // ej. "0-999/3456"
+      const totalReportado = contentRange ? Number(contentRange.split("/")[1]) : NaN;
+      total = isNaN(totalReportado) ? todas.length : totalReportado; // si no viene el header, se corta aquí
+      desde += TAMANO_BLOQUE;
+      if (bloque.length < TAMANO_BLOQUE) break; // último bloque, ya no hay más
+    }
+    return todas;
+  },
+  async post(table, body) {
+    await this.ensureFreshToken();
+    const r = await fetch(this.url(table), { method: "POST", headers: this.dataHeaders(), body: JSON.stringify(body) });
+    if (!r.ok) throw new Error(await r.text());
+    return r.json();
+  },
+  async patch(table, id, body) {
+    // SEGURIDAD: nunca permitir un PATCH sin id válido (evita editar TODA la tabla)
+    if (id === undefined || id === null || id === "") {
+      throw new Error("patch: id inválido, operación cancelada por seguridad");
+    }
+    await this.ensureFreshToken();
+    const r = await fetch(this.url(table, `?id=eq.${encodeURIComponent(id)}`), { method: "PATCH", headers: this.dataHeaders(), body: JSON.stringify(body) });
+    if (!r.ok) throw new Error(await r.text());
+    return r.json();
+  },
+  async delete(table, id) {
+    // SEGURIDAD: nunca permitir un DELETE sin id válido (evita borrar TODA la tabla)
+    if (id === undefined || id === null || id === "") {
+      throw new Error("delete: id inválido, operación cancelada por seguridad");
+    }
+    await this.ensureFreshToken();
+    const r = await fetch(this.url(table, `?id=eq.${encodeURIComponent(id)}`), { method: "DELETE", headers: this.dataHeaders() });
+    if (!r.ok) throw new Error(await r.text());
+    return true;
+  },
+  // Auth
+  async signUp(email, password, meta) {
+    const r = await fetch(`${SUPABASE_URL}/auth/v1/signup`, { method: "POST", headers: this.authHeaders(), body: JSON.stringify({ email, password, data: meta }) });
+    return r.json();
+  },
+  async signIn(email, password) {
+    const r = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, { method: "POST", headers: this.authHeaders(), body: JSON.stringify({ email, password }) });
+    return r.json();
+  },
+  // Manda un correo con un link para restablecer la contraseña (el cliente la olvidó
+  // y no puede iniciar sesión). Supabase decide si el correo existe o no -- por
+  // seguridad, siempre responde "enviado" igual, para no revelar qué correos existen.
+  async recoverPassword(email) {
+    // redirect_to va como parámetro en la URL (no en el body) -- así el link del
+    // correo regresa al dominio desde el que se pidió, sin depender de que la
+    // configuración general de Supabase tenga el dominio correcto puesto.
+    const redirectTo = typeof window !== "undefined" ? encodeURIComponent(window.location.origin) : "";
+    await fetch(`${SUPABASE_URL}/auth/v1/recover${redirectTo ? `?redirect_to=${redirectTo}` : ""}`, {
+      method: "POST", headers: this.authHeaders(), body: JSON.stringify({ email }),
+    });
+    return true;
+  },
+  // Cambia la contraseña. Si viene "tokenRecuperacion" (del link del correo, cuando
+  // el cliente todavía no puede iniciar sesión normal), se usa ese; si no, se usa la
+  // sesión actual (cliente que ya inició sesión y solo quiere cambiarla desde Mi Cuenta).
+  async updatePassword(nuevaPassword, tokenRecuperacion) {
+    const token = tokenRecuperacion || this.session?.access_token;
+    if (!token) return { ok: false, error: "No hay sesión activa" };
+    const r = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+      method: "PUT",
+      headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ password: nuevaPassword }),
+    });
+    const data = await r.json();
+    return { ok: r.ok, data };
+  },
+  // Inicia sesión con Google (OAuth). Redirige a Google y vuelve a la app.
+  async signInWithGoogle() {
+    // PKCE: generamos un verificador y su reto (challenge) para un login seguro
+    const rand = (len) => {
+      const arr = new Uint8Array(len); crypto.getRandomValues(arr);
+      return btoa(String.fromCharCode(...arr)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    };
+    const verifier = rand(64);
+    localStorage.setItem("oft_pkce_verifier", verifier);
+    // challenge = base64url( SHA-256(verifier) )
+    const data = new TextEncoder().encode(verifier);
+    const digest = await crypto.subtle.digest("SHA-256", data);
+    const challenge = btoa(String.fromCharCode(...new Uint8Array(digest))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    const redirectTo = encodeURIComponent(window.location.origin);
+    window.location.href = `${SUPABASE_URL}/auth/v1/authorize?provider=google&redirect_to=${redirectTo}&code_challenge=${challenge}&code_challenge_method=s256`;
+  },
+  // ── MFA / Verificación en dos pasos (TOTP tipo Google Authenticator) ──
+  mfaHeaders() {
+    return { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${this.session?.access_token || SUPABASE_KEY}`, "Content-Type": "application/json" };
+  },
+  async mfaListFactors() {
+    // Endpoint dedicado para listar factores — más confiable que asumir
+    // que vienen incluidos dentro de la respuesta de /auth/v1/user.
+    // Como respaldo, si no devuelve nada usable, se intenta también por /auth/v1/user
+    // (algunas versiones de Supabase los incluyen ahí en vez de en el endpoint dedicado).
+    try {
+      const r = await fetch(`${SUPABASE_URL}/auth/v1/factors`, { headers: this.mfaHeaders() });
+      if (r.ok) {
+        const data = await r.json();
+        const lista = Array.isArray(data) ? data : (data?.factors || []);
+        if (lista.length > 0) return lista.filter(f => f.factor_type === "totp");
+      }
+    } catch(e) {}
+    try {
+      const r2 = await fetch(`${SUPABASE_URL}/auth/v1/user`, { headers: this.mfaHeaders() });
+      const data2 = await r2.json();
+      return (data2?.factors || []).filter(f => f.factor_type === "totp");
+    } catch(e) { return []; }
+  },
+  async mfaEnroll() {
+    const r = await fetch(`${SUPABASE_URL}/auth/v1/factors`, {
+      method: "POST", headers: this.mfaHeaders(),
+      body: JSON.stringify({ factor_type: "totp", friendly_name: "Autenticador" }),
+    });
+    return r.json(); // { id, totp: { qr_code, secret, uri } }
+  },
+  async mfaChallenge(factorId) {
+    const r = await fetch(`${SUPABASE_URL}/auth/v1/factors/${factorId}/challenge`, { method: "POST", headers: this.mfaHeaders() });
+    return r.json(); // { id, expires_at }
+  },
+  async mfaVerify(factorId, challengeId, code) {
+    const r = await fetch(`${SUPABASE_URL}/auth/v1/factors/${factorId}/verify`, {
+      method: "POST", headers: this.mfaHeaders(),
+      body: JSON.stringify({ challenge_id: challengeId, code }),
+    });
+    return r.json(); // éxito: { access_token, refresh_token, ... } sesión nueva ya con 2do factor confirmado
+  },
+  async mfaUnenroll(factorId) {
+    const r = await fetch(`${SUPABASE_URL}/auth/v1/factors/${factorId}`, { method: "DELETE", headers: this.mfaHeaders() });
+    return r.json();
+  },
+  // Storage
+  uploadUrl(bucket, path) { return `${SUPABASE_URL}/storage/v1/object/${bucket}/${path}`; },
+  publicUrl(bucket, path) { return `${SUPABASE_URL}/storage/v1/object/public/${bucket}/${path}`; },
+  async upload(bucket, path, file) {
+    // Faltaba esto -- a diferencia de get/post/patch, upload() nunca revisaba si la
+    // sesión ya había vencido antes de mandar la petición. Si el token expiró (ej.
+    // llevas un rato con el panel abierto), Supabase rechaza la subida con "exp
+    // claim timestamp check failed" -- por eso las imágenes no se subían.
+    await this.ensureFreshToken();
+    const r = await fetch(this.uploadUrl(bucket, path), {
+      method: "POST",
+      headers: {
+        "apikey": SUPABASE_KEY,
+        "Authorization": `Bearer ${this.session?.access_token || SUPABASE_KEY}`,
+        "Content-Type": file.type || "application/octet-stream",
+        "x-upsert": "true",
+        "cache-control": "3600",
+      },
+      body: file,
+    });
+    if (!r.ok) {
+      const errText = await r.text();
+      throw new Error(`Error subiendo imagen: ${errText}`);
+    }
+    return r.json();
+  }
+};
+
+export const RED = "#E31E24", RED_D = "#B01519", BLACK = "#111", GRAY = "#F5F5F5", GRAY2 = "#E0E0E0", GRAY3 = "#9E9E9E", WHITE = "#FFFFFF";
+
+// Catálogo de notas de fragancia para perfumes -- cada una con su ícono y color,
+// para mostrarlas en la página del producto de forma visual, no solo como texto.
+export const NOTAS_FRAGANCIA = [
+  { nombre: "Cítricos", icono: Citrus, color: "#F59E0B" },
+  { nombre: "Floral", icono: Flower2, color: "#EC4899" },
+  { nombre: "Rosa", icono: Flower, color: "#F472B6" },
+  { nombre: "Frutal", icono: Cherry, color: "#EF4444" },
+  { nombre: "Vainilla", icono: Cookie, color: "#D97706" },
+  { nombre: "Dulce/Oriental", icono: Sparkles, color: "#C026D3" },
+  { nombre: "Amaderado", icono: TreePine, color: "#78350F" },
+  { nombre: "Sándalo", icono: Trees, color: "#92400E" },
+  { nombre: "Almizcle", icono: Feather, color: "#78716C" },
+  { nombre: "Cuero", icono: Shield, color: "#57534E" },
+  { nombre: "Especiado", icono: Flame, color: "#DC2626" },
+  { nombre: "Ámbar", icono: Sun, color: "#D97706" },
+  { nombre: "Marino/Acuático", icono: Droplets, color: "#0EA5E9" },
+  { nombre: "Fresco", icono: Wind, color: "#38BDF8" },
+  { nombre: "Verde/Herbal", icono: Leaf, color: "#16A34A" },
+  { nombre: "Café", icono: Coffee, color: "#6F4E37" },
+  { nombre: "Polvorado", icono: CloudFog, color: "#94A3B8" },
+];
+// Busca una nota por nombre (sin importar mayúsculas) -- si no la encuentra
+// (ej. quedó guardada de una versión vieja del catálogo), usa un ícono genérico.
+export function notaFragancia(nombre) {
+  return NOTAS_FRAGANCIA.find(n => n.nombre.toLowerCase() === (nombre || "").trim().toLowerCase())
+    || { nombre, icono: Sparkles, color: GRAY3 };
+}
+
+const AppCtx = createContext(null);
+
+export const useApp = () => useContext(AppCtx);
+
+export function useLockBodyScroll() {
+  useEffect(() => {
+    const original = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = original; };
+  }, []);
+}
+
+const ORDER_STATUS_ENVIO = ["Pedido realizado", "Empacando pedido...", "Listo para envío", "Pedido enviado"];
+
+const ORDER_STATUS_RETIRO = ["Pedido realizado", "Empacando pedido...", "Pedido listo para retiro", "Pedido retirado"];
+
+export function estadosDe(order) { return order?.retiro_local ? ORDER_STATUS_RETIRO : ORDER_STATUS_ENVIO; }
+
+const STATUS_COLORS = [
+  { bg: GRAY2, color: BLACK },
+  { bg: "#FFF3CD", color: "#856404" },
+  { bg: "#D4EDDA", color: "#155724" },
+  { bg: "#CCE5FF", color: "#004085" },
+];
+
+const STATUS_ICONS_ENVIO = [ClipboardList, RefreshCw, Package, Truck];
+
+const STATUS_ICONS_RETIRO = [ClipboardList, RefreshCw, Package, CheckCircle2];
+
+export function CategoryIcon({ cat, name, size = 28, color = RED }) {
+  // Si recibe un objeto categoría con icono_url, muestra la imagen
+  const iconoUrl = cat?.icono_url;
+  if (iconoUrl) {
+    return <img src={iconoUrl} alt={cat?.nombre || name} style={{ width: size, height: size, objectFit: "contain", borderRadius: 6 }} />;
+  }
+  const n = (cat?.nombre || name || "").toLowerCase();
+  let Icon = Tag;
+  if (n.includes("jean") && n.includes("hombre")) Icon = Shirt;
+  else if (n.includes("jean")) Icon = Shirt;
+  else if (n.includes("polo") || n.includes("camisa")) Icon = Shirt;
+  else if (n.includes("calzado") || n.includes("sandalia") || n.includes("chancla") || n.includes("zapato")) Icon = Footprints;
+  else if (n.includes("accesorio")) Icon = Watch;
+  return <Icon size={size} color={color} strokeWidth={1.8} />;
+}
+
+export const S = {
+  app: { fontFamily: "Helvetica, Arial, sans-serif", background: WHITE, color: BLACK, minHeight: "100vh" },
+  nav: { background: WHITE, borderBottom: `2px solid ${RED}`, padding: "0 24px", display: "flex", alignItems: "center", justifyContent: "space-between", height: 60, position: "sticky", top: 0, zIndex: 100, boxShadow: "0 2px 8px rgba(0,0,0,0.08)" },
+  btnRed: { background: RED, color: WHITE, border: "none", borderRadius: 8, padding: "10px 20px", fontWeight: 700, fontSize: 14, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6, transition: "background 0.2s" },
+  btnBlack: { background: BLACK, color: WHITE, border: "none", borderRadius: 8, padding: "10px 20px", fontWeight: 700, fontSize: 14, cursor: "pointer" },
+  btnOutline: { background: "transparent", color: RED, border: `2px solid ${RED}`, borderRadius: 8, padding: "8px 18px", fontWeight: 700, fontSize: 14, cursor: "pointer" },
+  btnWA: { background: "#25D366", color: WHITE, border: "none", borderRadius: 8, padding: "10px 16px", fontWeight: 700, fontSize: 13, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 },
+  input: { width: "100%", border: `1.5px solid ${GRAY2}`, borderRadius: 8, padding: "10px 14px", fontSize: 14, fontFamily: "inherit", outline: "none", boxSizing: "border-box", marginBottom: 14 },
+  label: { fontSize: 13, fontWeight: 600, color: BLACK, display: "block", marginBottom: 6 },
+  overlay: { position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 },
+  modal: { background: WHITE, borderRadius: 20, padding: 32, width: "100%", maxWidth: 480, maxHeight: "90vh", overflowY: "auto" },
+  section: { padding: "48px 24px", maxWidth: 1200, margin: "0 auto" },
+  sectionTitle: { fontSize: 22, fontWeight: 800, marginBottom: 24 },
+  prodGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 20, alignItems: "stretch" },
+  prodCard: { background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 16, overflow: "hidden", boxShadow: "0 2px 8px rgba(0,0,0,0.04)", minWidth: 0, width: "100%", display: "flex", flexDirection: "column", height: "100%" },
+  priceTable: { background: GRAY, borderRadius: 8, padding: "10px 12px", marginBottom: 14 },
+  priceRow: { display: "flex", justifyContent: "space-between", fontSize: 13, padding: "3px 0" },
+  table: { width: "100%", borderCollapse: "collapse", background: WHITE, borderRadius: 12, overflow: "hidden" },
+  th: { background: BLACK, color: WHITE, padding: "12px 16px", textAlign: "left", fontSize: 13, fontWeight: 700 },
+  td: { padding: "12px 16px", fontSize: 13, borderBottom: `1px solid ${GRAY2}` },
+  statCard: { background: WHITE, borderRadius: 12, padding: "20px 24px", flex: 1, minWidth: 140, border: `1px solid ${GRAY2}` },
+  toast: { position: "fixed", top: 76, left: "50%", transform: "translateX(-50%)", background: BLACK, color: WHITE, padding: "10px 16px", borderRadius: 24, fontWeight: 600, fontSize: 13, zIndex: 999, boxShadow: "0 4px 20px rgba(0,0,0,0.3)", maxWidth: "88vw", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
+  spinner: { border: `3px solid ${GRAY2}`, borderTop: `3px solid ${RED}`, borderRadius: "50%", width: 32, height: 32, animation: "spin 0.8s linear infinite", margin: "60px auto" },
+};
+
+const LOGO_URL = "https://esezhctdiucwovbvxmou.supabase.co/storage/v1/object/public/brand/ESTE.png";
+
+export function Logo({ onClick, height = 28 }) {
+  return (
+    <div onClick={onClick} style={{ display: "flex", alignItems: "center", cursor: onClick ? "pointer" : "default" }}>
+      <img src={LOGO_URL} alt="Ofertodo" style={{ height: height, width: "auto", objectFit: "contain" }} />
+    </div>
+  );
+}
+
+export function Spinner() {
+  return (
+    <div style={{ textAlign: "center", padding: 60 }}>
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      <div style={S.spinner} />
+      <p style={{ color: GRAY3, marginTop: 12 }}>Cargando...</p>
+    </div>
+  );
+}
+
+export function StatusBadge({ index, retiro = false }) {
+  const s = STATUS_COLORS[index] || STATUS_COLORS[0];
+  const iconos = retiro ? STATUS_ICONS_RETIRO : STATUS_ICONS_ENVIO;
+  const etiquetas = retiro ? ORDER_STATUS_RETIRO : ORDER_STATUS_ENVIO;
+  const Icon = iconos[index] || ClipboardList;
+  return (
+    <span style={{ background: s.bg, color: s.color, padding: "4px 10px", borderRadius: 20, fontSize: 12, fontWeight: 700, whiteSpace: "nowrap", display: "inline-flex", alignItems: "center", gap: 5 }}>
+      <Icon size={13} strokeWidth={2.2} /> {etiquetas[index]}
+    </span>
+  );
+}
+
+const PRES_PIEZAS = { pieza: 1, media: 6, docena: 12 };
+// Modalidad nueva para productos costosos que se venden distinto (perfumes,
+// por ejemplo): en vez de Media Docena/Docena (6/12), usa 3 Piezas/6 Piezas.
+// Los productos existentes no se tocan -- siguen en 'estandar' por defecto.
+const PRES_PIEZAS_PERFUMERIA = { pieza: 1, media: 3, docena: 6 };
+
+function presLabelPlural(pres, count, producto = null) {
+  if (producto?.modalidad_presentacion === "perfumeria") {
+    if (pres === "pieza") return count === 1 ? "pieza" : "piezas";
+    if (pres === "media") return "3 piezas";
+    return "6 piezas";
+  }
+  if (pres === "pieza") return count === 1 ? "pieza" : "piezas";
+  if (pres === "media") return count === 1 ? "½ docena" : "½ docenas";
+  return count === 1 ? "docena" : "docenas";
+}
+
+function presUnitPrice(product, pres) {
+  if (pres === "pieza")  return Number(product.precio_pieza);
+  if (pres === "media")  return Number(product.precio_media_docena);
+  return Number(product.precio_docena);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  ANALÍTICA — registra eventos de uso del sitio (visitas, clics en
+//  categorías/productos, búsquedas, agregar al carrito) para el panel
+//  de Analítica del admin. Nunca bloquea ni rompe la app si falla.
+// ═══════════════════════════════════════════════════════════════
+
+// Identificador anónimo y constante por navegador/dispositivo, para poder
+// contar "visitantes únicos" sin necesidad de que se hayan registrado.
+export function idVisitante() {
+  try {
+    let id = localStorage.getItem("oft_visitante_id");
+    if (!id) {
+      id = "v_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 10);
+      localStorage.setItem("oft_visitante_id", id);
+    }
+    return id;
+  } catch (e) {
+    return "v_anonimo"; // si el navegador bloquea localStorage, no rompe nada, solo agrupa distinto ese caso raro
+  }
+}
+
+export function registrarEvento(tipo, valor = null, valorNombre = null, usuarioId = null) {
+  try {
+    // No usa sb.post() a propósito: esa función pide de vuelta la fila recién creada
+    // (para poder mostrarla en pantalla en otros casos), pero la tabla de eventos_analytics
+    // solo deja LEER al admin -- pedir la fila de vuelta chocaba con eso y hacía que
+    // Supabase rechazara TODO el intento. Aquí solo se manda a guardar, sin pedir nada de vuelta.
+    fetch(`${SUPABASE_URL}/rest/v1/eventos_analytics`, {
+      method: "POST",
+      keepalive: true, // para que el aviso de "salida" llegue aunque se cierre la pestaña
+      headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Content-Type": "application/json", "Prefer": "return=minimal" },
+      body: JSON.stringify({
+        tipo,
+        valor: valor != null ? String(valor) : null,
+        valor_nombre: valorNombre || null,
+        visitante_id: idVisitante(),
+        usuario_id: usuarioId || null,
+      }),
+    }).catch(() => {}); // best-effort: si falla, no importa, nunca debe afectar la experiencia del cliente
+  } catch (e) { /* nunca truena la app por esto */ }
+}
+
+// ── Carga bajo demanda de librerías pesadas ────────────────────────────────────
+// html2canvas y jsPDF (generar PDF/imagen de facturas y reportes) y el botón de
+// Yappy ya NO se descargan al abrir la tienda: solo cuando de verdad se usan.
+// Antes iban en el <head> y frenaban la carga de todos los visitantes.
+const _scriptsCargando = {};
+function cargarScriptExterno(url, { modulo = false, listo = null } = {}) {
+  if (typeof window === "undefined") return Promise.resolve();
+  if (listo && listo()) return Promise.resolve();
+  if (_scriptsCargando[url]) return _scriptsCargando[url];
+  _scriptsCargando[url] = new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = url;
+    if (modulo) s.type = "module";
+    s.async = true;
+    s.onload = () => resolve();
+    s.onerror = () => { delete _scriptsCargando[url]; reject(new Error("No se pudo cargar " + url)); };
+    document.head.appendChild(s);
+  });
+  return _scriptsCargando[url];
+}
+// Devuelve true si html2canvas y jsPDF quedaron listos; si no hay internet, avisa y devuelve false.
+export async function asegurarLibsPdf({ soloImagen = false } = {}) {
+  try {
+    await Promise.all([
+      cargarScriptExterno("https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js", { listo: () => !!window.html2canvas }),
+      soloImagen ? Promise.resolve() : cargarScriptExterno("https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js", { listo: () => !!window.jspdf }),
+    ]);
+    return !!window.html2canvas && (soloImagen || !!window.jspdf);
+  } catch (e) {
+    alert("No se pudo cargar el generador. Revisa tu conexión a internet e intenta de nuevo.");
+    return false;
+  }
+}
+export function cargarYappyBoton() {
+  return cargarScriptExterno("https://bt-cdn.yappy.cloud/v1/cdn/web-component-btn-yappy.js", { modulo: true }).catch(() => {});
+}
+
+// ── reCAPTCHA v3 (protección antibots en el checkout, pedido por BAC) ──────────
+// Carga el script de Google solo una vez, la primera vez que hace falta (no en
+// cada visita), y nunca bloquea la compra si algo sale mal cargándolo.
+let _recaptchaCargando = null;
+function cargarScriptRecaptcha() {
+  if (typeof window === "undefined") return Promise.resolve();
+  if (window.grecaptcha) return Promise.resolve();
+  if (_recaptchaCargando) return _recaptchaCargando;
+  _recaptchaCargando = new Promise((resolve) => {
+    const script = document.createElement("script");
+    script.src = `https://www.google.com/recaptcha/api.js?render=${RECAPTCHA_SITE_KEY}`;
+    script.onload = () => resolve();
+    script.onerror = () => resolve(); // no bloquea la compra si el script no cargó
+    document.head.appendChild(script);
+  });
+  return _recaptchaCargando;
+}
+
+// Pide un token de reCAPTCHA para la acción indicada (ej. "checkout"). Si algo
+// falla en cualquier paso, devuelve null en vez de trabar la compra -- el
+// servidor ya sabe tratar un token ausente sin bloquear al cliente por eso.
+export async function obtenerTokenRecaptcha(accion = "checkout") {
+  try {
+    await cargarScriptRecaptcha();
+    if (!window.grecaptcha || !window.grecaptcha.execute) return null;
+    return await new Promise((resolve) => {
+      window.grecaptcha.ready(() => {
+        window.grecaptcha.execute(RECAPTCHA_SITE_KEY, { action: accion }).then(resolve).catch(() => resolve(null));
+      });
+    });
+  } catch (e) {
+    return null;
+  }
+}
+
+// ── PÍXELES DE MARKETING (Meta / Google) — para que el admin pueda medir y
+// optimizar sus campañas de publicidad. Solo se cargan si el admin puso un ID
+// en el panel; si no, todas las funciones de abajo simplemente no hacen nada.
+let _metaPixelCargado = false;
+export function cargarMetaPixel(pixelId) {
+  if (!pixelId || _metaPixelCargado || typeof window === "undefined") return;
+  _metaPixelCargado = true;
+  try {
+    (function (f, b, e, v, n, t, s) {
+      if (f.fbq) return;
+      n = f.fbq = function () { n.callMethod ? n.callMethod.apply(n, arguments) : n.queue.push(arguments); };
+      if (!f._fbq) f._fbq = n;
+      n.push = n; n.loaded = true; n.version = "2.0"; n.queue = [];
+      t = b.createElement(e); t.async = true; t.src = v;
+      s = b.getElementsByTagName(e)[0]; s.parentNode.insertBefore(t, s);
+    })(window, document, "script", "https://connect.facebook.net/en_US/fbevents.js");
+    window.fbq("init", pixelId);
+    window.fbq("track", "PageView");
+  } catch (e) { /* si Meta falla en cargar, no debe romper la tienda */ }
+}
+
+let _googlePixelCargado = false;
+export function cargarGooglePixel(measurementId) {
+  if (!measurementId || _googlePixelCargado || typeof window === "undefined") return;
+  _googlePixelCargado = true;
+  try {
+    const script = document.createElement("script");
+    script.async = true;
+    script.src = `https://www.googletagmanager.com/gtag/js?id=${measurementId}`;
+    document.head.appendChild(script);
+    window.dataLayer = window.dataLayer || [];
+    window.gtag = function () { window.dataLayer.push(arguments); };
+    window.gtag("js", new Date());
+    window.gtag("config", measurementId);
+  } catch (e) { /* si Google falla en cargar, no debe romper la tienda */ }
+}
+
+// Ver producto (ViewContent / view_item)
+export function trackVerProducto({ id, nombre, precio }) {
+  try { window.fbq && window.fbq("track", "ViewContent", { content_ids: [String(id)], content_name: nombre, content_type: "product", value: Number(precio) || 0, currency: "USD" }); } catch (e) {}
+  try { window.gtag && window.gtag("event", "view_item", { currency: "USD", value: Number(precio) || 0, items: [{ item_id: String(id), item_name: nombre, price: Number(precio) || 0 }] }); } catch (e) {}
+}
+
+// Agregar al carrito (AddToCart / add_to_cart)
+export function trackAgregarCarrito({ id, nombre, precio, cantidad = 1 }) {
+  const valor = (Number(precio) || 0) * cantidad;
+  try { window.fbq && window.fbq("track", "AddToCart", { content_ids: [String(id)], content_name: nombre, content_type: "product", value: valor, currency: "USD" }); } catch (e) {}
+  try { window.gtag && window.gtag("event", "add_to_cart", { currency: "USD", value: valor, items: [{ item_id: String(id), item_name: nombre, price: Number(precio) || 0, quantity: cantidad }] }); } catch (e) {}
+}
+
+// Iniciar checkout (InitiateCheckout / begin_checkout)
+export function trackIniciarCheckout({ total, items }) {
+  const lista = items || [];
+  try { window.fbq && window.fbq("track", "InitiateCheckout", { value: Number(total) || 0, currency: "USD", content_ids: lista.map(i => String(i.id)), num_items: lista.length }); } catch (e) {}
+  try { window.gtag && window.gtag("event", "begin_checkout", { currency: "USD", value: Number(total) || 0, items: lista.map(i => ({ item_id: String(i.id), item_name: i.nombre, price: Number(i.precio) || 0, quantity: i.cantidad || 1 })) }); } catch (e) {}
+}
+
+// Compra completada (Purchase / purchase) -- el evento más importante para medir campañas
+export function trackCompra({ codigo, total, items }) {
+  const lista = items || [];
+  try { window.fbq && window.fbq("track", "Purchase", { value: Number(total) || 0, currency: "USD", content_ids: lista.map(i => String(i.id)) }); } catch (e) {}
+  try { window.gtag && window.gtag("event", "purchase", { transaction_id: codigo, currency: "USD", value: Number(total) || 0, items: lista.map(i => ({ item_id: String(i.id), item_name: i.nombre, price: Number(i.precio) || 0, quantity: i.cantidad || 1 })) }); } catch (e) {}
+}
+
+export function imagenOptimizada(url, tamano = 400, calidad = 75) {
+  if (!url || !url.includes("/storage/v1/object/public/")) return url;
+  // Confirmado: Supabase no comprime archivos .svg con esta transformación (los sirve
+  // tal cual, ignorando el tamaño pedido) -- pedirla solo suma una vuelta de más sin
+  // ningún beneficio, así que para SVG se usa la imagen original directo.
+  if (url.toLowerCase().includes(".svg")) return url;
+  const base = url.replace("/storage/v1/object/public/", "/storage/v1/render/image/public/");
+  return base + (base.includes("?") ? "&" : "?") + `width=${tamano}&height=${tamano}&resize=contain&quality=${calidad}`;
+}
+
+// Comprime/redimensiona una foto ANTES de subirla — así las fotos de celular (que suelen
+// pesar 2-3 MB) quedan livianas para la web (normalmente 80-200 KB), sin que se note
+// diferencia de calidad a simple vista. Si algo falla, sube la foto original tal cual,
+// para nunca bloquear al usuario por esto.
+//
+// Los archivos SVG normalmente se saltan (son íconos vectoriales chiquitos que no hace
+// falta comprimir) -- PERO si forzarRaster=true, también se convierten a JPEG. Esto es
+// para casos como los banners del carrusel, donde un "SVG" puede en realidad ser una
+// composición de diseño pesada (con una foto incrustada adentro) de varios MB, y
+// Supabase no sabe comprimir SVGs para servirlos más livianos como sí hace con fotos.
+// Agrega un canvas alto (una factura, guía, etc. ya dibujada completa) a un PDF,
+// partiéndolo en páginas de verdad -- cada página recibe SU PROPIO recorte del
+// canvas original, en vez de dibujar la imagen completa una y otra vez corrida
+// hacia arriba (que es como estaba antes). Esa técnica anterior depende de que
+// el visor de PDF recorte bien la parte que no cabe en cada página, y algunos
+// visores de PDF en celular no lo hacen perfecto -- se ve como que la última
+// línea (ej. un precio) se repite al inicio de la siguiente página. Recortando
+// el canvas de antemano, cada página es una imagen aparte y no hay nada que
+// un visor pueda "dejar pasar" de una página a la otra.
+export function agregarCanvasComoPaginasPdf(pdf, canvas, { pageW = 210, pageH = 297, margin = 10 } = {}) {
+  const imgW = pageW - margin * 2;
+  const pxPorMm = canvas.width / imgW; // cuántos píxeles del canvas equivalen a 1mm en el PDF
+  const altoUtilPxPorPagina = (pageH - margin * 2) * pxPorMm;
+
+  let procesadoPx = 0;
+  let primeraPagina = true;
+  while (procesadoPx < canvas.height) {
+    const altoEstaPaginaPx = Math.min(altoUtilPxPorPagina, canvas.height - procesadoPx);
+    const recorte = document.createElement("canvas");
+    recorte.width = canvas.width;
+    recorte.height = altoEstaPaginaPx;
+    recorte.getContext("2d").drawImage(canvas, 0, procesadoPx, canvas.width, altoEstaPaginaPx, 0, 0, canvas.width, altoEstaPaginaPx);
+
+    if (!primeraPagina) pdf.addPage();
+    pdf.addImage(recorte.toDataURL("image/png"), "PNG", margin, margin, imgW, altoEstaPaginaPx / pxPorMm);
+
+    procesadoPx += altoEstaPaginaPx;
+    primeraPagina = false;
+  }
+}
+
+export function comprimirImagen(file, maxDimension = 1400, calidad = 0.82, forzarRaster = false) {
+  return new Promise((resolve) => {
+    const esSvg = file.type === "image/svg+xml";
+    if (!file.type || !file.type.startsWith("image/") || (esSvg && !forzarRaster) || file.type === "image/gif") {
+      resolve(file); return;
+    }
+    // Si el original es PNG, se mantiene como PNG -- un PNG casi siempre tiene fondo
+    // transparente a propósito (íconos, logos), y convertir a JPG (que no soporta
+    // transparencia) hace que esas zonas se rellenen de negro al aplanar la imagen.
+    const mantenerTransparencia = file.type === "image/png";
+    const formatoSalida = mantenerTransparencia ? "image/png" : "image/jpeg";
+    const extensionSalida = mantenerTransparencia ? ".png" : ".jpg";
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        let { width, height } = img;
+        if (width > maxDimension || height > maxDimension) {
+          if (width > height) { height = Math.round(height * (maxDimension / width)); width = maxDimension; }
+          else { width = Math.round(width * (maxDimension / height)); height = maxDimension; }
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width = width; canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, width, height);
+        canvas.toBlob((blob) => {
+          if (!blob || blob.size >= file.size) { resolve(file); return; } // si no mejora, sube la original
+          const nombreFinal = file.name.replace(/\.\w+$/, "") + extensionSalida;
+          resolve(new File([blob], nombreFinal, { type: formatoSalida }));
+        }, formatoSalida, mantenerTransparencia ? undefined : calidad); // PNG no usa "calidad" (no es compresión con pérdida)
+      };
+      img.onerror = () => resolve(file);
+      img.src = e.target.result;
+    };
+    reader.onerror = () => resolve(file);
+    reader.readAsDataURL(file);
+  });
+}
+
+// "producto" es opcional -- si no se pasa, o si su modalidad es la de siempre,
+// se comporta exactamente igual que antes (docena=12, media=6 piezas). Si el
+// producto está marcado como 'perfumeria', docena/media pasan a valer 6 y 3
+// piezas -- son los mismos nombres de campo por dentro, solo cambia cuántas
+// piezas representa cada uno para ESE producto en particular.
+function presToPiezas(pres, count, producto = null) {
+  const tabla = producto?.modalidad_presentacion === "perfumeria" ? PRES_PIEZAS_PERFUMERIA : PRES_PIEZAS;
+  return (tabla[pres] || 1) * count;
+}
+
+function parseDistribucion(json) {
+  if (!json) return {};
+  try {
+    const obj = typeof json === "string" ? JSON.parse(json) : json;
+    return obj && typeof obj === "object" ? obj : {};
+  } catch { return {}; }
+}
+
+const PANAMA_ZONAS = [
+  "Panamá Oeste", "La Chorrera", "Arraiján", "Capira", "Chame", "San Carlos",
+  "Bocas del Toro", "Changuinola", "Almirante", "Bastimentos",
+  "Coclé", "Penonomé", "Aguadulce", "Antón", "Natá", "Olá",
+  "Colón", "Sabanitas", "Cristóbal", "Portobelo", "Santa Isabel",
+  "Chiriquí", "David", "Boquete", "Puerto Armuelles", "Volcán", "Bugaba", "Dolega",
+  "Darién", "Metetí", "La Palma", "Yaviza",
+  "Herrera", "Chitré", "Ocú", "Los Pozos", "Parita",
+  "Los Santos", "Las Tablas", "Guararé", "Pedasí", "Tonosí",
+  "Veraguas", "Santiago", "Soná", "Atalaya", "Santa Fe",
+  "Guna Yala", "Emberá", "Ngäbe-Buglé",
+  "San Miguelito", "Tocumen", "Pacora", "Chilibre", "Las Cumbres", "Juan Díaz",
+  "Panamá", // provincia/ciudad genérica — al final por ser la más amplia
+];
+
+export function resolverAreaVenta(pedido) {
+  if (pedido.sucursal_nombre && pedido.sucursal_nombre.trim()) {
+    return pedido.sucursal_nombre.trim();
+  }
+  // Retiro en el propio local -- esto no es "sin dirección", es un destino conocido,
+  // solo que no es una sucursal de una empresa de envío. Antes de este arreglo, estos
+  // pedidos caían incorrectamente en "Sin dirección" aunque sí tenían destino.
+  if (pedido.retiro_local) {
+    return (pedido.local_retiro_nombre && pedido.local_retiro_nombre.trim()) || "Retiro en local";
+  }
+  const texto = `${pedido.direccion || ""}`.toLowerCase();
+  if (!texto.trim()) return "Sin dirección";
+  for (const zona of PANAMA_ZONAS) {
+    if (texto.includes(zona.toLowerCase())) return zona;
+  }
+  return "Otra zona";
+}
+
+function mediaDocenaDesdeDistribucion(distDocena) {
+  const entradas = Object.entries(distDocena || {}).filter(([, qty]) => Number(qty) > 0);
+  if (entradas.length === 0) return {};
+
+  const media = {};
+  entradas.forEach(([k, qty]) => { media[k] = Math.max(1, Math.floor(Number(qty) / 2)); });
+  let restante = 6 - Object.values(media).reduce((a, b) => a + b, 0);
+
+  if (restante < 0) {
+    // Caso raro: más de 6 tallas/colores distintos en la docena — no caben todas en 6 piezas.
+    // Se recorta empezando por las variantes con MENOS unidades en la docena.
+    const asc = [...entradas].sort((a, b) => Number(a[1]) - Number(b[1]));
+    let i = 0;
+    while (restante < 0 && i < asc.length * 3) {
+      const [k] = asc[i % asc.length];
+      if (media[k] > 0) { media[k] -= 1; restante += 1; }
+      i++;
+    }
+    Object.keys(media).forEach(k => { if (media[k] <= 0) delete media[k]; });
+    return media;
+  }
+
+  // Reparte lo que falta para llegar a 6, priorizando la variante que más se repite en la docena
+  const desc = [...entradas].sort((a, b) => Number(b[1]) - Number(a[1]));
+  let i = 0;
+  while (restante > 0) {
+    const [k] = desc[i % desc.length];
+    media[k] += 1;
+    restante -= 1;
+    i++;
+  }
+  return media;
+}
+
+const COLOR_HEX = {
+  rojo: "#E31E24", azul: "#1E63E3", verde: "#1FA64A", negro: "#111111", blanco: "#FFFFFF",
+  amarillo: "#F5C518", naranja: "#F57C18", morado: "#8E44AD", rosa: "#E8569E", rosado: "#E8569E",
+  gris: "#9E9E9E", cafe: "#7B4B2A", café: "#7B4B2A", marron: "#7B4B2A", marrón: "#7B4B2A",
+  beige: "#E8D8B0", celeste: "#7EC8E3", turquesa: "#1ABC9C", vino: "#7B1E2B", dorado: "#D4AF37",
+  plateado: "#C0C0C0", crema: "#F5F0E1", fucsia: "#E3197D",
+};
+
+const colorToHex = (nombre) => {
+  const limpio = (nombre || "").trim();
+  // Formato combinado "Nombre (#HEX)" -- se usa el código de adentro del paréntesis
+  const combinado = limpio.match(/\(#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})\)\s*$/);
+  if (combinado) return `#${combinado[1]}`;
+  // Si ya es un código hex válido por sí solo (ej. "#FF0000" o "#F00")
+  if (/^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$/.test(limpio)) return limpio;
+  return COLOR_HEX[limpio.toLowerCase()] || "#CCCCCC";
+};
+// Para mostrar como TEXTO: quita el "(#HEX)" técnico si lo hay, dejando solo el
+// nombre -- el círculo de color ya muestra el tono exacto, no hace falta repetirlo en texto.
+export const nombreColorLimpio = (nombre) => (nombre || "").replace(/\s*\(#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})\)\s*$/, "").trim() || nombre;
+
+// Disponibilidad para el CLIENTE EN LA WEB: el stock de Odoo menos las piezas abiertas como
+// muestra (siguen contando en Odoo, que mantiene el inventario real, pero la web no las vende).
+// No toca el campo stock. El personal en el pedido manual del admin sigue viendo el stock real.
+export const stockWeb = (p) => Math.max(0, (Number(p?.stock) || 0) - (Number(p?.piezas_muestra) || 0) - (Number(p?.piezas_reservadas) || 0));
+// Etiqueta "· N reservadas" para listas de productos del personal (solo si hay piezas reservadas)
+export const EtiquetaReservadas = ({ p }) => Number(p?.piezas_reservadas) > 0
+  ? <span style={{ fontWeight: 800, color: "#7C3AED" }}> · {Number(p.piezas_reservadas)} reservadas</span> : null;
+
+// Aviso de stock insuficiente al armar un pedido manual -- reemplaza el confirm()
+// del navegador por algo consistente con el resto de la web, con su misma animación.
+function ModalAvisoStock({ aviso, onConfirmar, onCancelar }) {
+  useLockBodyScroll();
+  return createPortal(
+    <div className="oft-overlay" style={S.overlay} onClick={onCancelar}>
+      <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 16, maxWidth: 380, width: "92%", padding: 24, textAlign: "center" }} onClick={e => e.stopPropagation()}>
+        <div style={{ width: 56, height: 56, borderRadius: "50%", background: "#FFF3CD", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 14px" }}>
+          <AlertTriangle size={28} color="#856404" />
+        </div>
+        <div style={{ fontSize: 17, fontWeight: 900, marginBottom: 8 }}>{aviso.reservado ? "Piezas reservadas" : aviso.esMuestra ? "Estás vendiendo una muestra" : "Stock insuficiente"}</div>
+        <div style={{ fontSize: 13.5, color: GRAY3, lineHeight: 1.5, marginBottom: 20 }}>
+          {aviso.reservado ? (
+            <>"<strong style={{ color: BLACK }}>{aviso.producto}</strong>" tiene <strong style={{ color: BLACK }}>{aviso.stockDisponible}</strong> en stock, pero <strong style={{ color: "#7C3AED" }}>{aviso.reservadas}</strong> {aviso.reservadas === 1 ? "pieza está reservada" : "piezas están reservadas"} para otros clientes. Disponibles para vender: <strong style={{ color: BLACK }}>{aviso.libres}</strong>
+            {aviso.yaEnCarrito > 0 && <> (ya hay {aviso.yaEnCarrito} en este pedido)</>}, y con esto llevaría <strong style={{ color: BLACK }}>{aviso.totalConEsto}</strong>.
+            {aviso.bloqueado && <div style={{ marginTop: 8 }}>No se puede agregar. Para usar esas piezas, libera o convierte la reserva primero.</div>}</>
+          ) : aviso.esMuestra ? (
+            <>"<strong style={{ color: BLACK }}>{aviso.producto}</strong>" tiene <strong style={{ color: BLACK }}>{aviso.muestra}</strong> {aviso.muestra === 1 ? "pieza abierta" : "piezas abiertas"} de <strong style={{ color: BLACK }}>muestra</strong>, que no se debe vender.
+            Sin contar la muestra quedan <strong style={{ color: BLACK }}>{aviso.disponiblesSinMuestra}</strong>
+            {aviso.yaEnCarrito > 0 && <> (ya hay {aviso.yaEnCarrito} en este pedido)</>}, y con esto el pedido llevaría <strong style={{ color: BLACK }}>{aviso.totalConEsto}</strong>.</>
+          ) : aviso.stockDisponible <= 0 ? (
+            <>"<strong style={{ color: BLACK }}>{aviso.producto}</strong>" muestra <strong style={{ color: BLACK }}>0</strong> en stock, según la última sincronización.</>
+          ) : (
+            <>"<strong style={{ color: BLACK }}>{aviso.producto}</strong>" tiene <strong style={{ color: BLACK }}>{aviso.stockDisponible}</strong> en stock
+            {aviso.yaEnCarrito > 0 && <> (ya hay {aviso.yaEnCarrito} en este pedido)</>}, y esto lo dejaría en <strong style={{ color: BLACK }}>{aviso.totalConEsto}</strong> piezas.</>
+          )}
+          {!aviso.esMuestra && aviso.muestra > 0 && <div style={{ marginTop: 8 }}>Además, {aviso.muestra === 1 ? "1 pieza de este producto está abierta" : `${aviso.muestra} piezas de este producto están abiertas`} como <strong style={{ color: BLACK }}>muestra</strong>.</div>}
+        </div>
+        <div style={{ display: "flex", gap: 10 }}>
+          <button onClick={onCancelar} className="oft-btn-press" style={{ flex: 1, padding: "11px", borderRadius: 10, border: `1.5px solid ${GRAY2}`, background: WHITE, fontWeight: 700, fontSize: 14, cursor: "pointer" }}>
+            {aviso.bloqueado ? "Entendido" : "Cancelar"}
+          </button>
+          {!aviso.bloqueado && (
+          <button onClick={onConfirmar} className="oft-btn-press" style={{ flex: 1, padding: "11px", borderRadius: 10, border: "none", background: "#856404", color: WHITE, fontWeight: 700, fontSize: 14, cursor: "pointer" }}>
+            {aviso.esMuestra ? "Aceptar y continuar" : "Agregar igual"}
+          </button>
+          )}
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+// Popup para elegir con qué presentación se agrega un producto al pedido manual --
+// aparece justo al seleccionarlo en la búsqueda, en vez de agregarlo directo con
+// una presentación por defecto que luego hay que cambiar.
+export function ModalElegirPresentacion({ producto, onElegir, onCerrar }) {
+  useLockBodyScroll();
+  const esPerfumeria = producto.modalidad_presentacion === "perfumeria";
+  const opciones = [
+    { pres: "pieza", etiqueta: "Pieza", precio: producto.precio_pieza, detalle: "1 unidad" },
+    { pres: "media", etiqueta: esPerfumeria ? "3 Piezas" : "Media Docena", precio: producto.precio_media_docena, detalle: esPerfumeria ? "3 unidades" : "6 unidades" },
+    { pres: "docena", etiqueta: esPerfumeria ? "6 Piezas" : "Docena", precio: producto.precio_docena, detalle: esPerfumeria ? "6 unidades" : "12 unidades" },
+  ];
+  return createPortal(
+    <div className="oft-overlay" style={S.overlay} onClick={onCerrar}>
+      <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 16, maxWidth: 380, width: "92%", padding: 22 }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 18 }}>
+          {producto.imagen_url ? <img src={producto.imagen_url} style={{ width: 44, height: 44, borderRadius: 8, objectFit: "cover" }} /> : <div style={{ width: 44, height: 44, borderRadius: 8, background: GRAY, display: "flex", alignItems: "center", justifyContent: "center" }}><Package size={20} color={GRAY3} /></div>}
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontWeight: 800, fontSize: 15, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{producto.nombre}</div>
+            <div style={{ fontSize: 12, color: GRAY3 }}>{producto.referencia || "—"}</div>
+          </div>
+          <button onClick={onCerrar} style={{ background: "none", border: "none", cursor: "pointer", display: "flex", padding: 4 }}><X size={20} /></button>
+        </div>
+        <div style={{ fontSize: 12, fontWeight: 800, color: GRAY3, marginBottom: 10, letterSpacing: 0.5 }}>¿CÓMO SE AGREGA?</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {opciones.map(op => (
+            <button key={op.pres} onClick={() => onElegir(op.pres)} className="oft-btn-press"
+              style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%", padding: "14px 16px", borderRadius: 12, border: `1.5px solid ${GRAY2}`, background: WHITE, cursor: "pointer", textAlign: "left" }}>
+              <div>
+                <div style={{ fontWeight: 800, fontSize: 14 }}>{op.etiqueta}</div>
+                <div style={{ fontSize: 11.5, color: GRAY3 }}>{op.detalle}</div>
+              </div>
+              <div style={{ fontWeight: 900, fontSize: 16, color: RED }}>${op.precio}</div>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+export function CrearPedidoView({ onCreado } = {}) {
+  const { products, categories, empresas, sucursales, setSucursales, localesRetiro, showToast, user } = useApp();
+  const [items, setItems] = useState([]); // { product, pres, count }
+  const [search, setSearch] = useState("");
+  const [cliente, setCliente] = useState({ id: null, nombre: "", telefono: "", direccion: "" });
+  const [clientesLista, setClientesLista] = useState([]); // clientes registrados para buscar
+  const [busquedaCliente, setBusquedaCliente] = useState(""); // texto de búsqueda de cliente
+  const [mostrarClientes, setMostrarClientes] = useState(false); // muestra el desplegable de resultados
+  const [clienteForm, setClienteForm] = useState(null); // null | {} — modal para crear cliente directo desde aquí
+  // Carga la lista de clientes para poder buscarlos al crear el pedido
+  useEffect(() => {
+    sb.get("usuarios", "?es_admin=eq.false&order=nombre.asc").then(d => setClientesLista(d || [])).catch(() => {});
+  }, []);
+  const [notas, setNotas] = useState("");
+  const [empresaId, setEmpresaId] = useState(null);
+  const [sucursalId, setSucursalId] = useState(null);
+  const [tipo, setTipo] = useState("pedido"); // 'pedido' | 'cotizacion'
+  // "Reserva" = una cotización que aparta las piezas: nadie más (web ni vendedores) las puede vender hasta que se libere o se convierta en pedido
+  const [reservar, setReservar] = useState(false);
+  const [reservaVence, setReservaVence] = useState("");
+  const [descuento, setDescuento] = useState(""); // porcentaje
+  const [envio, setEnvio] = useState(""); // costo de envío
+  const [metodoPago, setMetodoPago] = useState(""); // "yappy" | "tarjeta" | "transferencia" -- cómo pagó el cliente (obligatorio en pedidos)
+  // Tipo de envío del pedido manual: null (sin envío) | "sucursal" | "puerta" | "local"
+  const [modoEnvio, setModoEnvio] = useState(null);
+  const retiroLocal = modoEnvio === "local"; // el cliente retira en el local, sin envío
+  const [busquedaSuc, setBusquedaSuc] = useState(""); // buscador de sucursales
+  const [envioManual, setEnvioManual] = useState(false); // true cuando se escribió el costo a mano (ya no se autocalcula)
+  const [costoPuertaCfg, setCostoPuertaCfg] = useState(0);
+  useEffect(() => {
+    sb.get("configuracion", "?clave=eq.costo_envio_puerta_a_puerta&limit=1")
+      .then(d => { if (d?.[0]?.valor != null) setCostoPuertaCfg(Number(d[0].valor) || 0); })
+      .catch(() => {});
+  }, []);
+  const [retiroNombreAutorizado, setRetiroNombreAutorizado] = useState(""); // opcional -- quién recoge, si no es el mismo cliente
+  const [localRetiroId, setLocalRetiroId] = useState(null); // en cuál local específico (si hay más de uno)
+  const [redondeo, setRedondeo] = useState("arriba"); // "arriba" | "abajo" | "no"
+  const [saving, setSaving] = useState(false);
+  const [invoice, setInvoice] = useState(null); // datos de la factura generada
+  // ── FLEXPACK: armar docena/media mezclando referencias ──
+  const [flexPacks, setFlexPacks] = useState([]); // [{ id, modo:'docena'|'media', lineas:[{product, piezas}] }]
+  const [flexSearch, setFlexSearch] = useState("");
+  const [flexActiveId, setFlexActiveId] = useState(null); // pack al que se le está agregando
+
+  const money = (n) => "$" + Number(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const empresasActivas = empresas.filter(e => e.activa !== false);
+  const sucursalesEmpresa = sucursales.filter(s => s.empresa_id === empresaId && s.activa !== false);
+  const empresaSel = empresas.find(e => e.id === empresaId);
+  const sucursalSel = sucursales.find(s => s.id === sucursalId);
+  const servientregaEmp = empresas.find(e => (e.nombre || "").toLowerCase().includes("servientrega"));
+
+  // Precio por pieza de un producto según el modo del pack (docena ÷12, media ÷6)
+  const flexUnitPrice = (product, modo) => modo === "media" ? Number(product.precio_media_docena) / 6 : Number(product.precio_docena) / 12;
+  // Precio real de una línea del FlexPack: usa el precio editado (override) si existe, si no el calculado
+  const flexLineUnitPrice = (linea, modo) => {
+    if (linea.precioOverride !== undefined && linea.precioOverride !== "" && !isNaN(Number(linea.precioOverride))) {
+      return Number(linea.precioOverride);
+    }
+    return flexUnitPrice(linea.product, modo);
+  };
+  const FLEX_META = { docena: 12, media: 6 };
+  const flexPiezas = (pack) => pack.lineas.reduce((s, l) => s + l.piezas, 0);
+  const flexTotal = (pack) => pack.lineas.reduce((s, l) => s + flexLineUnitPrice(l, pack.modo) * l.piezas, 0);
+  const flexCompleto = (pack) => flexPiezas(pack) === FLEX_META[pack.modo];
+
+  // Precio unitario de un item: usa el precio editado (override) si existe, si no el del producto
+  const itemUnitPrice = (it) => {
+    if (it.precioOverride !== undefined && it.precioOverride !== "" && !isNaN(Number(it.precioOverride))) {
+      return Number(it.precioOverride);
+    }
+    return presUnitPrice(it.product, it.pres);
+  };
+  const itemTotal = (it) => itemUnitPrice(it) * it.count;
+
+  const filtered = search.trim()
+    ? products.filter(p => (p.nombre + " " + (p.referencia || "")).toLowerCase().includes(search.toLowerCase())).slice(0, 6)
+    : [];
+  const flexFiltered = flexSearch.trim()
+    ? products.filter(p => (p.nombre + " " + (p.referencia || "")).toLowerCase().includes(flexSearch.toLowerCase())).slice(0, 6)
+    : [];
+
+  // FLEXPACK handlers
+  const addFlexPack = (modo) => {
+    const id = Date.now();
+    setFlexPacks(prev => [...prev, { id, modo, lineas: [] }]);
+    setFlexActiveId(id);
+  };
+  const removeFlexPack = (id) => setFlexPacks(prev => prev.filter(p => p.id !== id));
+  const addFlexLine = (packId, product) => {
+    const ejecutar = () => {
+      setFlexPacks(prev => prev.map(pack => {
+        if (pack.id !== packId) return pack;
+        if (flexPiezas(pack) >= FLEX_META[pack.modo]) return pack; // ya está lleno
+        const ex = pack.lineas.find(l => l.product.id === product.id);
+        if (ex) return { ...pack, lineas: pack.lineas.map(l => l.product.id === product.id ? { ...l, piezas: l.piezas + 1, variantes: [...(l.variantes || []), { talla: "", color: "" }] } : l) };
+        return { ...pack, lineas: [...pack.lineas, { product, piezas: 1, variantes: [{ talla: "", color: "" }] }] };
+      }));
+      setFlexSearch("");
+    };
+    // Si el pack ya está lleno no se agrega nada, así que tampoco se avisa
+    const packActual = flexPacks.find(p => p.id === packId);
+    if (packActual && flexPiezas(packActual) < FLEX_META[packActual.modo]) {
+      // Avisa si no hay stock (o no alcanza) para esta pieza, sumando lo que ya va en el pedido
+      const chequeo = checarStock(product, 1);
+      if (chequeo.excede) { setAvisoStock({ ...chequeo, onConfirmar: ejecutar }); return; }
+    }
+    ejecutar();
+  };
+  const updateFlexLine = (packId, prodId, piezas) => {
+    // Solo avisa cuando la cantidad SUBE (bajar nunca puede exceder el stock)
+    const packActual = flexPacks.find(p => p.id === packId);
+    const lineaActual = packActual?.lineas.find(l => l.product.id === prodId);
+    if (packActual && lineaActual && piezas > lineaActual.piezas) {
+      const otras = packActual.lineas.filter(l => l.product.id !== prodId).reduce((s, l) => s + l.piezas, 0);
+      const nuevas = Math.min(piezas, FLEX_META[packActual.modo] - otras);
+      if (nuevas > lineaActual.piezas) {
+        const chequeo = checarStock(lineaActual.product, nuevas, -1, { packId, prodId });
+        if (chequeo.excede) { setAvisoStock({ ...chequeo, onConfirmar: () => aplicarFlexLine(packId, prodId, piezas) }); return; }
+      }
+    }
+    aplicarFlexLine(packId, prodId, piezas);
+  };
+  const aplicarFlexLine = (packId, prodId, piezas) => {
+    setFlexPacks(prev => prev.map(pack => {
+      if (pack.id !== packId) return pack;
+      if (piezas <= 0) return { ...pack, lineas: pack.lineas.filter(l => l.product.id !== prodId) };
+      // no exceder el máximo del pack
+      const otras = pack.lineas.filter(l => l.product.id !== prodId).reduce((s, l) => s + l.piezas, 0);
+      const max = FLEX_META[pack.modo] - otras;
+      return {
+        ...pack, lineas: pack.lineas.map(l => {
+          if (l.product.id !== prodId) return l;
+          const nuevasPiezas = Math.min(piezas, max);
+          // Ajusta el arreglo de variantes (talla/color POR PIEZA) al nuevo tamaño --
+          // cada pieza de esta línea puede llevar una talla distinta.
+          const variantesActuales = l.variantes || [];
+          let nuevasVariantes = variantesActuales.slice(0, nuevasPiezas);
+          while (nuevasVariantes.length < nuevasPiezas) nuevasVariantes.push({ talla: "", color: "" });
+          return { ...l, piezas: nuevasPiezas, variantes: nuevasVariantes };
+        }),
+      };
+    }));
+  };
+  const updateFlexLinePrice = (packId, prodId, precio) => {
+    setFlexPacks(prev => prev.map(pack => {
+      if (pack.id !== packId) return pack;
+      return { ...pack, lineas: pack.lineas.map(l => l.product.id === prodId ? { ...l, precioOverride: precio } : l) };
+    }));
+  };
+  // Talla/color de UNA pieza específica dentro de una línea del FlexPack -- así,
+  // si se llevan 3 del mismo producto, cada una puede ir en una talla distinta.
+  const updateFlexPieceVariante = (packId, prodId, piezaIdx, campo, val) => {
+    setFlexPacks(prev => prev.map(pack => {
+      if (pack.id !== packId) return pack;
+      return {
+        ...pack, lineas: pack.lineas.map(l => {
+          if (l.product.id !== prodId) return l;
+          const variantes = [...(l.variantes || Array.from({ length: l.piezas }, () => ({ talla: "", color: "" })))];
+          variantes[piezaIdx] = { ...variantes[piezaIdx], [campo]: val };
+          return { ...l, variantes };
+        }),
+      };
+    }));
+  };
+
+  const subtotalNormal = items.reduce((s, it) => s + itemTotal(it), 0);
+  const subtotalFlex = flexPacks.reduce((s, pack) => s + flexTotal(pack), 0);
+  const subtotal = subtotalNormal + subtotalFlex;
+  const descPct = Math.min(Math.max(Number(descuento) || 0, 0), 100);
+  const descMonto = subtotal * (descPct / 100);
+  const costoEnvio = Number(envio) || 0;
+  // Envío especial de perfumes: solo se SUGIERE (el admin decide si lo aplica) cuando va a sucursal
+  const cfgEnvioPerf = useEnvioPerfumes();
+  const envioPerfumesOk = !retiroLocal && !!sucursalId && envioPerfumesAplica(cfgEnvioPerf, [
+    ...items.map(it => ({ product: it.product, piezas: piezasDePresentacion(it.product, it.pres) * (Number(it.count) || 0) })),
+    ...flexPacks.flatMap(pack => pack.lineas.map(l => ({ product: l.product, piezas: l.piezas }))),
+  ], categories);
+  // El costo de envío se calcula solo según el tipo de envío (se puede corregir a mano):
+  // sucursal = precio de la sucursal (o el especial de perfumes), puerta a puerta = precio fijo, local = sin costo
+  const envioAuto = modoEnvio === "sucursal" ? (sucursalSel ? (envioPerfumesOk ? cfgEnvioPerf.precio : (Number(sucursalSel.costo_envio) || 0)) : null)
+    : modoEnvio === "puerta" ? costoPuertaCfg
+    : modoEnvio === "local" ? 0 : null;
+  // Puerta a puerta siempre va por Servientrega (se selecciona sola)
+  useEffect(() => {
+    if (modoEnvio === "puerta" && servientregaEmp && empresaId !== servientregaEmp.id) { setEmpresaId(servientregaEmp.id); setSucursalId(null); }
+  }, [modoEnvio, servientregaEmp?.id]);
+  useEffect(() => {
+    if (envioManual || envioAuto === null) return;
+    setEnvio(envioAuto > 0 ? String(envioAuto) : "");
+  }, [envioAuto, envioManual, modoEnvio]);
+  const totalReal = subtotal - descMonto + costoEnvio;
+  // Redondeo al 0.50 o entero más cercano. Arriba: 120.10→120.50, 120.60→121.00. Abajo: 120.40→120.00, 120.90→120.50
+  const totalArriba = Math.ceil(totalReal * 2) / 2;
+  const totalAbajo = Math.floor(totalReal * 2) / 2;
+  const totalRedondeado = redondeo === "arriba" ? totalArriba : redondeo === "abajo" ? totalAbajo : totalReal;
+  const hayRedondeo = totalRedondeado !== totalReal;
+  const total = totalRedondeado;
+
+  // Cuántas piezas de este producto ya están en el carrito (en otras líneas) -- para
+  // sumarlas antes de avisar, por si ya se agregó en más de una presentación.
+  // Incluye también las piezas del mismo producto que ya van dentro de un FlexPack.
+  const piezasYaEnCarrito = (productId, excluirIdx = -1, excluirFlex = null) =>
+    items.reduce((s, it, i) => i === excluirIdx || it.product.id !== productId ? s : s + presToPiezas(it.pres, it.count, it.product), 0)
+    + flexPacks.reduce((s, pack) => s + pack.lineas.reduce((s2, l) =>
+        l.product.id !== productId || (excluirFlex && excluirFlex.packId === pack.id && excluirFlex.prodId === l.product.id) ? s2 : s2 + l.piezas, 0), 0);
+
+  // Solo INFORMA si algo excede el stock -- ya no decide qué hacer (antes usaba
+  // confirm() del navegador, que bloquea todo; ahora se muestra un modal propio,
+  // así que la acción real se guarda en "avisoStock" y se ejecuta solo si se confirma).
+  const checarStock = (product, piezasNuevas, excluirIdx = -1, excluirFlex = null) => {
+    if (!product.stock_actualizado_at) return { excede: false };
+    const stockDisponible = Number(product.stock || 0);
+    const yaEnCarrito = piezasYaEnCarrito(product.id, excluirIdx, excluirFlex);
+    const totalConEsto = yaEnCarrito + piezasNuevas;
+    const muestra = Number(product.piezas_muestra) || 0;
+    // Piezas reservadas para otros clientes: no se pueden vender (en pedidos y reservas se bloquea del todo)
+    const reservadas = Number(product.piezas_reservadas) || 0;
+    if (reservadas > 0 && totalConEsto > stockDisponible - reservadas) {
+      return {
+        excede: true, reservado: true, bloqueado: tipo === "pedido" || reservar, productId: product.id, producto: product.nombre,
+        stockDisponible, reservadas, libres: Math.max(0, stockDisponible - reservadas), yaEnCarrito, totalConEsto, muestra,
+      };
+    }
+    // Dentro de lo vendible (sin contar la muestra): sin aviso
+    if (totalConEsto <= stockDisponible - muestra) return { excede: false };
+    if (totalConEsto <= stockDisponible) {
+      // Alcanza el stock real, pero ya se estaría vendiendo la pieza de muestra.
+      // Si ya se aceptó para este producto en este pedido, no se vuelve a preguntar en cada cambio.
+      if (muestrasAceptadas.current.has(product.id)) return { excede: false };
+      return { excede: true, esMuestra: true, productId: product.id, muestra, producto: product.nombre, stockDisponible, disponiblesSinMuestra: Math.max(0, stockDisponible - muestra), yaEnCarrito, totalConEsto };
+    }
+    return {
+      excede: true, productId: product.id, muestra, producto: product.nombre, stockDisponible, yaEnCarrito, totalConEsto,
+    };
+  };
+
+  const [avisoStock, setAvisoStock] = useState(null); // null | { ...datos del checarStock, onConfirmar }
+  // Productos con muestra abierta cuya venta (de la pieza de muestra) ya se aceptó en este pedido
+  const muestrasAceptadas = useRef(new Set());
+  const [productoParaElegir, setProductoParaElegir] = useState(null); // null | producto -- para el popup de Pieza/Media/Docena
+
+  const addItem = (product, pres = "docena") => {
+    const ejecutar = () => { setItems(prev => [...prev, { product, pres, count: 1 }]); setSearch(""); };
+    // Se revisa contra el stock real antes de agregarlo, no solo cuando ya está en 0.
+    const chequeo = checarStock(product, presToPiezas(pres, 1, product));
+    if (chequeo.excede) { setAvisoStock({ ...chequeo, onConfirmar: ejecutar }); return; }
+    ejecutar();
+  };
+  const updateItem = (idx, field, val) => {
+    const it = items[idx];
+    const ejecutar = () => {
+      setItems(prev => prev.map((it2, i) => {
+        if (i !== idx) return it2;
+        // Si cambia la presentación, se borra el precio editado (era para la otra
+        // presentación) y la distribución personalizada (el total objetivo cambió)
+        if (field === "pres") return { ...it2, pres: val, precioOverride: undefined, distribucionPersonalizada: null };
+        if (field === "count") {
+          const nuevoCount = Math.max(1, val);
+          // Ajusta el arreglo de variantes (talla/color por pieza) al nuevo tamaño
+          const variantesActuales = it2.variantes || [];
+          let nuevasVariantes = variantesActuales.slice(0, nuevoCount);
+          while (nuevasVariantes.length < nuevoCount) nuevasVariantes.push({ talla: "", color: "" });
+          return { ...it2, count: nuevoCount, variantes: nuevasVariantes };
+        }
+        return { ...it2, [field]: val };
+      }));
+    };
+    if (field === "pres") {
+      const chequeo = checarStock(it.product, presToPiezas(val, it.count, it.product), idx);
+      if (chequeo.excede) { setAvisoStock({ ...chequeo, onConfirmar: ejecutar }); return; }
+    }
+    if (field === "count") {
+      const nuevoCount = Math.max(1, val);
+      // Solo avisa si la cantidad SUBE (bajar cantidad nunca puede exceder el stock)
+      if (nuevoCount > it.count) {
+        const chequeo = checarStock(it.product, presToPiezas(it.pres, nuevoCount, it.product), idx);
+        if (chequeo.excede) { setAvisoStock({ ...chequeo, onConfirmar: ejecutar }); return; }
+      }
+    }
+    ejecutar();
+  };
+  // Actualiza la talla o color de UNA pieza específica dentro de un item
+  const updateVariantePieza = (idx, piezaIdx, campo, val) => {
+    setItems(prev => prev.map((it, i) => {
+      if (i !== idx) return it;
+      const variantes = [...(it.variantes || Array.from({ length: it.count }, () => ({ talla: "", color: "" })))];
+      variantes[piezaIdx] = { ...variantes[piezaIdx], [campo]: val };
+      return { ...it, variantes };
+    }));
+  };
+  const removeItem = (idx) => setItems(prev => prev.filter((_, i) => i !== idx));
+
+  // Deja el costo escrito como el precio fijo de la sucursal elegida (o de puerta a puerta) para los próximos pedidos
+  const [guardandoPrecio, setGuardandoPrecio] = useState(false);
+  const guardarPrecioEnvio = async () => {
+    const valor = Number(envio);
+    if (isNaN(valor) || valor < 0) { showToast("Pon un costo válido"); return; }
+    setGuardandoPrecio(true);
+    try {
+      if (modoEnvio === "puerta") {
+        const r = await fetch(`${SUPABASE_URL}/rest/v1/configuracion?clave=eq.costo_envio_puerta_a_puerta`, { method: "PATCH", headers: sb.dataHeaders(), body: JSON.stringify({ valor }) });
+        if (!r.ok) throw new Error(await r.text());
+        setCostoPuertaCfg(valor);
+        showToast("Precio de puerta a puerta actualizado");
+      } else if (sucursalSel) {
+        await sb.patch("sucursales", sucursalSel.id, { costo_envio: valor });
+        if (typeof setSucursales === "function") setSucursales(prev => prev.map(su => su.id === sucursalSel.id ? { ...su, costo_envio: valor } : su));
+        showToast(`Precio de ${sucursalSel.nombre} actualizado`);
+      }
+      setEnvioManual(false);
+    } catch (e) { showToast("No se pudo guardar: " + (e.message || e)); }
+    setGuardandoPrecio(false);
+  };
+
+  const handleGenerate = async () => {
+    const hayNormales = items.length > 0;
+    const hayFlex = flexPacks.length > 0;
+    if (!hayNormales && !hayFlex) { alert("Agrega al menos un producto."); return; }
+    if (!cliente.nombre.trim()) { alert("Escribe el nombre del cliente."); return; }
+    if (modoEnvio === "sucursal") {
+      if (!empresaId) { alert("Elige la empresa de envío (Servientrega o Ferguson)."); return; }
+      if (sucursalesEmpresa.length > 0 && !sucursalId) { alert("Elige la sucursal donde se va a recoger el pedido."); return; }
+    } else if (modoEnvio === "puerta") {
+      if (!servientregaEmp) { alert("No se encontró la empresa Servientrega para el envío puerta a puerta."); return; }
+      if (!cliente.direccion.trim()) { alert("Para puerta a puerta, escribe la dirección de entrega."); return; }
+    } else if (modoEnvio === "local") {
+      if (localesRetiro.length > 1 && !localRetiroId) { alert("Elige en cuál local retira el cliente."); return; }
+    }
+    if (!metodoPago && !reservar) { alert(tipo === "cotizacion" ? "Elige cómo va a pagar el cliente: Yappy, Tarjeta o Transferencia." : "Elige cómo pagó el cliente: Yappy, Tarjeta o Transferencia."); return; }
+    // Pedido o reserva: no se pueden llevar piezas que otro cliente tiene reservadas
+    // (la pantalla ya avisa al agregar, pero el tipo pudo cambiarse después de armar la lista)
+    if (tipo === "pedido" || reservar) {
+      const porProducto = {};
+      items.forEach(it => { porProducto[it.product.id] = (porProducto[it.product.id] || 0) + presToPiezas(it.pres, it.count, it.product); });
+      flexPacks.forEach(pack => pack.lineas.forEach(l => { porProducto[l.product.id] = (porProducto[l.product.id] || 0) + l.piezas; }));
+      const conflictos = [];
+      for (const id of Object.keys(porProducto)) {
+        const p = products.find(x => String(x.id) === String(id));
+        const res = Number(p?.piezas_reservadas) || 0;
+        if (!p || !p.stock_actualizado_at || res <= 0) continue;
+        const libres = Math.max(0, Number(p.stock || 0) - res);
+        if (porProducto[id] > libres) conflictos.push(`• ${p.nombre}: llevas ${porProducto[id]}, pero solo hay ${libres} sin reservar (${res} reservadas para otros clientes)`);
+      }
+      if (conflictos.length) { alert("No se puede continuar -- hay piezas reservadas para otros clientes:\n\n" + conflictos.join("\n") + "\n\nBaja la cantidad, o libera/convierte la reserva primero."); return; }
+    }
+    // Validar que cada FLEXPACK esté completo
+    for (let i = 0; i < flexPacks.length; i++) {
+      const pack = flexPacks[i];
+      if (!flexCompleto(pack)) {
+        const meta = FLEX_META[pack.modo];
+        alert(`El FLEXPACK ${pack.modo === "media" ? "media docena" : "docena"} #${i + 1} tiene ${flexPiezas(pack)} de ${meta} piezas. Complétalo o elimínalo.`);
+        return;
+      }
+      // Cada pieza de cada línea del pack necesita su talla/color, si el producto los tiene
+      for (const l of pack.lineas) {
+        const requiereTalla = l.product.tiene_tallas && (l.product.tallas || "").trim();
+        const requiereColor = l.product.tiene_colores && (l.product.colores || "").trim();
+        if (!requiereTalla && !requiereColor) continue;
+        const variantes = l.variantes && l.variantes.length === l.piezas ? l.variantes : [];
+        const asignadas = variantes.filter(v => (!requiereTalla || v.talla) && (!requiereColor || v.color)).length;
+        if (asignadas < l.piezas) {
+          alert(`"${l.product.nombre}" dentro del FLEXPACK #${i + 1} tiene ${asignadas} de ${l.piezas} piezas con talla/color asignados. Completa todas antes de generar el pedido.`);
+          return;
+        }
+      }
+    }
+    // Validar que cada pieza tenga su talla/color asignados (si el producto tiene variantes)
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      if (it.pres !== "pieza") continue;
+      const requiereTalla = it.product.tiene_tallas && (it.product.tallas || "").trim();
+      const requiereColor = it.product.tiene_colores && (it.product.colores || "").trim();
+      if (!requiereTalla && !requiereColor) continue;
+      const variantes = it.variantes && it.variantes.length === it.count ? it.variantes : [];
+      const asignadas = variantes.filter(v => (!requiereTalla || v.talla) && (!requiereColor || v.color)).length;
+      if (asignadas < it.count) {
+        alert(`"${it.product.nombre}" tiene ${asignadas} de ${it.count} piezas con talla/color asignados. Completa todas las piezas antes de generar el pedido.`);
+        return;
+      }
+    }
+    // Validar que la distribución personalizada (docena/media docena) sume exacto, si se activó
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      if ((it.pres !== "docena" && it.pres !== "media") || !it.distribucionPersonalizada) continue;
+      const eje = it.product.distribucion_eje || (it.product.tiene_tallas ? "talla" : "color");
+      const variantesDisponibles = (eje === "talla" ? it.product.tallas : it.product.colores || "").split(",").map(s => s.trim()).filter(Boolean);
+      const totalObjetivo = (it.pres === "docena" ? 12 : 6) * it.count;
+      const totalActual = variantesDisponibles.reduce((s, v) => s + (Number(it.distribucionPersonalizada[v]) || 0), 0);
+      if (totalActual !== totalObjetivo) {
+        alert(`La distribución personalizada de "${it.product.nombre}" suma ${totalActual}, pero debe sumar exactamente ${totalObjetivo}. Ajústala antes de generar el pedido.`);
+        return;
+      }
+    }
+    // Última revisión: si el pedido incluye la pieza de muestra de algún producto y todavía no se
+    // aceptó (por ejemplo, la muestra se marcó después de agregarlo), se pregunta antes de guardar.
+    const piezasPorProducto = new Map();
+    const sumar = (prod, n) => piezasPorProducto.set(prod.id, { prod, n: (piezasPorProducto.get(prod.id)?.n || 0) + n });
+    items.forEach(it => sumar(it.product, presToPiezas(it.pres, it.count, it.product)));
+    flexPacks.forEach(pack => pack.lineas.forEach(l => sumar(l.product, l.piezas)));
+    for (const { prod, n } of piezasPorProducto.values()) {
+      const muestra = Number(prod.piezas_muestra) || 0;
+      const stockReal = Number(prod.stock) || 0;
+      if (!muestra || !prod.stock_actualizado_at || muestrasAceptadas.current.has(prod.id)) continue;
+      if (n > stockReal - muestra) {
+        setAvisoStock({
+          excede: true, esMuestra: n <= stockReal, productId: prod.id, muestra, producto: prod.nombre, stockDisponible: stockReal,
+          disponiblesSinMuestra: Math.max(0, stockReal - muestra), yaEnCarrito: 0, totalConEsto: n,
+          onConfirmar: () => { muestrasAceptadas.current.add(prod.id); handleGenerate(); },
+        });
+        return;
+      }
+    }
+    setSaving(true);
+    try {
+      // Número de factura correlativo
+      let numFactura = null;
+      try {
+        const r = await fetch(`${SUPABASE_URL}/rest/v1/rpc/siguiente_factura`, {
+          method: "POST",
+          headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Content-Type": "application/json" },
+          body: "{}",
+        });
+        if (r.ok) numFactura = await r.json();
+      } catch(e) { /* si falla, usamos timestamp */ }
+      if (!numFactura) numFactura = Number(Date.now().toString().slice(-6));
+
+      const codigo = (tipo === "cotizacion" ? "COT-" : "OFT-") + numFactura;
+      const localElegidoAdmin = retiroLocal ? (localesRetiro.find(l => l.id === localRetiroId) || (localesRetiro.length === 1 ? localesRetiro[0] : null)) : null;
+      const pedido = await sb.post("pedidos", {
+        codigo, usuario_id: cliente.id || null, nombre_cliente: cliente.nombre, telefono: cliente.telefono,
+        direccion: cliente.direccion, notas, total, estado: 0,
+        empresa_envio_id: empresaId, empresa_envio_nombre: empresaSel?.nombre || "",
+        sucursal_id: sucursalId, sucursal_nombre: modoEnvio === "puerta" ? "Puerta a puerta" : (sucursalSel?.nombre || ""),
+        retiro_local: retiroLocal,
+        retiro_nombre_autorizado: retiroLocal ? (retiroNombreAutorizado.trim() || null) : null,
+        local_retiro_id: localElegidoAdmin?.id || null, local_retiro_nombre: localElegidoAdmin?.nombre || null,
+        tipo, num_factura: numFactura, creado_por_admin: true, costo_envio: costoEnvio,
+        creado_por_usuario_id: user?.id || null,
+        metodo_pago: metodoPago || null,
+        reservada: reservar && tipo === "cotizacion",
+        reserva_vence: reservar && tipo === "cotizacion" && reservaVence ? reservaVence : null,
+        // Las cotizaciones se marcan pagadas de una vez (no son ventas reales).
+        // Los PEDIDOS se insertan como NO pagados y se marcan pagados en un segundo paso
+        // (más abajo, después de crear los items) — igual que el flujo web con Yappy.
+        // Esto es importante porque la sincronización con Odoo está enganchada al cambio
+        // de "pagado" de false → true, no a la creación del registro: si se inserta ya
+        // pagado=true de una vez, esa transición nunca ocurre y la venta no llega a Odoo.
+        pagado: tipo === "cotizacion" ? true : false,
+      });
+      const pedidoId = pedido[0].id;
+      // Se guarda cada línea creada aquí -- así, al avisarle al Dashboard que hay un
+      // pedido nuevo, se le puede mandar YA CON sus productos, sin que tenga que
+      // adivinarlos ni quedarse con la lista vacía hasta que alguien refresque.
+      const itemsCreados = [];
+      // Productos normales — si es "pieza" y tiene variantes por pieza, se agrupan por combinación talla+color
+      for (const it of items) {
+        const tieneVariantesPorPieza = it.pres === "pieza" && it.variantes && it.variantes.length === it.count &&
+          ((it.product.tiene_tallas && (it.product.tallas || "").trim()) || (it.product.tiene_colores && (it.product.colores || "").trim()));
+        if (tieneVariantesPorPieza) {
+          // Agrupa las piezas por combinación exacta de talla+color
+          const grupos = {};
+          it.variantes.forEach(v => {
+            const key = `${v.talla || ""}|||${v.color || ""}`;
+            grupos[key] = (grupos[key] || 0) + 1;
+          });
+          for (const key of Object.keys(grupos)) {
+            const [talla, color] = key.split("|||");
+            const cantidadGrupo = grupos[key];
+            const variante = [talla ? `Talla: ${talla}` : null, color ? `Color: ${color}` : null].filter(Boolean).join(" · ");
+            const nombreConVariante = variante ? `${it.product.nombre} (${variante})` : it.product.nombre;
+            const precioUnit = itemUnitPrice(it);
+            const creado = await sb.post("pedido_items", {
+              pedido_id: pedidoId, producto_id: it.product.id, nombre_producto: nombreConVariante,
+              cantidad: cantidadGrupo, precio_unitario: precioUnit,
+              subtotal: precioUnit * cantidadGrupo, presentacion: "pieza",
+            });
+            if (Array.isArray(creado) && creado[0]) itemsCreados.push(creado[0]);
+          }
+        } else {
+          const eje = it.product.distribucion_eje || (it.product.tiene_tallas ? "talla" : "color");
+          const variantesDisponibles = (eje === "talla" ? it.product.tallas : it.product.colores || "").split(",").map(s => s.trim()).filter(Boolean);
+          const distribucionValida = it.distribucionPersonalizada && variantesDisponibles.some(v => Number(it.distribucionPersonalizada[v]) > 0);
+          const creado = await sb.post("pedido_items", {
+            pedido_id: pedidoId, producto_id: it.product.id, nombre_producto: it.product.nombre,
+            cantidad: presToPiezas(it.pres, it.count, it.product), precio_unitario: itemUnitPrice(it),
+            subtotal: itemTotal(it), presentacion: it.pres,
+            distribucion_tallas: distribucionValida ? JSON.stringify({ eje, cantidades: it.distribucionPersonalizada }) : null,
+          });
+          if (Array.isArray(creado) && creado[0]) itemsCreados.push(creado[0]);
+        }
+      }
+      // Líneas de FLEXPACK -- se agrupan las piezas de cada línea por su combinación
+      // exacta de talla+color (igual que "Por pieza"), para que 3 piezas del mismo
+      // producto en tallas distintas queden como líneas separadas y correctas.
+      for (const pack of flexPacks) {
+        const etiqueta = pack.modo === "media" ? "FLEXPACK ½ doc" : "FLEXPACK docena";
+        for (const l of pack.lineas) {
+          const variantes = l.variantes && l.variantes.length === l.piezas ? l.variantes : [];
+          const precioUnit = flexLineUnitPrice(l, pack.modo);
+          if (variantes.length === l.piezas && (l.product.tiene_tallas || l.product.tiene_colores)) {
+            const grupos = {};
+            variantes.forEach(v => {
+              const key = `${v.talla || ""}|||${v.color || ""}`;
+              grupos[key] = (grupos[key] || 0) + 1;
+            });
+            for (const key of Object.keys(grupos)) {
+              const [talla, color] = key.split("|||");
+              const cantidadGrupo = grupos[key];
+              const variante = [talla ? `Talla: ${talla}` : null, color ? `Color: ${color}` : null].filter(Boolean).join(" · ");
+              const nombreConVariante = variante ? `${l.product.nombre} (${variante}) (${etiqueta})` : `${l.product.nombre} (${etiqueta})`;
+              const creado = await sb.post("pedido_items", {
+                pedido_id: pedidoId, producto_id: l.product.id, nombre_producto: nombreConVariante,
+                cantidad: cantidadGrupo, precio_unitario: precioUnit,
+                subtotal: precioUnit * cantidadGrupo,
+                presentacion: pack.modo === "media" ? "flexpack_media" : "flexpack_docena",
+              });
+              if (Array.isArray(creado) && creado[0]) itemsCreados.push(creado[0]);
+            }
+          } else {
+            const creado = await sb.post("pedido_items", {
+              pedido_id: pedidoId, producto_id: l.product.id, nombre_producto: `${l.product.nombre} (${etiqueta})`,
+              cantidad: l.piezas, precio_unitario: precioUnit,
+              subtotal: precioUnit * l.piezas,
+              presentacion: pack.modo === "media" ? "flexpack_media" : "flexpack_docena",
+            });
+            if (Array.isArray(creado) && creado[0]) itemsCreados.push(creado[0]);
+          }
+        }
+      }
+      // Items para la factura (normales + flex) — agrupa piezas con variantes por combinación talla+color
+      const invoiceItems = [
+        ...items.flatMap(it => {
+          const tieneVariantesPorPieza = it.pres === "pieza" && it.variantes && it.variantes.length === it.count &&
+            ((it.product.tiene_tallas && (it.product.tallas || "").trim()) || (it.product.tiene_colores && (it.product.colores || "").trim()));
+          if (tieneVariantesPorPieza) {
+            const grupos = {};
+            it.variantes.forEach(v => {
+              const key = `${v.talla || ""}|||${v.color || ""}`;
+              grupos[key] = (grupos[key] || 0) + 1;
+            });
+            const precioUnit = itemUnitPrice(it);
+            return Object.keys(grupos).map(key => {
+              const [talla, color] = key.split("|||");
+              const cantidadGrupo = grupos[key];
+              const variante = [talla ? `Talla: ${talla}` : null, color ? `Color: ${color}` : null].filter(Boolean).join(" · ");
+              return {
+                nombre: variante ? `${it.product.nombre} (${variante})` : it.product.nombre, referencia: it.product.referencia, imagen: it.product.imagen_url || null,
+                presentacion: `${cantidadGrupo} pieza${cantidadGrupo > 1 ? "s" : ""}`,
+                piezas: cantidadGrupo,
+                precioUnit,
+                subtotal: precioUnit * cantidadGrupo,
+              };
+            });
+          }
+          return [{
+            nombre: it.product.nombre, referencia: it.product.referencia, imagen: it.product.imagen_url || null,
+            presentacion: `${it.count} ${presLabelPlural(it.pres, it.count, it.product)}`,
+            piezas: presToPiezas(it.pres, it.count, it.product),
+            precioUnit: itemUnitPrice(it),
+            subtotal: itemTotal(it),
+          }];
+        }),
+        ...flexPacks.flatMap(pack => pack.lineas.flatMap(l => {
+          const precioUnit = flexLineUnitPrice(l, pack.modo);
+          const variantes = l.variantes && l.variantes.length === l.piezas ? l.variantes : [];
+          if (variantes.length === l.piezas && (l.product.tiene_tallas || l.product.tiene_colores)) {
+            const grupos = {};
+            variantes.forEach(v => {
+              const key = `${v.talla || ""}|||${v.color || ""}`;
+              grupos[key] = (grupos[key] || 0) + 1;
+            });
+            return Object.keys(grupos).map(key => {
+              const [talla, color] = key.split("|||");
+              const variante = [talla ? `Talla: ${talla}` : null, color ? `Color: ${color}` : null].filter(Boolean).join(" · ");
+              const cantidadGrupo = grupos[key];
+              return {
+                nombre: variante ? `${l.product.nombre} (${variante})` : l.product.nombre, referencia: l.product.referencia, imagen: l.product.imagen_url || null,
+                presentacion: pack.modo === "media" ? "FLEXPACK ½ doc" : "FLEXPACK docena",
+                piezas: cantidadGrupo, precioUnit, subtotal: precioUnit * cantidadGrupo,
+              };
+            });
+          }
+          return [{
+            nombre: l.product.nombre, referencia: l.product.referencia, imagen: l.product.imagen_url || null,
+            presentacion: pack.modo === "media" ? "FLEXPACK ½ doc" : "FLEXPACK docena",
+            piezas: l.piezas, precioUnit, subtotal: precioUnit * l.piezas,
+          }];
+        })),
+      ];
+
+      if (tipo !== "cotizacion") {
+        // Antes de dar la venta por hecha, se crea (y se intenta confirmar) la orden
+        // en Odoo -- que es quien tiene el inventario real -- y se espera su respuesta.
+        // Si Odoo dice que algo no alcanza en stock, se DETIENE la venta aquí mismo:
+        // se borra lo que ya se había creado en Ofertodo y se avisa exactamente qué
+        // producto(s) no tienen suficiente disponibilidad, en vez de dejar la venta
+        // hecha en Ofertodo mientras en Odoo se queda pendiente sin que nadie se entere.
+        try {
+          const respOdoo = await fetch(`${SUPABASE_URL}/functions/v1/crear-venta-odoo`, {
+            method: "POST",
+            headers: sb.functionHeaders(),
+            body: JSON.stringify({
+              codigo, nombre_cliente: cliente.nombre, email_cliente: null,
+              telefono: cliente.telefono, direccion: cliente.direccion,
+              costo_envio: costoEnvio, empresa_envio: empresaSel?.nombre || "",
+              items: invoiceItems.map(it => ({
+                referencia: it.referencia, nombre_producto: it.nombre,
+                cantidad: it.piezas,
+                // Precio real POR PIEZA (derivado del subtotal, que siempre es correcto),
+                // no el precio de la docena/media docena completa — así Odoo no infla el total.
+                precio_unitario: it.piezas > 0 ? it.subtotal / it.piezas : it.precioUnit,
+              })),
+            }),
+          });
+          const dataOdoo = await respOdoo.json().catch(() => ({}));
+          if (!dataOdoo.ok) {
+            // Revierte lo que ya se había creado -- no queda ningún rastro de una
+            // venta que en realidad no se pudo concretar.
+            for (const it of itemsCreados) { try { await sb.delete("pedido_items", it.id); } catch(e) {} }
+            try { await sb.delete("pedidos", pedidoId); } catch(e) {}
+            if (dataOdoo.sin_stock) {
+              const detalle = (dataOdoo.problemas || []).map(p => `• ${p.nombre}: pidió ${p.solicitado}, hay ${p.disponible} disponibles`).join("\n");
+              alert(`No se pudo completar la venta -- no hay suficiente stock en Odoo:\n\n${detalle}\n\nAjusta las cantidades o repón stock antes de intentar de nuevo.`);
+            } else {
+              alert("No se pudo completar la venta: " + (dataOdoo.mensaje || dataOdoo.error || "error desconocido al sincronizar con Odoo") + "\n\nNo se creó nada -- intenta de nuevo.");
+            }
+            setSaving(false);
+            return;
+          }
+          if (dataOdoo.entrega_error) {
+            // La venta y el stock SÍ quedaron reservados en Odoo (eso ya pasó al confirmar
+            // la orden) -- solo el paso final de "Validar" la entrega no se pudo hacer solo.
+            // No detiene nada, pero avisa para que se termine ese paso a mano en Odoo.
+            showToast("Venta creada y confirmada, pero hay que terminar de validar la entrega en Odoo manualmente.");
+          }
+        } catch(e) {
+          for (const it of itemsCreados) { try { await sb.delete("pedido_items", it.id); } catch(e2) {} }
+          try { await sb.delete("pedidos", pedidoId); } catch(e2) {}
+          alert("No se pudo conectar con Odoo para completar la venta. No se creó nada -- intenta de nuevo.\n\n" + e.message);
+          setSaving(false);
+          return;
+        }
+        // Marca el PEDIDO como pagado ahora que Odoo ya confirmó que hay stock y la
+        // orden quedó creada y confirmada del otro lado.
+        try {
+          await sb.patch("pedidos", pedidoId, { pagado: true });
+        } catch(e) {
+          showToast("Pedido creado, pero hubo un problema marcándolo como pagado. Revísalo en Pedidos.");
+        }
+      }
+
+      // Datos para la factura
+      setInvoice({
+        codigo, numFactura, tipo, reserva: reservar, fecha: new Date(),
+        cliente: { ...cliente }, notas,
+        empresa: empresaSel?.nombre || "", sucursal: modoEnvio === "puerta" ? "Puerta a puerta" : (sucursalSel?.nombre || ""),
+        items: invoiceItems,
+        subtotal, descPct, descMonto, costoEnvio, total,
+      });
+      // Avisa al panel que lo contiene (ej. el Dashboard) que se creó un pedido o
+      // cotización nuevo -- ya con sus productos reales (no una lista vacía), así
+      // aparece completo de una vez, sin tener que refrescar la página.
+      if (onCreado && Array.isArray(pedido) && pedido[0]) onCreado({ ...pedido[0], items: itemsCreados });
+      showToast(reservar ? "Reserva creada: esas piezas ya no se pueden vender" : tipo === "cotizacion" ? "Cotización creada" : "Pedido creado");
+    } catch(e) { alert("Error al crear: " + e.message); }
+    setSaving(false);
+  };
+
+  const resetForm = () => {
+    muestrasAceptadas.current = new Set(); setItems([]); setFlexPacks([]); setFlexActiveId(null); setCliente({ nombre: "", telefono: "", direccion: "" }); setNotas("");
+    setEmpresaId(null); setSucursalId(null); setModoEnvio(null); setBusquedaSuc(""); setEnvioManual(false); setRetiroNombreAutorizado(""); setLocalRetiroId(null); setTipo("pedido"); setReservar(false); setReservaVence(""); setMetodoPago(""); setDescuento(""); setEnvio(""); setRedondeo("arriba"); setInvoice(null);
+  };
+
+  return (
+    <>
+      <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 8, display: "flex", alignItems: "center", gap: 10 }}><FilePlus size={24} color={RED} /> Crear Pedido / Cotización</div>
+      <p style={{ fontSize: 13, color: GRAY3, marginBottom: 24 }}>Crea un pedido manual y genera una factura para imprimir o enviar.</p>
+
+      {/* TIPO */}
+      <div style={{ display: "flex", gap: 10, marginBottom: 20 }}>
+        {[["pedido", "Pedido", Package], ["cotizacion", "Cotización", FileText], ["reserva", "Reserva", Lock]].map(([k, l, Icon]) => {
+          const activo = k === "reserva" ? reservar : k === "cotizacion" ? (tipo === "cotizacion" && !reservar) : tipo === "pedido";
+          const colorAct = k === "reserva" ? "#7C3AED" : RED;
+          return (
+          <button key={k} onClick={() => { if (k === "reserva") { setTipo("cotizacion"); setReservar(true); } else { setTipo(k); setReservar(false); } }} className="oft-btn-press"
+            style={{ flex: 1, padding: "14px", borderRadius: 12, border: `2px solid ${activo ? colorAct : GRAY2}`, background: activo ? (k === "reserva" ? "#F5F3FF" : "#FFF5F5") : WHITE, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, fontWeight: 800, color: activo ? colorAct : BLACK }}>
+            <Icon size={18} /> {l}
+          </button>
+          );
+        })}
+      </div>
+
+      <div className="oft-dash-grid-2" style={{ display: "grid", gridTemplateColumns: "1.3fr 1fr", gap: 20, alignItems: "start" }}>
+        {/* COLUMNA IZQUIERDA: productos */}
+        <div style={{ background: WHITE, borderRadius: 16, padding: 20, border: `1px solid ${GRAY2}` }}>
+          <div style={{ fontWeight: 800, marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}><Tag size={18} color={RED} /> Productos</div>
+
+          {/* Buscador */}
+          <div style={{ position: "relative", marginBottom: 12 }}>
+            <Search size={16} color={GRAY3} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)" }} />
+            <input style={{ ...S.input, paddingLeft: 36, marginBottom: 0 }} placeholder="Buscar producto por nombre o referencia..." value={search} onChange={e => setSearch(e.target.value)} />
+            {filtered.length > 0 && (
+              <div style={{ position: "absolute", top: "100%", left: 0, right: 0, background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 10, marginTop: 4, zIndex: 20, boxShadow: "0 8px 24px rgba(0,0,0,0.12)", overflow: "hidden" }}>
+                {filtered.map(p => (
+                  <div key={p.id} onClick={() => setProductoParaElegir(p)} className="oft-cat-chip" style={{ padding: 10, display: "flex", alignItems: "center", gap: 10, cursor: "pointer", borderBottom: `1px solid ${GRAY}` }}>
+                    {p.imagen_url ? <img src={imagenOptimizada(p.imagen_url, 150)} style={{ width: 36, height: 36, borderRadius: 6, objectFit: "cover" }} /> : <div style={{ width: 36, height: 36, borderRadius: 6, background: GRAY, display: "flex", alignItems: "center", justifyContent: "center" }}><Package size={16} color={GRAY3} /></div>}
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 700, fontSize: 13 }}>{p.nombre}</div>
+                      <div style={{ fontSize: 11, color: GRAY3 }}>
+                        {p.referencia || "—"} · Docena ${p.precio_docena}
+                        {p.stock_actualizado_at && (
+                          <span style={{ fontWeight: 800, color: Number(p.stock) <= 0 ? RED : Number(p.stock) <= 5 ? "#856404" : "#0F6E56" }}> · Stock: {Number(p.stock)}</span>
+                        )}
+                        <EtiquetaReservadas p={p} />
+                      </div>
+                    </div>
+                    <Plus size={18} color={RED} />
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Items agregados */}
+          {items.length === 0 ? (
+            <div style={{ textAlign: "center", padding: "30px 0", color: GRAY3, fontSize: 13 }}>
+              <Package size={36} strokeWidth={1.3} style={{ margin: "0 auto 8px" }} />
+              Busca y agrega productos al pedido
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {items.map((it, idx) => {
+                const precioActual = itemUnitPrice(it);
+                const precioEditado = it.precioOverride !== undefined && it.precioOverride !== "" && Number(it.precioOverride) !== presUnitPrice(it.product, it.pres);
+                return (
+                <div key={idx} style={{ border: `1px solid ${GRAY2}`, borderRadius: 10, padding: 10 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                    {it.product.imagen_url ? <img src={it.product.imagen_url} style={{ width: 40, height: 40, borderRadius: 6, objectFit: "cover" }} /> : <div style={{ width: 40, height: 40, borderRadius: 6, background: GRAY, display: "flex", alignItems: "center", justifyContent: "center" }}><Package size={18} color={GRAY3} /></div>}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 700, fontSize: 13 }}>{it.product.nombre}</div>
+                      <div style={{ fontSize: 11, color: GRAY3 }}>
+                        {it.count} × {money(precioActual)} {presLabelPlural(it.pres, it.count, it.product)}
+                        {it.product.stock_actualizado_at && (
+                          <span style={{ fontWeight: 800, color: Number(it.product.stock) <= 0 ? RED : Number(it.product.stock) <= 5 ? "#856404" : "#0F6E56" }}> · Stock: {Number(it.product.stock)}</span>
+                        )}
+                        <EtiquetaReservadas p={it.product} />
+                      </div>
+                    </div>
+                    <div style={{ fontWeight: 800, color: RED }}>{money(itemTotal(it))}</div>
+                    <button onClick={() => removeItem(idx)} style={{ background: "none", border: "none", color: RED, cursor: "pointer", display: "flex" }}><Trash2 size={16} /></button>
+                  </div>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <select value={it.pres} onChange={e => updateItem(idx, "pres", e.target.value)} style={{ flex: 1, border: `1.5px solid ${GRAY2}`, borderRadius: 8, padding: "6px 8px", fontSize: 13, fontFamily: "inherit" }}>
+                      <option value="pieza">Pieza (${it.product.precio_pieza})</option>
+                      <option value="media">{it.product.modalidad_presentacion === "perfumeria" ? "3 Piezas" : "½ Docena"} (${it.product.precio_media_docena})</option>
+                      <option value="docena">{it.product.modalidad_presentacion === "perfumeria" ? "6 Piezas" : "Docena"} (${it.product.precio_docena})</option>
+                    </select>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, border: `1.5px solid ${GRAY2}`, borderRadius: 8, padding: "2px 6px" }}>
+                      <button onClick={() => updateItem(idx, "count", Math.max(1, it.count - 1))} style={{ border: "none", background: "none", fontSize: 18, cursor: "pointer", color: it.count <= 1 ? GRAY3 : BLACK, width: 24 }}>−</button>
+                      <span style={{ fontWeight: 800, minWidth: 20, textAlign: "center" }}>{it.count}</span>
+                      <button onClick={() => updateItem(idx, "count", it.count + 1)} style={{ border: "none", background: "none", fontSize: 18, cursor: "pointer", color: RED, width: 24 }}>+</button>
+                    </div>
+                  </div>
+                  {/* EDITAR PRECIO UNITARIO */}
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+                    <span style={{ fontSize: 12, color: GRAY3, fontWeight: 700, whiteSpace: "nowrap" }}>Precio c/u $</span>
+                    <input
+                      type="number" min="0" step="0.01"
+                      value={it.precioOverride !== undefined ? it.precioOverride : presUnitPrice(it.product, it.pres)}
+                      onChange={e => updateItem(idx, "precioOverride", e.target.value)}
+                      style={{ flex: 1, border: `1.5px solid ${precioEditado ? RED : GRAY2}`, borderRadius: 8, padding: "6px 8px", fontSize: 13, fontFamily: "inherit", color: precioEditado ? RED : BLACK, fontWeight: precioEditado ? 800 : 400 }}
+                    />
+                    {precioEditado && (
+                      <button onClick={() => updateItem(idx, "precioOverride", undefined)} title="Volver al precio original" style={{ background: "none", border: `1.5px solid ${GRAY2}`, borderRadius: 8, padding: "5px 8px", fontSize: 11, fontWeight: 700, cursor: "pointer", color: GRAY3, whiteSpace: "nowrap" }}>
+                        ↺ Original
+                      </button>
+                    )}
+                  </div>
+
+                  {/* ASIGNAR TALLA Y COLOR POR CADA PIEZA — solo si es "Por pieza" y el producto tiene variantes */}
+                  {it.pres === "pieza" && (it.product.tiene_tallas || it.product.tiene_colores) && (() => {
+                    const tallas = (it.product.tallas || "").split(",").map(s => s.trim()).filter(Boolean);
+                    const colores = (it.product.colores || "").split(",").map(s => s.trim()).filter(Boolean);
+                    const requiereTalla = it.product.tiene_tallas && tallas.length > 0;
+                    const requiereColor = it.product.tiene_colores && colores.length > 0;
+                    const variantes = it.variantes && it.variantes.length === it.count ? it.variantes : Array.from({ length: it.count }, () => ({ talla: "", color: "" }));
+                    const asignadas = variantes.filter(v => (!requiereTalla || v.talla) && (!requiereColor || v.color)).length;
+                    const completo = asignadas === it.count;
+                    return (
+                      <div style={{ marginTop: 8, background: GRAY, borderRadius: 8, padding: 10 }}>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                          <span style={{ fontSize: 12, fontWeight: 800 }}>Talla / color por pieza</span>
+                          <span style={{ fontSize: 11, fontWeight: 800, padding: "2px 8px", borderRadius: 10, background: completo ? "#D4EDDA" : "#FFF3CD", color: completo ? "#155724" : "#856404" }}>
+                            {asignadas}/{it.count} asignadas {completo ? "✓" : ""}
+                          </span>
+                        </div>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                          {variantes.map((v, piezaIdx) => {
+                            const piezaOk = (!requiereTalla || v.talla) && (!requiereColor || v.color);
+                            return (
+                              <div key={piezaIdx} style={{ background: WHITE, borderRadius: 8, padding: "8px 10px", border: `1.5px solid ${piezaOk ? "#A5D6A7" : GRAY2}` }}>
+                                <div style={{ fontSize: 11, fontWeight: 700, color: GRAY3, marginBottom: 6 }}>Pieza {piezaIdx + 1} de {it.count}</div>
+                                {requiereTalla && (
+                                  <div style={{ marginBottom: requiereColor ? 6 : 0 }}>
+                                    <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                                      {tallas.map(t => {
+                                        const active = v.talla === t;
+                                        return (
+                                          <button key={t} type="button" onClick={() => updateVariantePieza(idx, piezaIdx, "talla", active ? "" : t)}
+                                            style={{ minWidth: 28, padding: "3px 7px", borderRadius: 5, border: `2px solid ${active ? RED : GRAY2}`, background: active ? RED : WHITE, color: active ? WHITE : BLACK, fontWeight: 800, fontSize: 10, cursor: "pointer" }}>
+                                            {t}
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                )}
+                                {requiereColor && (
+                                  <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                                    {colores.map(c => {
+                                      const active = v.color === c;
+                                      return (
+                                        <button key={c} type="button" onClick={() => updateVariantePieza(idx, piezaIdx, "color", active ? "" : c)}
+                                          style={{ display: "inline-flex", alignItems: "center", gap: 3, padding: "2px 7px 2px 4px", borderRadius: 14, border: `2px solid ${active ? RED : GRAY2}`, background: active ? "#FFF5F5" : WHITE, cursor: "pointer" }}>
+                                          <span style={{ width: 11, height: 11, borderRadius: "50%", background: colorToHex(c), border: `1px solid ${GRAY2}` }} />
+                                          <span style={{ fontSize: 10, fontWeight: 700, color: active ? RED : BLACK }}>{c}</span>
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {/* DISTRIBUCIÓN DE TALLA/COLOR PERSONALIZADA — solo para Docena/Media Docena
+                      con tallas o colores. Por defecto usa la distribución predeterminada del
+                      producto; si el cliente se lleva una mezcla distinta según lo que hay en
+                      stock, se puede personalizar aquí para que salga correcta en la guía. */}
+                  {(it.pres === "docena" || it.pres === "media") && (it.product.tiene_tallas || it.product.tiene_colores) && (() => {
+                    const eje = it.product.distribucion_eje || (it.product.tiene_tallas ? "talla" : "color");
+                    const variantesDisponibles = (eje === "talla" ? it.product.tallas : it.product.colores || "").split(",").map(s => s.trim()).filter(Boolean);
+                    if (variantesDisponibles.length === 0) return null;
+                    const totalObjetivo = (it.pres === "docena" ? 12 : 6) * it.count;
+                    const personalizado = !!it.distribucionPersonalizada;
+                    const dist = it.distribucionPersonalizada || {};
+                    const totalActual = variantesDisponibles.reduce((s, v) => s + (Number(dist[v]) || 0), 0);
+
+                    const setQty = (v, qty) => {
+                      const n = Math.max(0, Number(qty.replace(/[^0-9]/g, "")) || 0);
+                      // Lo que ya está puesto en las DEMÁS tallas -- lo máximo que se le puede
+                      // dejar poner a esta es lo que quede libre después de eso, para que
+                      // nunca se pueda pasar del total (ya no hace falta avisar "sobran X").
+                      const sumaOtras = variantesDisponibles.reduce((s, otra) => s + (otra === v ? 0 : (Number(dist[otra]) || 0)), 0);
+                      const maximoParaEsta = Math.max(0, totalObjetivo - sumaOtras);
+                      updateItem(idx, "distribucionPersonalizada", { ...dist, [v]: Math.min(n, maximoParaEsta) });
+                    };
+
+                    return (
+                      <div style={{ marginTop: 8, background: GRAY, borderRadius: 8, padding: 10 }}>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8, flexWrap: "wrap", gap: 6 }}>
+                          <span style={{ fontSize: 12, fontWeight: 800 }}>Distribución de {eje === "talla" ? "tallas" : "colores"}</span>
+                          <div style={{ display: "flex", gap: 4 }}>
+                            <button type="button" onClick={() => updateItem(idx, "distribucionPersonalizada", null)}
+                              style={{ fontSize: 11, fontWeight: 700, padding: "4px 9px", borderRadius: 7, border: `1.5px solid ${!personalizado ? RED : GRAY2}`, background: !personalizado ? RED : WHITE, color: !personalizado ? WHITE : GRAY3, cursor: "pointer" }}>
+                              Predeterminada
+                            </button>
+                            <button type="button" onClick={() => updateItem(idx, "distribucionPersonalizada", Object.fromEntries(variantesDisponibles.map(v => [v, 0])))}
+                              style={{ fontSize: 11, fontWeight: 700, padding: "4px 9px", borderRadius: 7, border: `1.5px solid ${personalizado ? RED : GRAY2}`, background: personalizado ? RED : WHITE, color: personalizado ? WHITE : GRAY3, cursor: "pointer" }}>
+                              Personalizar
+                            </button>
+                          </div>
+                        </div>
+                        {!personalizado ? (
+                          <p style={{ fontSize: 11, color: GRAY3, margin: 0 }}>Se usará la distribución predeterminada del producto — se verá en la guía tal como está configurada en el catálogo.</p>
+                        ) : (
+                          <>
+                            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
+                              {variantesDisponibles.map(v => {
+                                const sumaOtras = variantesDisponibles.reduce((s, otra) => s + (otra === v ? 0 : (Number(dist[otra]) || 0)), 0);
+                                const maximoParaEsta = Math.max(0, totalObjetivo - sumaOtras);
+                                return (
+                                  <div key={v} style={{ display: "flex", alignItems: "center", gap: 5, background: WHITE, border: `1.5px solid ${GRAY2}`, borderRadius: 8, padding: "5px 8px" }}>
+                                    <span style={{ fontSize: 12, fontWeight: 700 }}>{v}</span>
+                                    <input type="number" min="0" max={maximoParaEsta} inputMode="numeric" value={dist[v] || ""} placeholder="0"
+                                      onChange={e => setQty(v, e.target.value)}
+                                      style={{ width: 36, border: "none", borderBottom: `2px solid ${GRAY2}`, textAlign: "center", fontWeight: 800, fontSize: 13, outline: "none" }} />
+                                  </div>
+                                );
+                              })}
+                            </div>
+                            <div style={{ fontSize: 11, fontWeight: 700, color: totalActual === totalObjetivo ? "#1FA64A" : RED }}>
+                              Total: {totalActual} / {totalObjetivo} {totalActual === totalObjetivo ? "✓ Completo" : `— faltan ${totalObjetivo - totalActual}`}
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    );
+                  })()}
+                </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* ═══ FLEXPACK ═══ */}
+          <div style={{ marginTop: 18, paddingTop: 16, borderTop: `2px dashed ${RED}` }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+              <div style={{ background: RED, color: WHITE, fontWeight: 900, fontSize: 11, padding: "3px 8px", borderRadius: 6, letterSpacing: 0.5 }}>FLEXPACK</div>
+              <span style={{ fontSize: 13, fontWeight: 700 }}>Arma una docena o media mezclando referencias</span>
+            </div>
+            <p style={{ fontSize: 12, color: GRAY3, marginBottom: 12 }}>Cada pieza se cobra al precio de docena/media de su propia referencia. Debes completar la cantidad exacta.</p>
+
+            {/* Botones para crear un pack */}
+            <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+              <button onClick={() => addFlexPack("docena")} className="oft-btn-press" style={{ ...S.btnOutline, flex: 1, justifyContent: "center", display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13 }}>
+                <Plus size={15} /> Docena (12 pzs)
+              </button>
+              <button onClick={() => addFlexPack("media")} className="oft-btn-press" style={{ ...S.btnOutline, flex: 1, justifyContent: "center", display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13 }}>
+                <Plus size={15} /> ½ Docena (6 pzs)
+              </button>
+            </div>
+
+            {/* Packs */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              {flexPacks.map((pack, pIdx) => {
+                const piezas = flexPiezas(pack);
+                const meta = FLEX_META[pack.modo];
+                const completo = piezas === meta;
+                const pct = Math.min((piezas / meta) * 100, 100);
+                const activo = flexActiveId === pack.id;
+                return (
+                  <div key={pack.id} style={{ border: `2px solid ${completo ? "#22c55e" : RED}`, borderRadius: 14, padding: 14, background: completo ? "#F0FDF4" : "#FFF9F9" }}>
+                    {/* Cabecera del pack */}
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                      <div style={{ fontWeight: 800, fontSize: 14, display: "flex", alignItems: "center", gap: 8 }}>
+                        {pack.modo === "media" ? "½ Docena" : "Docena"} FLEXPACK
+                        <span style={{ fontSize: 12, fontWeight: 700, color: completo ? "#155724" : RED, background: completo ? "#D4EDDA" : "#FFE0E0", padding: "2px 8px", borderRadius: 10 }}>
+                          {piezas}/{meta} {completo ? "✓" : ""}
+                        </span>
+                      </div>
+                      <button onClick={() => removeFlexPack(pack.id)} style={{ background: "none", border: "none", color: RED, cursor: "pointer", display: "flex" }}><Trash2 size={16} /></button>
+                    </div>
+
+                    {/* Barra de progreso */}
+                    <div style={{ height: 6, background: GRAY2, borderRadius: 3, overflow: "hidden", marginBottom: 12 }}>
+                      <div style={{ height: "100%", width: `${pct}%`, background: completo ? "#22c55e" : RED, borderRadius: 3, transition: "width 0.3s ease" }} />
+                    </div>
+
+                    {/* Líneas del pack */}
+                    {pack.lineas.map(l => {
+                      const precioLinea = flexLineUnitPrice(l, pack.modo);
+                      const precioEditado = l.precioOverride !== undefined && l.precioOverride !== "" && Number(l.precioOverride) !== flexUnitPrice(l.product, pack.modo);
+                      return (
+                      <div key={l.product.id} style={{ background: WHITE, borderRadius: 8, padding: "8px 10px", marginBottom: 8 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                          {l.product.imagen_url ? <img src={l.product.imagen_url} style={{ width: 34, height: 34, borderRadius: 6, objectFit: "cover" }} /> : <div style={{ width: 34, height: 34, borderRadius: 6, background: GRAY, display: "flex", alignItems: "center", justifyContent: "center" }}><Package size={15} color={GRAY3} /></div>}
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontWeight: 700, fontSize: 13 }}>{l.product.nombre}</div>
+                            <div style={{ fontSize: 11, color: GRAY3 }}>{money(precioLinea)}/pza · {l.product.referencia || "—"}
+                              {l.product.stock_actualizado_at && (
+                                <span style={{ fontWeight: 800, color: Number(l.product.stock) <= 0 ? RED : Number(l.product.stock) <= 5 ? "#856404" : "#0F6E56" }}> · {Number(l.product.stock) <= 0 ? "Sin stock" : `Stock: ${Number(l.product.stock)}`}</span>
+                              )}
+                              <EtiquetaReservadas p={l.product} />
+                            </div>
+                          </div>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6, border: `1.5px solid ${GRAY2}`, borderRadius: 8, padding: "2px 6px" }}>
+                            <button onClick={() => updateFlexLine(pack.id, l.product.id, l.piezas - 1)} style={{ border: "none", background: "none", fontSize: 16, cursor: "pointer", color: BLACK, width: 22 }}>−</button>
+                            <span style={{ fontWeight: 800, minWidth: 18, textAlign: "center", fontSize: 14 }}>{l.piezas}</span>
+                            <button onClick={() => updateFlexLine(pack.id, l.product.id, l.piezas + 1)} disabled={completo} style={{ border: "none", background: "none", fontSize: 16, cursor: completo ? "not-allowed" : "pointer", color: completo ? GRAY3 : RED, width: 22 }}>+</button>
+                          </div>
+                          <div style={{ fontWeight: 800, fontSize: 13, color: RED, minWidth: 52, textAlign: "right" }}>{money(precioLinea * l.piezas)}</div>
+                        </div>
+                        {/* EDITAR PRECIO POR PIEZA DE ESTA LÍNEA */}
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+                          <span style={{ fontSize: 11, color: GRAY3, fontWeight: 700, whiteSpace: "nowrap" }}>Precio/pza $</span>
+                          <input
+                            type="number" min="0" step="0.01"
+                            value={l.precioOverride !== undefined ? l.precioOverride : flexUnitPrice(l.product, pack.modo)}
+                            onChange={e => updateFlexLinePrice(pack.id, l.product.id, e.target.value)}
+                            style={{ flex: 1, border: `1.5px solid ${precioEditado ? RED : GRAY2}`, borderRadius: 8, padding: "5px 8px", fontSize: 12, fontFamily: "inherit", color: precioEditado ? RED : BLACK, fontWeight: precioEditado ? 800 : 400 }}
+                          />
+                          {precioEditado && (
+                            <button onClick={() => updateFlexLinePrice(pack.id, l.product.id, undefined)} title="Volver al precio original" style={{ background: "none", border: `1.5px solid ${GRAY2}`, borderRadius: 8, padding: "4px 8px", fontSize: 10, fontWeight: 700, cursor: "pointer", color: GRAY3, whiteSpace: "nowrap" }}>
+                              ↺ Original
+                            </button>
+                          )}
+                        </div>
+                        {/* TALLA / COLOR — UNA POR CADA PIEZA de esta línea, no una sola para
+                            todas (si se llevan 3 del mismo producto, cada una puede ir en una
+                            talla distinta). Con 1 sola pieza, se ve igual de simple que antes. */}
+                        {(l.product.tiene_tallas || l.product.tiene_colores) && (() => {
+                          const tallasDisp = (l.product.tallas || "").split(",").map(s => s.trim()).filter(Boolean);
+                          const coloresDisp = (l.product.colores || "").split(",").map(s => s.trim()).filter(Boolean);
+                          if (tallasDisp.length === 0 && coloresDisp.length === 0) return null;
+                          const requiereTalla = l.product.tiene_tallas && tallasDisp.length > 0;
+                          const requiereColor = l.product.tiene_colores && coloresDisp.length > 0;
+                          const variantes = l.variantes && l.variantes.length === l.piezas ? l.variantes : Array.from({ length: l.piezas }, () => ({ talla: "", color: "" }));
+                          const asignadas = variantes.filter(v => (!requiereTalla || v.talla) && (!requiereColor || v.color)).length;
+                          const completo = asignadas === l.piezas;
+                          return (
+                            <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px dashed ${GRAY2}` }}>
+                              {l.piezas > 1 && (
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                                  <span style={{ fontSize: 10.5, fontWeight: 800, color: GRAY3 }}>Talla/color — pieza por pieza</span>
+                                  <span style={{ fontSize: 10, fontWeight: 800, padding: "1px 7px", borderRadius: 9, background: completo ? "#D4EDDA" : "#FFF3CD", color: completo ? "#155724" : "#856404" }}>
+                                    {asignadas}/{l.piezas} {completo ? "✓" : ""}
+                                  </span>
+                                </div>
+                              )}
+                              <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                                {variantes.map((v, piezaIdx) => (
+                                  <div key={piezaIdx} style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                                    {l.piezas > 1 && <span style={{ fontSize: 10, fontWeight: 800, color: GRAY3, minWidth: 13, flexShrink: 0 }}>{piezaIdx + 1}.</span>}
+                                    {requiereTalla && (
+                                      <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
+                                        {tallasDisp.map(t => {
+                                          const active = v.talla === t;
+                                          return (
+                                            <button key={t} type="button" onClick={() => updateFlexPieceVariante(pack.id, l.product.id, piezaIdx, "talla", active ? "" : t)}
+                                              style={{ minWidth: 24, padding: "2px 6px", borderRadius: 5, border: `2px solid ${active ? RED : GRAY2}`, background: active ? RED : WHITE, color: active ? WHITE : BLACK, fontWeight: 800, fontSize: 9.5, cursor: "pointer" }}>
+                                              {t}
+                                            </button>
+                                          );
+                                        })}
+                                      </div>
+                                    )}
+                                    {requiereColor && (
+                                      <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
+                                        {coloresDisp.map(c => {
+                                          const active = v.color === c;
+                                          return (
+                                            <button key={c} type="button" onClick={() => updateFlexPieceVariante(pack.id, l.product.id, piezaIdx, "color", active ? "" : c)}
+                                              style={{ display: "inline-flex", alignItems: "center", gap: 2, padding: "1px 6px 1px 3px", borderRadius: 12, border: `2px solid ${active ? RED : GRAY2}`, background: active ? "#FFF5F5" : WHITE, cursor: "pointer" }}>
+                                              <span style={{ width: 9, height: 9, borderRadius: "50%", background: colorToHex(c), border: `1px solid ${GRAY2}` }} />
+                                              <span style={{ fontSize: 9.5, fontWeight: 700, color: active ? RED : BLACK }}>{c}</span>
+                                            </button>
+                                          );
+                                        })}
+                                      </div>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        })()}
+                      </div>
+                      );
+                    })}
+
+                    {/* Buscador para agregar al pack */}
+                    {!completo && (
+                      <div style={{ position: "relative", marginTop: 8 }}>
+                        <input
+                          style={{ ...S.input, marginBottom: 0, fontSize: 13 }}
+                          placeholder={`Agregar referencia (faltan ${meta - piezas})`}
+                          value={activo ? flexSearch : ""}
+                          onFocus={() => setFlexActiveId(pack.id)}
+                          onChange={e => { setFlexActiveId(pack.id); setFlexSearch(e.target.value); }}
+                        />
+                        {activo && flexFiltered.length > 0 && (
+                          <div style={{ position: "absolute", top: "100%", left: 0, right: 0, background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 10, marginTop: 4, zIndex: 20, boxShadow: "0 8px 24px rgba(0,0,0,0.12)", overflow: "hidden" }}>
+                            {flexFiltered.map(p => (
+                              <div key={p.id} onClick={() => addFlexLine(pack.id, p)} className="oft-cat-chip" style={{ padding: 9, display: "flex", alignItems: "center", gap: 10, cursor: "pointer", borderBottom: `1px solid ${GRAY}` }}>
+                                {p.imagen_url ? <img src={imagenOptimizada(p.imagen_url, 150)} style={{ width: 30, height: 30, borderRadius: 5, objectFit: "cover" }} /> : <div style={{ width: 30, height: 30, borderRadius: 5, background: GRAY, display: "flex", alignItems: "center", justifyContent: "center" }}><Package size={14} color={GRAY3} /></div>}
+                                <div style={{ flex: 1 }}>
+                                  <div style={{ fontWeight: 700, fontSize: 12 }}>{p.nombre}</div>
+                                  <div style={{ fontSize: 10, color: GRAY3 }}>
+                                    {p.referencia || "—"} · {money(flexUnitPrice(p, pack.modo))}/pza
+                                    {p.stock_actualizado_at && (
+                                      <span style={{ fontWeight: 800, color: Number(p.stock) <= 0 ? RED : Number(p.stock) <= 5 ? "#856404" : "#0F6E56" }}> · Stock: {Number(p.stock)}</span>
+                                    )}
+                                    <EtiquetaReservadas p={p} />
+                                  </div>
+                                </div>
+                                <Plus size={16} color={RED} />
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Total del pack */}
+                    <div style={{ display: "flex", justifyContent: "space-between", marginTop: 10, paddingTop: 8, borderTop: `1px solid ${GRAY2}`, fontWeight: 800, fontSize: 14 }}>
+                      <span>{completo ? "Total del pack" : `Faltan ${meta - piezas} piezas`}</span>
+                      <span style={{ color: RED }}>{money(flexTotal(pack))}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* TOTALES (se muestran si hay productos normales o flexpacks) */}
+          {subtotal > 0 && (
+            <div style={{ marginTop: 16 }}>
+              {/* DESCUENTO Y ENVÍO */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, paddingTop: 10, borderTop: `1px solid ${GRAY2}` }}>
+                <div>
+                  <label style={{ ...S.label, fontSize: 11 }}>Descuento (%)</label>
+                  <input style={{ ...S.input, marginBottom: 0 }} type="number" min="0" max="100" placeholder="0" value={descuento} onChange={e => setDescuento(e.target.value)} />
+                </div>
+                <div>
+                  <label style={{ ...S.label, fontSize: 11 }}>Costo de envío ($)</label>
+                  <input style={{ ...S.input, marginBottom: 0 }} type="number" min="0" placeholder="0.00" value={envio} onChange={e => { setEnvio(e.target.value); setEnvioManual(true); }} />
+                  {envioPerfumesOk && envioManual && Number(envio) !== cfgEnvioPerf.precio && (
+                    <button type="button" onClick={() => { setEnvio(String(cfgEnvioPerf.precio)); setEnvioManual(false); }} className="oft-btn-press"
+                      style={{ marginTop: 6, width: "100%", padding: "7px 10px", borderRadius: 8, border: "1.5px dashed #0F6E56", background: "#E8F6F1", color: "#0F6E56", fontSize: 12, fontWeight: 800, cursor: "pointer" }}>
+                      Envío de perfumes a sucursal: {money(cfgEnvioPerf.precio)} — aplicar
+                    </button>
+                  )}
+                </div>
+              </div>
+              {/* RESUMEN */}
+              <div style={{ display: "flex", flexDirection: "column", gap: 4, paddingTop: 10, borderTop: `1px solid ${GRAY2}`, fontSize: 14 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", color: GRAY3 }}>
+                  <span>Subtotal</span><span>{money(subtotal)}</span>
+                </div>
+                {descPct > 0 && (
+                  <div style={{ display: "flex", justifyContent: "space-between", color: "#155724" }}>
+                    <span>Descuento ({descPct}%)</span><span>−{money(descMonto)}</span>
+                  </div>
+                )}
+                {costoEnvio > 0 && (
+                  <div style={{ display: "flex", justifyContent: "space-between", color: GRAY3 }}>
+                    <span>Envío</span><span>+{money(costoEnvio)}</span>
+                  </div>
+                )}
+                {/* REDONDEO: arriba / abajo / no */}
+                <div style={{ marginTop: 6, padding: "10px 0", borderTop: `1px dashed ${GRAY2}` }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
+                    Redondear total
+                    {hayRedondeo && redondeo !== "no" && (
+                      <span style={{ fontSize: 10, color: redondeo === "arriba" ? "#155724" : "#7B1E1E", background: redondeo === "arriba" ? "#D4EDDA" : "#FBE0E0", padding: "1px 6px", borderRadius: 8 }}>
+                        {redondeo === "arriba" ? "+" : "−"}{money(Math.abs(totalRedondeado - totalReal))}
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    {[["arriba","Arriba ↑"],["abajo","Abajo ↓"],["no","Exacto"]].map(([k,l]) => (
+                      <button key={k} onClick={() => setRedondeo(k)} className="oft-btn-press"
+                        style={{ flex: 1, padding: "8px 4px", borderRadius: 8, border: `2px solid ${redondeo === k ? RED : GRAY2}`, background: redondeo === k ? RED : WHITE, color: redondeo === k ? WHITE : BLACK, fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+                        {l}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {redondeo !== "no" && hayRedondeo && (
+                  <div style={{ display: "flex", justifyContent: "space-between", color: GRAY3, fontSize: 12 }}>
+                    <span style={{ textDecoration: "line-through" }}>Total real {money(totalReal)}</span>
+                    <span style={{ color: redondeo === "arriba" ? "#155724" : "#7B1E1E" }}>redondeado {redondeo === "arriba" ? "↑" : "↓"}</span>
+                  </div>
+                )}
+                <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 900, fontSize: 18, marginTop: 4 }}>
+                  <span>Total</span>
+                  <span key={total} className="oft-total-pop" style={{ color: RED }}>{money(total)}</span>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* COLUMNA DERECHA: datos del cliente */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <div style={{ background: WHITE, borderRadius: 16, padding: 20, border: `1px solid ${GRAY2}` }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+              <div style={{ fontWeight: 800, display: "flex", alignItems: "center", gap: 8 }}><User size={18} color={RED} /> Datos del cliente</div>
+              {!cliente.id && (
+                <button
+                  onClick={() => setClienteForm({ nombre: cliente.nombre, telefono: cliente.telefono })}
+                  className="oft-btn-press"
+                  style={{ background: "none", border: "none", color: RED, fontWeight: 700, fontSize: 12, cursor: "pointer", padding: 0, display: "inline-flex", alignItems: "center", gap: 4 }}
+                >
+                  <Plus size={14} /> Crear cliente
+                </button>
+              )}
+            </div>
+
+            {/* BUSCAR CLIENTE EXISTENTE */}
+            <div style={{ position: "relative", marginBottom: 14 }}>
+              <label style={S.label}>Buscar cliente registrado</label>
+              <div style={{ position: "relative" }}>
+                <Search size={15} color={GRAY3} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)" }} />
+                <input
+                  style={{ ...S.input, paddingLeft: 34, marginBottom: 0 }}
+                  placeholder="Escribe nombre o teléfono..."
+                  value={busquedaCliente}
+                  onChange={e => { setBusquedaCliente(e.target.value); setMostrarClientes(true); }}
+                  onFocus={() => setMostrarClientes(true)}
+                />
+              </div>
+              {/* Resultados */}
+              {mostrarClientes && busquedaCliente.trim() && (
+                <div style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 30, background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 10, marginTop: 4, maxHeight: 220, overflowY: "auto", boxShadow: "0 8px 24px rgba(0,0,0,0.12)" }}>
+                  {clientesLista
+                    .filter(c => {
+                      const q = busquedaCliente.toLowerCase();
+                      return (c.nombre || "").toLowerCase().includes(q) || (c.telefono || "").includes(q);
+                    })
+                    .slice(0, 8)
+                    .map(c => (
+                      <div key={c.id} onClick={() => {
+                        setCliente({ id: c.id, nombre: c.nombre || "", telefono: c.telefono || "", direccion: cliente.direccion });
+                        setBusquedaCliente("");
+                        setMostrarClientes(false);
+                        showToast(`Cliente: ${c.nombre}`);
+                      }} style={{ padding: "10px 14px", cursor: "pointer", borderBottom: `1px solid ${GRAY}`, display: "flex", alignItems: "center", gap: 10, background: WHITE }}>
+                        <div style={{ width: 32, height: 32, borderRadius: "50%", background: `linear-gradient(135deg, ${RED}, ${RED_D})`, color: WHITE, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 900, fontSize: 14, flexShrink: 0 }}>
+                          {(c.nombre || "?").charAt(0).toUpperCase()}
+                        </div>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontWeight: 700, fontSize: 13 }}>{c.nombre}</div>
+                          <div style={{ fontSize: 12, color: GRAY3 }}>{c.telefono || "Sin teléfono"}</div>
+                        </div>
+                      </div>
+                    ))}
+                  {clientesLista.filter(c => { const q = busquedaCliente.toLowerCase(); return (c.nombre || "").toLowerCase().includes(q) || (c.telefono || "").includes(q); }).length === 0 && (
+                    <div style={{ padding: "12px 14px", fontSize: 13, color: GRAY3 }}>No se encontró ese cliente. Puedes escribir sus datos abajo.</div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <label style={S.label}>Nombre *</label>
+            <input style={S.input} placeholder="Nombre del cliente" value={cliente.nombre} onChange={e => setCliente({ ...cliente, id: null, nombre: e.target.value })} />
+            <label style={S.label}>WhatsApp / Teléfono</label>
+            <input style={S.input} placeholder="Ej: 6720-0474" value={cliente.telefono} onChange={e => setCliente({ ...cliente, telefono: e.target.value })} />
+            <label style={S.label}>Dirección / referencia</label>
+            <input style={S.input} placeholder="Opcional" value={cliente.direccion} onChange={e => setCliente({ ...cliente, direccion: e.target.value })} />
+          </div>
+
+          {clienteForm && (
+            <ClienteFormModal
+              cliente={clienteForm}
+              showToast={showToast}
+              onClose={() => setClienteForm(null)}
+              onSaved={(saved) => {
+                setClientesLista(prev => [saved, ...prev]);
+                // Selecciona automáticamente al cliente recién creado, así el pedido queda ligado a él
+                setCliente({ id: saved.id, nombre: saved.nombre || "", telefono: saved.telefono || "", direccion: cliente.direccion });
+              }}
+            />
+          )}
+
+          <div style={{ background: WHITE, borderRadius: 16, padding: 20, border: `1px solid ${GRAY2}` }}>
+            <div style={{ fontWeight: 800, marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}><Truck size={18} color={RED} /> Envío (opcional)</div>
+            {/* TIPO DE ENVÍO */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginBottom: 14 }}>
+              {[["sucursal", "A sucursal", Building2], ["puerta", "Puerta a puerta", MapPin], ["local", "Retiro en el local", Home]].map(([k, label, Icon]) => {
+                const act = modoEnvio === k;
+                return (
+                  <button key={k} type="button" className="oft-btn-press"
+                    onClick={() => {
+                      const nuevo = act ? null : k;
+                      setModoEnvio(nuevo); setEnvioManual(false); setBusquedaSuc(""); setSucursalId(null);
+                      if (nuevo === "puerta") setEmpresaId(servientregaEmp?.id || null);
+                      else if (nuevo !== "sucursal") setEmpresaId(null);
+                      if (nuevo === null || nuevo === "local") setEnvio("");
+                    }}
+                    style={{ padding: "12px 6px", borderRadius: 10, cursor: "pointer", border: `2px solid ${act ? RED : GRAY2}`, background: act ? "#FFF5F5" : WHITE, color: act ? RED : BLACK, display: "flex", flexDirection: "column", alignItems: "center", gap: 6, fontWeight: 800, fontSize: 12.5, lineHeight: 1.2 }}>
+                    <Icon size={22} strokeWidth={1.8} /> {label}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* A SUCURSAL: empresa + buscador de sucursal */}
+            {modoEnvio === "sucursal" && (
+              <div>
+                <label style={{ ...S.label, fontSize: 11 }}>Empresa de envío *</label>
+                <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.max(1, Math.min(empresasActivas.length, 3))}, 1fr)`, gap: 8, marginBottom: 12 }}>
+                  {empresasActivas.map(emp => {
+                    const act = empresaId === emp.id;
+                    return (
+                      <button key={emp.id} type="button" className="oft-btn-press" onClick={() => { setEmpresaId(emp.id); setSucursalId(null); setBusquedaSuc(""); setEnvioManual(false); }}
+                        style={{ padding: "10px 8px", borderRadius: 10, cursor: "pointer", border: `2px solid ${act ? RED : GRAY2}`, background: act ? "#FFF5F5" : WHITE, color: act ? RED : BLACK, fontWeight: 800, fontSize: 13 }}>
+                        {emp.nombre}
+                      </button>
+                    );
+                  })}
+                </div>
+                {empresaId && sucursalesEmpresa.length > 0 && (() => {
+                  const norm = (t) => String(t || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+                  const q = norm(busquedaSuc).trim();
+                  const lista = q ? sucursalesEmpresa.filter(su => norm(su.nombre + " " + (su.direccion || "")).includes(q)) : sucursalesEmpresa;
+                  if (sucursalSel && sucursalSel.empresa_id === empresaId) {
+                    return (
+                      <div>
+                        <label style={{ ...S.label, fontSize: 11 }}>Sucursal *</label>
+                        <div style={{ display: "flex", alignItems: "center", gap: 10, border: `2px solid ${RED}`, background: "#FFF5F5", borderRadius: 10, padding: "10px 12px" }}>
+                          <CheckCircle2 size={18} color={RED} style={{ flexShrink: 0 }} />
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontWeight: 800, fontSize: 14 }}>{sucursalSel.nombre}</div>
+                            {sucursalSel.direccion && <div style={{ fontSize: 12, color: GRAY3 }}>{sucursalSel.direccion}</div>}
+                          </div>
+                          <span style={{ fontWeight: 800, fontSize: 13 }}>{money(sucursalSel.costo_envio || 0)}</span>
+                          <button type="button" onClick={() => { setSucursalId(null); setBusquedaSuc(""); setEnvioManual(false); }} className="oft-btn-press"
+                            style={{ background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 8, padding: "6px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Cambiar</button>
+                        </div>
+                      </div>
+                    );
+                  }
+                  return (
+                    <div>
+                      <label style={{ ...S.label, fontSize: 11 }}>Sucursal * <span style={{ color: GRAY3, fontWeight: 500 }}>({sucursalesEmpresa.length} disponibles)</span></label>
+                      <div style={{ position: "relative", marginBottom: 8 }}>
+                        <Search size={15} color={GRAY3} style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)" }} />
+                        <input style={{ ...S.input, marginBottom: 0, paddingLeft: 34 }} placeholder="Escribe para buscar la sucursal..." value={busquedaSuc} onChange={e => setBusquedaSuc(e.target.value)} />
+                      </div>
+                      <div style={{ maxHeight: 230, overflowY: "auto", border: `1px solid ${GRAY2}`, borderRadius: 10 }}>
+                        {lista.length === 0 ? (
+                          <div style={{ padding: 14, fontSize: 13, color: GRAY3, textAlign: "center" }}>No se encontró ninguna sucursal con "{busquedaSuc}"</div>
+                        ) : lista.map(su => (
+                          <div key={su.id} onClick={() => { setSucursalId(su.id); setBusquedaSuc(""); setEnvioManual(false); }}
+                            style={{ padding: "10px 12px", cursor: "pointer", borderBottom: `1px solid ${GRAY}`, display: "flex", alignItems: "center", gap: 10 }}>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontWeight: 700, fontSize: 13.5 }}>{su.nombre}</div>
+                              {su.direccion && <div style={{ fontSize: 11.5, color: GRAY3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{su.direccion}</div>}
+                            </div>
+                            <span style={{ fontSize: 12.5, fontWeight: 800, color: Number(su.costo_envio) > 0 ? BLACK : "#0F6E56" }}>{Number(su.costo_envio) > 0 ? money(su.costo_envio) : "Gratis"}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })()}
+                {empresaId && sucursalesEmpresa.length === 0 && (
+                  <div style={{ fontSize: 12.5, color: GRAY3, background: GRAY, borderRadius: 8, padding: 10 }}>Esta empresa no tiene sucursales registradas.</div>
+                )}
+                {envioPerfumesOk && sucursalSel && (
+                  <div style={{ marginTop: 10, fontSize: 12, fontWeight: 700, color: "#0F6E56", background: "#E8F6F1", border: "1px solid #0F6E56", borderRadius: 8, padding: "7px 10px" }}>Envío especial de perfumes aplicado: {money(cfgEnvioPerf.precio)}</div>
+                )}
+              </div>
+            )}
+
+            {/* PUERTA A PUERTA: Servientrega automático + dirección */}
+            {modoEnvio === "puerta" && (
+              <div>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, background: "#FFF5F5", border: `1.5px solid ${RED}`, borderRadius: 10, padding: "10px 12px", marginBottom: 12 }}>
+                  <Truck size={18} color={RED} style={{ flexShrink: 0 }} />
+                  <div style={{ flex: 1, fontSize: 13 }}>
+                    <b>{servientregaEmp ? servientregaEmp.nombre : "Servientrega"}</b> · puerta a puerta · {money(costoPuertaCfg)}
+                  </div>
+                </div>
+                {!servientregaEmp && <div style={{ fontSize: 12, color: RED, marginBottom: 10 }}>No se encontró la empresa Servientrega en la lista de empresas de envío.</div>}
+                <label style={{ ...S.label, fontSize: 11 }}>Dirección de entrega *</label>
+                <textarea style={{ ...S.input, marginBottom: 0, resize: "vertical", borderColor: cliente.direccion.trim() ? GRAY2 : RED }} rows={2} placeholder="Dirección completa para la entrega..."
+                  value={cliente.direccion} onChange={e => setCliente({ ...cliente, direccion: e.target.value })} />
+              </div>
+            )}
+
+            {/* COSTO DE ENVÍO EDITABLE (sucursal elegida o puerta a puerta) */}
+            {(modoEnvio === "puerta" || (modoEnvio === "sucursal" && sucursalSel)) && (() => {
+              const guardado = modoEnvio === "puerta" ? costoPuertaCfg : (Number(sucursalSel?.costo_envio) || 0);
+              const actual = Number(envio) || 0;
+              const cambiado = envioManual && Math.abs(actual - Number(envioAuto || 0)) > 0.004;
+              const puedeGuardar = envioManual && Math.abs(actual - guardado) > 0.004 && !(modoEnvio === "sucursal" && envioPerfumesOk);
+              return (
+                <div style={{ marginTop: 12, background: GRAY, borderRadius: 10, padding: "10px 12px" }}>
+                  <label style={{ ...S.label, fontSize: 11, marginBottom: 6 }}>Costo de envío ($) · {modoEnvio === "puerta" ? "puerta a puerta" : sucursalSel.nombre}</label>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                    <input type="number" min="0" step="0.01" value={envio} placeholder="0.00"
+                      onChange={e => { setEnvio(e.target.value); setEnvioManual(true); }}
+                      style={{ ...S.input, marginBottom: 0, width: 110, textAlign: "center", fontWeight: 800, background: WHITE }} />
+                    <span style={{ fontSize: 12, color: GRAY3 }}>{envioPerfumesOk && modoEnvio === "sucursal" ? `Precio especial de perfumes: ${money(cfgEnvioPerf.precio)}` : `Precio actual: ${money(guardado)}`}</span>
+                    {cambiado && <button type="button" onClick={() => setEnvioManual(false)} className="oft-btn-press" style={{ background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 8, padding: "6px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Restablecer</button>}
+                  </div>
+                  {puedeGuardar && (
+                    <button type="button" onClick={guardarPrecioEnvio} disabled={guardandoPrecio} className="oft-btn-press"
+                      style={{ marginTop: 8, width: "100%", padding: "8px 10px", borderRadius: 8, border: `1.5px dashed ${RED}`, background: "#FFF5F5", color: RED, fontSize: 12, fontWeight: 800, cursor: "pointer", opacity: guardandoPrecio ? 0.6 : 1 }}>
+                      {guardandoPrecio ? "Guardando..." : `Guardar ${money(actual)} como precio ${modoEnvio === "puerta" ? "de puerta a puerta" : "de esta sucursal"} para siempre`}
+                    </button>
+                  )}
+                  <div style={{ fontSize: 11, color: GRAY3, marginTop: 6 }}>{envioManual ? "Solo para este pedido, a menos que lo guardes como precio fijo." : "Puedes cambiarlo solo para este pedido."}</div>
+                </div>
+              );
+            })()}
+
+            {/* RETIRO EN EL LOCAL */}
+            {modoEnvio === "local" && (
+              <div>
+                {localesRetiro.length > 1 && (
+                  <select style={S.input} value={localRetiroId || ""} onChange={e => setLocalRetiroId(e.target.value ? Number(e.target.value) : null)}>
+                    <option value="">¿En cuál local retira? *</option>
+                    {localesRetiro.map(loc => <option key={loc.id} value={loc.id}>{loc.nombre}</option>)}
+                  </select>
+                )}
+                <label style={{ ...S.label, fontSize: 11 }}>¿Quién lo retira? (opcional, si no es el mismo cliente)</label>
+                <input style={{ ...S.input, marginBottom: 0 }} placeholder="Nombre de la persona que retira..." value={retiroNombreAutorizado} onChange={e => setRetiroNombreAutorizado(e.target.value)} />
+              </div>
+            )}
+            {modoEnvio === null && <div style={{ fontSize: 12, color: GRAY3 }}>Elige cómo se entrega el pedido, o déjalo sin envío.</div>}
+          </div>
+
+          {reservar && (
+            <div style={{ background: "#F5F3FF", borderRadius: 16, padding: 20, border: "1.5px solid #7C3AED" }}>
+              <div style={{ fontWeight: 800, marginBottom: 6, display: "flex", alignItems: "center", gap: 8, color: "#5B21B6" }}><Lock size={18} color="#7C3AED" /> Reserva de piezas</div>
+              <div style={{ fontSize: 12.5, color: "#4C1D95", lineHeight: 1.5, marginBottom: 12 }}>Las piezas de esta lista quedan apartadas para este cliente: no se podrán vender ni en la web ni en pedidos manuales hasta que liberes la reserva o la conviertas en pedido ("A pedido").</div>
+              <label style={{ ...S.label, marginTop: 0 }}>Reservada hasta (opcional)</label>
+              <input type="date" style={{ ...S.input, marginBottom: 0 }} value={reservaVence} onChange={e => setReservaVence(e.target.value)} />
+              <div style={{ fontSize: 11.5, color: GRAY3, marginTop: 6 }}>La reserva no se libera sola: esta fecha solo sirve para que te avise cuándo está vencida.</div>
+            </div>
+          )}
+
+          <div style={{ background: WHITE, borderRadius: 16, padding: 20, border: `1px solid ${(metodoPago || reservar) ? GRAY2 : RED}` }}>
+            <div style={{ fontWeight: 800, marginBottom: 4, display: "flex", alignItems: "center", gap: 8 }}><CreditCard size={18} color={RED} /> {reservar ? "¿Cómo va a pagar el cliente? (opcional)" : tipo === "cotizacion" ? "¿Cómo va a pagar el cliente? *" : "¿Cómo pagó el cliente? *"}</div>
+            <div style={{ fontSize: 12, color: GRAY3, marginBottom: 12 }}>{tipo === "cotizacion" ? "Queda guardado en la cotización y pasa al pedido cuando se convierta." : "Queda registrado en el pedido y en el dashboard."}</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
+              {Object.entries(METODOS_PAGO).map(([k, m]) => (
+                <button key={k} type="button" onClick={() => setMetodoPago(k)} className="oft-btn-press"
+                  style={{ padding: "12px 6px", borderRadius: 10, cursor: "pointer", fontWeight: 800, fontSize: 13, border: `2px solid ${metodoPago === k ? m.color : GRAY2}`, background: metodoPago === k ? m.bg : WHITE, color: metodoPago === k ? m.color : BLACK }}>
+                  {m.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div style={{ background: WHITE, borderRadius: 16, padding: 20, border: `1px solid ${GRAY2}` }}>
+            <div style={{ fontWeight: 800, marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}><FileText size={18} color={RED} /> Notas</div>
+            <textarea style={{ ...S.input, marginBottom: 0, resize: "vertical" }} rows={3} placeholder="Notas del pedido (opcional)" value={notas} onChange={e => setNotas(e.target.value)} />
+          </div>
+
+          <button onClick={handleGenerate} disabled={saving} className="oft-btn-press"
+            style={{ ...S.btnRed, width: "100%", justifyContent: "center", padding: 16, fontSize: 16, opacity: saving ? 0.7 : 1 }}>
+            <Receipt size={18} /> {saving ? "Generando..." : reservar ? "Reservar piezas y generar documento" : `Generar ${tipo === "cotizacion" ? "cotización" : "pedido"} y factura`}
+          </button>
+        </div>
+      </div>
+
+      {/* MODAL DE FACTURA */}
+      {invoice && <InvoiceModal invoice={invoice} onClose={() => { resetForm(); }} />}
+      {/* POPUP: elegir Pieza/Media/Docena al seleccionar un producto */}
+      {productoParaElegir && (
+        <ModalElegirPresentacion
+          producto={productoParaElegir}
+          onCerrar={() => setProductoParaElegir(null)}
+          onElegir={(pres) => { addItem(productoParaElegir, pres); setProductoParaElegir(null); }}
+        />
+      )}
+      {/* MODAL DE AVISO DE STOCK INSUFICIENTE */}
+      {avisoStock && (
+        <ModalAvisoStock
+          aviso={avisoStock}
+          onCancelar={() => setAvisoStock(null)}
+          onConfirmar={() => { if (avisoStock.muestra > 0) muestrasAceptadas.current.add(avisoStock.productId); avisoStock.onConfirmar(); setAvisoStock(null); }}
+        />
+      )}
+    </>
+  );
+}
+
+function InvoiceModal({ invoice, onClose }) {
+  useLockBodyScroll();
+  const ref = useRef(null);
+  const [busy, setBusy] = useState(false);
+  const money = (n) => "$" + Number(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const esCot = invoice.tipo === "cotizacion";
+
+  // Renderiza la factura a un ancho fijo (640px) fuera de pantalla,
+  // así el PDF/imagen nunca sale cortado en celular.
+  const renderCanvas = async () => {
+    const source = ref.current;
+    const clone = source.cloneNode(true);
+    const holder = document.createElement("div");
+    holder.style.position = "fixed";
+    holder.style.left = "-10000px";
+    holder.style.top = "0";
+    holder.style.width = "640px";
+    holder.style.background = "#ffffff";
+    clone.style.width = "640px";
+    clone.style.maxWidth = "640px";
+    holder.appendChild(clone);
+    document.body.appendChild(holder);
+    try {
+      const canvas = await window.html2canvas(clone, { scale: 2, backgroundColor: "#ffffff", useCORS: true, width: 640, windowWidth: 640 });
+      return canvas;
+    } finally {
+      document.body.removeChild(holder);
+    }
+  };
+
+  const isMobile = typeof window !== "undefined" && window.innerWidth <= 768;
+
+  const downloadPNG = async () => {
+    if (!(await asegurarLibsPdf({ soloImagen: true }))) return;
+    setBusy(true);
+    try {
+      const canvas = await renderCanvas();
+      // En celular: intenta usar "Compartir" para guardar en la galería/fotos
+      const blob = await new Promise(res => canvas.toBlob(res, "image/png"));
+      const file = new File([blob], `${invoice.codigo}.png`, { type: "image/png" });
+      if (isMobile && navigator.canShare && navigator.canShare({ files: [file] })) {
+        try {
+          await navigator.share({ files: [file], title: invoice.codigo });
+          setBusy(false);
+          return;
+        } catch(shareErr) {
+          // si el usuario cancela el compartir, caemos a descarga normal
+          if (shareErr.name === "AbortError") { setBusy(false); return; }
+        }
+      }
+      // Descarga normal (escritorio o si no hay compartir)
+      const link = document.createElement("a");
+      link.download = `${invoice.codigo}.png`;
+      link.href = canvas.toDataURL("image/png");
+      link.click();
+    } catch(e) { alert("Error generando imagen: " + e.message); }
+    setBusy(false);
+  };
+
+  const downloadPDF = async () => {
+    if (!(await asegurarLibsPdf())) return;
+    setBusy(true);
+    try {
+      const canvas = await renderCanvas();
+      const { jsPDF } = window.jspdf;
+      const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+      agregarCanvasComoPaginasPdf(pdf, canvas);
+      pdf.save(`${invoice.codigo}.pdf`);
+    } catch(e) { alert("Error generando PDF: " + e.message); }
+    setBusy(false);
+  };
+
+  return createPortal(
+    <div className="oft-overlay oft-overlay-doc" style={{ ...S.overlay, alignItems: "flex-start", overflowY: "auto", padding: "20px 0", WebkitOverflowScrolling: "touch", overscrollBehavior: "contain" }} onClick={onClose}>
+      <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 16, maxWidth: 620, width: "92%", margin: "0 auto", overflow: "hidden" }} onClick={e => e.stopPropagation()}>
+        {/* Barra superior con acciones - siempre visible arriba */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", borderBottom: `1px solid ${GRAY2}`, background: GRAY, flexWrap: "wrap", gap: 8 }}>
+          <div style={{ fontWeight: 800, display: "flex", alignItems: "center", gap: 8 }}><CheckCircle2 size={18} color="#22c55e" /> {invoice.reserva ? "Reserva creada" : esCot ? "Cotización creada" : "Pedido creado"}</div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button onClick={downloadPDF} disabled={busy} className="oft-btn-press" style={{ ...S.btnRed, padding: "8px 14px", fontSize: 13, opacity: busy ? 0.7 : 1 }}>
+              <Download size={14} /> PDF
+            </button>
+            <button onClick={downloadPNG} disabled={busy} className="oft-btn-press" style={{ ...S.btnOutline, padding: "8px 14px", fontSize: 13, display: "inline-flex", alignItems: "center", gap: 6, opacity: busy ? 0.7 : 1 }}>
+              <ImageIcon size={14} /> {busy ? "..." : "PNG"}
+            </button>
+            <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", display: "flex", padding: 4 }}><X size={22} /></button>
+          </div>
+        </div>
+
+        {/* FACTURA (lo que se exporta) */}
+        <div style={{ padding: 20, maxHeight: "80vh", overflowY: "auto" }}>
+          <div ref={ref} style={{ background: WHITE, padding: 28, fontFamily: "Helvetica, Arial, sans-serif", color: BLACK }}>
+            {/* Encabezado con logo */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", borderBottom: `3px solid ${RED}`, paddingBottom: 16, marginBottom: 20 }}>
+              <div>
+                <div style={{ display: "flex", alignItems: "center", fontWeight: 900, fontSize: 26, letterSpacing: -1 }}>
+                  <span style={{ color: RED }}>Ofer</span>
+                  <span style={{ background: RED, color: WHITE, padding: "0 8px", borderRadius: 4, marginLeft: 2 }}>todo</span>
+                </div>
+                <div style={{ fontSize: 11, color: GRAY3, marginTop: 6, lineHeight: 1.5 }}>
+                  Distribuidora · Panamá<br />
+                  WhatsApp: +507 6720-0474<br />
+                  Colón, Panamá
+                </div>
+              </div>
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontWeight: 900, fontSize: 20, color: esCot ? "#856404" : RED, textTransform: "uppercase" }}>{invoice.reserva ? "Reserva" : esCot ? "Cotización" : "Factura"}</div>
+                <div style={{ fontSize: 13, fontWeight: 700, marginTop: 4 }}>N° {invoice.numFactura}</div>
+                <div style={{ fontSize: 11, color: GRAY3, marginTop: 2 }}>{invoice.codigo}</div>
+                <div style={{ fontSize: 11, color: GRAY3, marginTop: 4 }}>{invoice.fecha.toLocaleDateString("es-PA", { day: "2-digit", month: "long", year: "numeric" })}</div>
+              </div>
+            </div>
+
+            {/* Datos del cliente */}
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 20, marginBottom: 20, flexWrap: "wrap" }}>
+              <div style={{ minWidth: 160 }}>
+                <div style={{ fontSize: 10, color: GRAY3, fontWeight: 700, textTransform: "uppercase", marginBottom: 4 }}>Cliente</div>
+                <div style={{ fontWeight: 800, fontSize: 14 }}>{invoice.cliente.nombre}</div>
+                {invoice.cliente.telefono && <div style={{ fontSize: 12, color: GRAY3 }}>{invoice.cliente.telefono}</div>}
+                {invoice.cliente.direccion && <div style={{ fontSize: 12, color: GRAY3 }}>{invoice.cliente.direccion}</div>}
+              </div>
+              {invoice.empresa && (
+                <div style={{ minWidth: 160, textAlign: "right" }}>
+                  <div style={{ fontSize: 10, color: GRAY3, fontWeight: 700, textTransform: "uppercase", marginBottom: 4 }}>Envío</div>
+                  <div style={{ fontWeight: 700, fontSize: 13 }}>{invoice.empresa}</div>
+                  {invoice.sucursal && <div style={{ fontSize: 12, color: GRAY3 }}>{invoice.sucursal}</div>}
+                </div>
+              )}
+            </div>
+
+            {/* Tabla de productos */}
+            <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 16 }}>
+              <thead>
+                <tr style={{ background: GRAY }}>
+                  <th style={{ textAlign: "left", padding: "8px 10px", fontSize: 11, fontWeight: 700, color: GRAY3 }}>Producto</th>
+                  <th style={{ textAlign: "center", padding: "8px 6px", fontSize: 11, fontWeight: 700, color: GRAY3 }}>Cant.</th>
+                  <th style={{ textAlign: "right", padding: "8px 6px", fontSize: 11, fontWeight: 700, color: GRAY3 }}>P. Unit</th>
+                  <th style={{ textAlign: "right", padding: "8px 10px", fontSize: 11, fontWeight: 700, color: GRAY3 }}>Subtotal</th>
+                </tr>
+              </thead>
+              <tbody>
+                {invoice.items.map((it, i) => (
+                  <tr key={i} style={{ borderBottom: `1px solid ${GRAY2}` }}>
+                    <td style={{ padding: "9px 10px", fontSize: 12 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        {/* Foto chica del producto al lado del nombre */}
+                        <div style={{ width: 42, height: 42, borderRadius: 6, background: GRAY, overflow: "hidden", flexShrink: 0 }}>
+                          {it.imagen && <img src={it.imagen} alt="" crossOrigin="anonymous" style={{ width: 42, height: 42, objectFit: "cover", display: "block" }} />}
+                        </div>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontWeight: 700 }}>{it.nombre}</div>
+                          <div style={{ fontSize: 10, color: GRAY3 }}>{it.referencia ? `Ref: ${it.referencia} · ` : ""}{it.presentacion} · {it.piezas} pzs</div>
+                        </div>
+                      </div>
+                    </td>
+                    <td style={{ textAlign: "center", padding: "9px 6px", fontSize: 12 }}>{it.piezas}</td>
+                    <td style={{ textAlign: "right", padding: "9px 6px", fontSize: 12 }}>{money(it.precioUnit)}</td>
+                    <td style={{ textAlign: "right", padding: "9px 10px", fontSize: 12, fontWeight: 700 }}>{money(it.subtotal)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            {/* Total */}
+            <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 16 }}>
+              <div style={{ minWidth: 240 }}>
+                {(invoice.descMonto > 0 || invoice.costoEnvio > 0) && (
+                  <>
+                    <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 12px", fontSize: 13, color: GRAY3 }}>
+                      <span>Subtotal</span><span>{money(invoice.subtotal)}</span>
+                    </div>
+                    {invoice.descMonto > 0 && (
+                      <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 12px", fontSize: 13, color: "#155724" }}>
+                        <span>Descuento ({invoice.descPct}%)</span><span>−{money(invoice.descMonto)}</span>
+                      </div>
+                    )}
+                    {invoice.costoEnvio > 0 && (
+                      <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 12px", fontSize: 13, color: GRAY3 }}>
+                        <span>Envío</span><span>+{money(invoice.costoEnvio)}</span>
+                      </div>
+                    )}
+                  </>
+                )}
+                <div style={{ display: "flex", justifyContent: "space-between", padding: "10px 12px", background: RED, color: WHITE, borderRadius: 8, fontWeight: 900, fontSize: 16, marginTop: 4 }}>
+                  <span>TOTAL</span><span>{money(invoice.total)}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Notas */}
+            {invoice.notas && (
+              <div style={{ background: GRAY, borderRadius: 8, padding: 12, marginBottom: 16 }}>
+                <div style={{ fontSize: 10, color: GRAY3, fontWeight: 700, textTransform: "uppercase", marginBottom: 4 }}>Notas</div>
+                <div style={{ fontSize: 12 }}>{invoice.notas}</div>
+              </div>
+            )}
+
+            {/* Pie */}
+            <div style={{ textAlign: "center", fontSize: 10, color: GRAY3, borderTop: `1px solid ${GRAY2}`, paddingTop: 12 }}>
+              {esCot
+                ? "Esta cotización es válida por 7 días. Los precios pueden variar según disponibilidad."
+                : "¡Gracias por tu compra! El pago se coordina por WhatsApp."}
+              <br />Ofertodo · Distribuidora · Panamá
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  , document.body);
+}
+
+// Escapa texto antes de meterlo en el HTML de una etiqueta que se imprime: el nombre y la
+// dirección los escribe el cliente, y NO deben poder colar código dentro del panel.
+const escHtml = (v) => String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+
+export function ShippingLabelModal({ order, onClose, onGuiaImpresa }) {
+  useLockBodyScroll();
+  const { products, empresas } = useApp();
+  const ref = useRef(null);
+  const [busy, setBusy] = useState(false);
+  const [impresa, setImpresa] = useState(!!order.guia_impresa);
+  const [cajas, setCajas] = useState(1); // cuántas cajas/bultos lleva el pedido (una etiqueta por caja)
+  // Empresa que se imprime en la etiqueta de caja: arranca con la del pedido, pero se puede escribir cualquiera (a veces se envía con otra)
+  const [empresaCaja, setEmpresaCaja] = useState(order.retiro_local ? "" : (order.empresa_envio_nombre || ""));
+  const fecha = order.created_at ? new Date(order.created_at) : new Date();
+
+  // Marca el pedido como "guía ya impresa" -- se llama sola al usar cualquiera de
+  // los botones de imprimir/descargar, para poder saber después cuáles quedaron
+  // pendientes sin tener que acordarse a mano. Si el pedido es local (una etiqueta
+  // suelta sin pedido real, id null), no hay nada que guardar en la base de datos.
+  const marcarComoImpresa = async () => {
+    if (impresa || !order.id) return;
+    setImpresa(true);
+    try {
+      await sb.patch("pedidos", order.id, { guia_impresa: true, guia_impresa_at: new Date().toISOString() });
+      onGuiaImpresa?.(order.id, true);
+    } catch (e) { /* no crítico -- el pedido ya se ve marcado en pantalla aunque falle el guardado */ }
+  };
+  const desmarcarImpresa = async () => {
+    if (!order.id) return;
+    setImpresa(false);
+    try {
+      await sb.patch("pedidos", order.id, { guia_impresa: false, guia_impresa_at: null });
+      onGuiaImpresa?.(order.id, false);
+    } catch (e) {}
+  };
+  const totalPiezas = (order.items || []).reduce((s, it) => s + Number(it.cantidad || 0), 0);
+  // Unifica líneas que son el mismo producto con la misma variante (ej. varios
+  // FlexPacks que llevaron la misma referencia y talla) en una sola fila con la
+  // cantidad total -- antes de esto, cada FlexPack generaba su propia línea, y con
+  // varios FlexPacks parecidos la lista se llenaba de renglones repetidos que
+  // confundían a quien empacaba. Se agrupa por producto + nombre exacto (el nombre
+  // ya incluye la talla/color, así que variantes distintas del mismo producto NUNCA
+  // se mezclan entre sí).
+  const itemsAgrupados = (() => {
+    const mapa = {};
+    const orden = [];
+    (order.items || []).forEach(it => {
+      const key = `${it.producto_id ?? "sin"}|||${it.nombre_producto}`;
+      if (!mapa[key]) { mapa[key] = { ...it, cantidad: 0, _distribucionSumada: null }; orden.push(key); }
+      mapa[key].cantidad += Number(it.cantidad) || 0;
+      if (it.distribucion_tallas) {
+        try {
+          const d = JSON.parse(it.distribucion_tallas);
+          if (!mapa[key]._distribucionSumada) mapa[key]._distribucionSumada = { eje: d.eje, cantidades: {} };
+          Object.entries(d.cantidades || {}).forEach(([v, q]) => {
+            mapa[key]._distribucionSumada.cantidades[v] = (mapa[key]._distribucionSumada.cantidades[v] || 0) + (Number(q) || 0);
+          });
+        } catch {}
+      }
+    });
+    return orden.map(key => mapa[key]);
+  })();
+  const money = (n) => "$" + Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  const renderCanvas = async () => {
+    const source = ref.current;
+    const clone = source.cloneNode(true);
+    const holder = document.createElement("div");
+    holder.style.position = "fixed"; holder.style.left = "-10000px"; holder.style.top = "0";
+    holder.style.width = "640px"; holder.style.background = "#ffffff";
+    clone.style.width = "640px"; clone.style.maxWidth = "640px";
+    holder.appendChild(clone);
+    document.body.appendChild(holder);
+    try {
+      return await window.html2canvas(clone, { scale: 2, backgroundColor: "#ffffff", useCORS: true, width: 640, windowWidth: 640 });
+    } finally { document.body.removeChild(holder); }
+  };
+
+  const downloadPDF = async () => {
+    if (!(await asegurarLibsPdf())) return;
+    setBusy(true);
+    try {
+      const canvas = await renderCanvas();
+      const { jsPDF } = window.jspdf;
+      const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+      agregarCanvasComoPaginasPdf(pdf, canvas);
+      pdf.save(`GUIA-${order.codigo}.pdf`);
+      marcarComoImpresa();
+    } catch(e) { alert("Error generando PDF: " + e.message); }
+    setBusy(false);
+  };
+
+  const printLabel = () => {
+    const contenido = ref.current.outerHTML;
+    const estilos = `
+      <style>
+        * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
+        @page { margin: 12mm; }
+        html, body { margin: 0; padding: 0; background: #ffffff; font-family: Helvetica, Arial, sans-serif; }
+      </style>`;
+    // Usa un iframe OCULTO en la misma página: no abre ventana nueva, así no recarga
+    // la app ni cierra la sesión en celular.
+    const iframe = document.createElement("iframe");
+    iframe.style.position = "fixed";
+    iframe.style.right = "0";
+    iframe.style.bottom = "0";
+    iframe.style.width = "0";
+    iframe.style.height = "0";
+    iframe.style.border = "0";
+    document.body.appendChild(iframe);
+    const doc = iframe.contentWindow.document;
+    doc.open();
+    doc.write(`<html><head><title>Guía ${escHtml(order.codigo)}</title>${estilos}</head><body>${contenido}</body></html>`);
+    doc.close();
+    // Esperar a que cargue el contenido (imágenes) antes de imprimir
+    const lanzarImpresion = () => {
+      try {
+        iframe.contentWindow.focus();
+        iframe.contentWindow.print();
+        marcarComoImpresa();
+      } catch(e) { /* si falla, no hacemos nada */ }
+      // Quitar el iframe después de imprimir
+      setTimeout(() => { try { document.body.removeChild(iframe); } catch(e) {} }, 1000);
+    };
+    setTimeout(lanzarImpresion, 500);
+  };
+
+  // Etiqueta compacta para el rollo de 4x6" -- solo lo que exige la empresa de envío
+  // (nombre, teléfono, dirección), en letra grande para que se lea bien pegada en
+  // la caja. Separada de la guía interna, que trae mucha más información como para
+  // caber o ser legible en una etiqueta de rollo.
+  const printEtiquetaCliente = () => {
+    const direccionCompleta = [order.direccion, order.sucursal_nombre ? `Sucursal: ${order.sucursal_nombre}` : null].filter(Boolean).join(" — ");
+    const envioPagado = Number(order.costo_envio || 0) > 0;
+    // Ajusta el tamaño de letra según qué tan largo sea el texto -- así, un nombre o
+    // dirección muy largos no empujan el contenido a una segunda hoja; se van
+    // achicando solos en vez de desbordarse. "umbrales" va de menor a mayor: usa el
+    // primer tamaño cuyo límite alcance para ese texto.
+    const tamanoPor = (texto, umbrales) => {
+      const largo = (texto || "").length;
+      for (const [max, tam] of umbrales) if (largo <= max) return tam;
+      return umbrales[umbrales.length - 1][1];
+    };
+    const tamNombre = tamanoPor(order.nombre_cliente, [[16, 30], [26, 24], [38, 19], [55, 15], [999, 12]]);
+    const tamDireccion = tamanoPor(direccionCompleta, [[35, 18], [65, 15], [100, 13], [140, 11], [999, 9.5]]);
+    const tamEmpresa = tamanoPor(order.empresa_envio_nombre || (order.retiro_local ? "RETIRO EN LOCAL" : ""), [[14, 16], [22, 13], [999, 10.5]]);
+    const contenido = `
+      <div style="width:4in;height:6in;box-sizing:border-box;padding:0.32in;display:flex;flex-direction:column;font-family:Helvetica,Arial,sans-serif;overflow:hidden;">
+        <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:3px solid #111;padding-bottom:0.1in;margin-bottom:0.14in;flex-shrink:0;">
+          <div style="font-size:20pt;font-weight:900;color:#111;">Ofer<span style="background:#E31E24;color:#fff;padding:0 7px;border-radius:4px;">todo</span></div>
+          <div style="text-align:right;">
+            <div style="font-size:10pt;font-weight:700;color:#666;">${escHtml(order.codigo)}</div>
+            <div style="font-size:8pt;color:#999;">${new Date(order.created_at || Date.now()).toLocaleDateString("es-PA")}</div>
+          </div>
+        </div>
+        <div style="background:#111;color:#fff;padding:0.09in 0.13in;border-radius:6px;margin-bottom:0.1in;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-shrink:0;">
+          <span style="font-size:9.5pt;font-weight:700;letter-spacing:1px;opacity:0.8;flex-shrink:0;">ENVIAR POR</span>
+          <span style="font-size:${tamEmpresa}pt;font-weight:900;text-align:right;">${escHtml(order.empresa_envio_nombre || (order.retiro_local ? "RETIRO EN LOCAL" : "—"))}</span>
+        </div>
+        ${!order.retiro_local ? `
+        <div style="background:${envioPagado ? "#155724" : "#856404"};color:#fff;padding:0.07in 0.13in;border-radius:6px;margin-bottom:0.16in;text-align:center;flex-shrink:0;">
+          <span style="font-size:11.5pt;font-weight:900;letter-spacing:0.5px;">${envioPagado ? "✓ ENVÍO PAGADO" : "⚠ COBRAR ENVÍO AL ENTREGAR"}</span>
+        </div>` : `<div style="margin-bottom:0.08in;flex-shrink:0;"></div>`}
+        <div style="font-size:10.5pt;font-weight:800;color:#999;letter-spacing:1px;margin-bottom:0.06in;flex-shrink:0;">ENVIAR A:</div>
+        <div style="font-size:${tamNombre}pt;font-weight:900;color:#111;line-height:1.15;margin-bottom:0.18in;word-break:break-word;flex-shrink:0;">${escHtml(order.nombre_cliente || "—")}</div>
+        <div style="font-size:10.5pt;font-weight:800;color:#999;letter-spacing:1px;margin-bottom:0.06in;flex-shrink:0;">TELÉFONO:</div>
+        <div style="font-size:22pt;font-weight:900;color:#111;margin-bottom:0.18in;flex-shrink:0;">${escHtml(order.telefono || "—")}</div>
+        <div style="font-size:10.5pt;font-weight:800;color:#999;letter-spacing:1px;margin-bottom:0.06in;flex-shrink:0;">DIRECCIÓN:</div>
+        <div style="font-size:${tamDireccion}pt;font-weight:700;color:#111;line-height:1.32;flex:1;overflow:hidden;word-break:break-word;">${escHtml(direccionCompleta || "Retiro en local")}</div>
+        <div style="border-top:2px solid #ccc;padding-top:0.1in;font-size:9pt;color:#999;text-align:center;flex-shrink:0;">ofertodo.com.pa</div>
+      </div>`;
+    const estilos = `
+      <style>
+        * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; box-sizing: border-box; }
+        @page { size: 4in 6in; margin: 0; }
+        html, body { margin: 0; padding: 0; background: #ffffff; width: 4in; height: 6in; overflow: hidden; }
+      </style>`;
+    const iframe = document.createElement("iframe");
+    iframe.style.position = "fixed"; iframe.style.right = "0"; iframe.style.bottom = "0";
+    iframe.style.width = "0"; iframe.style.height = "0"; iframe.style.border = "0";
+    document.body.appendChild(iframe);
+    const doc = iframe.contentWindow.document;
+    doc.open();
+    doc.write(`<html><head><title>Etiqueta ${escHtml(order.codigo)}</title>${estilos}</head><body>${contenido}</body></html>`);
+    doc.close();
+    setTimeout(() => {
+      try { iframe.contentWindow.focus(); iframe.contentWindow.print(); marcarComoImpresa(); } catch(e) {}
+      setTimeout(() => { try { document.body.removeChild(iframe); } catch(e) {} }, 1000);
+    }, 400);
+  };
+
+  // Etiqueta para pegar en cada CAJA / bulto (rollo 4x6"): marca, cliente, destino y empresa de envío,
+  // todo en letra grande para leerlo de lejos. Imprime una etiqueta por caja ("CAJA 2 de 3").
+  // No marca la guía como impresa: esa marca es de la guía interna / etiqueta de cliente.
+  const printEtiquetaCaja = () => {
+    const n = Math.max(1, Math.min(50, Math.floor(Number(cajas)) || 1));
+    const tamanoPor = (texto, umbrales) => {
+      const largo = (texto || "").length;
+      for (const [max, tam] of umbrales) if (largo <= max) return tam;
+      return umbrales[umbrales.length - 1][1];
+    };
+    // DESTINO: sucursal si va a sucursal; si es puerta a puerta, la provincia (lo que va antes de " — ") y la dirección debajo.
+    let destinoGrande = "", destinoChico = "";
+    if (order.retiro_local) {
+      destinoGrande = "RETIRO EN LOCAL"; destinoChico = order.local_retiro_nombre || "";
+    } else if (order.sucursal_nombre) {
+      destinoGrande = order.sucursal_nombre; destinoChico = order.direccion || "";
+    } else {
+      const partes = String(order.direccion || "").split(" — ");
+      if (partes.length > 1) { destinoGrande = partes[0]; destinoChico = partes.slice(1).join(" — "); }
+      else { destinoGrande = order.direccion || "—"; }
+    }
+    const empresa = empresaCaja.trim() || (order.retiro_local ? "RETIRO EN LOCAL" : (order.empresa_envio_nombre || "—"));
+    const tamNombre = tamanoPor(order.nombre_cliente, [[14, 34], [22, 28], [32, 22], [48, 17], [999, 13]]);
+    const tamDestino = tamanoPor(destinoGrande, [[14, 30], [24, 24], [36, 19], [60, 15], [999, 12]]);
+    const tamEmpresa = tamanoPor(empresa, [[12, 30], [20, 24], [999, 16]]);
+    const una = (i) => `
+      <div style="width:4in;height:6in;box-sizing:border-box;padding:0.3in;display:flex;flex-direction:column;font-family:Helvetica,Arial,sans-serif;overflow:hidden;page-break-after:${i < n ? "always" : "auto"};break-after:${i < n ? "page" : "auto"};">
+        <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:4px solid #111;padding-bottom:0.12in;margin-bottom:0.2in;flex-shrink:0;">
+          <div style="font-size:30pt;font-weight:900;color:#111;letter-spacing:-1px;">Ofer<span style="background:#E31E24;color:#fff;padding:0 9px;border-radius:5px;margin-left:2px;">todo</span></div>
+          <div style="text-align:right;">
+            <div style="font-size:10pt;font-weight:700;color:#666;">${escHtml(order.codigo)}</div>
+            ${n > 1 ? `<div style="font-size:14pt;font-weight:900;color:#111;margin-top:2px;">CAJA ${i} de ${n}</div>` : ""}
+          </div>
+        </div>
+        <div style="font-size:10.5pt;font-weight:800;color:#999;letter-spacing:1px;margin-bottom:0.05in;flex-shrink:0;">CLIENTE</div>
+        <div style="font-size:${tamNombre}pt;font-weight:900;color:#111;line-height:1.12;margin-bottom:0.24in;word-break:break-word;flex-shrink:0;">${escHtml(order.nombre_cliente || "—")}</div>
+        <div style="font-size:10.5pt;font-weight:800;color:#999;letter-spacing:1px;margin-bottom:0.05in;flex-shrink:0;">DESTINO</div>
+        <div style="font-size:${tamDestino}pt;font-weight:900;color:#111;line-height:1.15;word-break:break-word;flex-shrink:0;">${escHtml(destinoGrande)}</div>
+        ${destinoChico ? `<div style="font-size:11pt;font-weight:600;color:#444;line-height:1.3;margin-top:0.07in;overflow:hidden;word-break:break-word;flex:1;">${escHtml(destinoChico)}</div>` : `<div style="flex:1;"></div>`}
+        <div style="background:#111;color:#fff;border-radius:8px;padding:0.14in 0.18in;text-align:center;flex-shrink:0;">
+          <div style="font-size:9.5pt;font-weight:700;letter-spacing:1.5px;opacity:0.8;">ENVIAR POR</div>
+          <div style="font-size:${tamEmpresa}pt;font-weight:900;line-height:1.1;margin-top:2px;">${escHtml(empresa)}</div>
+        </div>
+      </div>`;
+    const contenido = Array.from({ length: n }, (_, k) => una(k + 1)).join("");
+    const estilos = `
+      <style>
+        * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; box-sizing: border-box; }
+        @page { size: 4in 6in; margin: 0; }
+        html, body { margin: 0; padding: 0; background: #ffffff; width: 4in; }
+      </style>`;
+    const iframe = document.createElement("iframe");
+    iframe.style.position = "fixed"; iframe.style.right = "0"; iframe.style.bottom = "0";
+    iframe.style.width = "0"; iframe.style.height = "0"; iframe.style.border = "0";
+    document.body.appendChild(iframe);
+    const doc = iframe.contentWindow.document;
+    doc.open();
+    doc.write(`<html><head><title>Etiqueta de caja ${escHtml(order.codigo)}</title>${estilos}</head><body>${contenido}</body></html>`);
+    doc.close();
+    setTimeout(() => {
+      try { iframe.contentWindow.focus(); iframe.contentWindow.print(); } catch(e) {}
+      setTimeout(() => { try { document.body.removeChild(iframe); } catch(e) {} }, 1000);
+    }, 400);
+  };
+
+  return createPortal(
+    <div className="oft-overlay oft-overlay-doc" style={{ ...S.overlay, alignItems: "flex-start", overflowY: "auto", padding: "20px 0", WebkitOverflowScrolling: "touch", overscrollBehavior: "contain" }} onClick={onClose}>
+      <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 16, maxWidth: 620, width: "92%", margin: "0 auto", overflow: "hidden" }} onClick={e => e.stopPropagation()}>
+        {/* Barra superior - siempre visible arriba */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", borderBottom: `1px solid ${GRAY2}`, background: GRAY, flexWrap: "wrap", gap: 8 }}>
+          <div style={{ fontWeight: 800, display: "flex", alignItems: "center", gap: 8 }}><Truck size={18} color={RED} /> Guía de envío interna</div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button onClick={downloadPDF} disabled={busy} className="oft-btn-press" style={{ ...S.btnRed, padding: "8px 14px", fontSize: 13, opacity: busy ? 0.7 : 1 }}>
+              <Download size={14} /> {busy ? "..." : "PDF"}
+            </button>
+            <button onClick={printLabel} className="oft-btn-press" style={{ ...S.btnOutline, padding: "8px 14px", fontSize: 13, display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <FileText size={14} /> Imprimir
+            </button>
+            <button onClick={printEtiquetaCliente} className="oft-btn-press" style={{ background: BLACK, color: WHITE, border: "none", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <Truck size={14} /> Etiqueta (rollo 4x6")
+            </button>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", border: `1.5px solid ${BLACK}`, borderRadius: 8, padding: "6px 8px", background: WHITE }}>
+              <label style={{ fontSize: 12, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 5 }} title="Empresa que se imprime en la etiqueta de la caja. Puedes escribir cualquiera.">
+                Empresa
+                <input type="text" list="oft-empresas-caja" value={empresaCaja} onChange={e => setEmpresaCaja(e.target.value)} placeholder="Ej: Servientrega" maxLength={40}
+                  style={{ width: 150, border: `1px solid ${GRAY2}`, borderRadius: 6, padding: "4px 8px", fontSize: 13, fontWeight: 700 }} />
+                <datalist id="oft-empresas-caja">
+                  {(empresas || []).filter(e => e.activa !== false).map(e => <option key={e.id} value={e.nombre} />)}
+                </datalist>
+              </label>
+              <label style={{ fontSize: 12, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 5 }} title="Cuántas cajas lleva el pedido: se imprime una etiqueta por caja">
+                Cajas
+                <input type="number" min={1} max={50} value={cajas} onChange={e => setCajas(e.target.value)} onBlur={() => setCajas(c => Math.max(1, Math.min(50, Math.floor(Number(c)) || 1)))}
+                  style={{ width: 44, border: `1px solid ${GRAY2}`, borderRadius: 6, padding: "4px 6px", fontSize: 13, fontWeight: 800, textAlign: "center" }} />
+              </label>
+              <button onClick={printEtiquetaCaja} className="oft-btn-press" style={{ background: RED, color: WHITE, border: "none", borderRadius: 6, padding: "7px 12px", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}>
+                <Package size={14} /> Etiqueta de caja
+              </button>
+            </div>
+            <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", display: "flex", padding: 4 }}><X size={22} /></button>
+          </div>
+        </div>
+
+        {/* ESTADO DE IMPRESIÓN -- para saber al final del día cuáles guías faltan */}
+        {order.id && (
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 16px", background: impresa ? "#E6F4EA" : "#FFF8E1", borderBottom: `1px solid ${GRAY2}` }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12.5, fontWeight: 700, color: impresa ? "#155724" : "#856404" }}>
+              {impresa ? <CheckCircle2 size={15} /> : <AlertTriangle size={15} />}
+              {impresa ? "Guía ya impresa" : "Guía sin imprimir todavía"}
+            </div>
+            {impresa && (
+              <button onClick={desmarcarImpresa} style={{ background: "none", border: "none", color: "#155724", fontSize: 11.5, fontWeight: 700, textDecoration: "underline", cursor: "pointer" }}>
+                Marcar como pendiente
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* GUÍA (lo que se exporta) */}
+        <div style={{ padding: 20, maxHeight: "80vh", overflowY: "auto" }}>
+          <div ref={ref} style={{ background: WHITE, padding: 26, fontFamily: "Helvetica, Arial, sans-serif", color: BLACK, border: `2px solid ${BLACK}` }}>
+            {/* Encabezado */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", borderBottom: `2px solid ${BLACK}`, paddingBottom: 12, marginBottom: 16 }}>
+              <div>
+                <div style={{ display: "flex", alignItems: "center", fontWeight: 900, fontSize: 22, letterSpacing: -1 }}>
+                  <span style={{ color: RED }}>Ofer</span>
+                  <span style={{ background: RED, color: WHITE, padding: "0 7px", borderRadius: 4, marginLeft: 2 }}>todo</span>
+                </div>
+                <div style={{ fontSize: 11, color: GRAY3, marginTop: 4, fontWeight: 700, letterSpacing: 1 }}>GUÍA DE ENVÍO · USO INTERNO</div>
+              </div>
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontWeight: 900, fontSize: 18 }}>{order.codigo}</div>
+                <div style={{ fontSize: 11, color: GRAY3, marginTop: 2 }}>{fecha.toLocaleDateString("es-PA", { day: "2-digit", month: "long", year: "numeric" })}</div>
+              </div>
+            </div>
+
+            {/* EMPRESA DE ENVÍO, o RETIRO EN EL LOCAL — lo más importante, bien grande */}
+            {order.retiro_local ? (
+              <div style={{ background: "#856404", color: WHITE, borderRadius: 10, padding: "14px 18px", marginBottom: 12 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, opacity: 0.85, letterSpacing: 1 }}>ENTREGA</div>
+                <div style={{ fontSize: 24, fontWeight: 900, lineHeight: 1.1, marginTop: 2 }}>🏠 Retiro en el local</div>
+                {order.retiro_nombre_autorizado && <div style={{ fontSize: 15, fontWeight: 700, marginTop: 4 }}>👤 Autorizado a recoger: {order.retiro_nombre_autorizado}</div>}
+              </div>
+            ) : (
+              <div style={{ background: RED, color: WHITE, borderRadius: 10, padding: "14px 18px", marginBottom: 12 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, opacity: 0.85, letterSpacing: 1 }}>ENVIAR POR</div>
+                <div style={{ fontSize: 24, fontWeight: 900, lineHeight: 1.1, marginTop: 2 }}>{order.empresa_envio_nombre || "— Sin empresa asignada —"}</div>
+                {order.sucursal_nombre && <div style={{ fontSize: 15, fontWeight: 700, marginTop: 4 }}>📍 Sucursal: {order.sucursal_nombre}</div>}
+              </div>
+            )}
+
+            {/* ESTADO DEL PAGO DEL ENVÍO -- no aplica en retiro en el local, ahí nunca hay costo de envío que cobrar */}
+            {!order.retiro_local && (() => {
+              const envioPagado = Number(order.costo_envio || 0) > 0;
+              return (
+                <div style={{ display: "flex", alignItems: "center", gap: 10, borderRadius: 10, padding: "12px 16px", marginBottom: 16, border: `2px solid ${envioPagado ? "#155724" : "#856404"}`, background: envioPagado ? "#E6F4EA" : "#FFF8E1" }}>
+                  <div style={{ width: 38, height: 38, borderRadius: "50%", background: envioPagado ? "#155724" : "#856404", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                    {envioPagado ? <CheckCircle2 size={22} color="#fff" /> : <DollarSign size={22} color="#fff" />}
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 16, fontWeight: 900, color: envioPagado ? "#155724" : "#856404", lineHeight: 1.1 }}>
+                      {envioPagado ? "ENVÍO PAGADO" : "COBRO DE ENVÍO PENDIENTE"}
+                    </div>
+                    <div style={{ fontSize: 12, color: envioPagado ? "#155724" : "#856404", marginTop: 2 }}>
+                      {envioPagado ? "El cliente ya pagó el envío" : "Cobrar el envío al entregar / en destino"}
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* DATOS DEL DESTINATARIO */}
+            <div style={{ border: `2px solid ${BLACK}`, borderRadius: 10, padding: 16, marginBottom: 16 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: GRAY3, letterSpacing: 1, marginBottom: 8 }}>DESTINATARIO</div>
+              <div style={{ fontSize: 20, fontWeight: 900 }}>{order.nombre_cliente || "—"}</div>
+              {order.telefono && <div style={{ fontSize: 16, fontWeight: 700, marginTop: 4 }}>📱 {order.telefono}</div>}
+              {order.direccion && <div style={{ fontSize: 14, marginTop: 6, lineHeight: 1.4 }}>📍 {order.direccion}</div>}
+            </div>
+
+            {/* RESUMEN DE EMPAQUE */}
+            <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
+              <div style={{ flex: 1, border: `2px solid ${BLACK}`, borderRadius: 10, padding: "12px 14px", textAlign: "center" }}>
+                <div style={{ fontSize: 11, color: GRAY3, fontWeight: 700 }}>PRODUCTOS</div>
+                <div style={{ fontSize: 26, fontWeight: 900 }}>{itemsAgrupados.length}</div>
+              </div>
+              <div style={{ flex: 1, border: `2px solid ${BLACK}`, borderRadius: 10, padding: "12px 14px", textAlign: "center" }}>
+                <div style={{ fontSize: 11, color: GRAY3, fontWeight: 700 }}>PIEZAS TOTALES</div>
+                <div style={{ fontSize: 26, fontWeight: 900 }}>{totalPiezas}</div>
+              </div>
+            </div>
+
+            {/* CHECKLIST DE EMPAQUE */}
+            <div style={{ fontSize: 11, fontWeight: 700, color: GRAY3, letterSpacing: 1, marginBottom: 8 }}>CHECKLIST DE EMPAQUE</div>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead>
+                <tr style={{ background: GRAY }}>
+                  <th style={{ width: 28, padding: "8px 6px", fontSize: 11, fontWeight: 700, color: GRAY3, textAlign: "center" }}>✓</th>
+                  <th style={{ textAlign: "left", padding: "8px 10px", fontSize: 11, fontWeight: 700, color: GRAY3 }}>Producto</th>
+                  <th style={{ textAlign: "left", padding: "8px 6px", fontSize: 11, fontWeight: 700, color: GRAY3 }}>Ref.</th>
+                  <th style={{ textAlign: "center", padding: "8px 6px", fontSize: 11, fontWeight: 700, color: GRAY3 }}>Cant.</th>
+                </tr>
+              </thead>
+              <tbody>
+                {itemsAgrupados.map((it, i) => {
+                  const prod = products.find(p => p.id === it.producto_id);
+                  const dist = it._distribucionSumada;
+                  return (
+                    <Fragment key={i}>
+                      <tr style={{ borderBottom: dist ? "none" : `1px solid ${GRAY2}` }}>
+                        <td style={{ textAlign: "center", padding: "10px 6px" }}>
+                          <span style={{ display: "inline-block", width: 18, height: 18, border: `2px solid ${BLACK}`, borderRadius: 4 }} />
+                        </td>
+                        <td style={{ padding: "10px", fontSize: 13, fontWeight: 700 }}>{it.nombre_producto}</td>
+                        <td style={{ padding: "10px 6px", fontSize: 13, fontWeight: 700, color: GRAY3 }}>{prod?.referencia || "—"}</td>
+                        <td style={{ textAlign: "center", padding: "10px 6px", fontSize: 15, fontWeight: 900 }}>{it.cantidad}</td>
+                      </tr>
+                      {dist && (
+                        <tr style={{ borderBottom: `1px solid ${GRAY2}` }}>
+                          <td></td>
+                          <td colSpan={3} style={{ padding: "0 10px 10px" }}>
+                            <div style={{ background: "#FFF3CD", border: "1px solid #F5D68E", borderRadius: 8, padding: "8px 10px", display: "flex", flexWrap: "wrap", gap: 8 }}>
+                              <span style={{ fontSize: 10.5, fontWeight: 800, color: "#856404", letterSpacing: 0.3 }}>
+                                DISTRIBUCIÓN DE {dist.eje === "color" ? "COLOR" : "TALLA"}:
+                              </span>
+                              {Object.entries(dist.cantidades || {}).filter(([, q]) => Number(q) > 0).map(([v, q]) => (
+                                <span key={v} style={{ fontSize: 12.5, fontWeight: 800, background: WHITE, borderRadius: 6, padding: "2px 8px", border: "1px solid #F5D68E" }}>{q}× {v}</span>
+                              ))}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+
+            {/* NOTAS */}
+            {order.notas && (
+              <div style={{ marginTop: 16, border: `2px dashed ${GRAY3}`, borderRadius: 8, padding: 12 }}>
+                <div style={{ fontSize: 11, color: GRAY3, fontWeight: 700, letterSpacing: 1, marginBottom: 4 }}>NOTAS DEL PEDIDO</div>
+                <div style={{ fontSize: 13 }}>{order.notas}</div>
+              </div>
+            )}
+
+            {/* Pie */}
+            <div style={{ marginTop: 16, paddingTop: 12, borderTop: `1px solid ${GRAY2}`, display: "flex", justifyContent: "space-between", fontSize: 11, color: GRAY3 }}>
+              <span>Empacado por: _______________</span>
+              <span>Despachado: _______________</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  , document.body);
+}
+
+export function ChipAdder({ valor, onChange, placeholder, color }) {
+  const [input, setInput] = useState("");
+  const items = (valor || "").split(",").map(s => s.trim()).filter(Boolean);
+
+  const add = () => {
+    const v = input.trim();
+    if (!v) return;
+    if (items.some(i => i.toLowerCase() === v.toLowerCase())) { setInput(""); return; }
+    onChange([...items, v].join(", "));
+    setInput("");
+  };
+  const remove = (idx) => onChange(items.filter((_, i) => i !== idx).join(", "));
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 8, marginBottom: items.length ? 10 : 0 }}>
+        <input
+          style={{ ...S.input, marginBottom: 0 }}
+          placeholder={placeholder}
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); add(); } }}
+        />
+        <button type="button" onClick={add} className="oft-btn-press" style={{ background: color, color: WHITE, border: "none", borderRadius: 8, padding: "0 16px", fontWeight: 800, fontSize: 18, cursor: "pointer", flexShrink: 0 }}>+</button>
+      </div>
+      {items.length > 0 && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+          {items.map((it, idx) => (
+            <span key={idx} className="oft-chip-pop" style={{ display: "inline-flex", alignItems: "center", gap: 6, background: WHITE, border: `1.5px solid ${GRAY2}`, borderRadius: 20, padding: "5px 8px 5px 12px", fontSize: 13, fontWeight: 700 }}>
+              {it}
+              <button type="button" onClick={() => remove(idx)} style={{ background: GRAY2, border: "none", borderRadius: "50%", width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: BLACK }}>
+                <X size={11} />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Selector de colores con cuadro de color nativo (para elegir visualmente), un
+// círculo de vista previa por cada color agregado, y un campo para escribir el
+// nombre. El color solo se agrega al darle al "+" -- el cuadrito de color dispara
+// "onChange" mientras uno todavía está explorando tonos, así que solo GUARDA la
+// selección en lo que se confirma, en vez de agregar cada tono que se ve de paso.
+export function SelectorColores({ valor, onChange }) {
+  const [texto, setTexto] = useState("");
+  const [hexElegido, setHexElegido] = useState(null); // null = todavía no se tocó el cuadro de color
+  const colores = (valor || "").split(",").map(s => s.trim()).filter(Boolean);
+
+  const agregar = () => {
+    const nombre = texto.trim();
+    // Combina nombre + código si se dieron los dos ("Rojo (#FF0000)"); si solo se
+    // escribió un nombre, se agrega tal cual; si solo se eligió del cuadro, se
+    // agrega el código solo.
+    const entrada = nombre && hexElegido ? `${nombre} (${hexElegido})` : (nombre || hexElegido || "");
+    if (!entrada) return;
+    if (colores.some(c => c.toLowerCase() === entrada.toLowerCase())) { setTexto(""); setHexElegido(null); return; }
+    onChange([...colores, entrada].join(", "));
+    setTexto(""); setHexElegido(null);
+  };
+  const quitar = (c) => onChange(colores.filter(x => x !== c).join(", "));
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 8, marginBottom: colores.length ? 10 : 0 }}>
+        {/* Cuadro de color nativo -- solo GUARDA el tono elegido, no lo agrega todavía */}
+        <input type="color" value={hexElegido || "#E31E24"} title="Elige un color"
+          onChange={e => setHexElegido(e.target.value.toUpperCase())}
+          style={{ width: 44, height: 42, borderRadius: 8, border: `2px solid ${hexElegido ? BLACK : GRAY2}`, padding: 3, cursor: "pointer", flexShrink: 0 }} />
+        <input
+          style={{ ...S.input, marginBottom: 0 }}
+          placeholder="Nombre del color (ej: Rojo cereza)..."
+          value={texto}
+          onChange={e => setTexto(e.target.value)}
+          onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); agregar(); } }}
+        />
+        <button type="button" onClick={agregar} className="oft-btn-press" style={{ background: BLACK, color: WHITE, border: "none", borderRadius: 8, padding: "0 16px", fontWeight: 800, fontSize: 18, cursor: "pointer", flexShrink: 0 }}>+</button>
+      </div>
+      {hexElegido && (
+        <div style={{ fontSize: 11.5, color: GRAY3, marginBottom: 10, display: "flex", alignItems: "center", gap: 6 }}>
+          <span style={{ width: 12, height: 12, borderRadius: "50%", background: hexElegido, border: `1px solid ${GRAY2}` }} />
+          Color elegido: {hexElegido} — ponle un nombre (opcional) y dale a "+" para agregarlo
+        </div>
+      )}
+      {colores.length > 0 && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+          {colores.map((c, idx) => (
+            <span key={idx} className="oft-chip-pop" style={{ display: "inline-flex", alignItems: "center", gap: 7, background: WHITE, border: `1.5px solid ${GRAY2}`, borderRadius: 20, padding: "5px 8px 5px 8px", fontSize: 13, fontWeight: 700 }}>
+              <span style={{ width: 18, height: 18, borderRadius: "50%", background: colorToHex(c), border: `1px solid ${GRAY2}`, flexShrink: 0 }} />
+              {nombreColorLimpio(c)}
+              <button type="button" onClick={() => quitar(c)} style={{ background: GRAY2, border: "none", borderRadius: "50%", width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: BLACK }}>
+                <X size={11} />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function DistribucionEditor({ prodForm, setProdForm, activaTallas, activaColores }) {
+  const tieneTallas = (activaTallas !== undefined ? activaTallas : prodForm.tiene_tallas) && (prodForm.tallas || "").trim();
+  const tieneColores = (activaColores !== undefined ? activaColores : prodForm.tiene_colores) && (prodForm.colores || "").trim();
+  if (!tieneTallas && !tieneColores) return null;
+
+  const eje = prodForm.distribucion_eje || (tieneTallas ? "talla" : "color");
+  const variantes = (eje === "talla" ? prodForm.tallas : prodForm.colores).split(",").map(s => s.trim()).filter(Boolean);
+  const dist = parseDistribucion(prodForm.distribucion_docena);
+
+  const setQty = (v, qty) => {
+    const n = Math.max(0, Math.min(12, Number(qty.replace(/[^0-9]/g, "")) || 0));
+    const nuevo = { ...dist, [v]: n };
+    setProdForm({ ...prodForm, distribucion_docena: JSON.stringify(nuevo), distribucion_eje: eje });
+  };
+
+  const cambiarEje = (nuevoEje) => {
+    setProdForm({ ...prodForm, distribucion_eje: nuevoEje, distribucion_docena: "" });
+  };
+
+  const total = variantes.reduce((s, v) => s + (Number(dist[v]) || 0), 0);
+  const diff = 12 - total;
+  const distActiva = Object.fromEntries(variantes.map(v => [v, Number(dist[v]) || 0]));
+  const media = mediaDocenaDesdeDistribucion(distActiva);
+
+  return (
+    <div style={{ marginTop: 14, paddingTop: 14, borderTop: `1px dashed ${GRAY2}` }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4, flexWrap: "wrap", gap: 8 }}>
+        <span style={{ fontWeight: 700, fontSize: 13 }}>Distribución por docena (opcional)</span>
+        {tieneTallas && tieneColores && (
+          <select style={{ ...S.input, width: "auto", padding: "4px 8px", marginBottom: 0, fontSize: 12 }}
+            value={eje} onChange={e => cambiarEje(e.target.value)}>
+            <option value="talla">Distribuir por talla</option>
+            <option value="color">Distribuir por color</option>
+          </select>
+        )}
+      </div>
+      <p style={{ fontSize: 12, color: GRAY3, marginBottom: 10 }}>
+        Indica cuántas piezas de cada {eje} trae 1 docena completa (deben sumar 12). La media docena se calcula sola: incluye todas las {eje === "color" ? "colores" : "tallas"} y repite primero la que más se repite en la docena.
+      </p>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
+        {variantes.map(v => (
+          <div key={v} style={{ display: "flex", alignItems: "center", gap: 6, background: WHITE, border: `1.5px solid ${GRAY2}`, borderRadius: 10, padding: "6px 10px" }}>
+            <span style={{ fontSize: 13, fontWeight: 700 }}>{v}</span>
+            <input
+              type="number" min="0" max="12" inputMode="numeric"
+              value={dist[v] || ""} placeholder="0"
+              onChange={e => setQty(v, e.target.value)}
+              style={{ width: 44, border: "none", borderBottom: `2px solid ${GRAY2}`, textAlign: "center", fontWeight: 800, fontSize: 14, outline: "none" }}
+            />
+          </div>
+        ))}
+      </div>
+      <div style={{ fontSize: 12, fontWeight: 700, color: diff === 0 && total > 0 ? "#1FA64A" : RED }}>
+        Total: {total} / 12 {total === 0 ? "" : diff === 0 ? "✓ Completo" : diff > 0 ? `— faltan ${diff}` : `— sobran ${-diff}`}
+      </div>
+      {diff === 0 && total > 0 && (
+        <div style={{ background: WHITE, borderRadius: 10, padding: "10px 12px", border: `1px solid ${GRAY2}`, marginTop: 10 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: GRAY3, marginBottom: 6 }}>Media docena (automático)</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {Object.entries(media).map(([v, qty]) => (
+              <span key={v} style={{ fontSize: 12, fontWeight: 700, background: GRAY, borderRadius: 8, padding: "3px 8px" }}>{qty}× {v}</span>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function ClienteFormModal({ cliente, onClose, onSaved, showToast }) {
+  useLockBodyScroll();
+  const esEdicion = !!cliente?.id;
+  const [form, setForm] = useState({
+    nombre: cliente?.nombre || "",
+    telefono: cliente?.telefono || "",
+    email: cliente?.email && !cliente.email.includes("@ofertodo.local") ? cliente.email : "",
+    cedula: cliente?.cedula || "",
+  });
+  const [guardando, setGuardando] = useState(false);
+
+  const guardar = async () => {
+    if (!form.nombre.trim()) { showToast("Escribe el nombre del cliente"); return; }
+    setGuardando(true);
+    try {
+      if (esEdicion) {
+        const telefonoNuevo = form.telefono.trim();
+        const telefonoCambio = telefonoNuevo !== (cliente.telefono || "").trim();
+        const payload = {
+          nombre: form.nombre.trim(),
+          telefono: telefonoNuevo,
+          email: form.email.trim() || cliente.email,
+          cedula: form.cedula.trim() || null,
+        };
+        const fila = await sb.patch("usuarios", cliente.id, payload);
+        // El teléfono de un pedido/cotización es una COPIA de cuando se creó, no una
+        // referencia en vivo al cliente -- si se corrige aquí (ej. un error de dedo),
+        // hay que actualizarla también en sus pedidos y cotizaciones ya existentes,
+        // o se quedarían con el número viejo para siempre, incluso en la guía.
+        if (telefonoCambio && telefonoNuevo) {
+          try {
+            const telefonoViejo = (cliente.telefono || "").trim();
+            // Solo se corrigen los pedidos que TODAVÍA tienen el número viejo -- si
+            // algún pedido puntual ya tenía uno distinto a propósito (ej. compró para
+            // alguien más y puso otro contacto), ese no se toca.
+            const filtro = telefonoViejo
+              ? `usuario_id=eq.${cliente.id}&telefono=eq.${encodeURIComponent(telefonoViejo)}`
+              : `usuario_id=eq.${cliente.id}&or=(telefono.is.null,telefono.eq.)`;
+            await fetch(`${SUPABASE_URL}/rest/v1/pedidos?${filtro}`, {
+              method: "PATCH", headers: sb.dataHeaders(), body: JSON.stringify({ telefono: telefonoNuevo }),
+            });
+          } catch (e) { /* el cliente ya se guardó bien -- esto es un extra, no se bloquea si falla */ }
+        }
+        onSaved({ ...cliente, ...(Array.isArray(fila) && fila[0] ? fila[0] : payload) });
+        showToast(telefonoCambio ? "Cliente actualizado — también en sus pedidos y cotizaciones" : "Cliente actualizado");
+      } else {
+        // Email opcional: si no ponen, generamos uno interno para identificarlo
+        const email = form.email.trim() || `cliente_${Date.now()}@ofertodo.local`;
+        const fila = await sb.post("usuarios", {
+          nombre: form.nombre.trim(), telefono: form.telefono.trim(), email, es_admin: false,
+          cedula: form.cedula.trim() || null, origen_cuenta: "admin_manual",
+        });
+        onSaved(Array.isArray(fila) && fila[0] ? fila[0] : fila);
+        showToast("Cliente creado");
+      }
+      onClose();
+    } catch(e) {
+      showToast("Error: " + (e.message || "no se pudo guardar"));
+    }
+    setGuardando(false);
+  };
+
+  return createPortal(
+    <div className="oft-overlay" style={S.overlay} onClick={() => !guardando && onClose()}>
+      <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 16, maxWidth: 420, width: "92%", padding: 24 }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+          <div style={{ fontWeight: 800, fontSize: 17 }}>{esEdicion ? "Editar cliente" : "Crear cliente"}</div>
+          <button onClick={() => !guardando && onClose()} style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}><X size={22} /></button>
+        </div>
+        <label style={S.label}>Nombre *</label>
+        <input style={S.input} placeholder="Nombre del cliente" value={form.nombre} onChange={e => setForm({ ...form, nombre: e.target.value })} autoFocus />
+        <label style={S.label}>WhatsApp / Teléfono</label>
+        <input style={S.input} placeholder="Ej: 6720-0474" value={form.telefono} onChange={e => setForm({ ...form, telefono: e.target.value })} />
+        <label style={S.label}>Correo (opcional)</label>
+        <input style={S.input} placeholder="correo@ejemplo.com" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} />
+        <label style={S.label}>Cédula (opcional)</label>
+        <input style={S.input} placeholder="Ej: 8-123-4567" value={form.cedula} onChange={e => setForm({ ...form, cedula: e.target.value })} />
+        <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
+          <button onClick={() => !guardando && onClose()} disabled={guardando} className="oft-btn-press" style={{ ...S.btnOutline, flex: 1, justifyContent: "center" }}>Cancelar</button>
+          <button onClick={guardar} disabled={guardando} className="oft-btn-press" style={{ ...S.btnRed, flex: 1, justifyContent: "center", opacity: guardando ? 0.7 : 1 }}>
+            {guardando ? "Guardando..." : esEdicion ? "Guardar cambios" : "Crear cliente"}
+          </button>
+        </div>
+      </div>
+    </div>
+  , document.body);
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+//  OFERTAS Y COMBOS -- cálculos compartidos por la página pública, el
+//  carrito y el panel admin. El precio de la oferta lo manda el servidor
+//  (tabla ofertas_items); aquí solo se calcula cuánto costaría "normal",
+//  cuánto se ahorra y cómo se reparte el precio entre los productos.
+// ═══════════════════════════════════════════════════════════════
+
+// Precio normal de la tienda para `qty` piezas sueltas de un producto (misma
+// lógica escalonada que el catálogo: pieza / media docena / docena).
+function precioNormalPiezas(product, qty) {
+  const p1 = Number(product.precio_pieza), p6 = Number(product.precio_media_docena), p12 = Number(product.precio_docena);
+  if (!qty || qty <= 0) return 0;
+  if (qty < 6) return p1 * qty;
+  if (qty === 6) return p6;
+  if (qty < 12) return p6 + p1 * (qty - 6);
+  const docenas = Math.floor(qty / 12), resto = qty % 12;
+  const total = docenas * p12;
+  if (resto === 0) return total;
+  if (resto === 6) return total + p6;
+  if (resto < 6) return total + p1 * resto;
+  return total + p6 + p1 * (resto - 6);
+}
+
+// Piezas que trae UNA unidad de una oferta de producto (según la presentación)
+function piezasDePresentacion(product, pres) {
+  const perf = product?.modalidad_presentacion === "perfumeria";
+  if (pres === "docena") return perf ? 6 : 12;
+  if (pres === "media") return perf ? 3 : 6;
+  return 1;
+}
+
+// ═══ MÉTODO DE PAGO DE LOS PEDIDOS ═══
+// Web: solo "yappy" o "tarjeta". Pedidos manuales (admin): "yappy", "tarjeta" o "transferencia".
+const METODOS_PAGO = {
+  yappy: { label: "Yappy", color: "#0E7490", bg: "#CFFAFE" },
+  tarjeta: { label: "Tarjeta", color: "#6D28D9", bg: "#EDE9FE" },
+  transferencia: { label: "Transferencia", color: "#B45309", bg: "#FEF3C7" },
+};
+function BadgeMetodoPago({ metodo, sinRegistrar = false, style }) {
+  const m = METODOS_PAGO[metodo];
+  if (!m) {
+    if (!sinRegistrar) return null;
+    return <span style={{ display: "inline-block", background: "#F1F1F1", color: "#777", fontSize: 10, fontWeight: 800, padding: "2px 7px", borderRadius: 6, ...style }}>PAGO SIN REGISTRAR</span>;
+  }
+  return <span style={{ display: "inline-block", background: m.bg, color: m.color, fontSize: 10, fontWeight: 800, padding: "2px 7px", borderRadius: 6, textTransform: "uppercase", ...style }}>{m.label}</span>;
+}
+
+// ═══ ENVÍO DIFERENCIADO PARA PERFUMES (envío a sucursal) ═══
+// Se guarda en configuracion (clave "envio_perfumes"): { activo, precio, min, max }
+// Aplica solo al envío a SUCURSAL, cuando TODO el pedido son perfumes y la cantidad
+// de piezas está entre min y max. Si hay otros productos o más piezas, rige el precio normal.
+const ENVIO_PERFUMES_DEFAULT = { activo: false, precio: 5, min: 1, max: 3 };
+function normalizarEnvioPerfumes(v) {
+  const o = (v && typeof v === "object") ? v : {};
+  const n = (x, d) => (x === undefined || x === null || x === "" || isNaN(Number(x))) ? d : Number(x);
+  return {
+    activo: o.activo === true,
+    precio: Math.max(0, n(o.precio, ENVIO_PERFUMES_DEFAULT.precio)),
+    min: Math.max(1, Math.floor(n(o.min, ENVIO_PERFUMES_DEFAULT.min))),
+    max: Math.max(1, Math.floor(n(o.max, ENVIO_PERFUMES_DEFAULT.max))),
+  };
+}
+// lineas: [{ product, piezas }] -- cualquier línea sin producto (oferta, Flex Pack) cuenta como "no perfume"
+// Un producto cuenta como perfume si está marcado como "perfumería" O si está en una
+// categoría de perfumes (ej. "Perfumes de Dama"), aunque se venda como producto normal.
+function esProductoPerfume(product, categorias) {
+  if (!product) return false;
+  if (product.modalidad_presentacion === "perfumeria") return true;
+  const cat = (categorias || []).find(c => c.id === product.categoria_id);
+  return !!cat && /^\s*perfum/i.test(cat.nombre || "");
+}
+function envioPerfumesAplica(cfg, lineas, categorias) {
+  if (!cfg || !cfg.activo || !Array.isArray(lineas) || lineas.length === 0) return false;
+  let piezas = 0;
+  for (const l of lineas) {
+    if (!l || !l.product || !esProductoPerfume(l.product, categorias)) return false;
+    piezas += Number(l.piezas) || 0;
+  }
+  return piezas >= cfg.min && piezas <= cfg.max;
+}
+function piezasDeLineasPerfume(lineas) {
+  return (lineas || []).reduce((s, l) => s + (Number(l?.piezas) || 0), 0);
+}
+// Carga la configuración (pública) y la mantiene al día
+function useEnvioPerfumes() {
+  const [cfg, setCfg] = useState(ENVIO_PERFUMES_DEFAULT);
+  useEffect(() => {
+    let vivo = true;
+    const cargar = () => sb.get("configuracion", "?clave=eq.envio_perfumes&limit=1")
+      .then(d => { if (vivo) setCfg(normalizarEnvioPerfumes(d?.[0]?.valor)); })
+      .catch(() => {});
+    cargar();
+    const t = setInterval(cargar, 60000);
+    return () => { vivo = false; clearInterval(t); };
+  }, []);
+  return cfg;
+}
+
+// oferta: fila de ofertas_items. comboRows: filas de ofertas_combo_productos (de TODAS las
+// ofertas o solo de esta). productosPorId: { [id]: producto }.
+// Devuelve null si falta algún producto (no se puede mostrar ni vender).
+function ofertaInfo(oferta, productosPorId, comboRows) {
+  let lineas = [];
+  if (oferta.tipo === "combo") {
+    const filas = (comboRows || []).filter(r => r.oferta_id === oferta.id);
+    if (filas.length === 0) return null;
+    for (const r of filas) {
+      const product = productosPorId[r.producto_id];
+      if (!product) return null;
+      lineas.push({ product, piezas: Number(r.cantidad) });
+    }
+  } else {
+    const product = productosPorId[oferta.producto_id];
+    if (!product) return null;
+    lineas.push({ product, piezas: piezasDePresentacion(product, oferta.presentacion) });
+  }
+  const totalPiezas = lineas.reduce((s, l) => s + l.piezas, 0);
+  let normalCalculado;
+  if (oferta.tipo === "combo") normalCalculado = lineas.reduce((s, l) => s + precioNormalPiezas(l.product, l.piezas), 0);
+  else normalCalculado = presUnitPrice(lineas[0].product, oferta.presentacion);
+  const manual = Number(oferta.precio_normal_manual);
+  const precioNormal = manual > 0 ? manual : normalCalculado;
+  const precioOferta = Number(oferta.precio_oferta);
+  const ahorro = Math.max(0, precioNormal - precioOferta);
+  const pct = precioNormal > 0 ? Math.round((ahorro / precioNormal) * 100) : 0;
+  // Stock: cuántas unidades de la oferta alcanzan con lo que hay (solo si el stock es real/conocido)
+  let stockMax = Infinity;
+  for (const l of lineas) {
+    const p = l.product;
+    const respeta = (!p.proveedor_id || p.tiene_stock_fisico) && p.stock_actualizado_at;
+    if (respeta) stockMax = Math.min(stockMax, Math.floor(stockWeb(p) / l.piezas));
+  }
+  const nombrePres = { pieza: "pieza", media: "media docena", docena: "docena" }[oferta.presentacion] || "";
+  const titulo = (oferta.titulo && oferta.titulo.trim()) || (lineas[0].product.nombre + (oferta.tipo === "producto" && nombrePres && oferta.presentacion !== "pieza" ? ` (${nombrePres})` : ""));
+  const imagen = oferta.imagen_url || lineas[0].product.imagen_url || "";
+  const imagenes = lineas.map(l => l.product.imagen_url).filter(Boolean);
+  return { oferta, lineas, totalPiezas, precioNormal, precioOferta, ahorro, pct, stockMax, titulo, imagen, imagenes };
+}
+
+// Línea del carrito para `unidades` de una oferta. Es una "foto" liviana (sin objetos de
+// producto completos) porque el carrito se guarda en el navegador. El precio por unidad
+// de oferta se vuelve a validar en el servidor al pagar.
+function ofertaALineaCarrito(info, unidades) {
+  const o = info.oferta;
+  return {
+    esOferta: true,
+    ofertaLineId: `of-${o.id}`,
+    ofertaId: o.id, tipo: o.tipo, presentacion: o.presentacion || null, seccion: o.seccion,
+    unidades, qty: info.totalPiezas * unidades,
+    titulo: info.titulo, imagen: info.imagen,
+    precioUnidad: info.precioOferta, precioNormalUnidad: info.precioNormal,
+    limite: o.limite_por_pedido || null,
+    lineas: info.lineas.map(l => ({ productId: l.product.id, nombre: l.product.nombre, piezas: l.piezas, normal: precioNormalPiezas(l.product, l.piezas) })),
+  };
+}
+
+// Reparte el precio de la línea de oferta entre sus productos (proporcional a lo que costaría
+// cada uno normalmente) para guardarlo en pedido_items / Odoo. La suma de los subtotales es
+// EXACTAMENTE precioUnidad * unidades (el último producto absorbe el redondeo).
+function prorratearLinea(linea) {
+  const unidades = linea.unidades;
+  const total = Math.round(Number(linea.precioUnidad) * unidades * 100) / 100;
+  if (linea.tipo === "producto") {
+    const l = linea.lineas[0];
+    const cantidad = l.piezas * unidades;
+    return [{
+      producto_id: l.productId, nombre_producto: `${l.nombre} (Oferta)`,
+      cantidad, precio_unitario: Number((total / cantidad).toFixed(4)), subtotal: total,
+      presentacion: linea.presentacion || "pieza", oferta_id: linea.ofertaId, oferta_unidades: unidades,
+    }];
+  }
+  const pesos = linea.lineas.map(l => Math.max(Number(l.normal) || 0, 0.0001));
+  const sumaPesos = pesos.reduce((a, b) => a + b, 0);
+  let acumulado = 0;
+  return linea.lineas.map((l, i) => {
+    const cantidad = l.piezas * unidades;
+    const subtotal = i === linea.lineas.length - 1
+      ? Math.round((total - acumulado) * 100) / 100
+      : Math.round((total * pesos[i] / sumaPesos) * 100) / 100;
+    acumulado += subtotal;
+    return {
+      producto_id: l.productId, nombre_producto: `${l.nombre} (Combo: ${linea.titulo})`,
+      cantidad, precio_unitario: Number((subtotal / cantidad).toFixed(4)), subtotal,
+      presentacion: "pieza", oferta_id: linea.ofertaId, oferta_unidades: unidades,
+    };
+  });
+}
+
+// Texto "Faltan 2 días 03:15:09" -> partes para el contador regresivo
+function tiempoRestante(fechaFin, ahora = Date.now()) {
+  if (!fechaFin) return null;
+  const ms = new Date(fechaFin).getTime() - ahora;
+  if (ms <= 0) return { terminado: true, d: 0, h: 0, m: 0, s: 0 };
+  const s = Math.floor(ms / 1000);
+  return { terminado: false, d: Math.floor(s / 86400), h: Math.floor((s % 86400) / 3600), m: Math.floor((s % 3600) / 60), s: s % 60 };
+}
+
+export {
+  AppCtx, ORDER_STATUS_ENVIO, ORDER_STATUS_RETIRO, STATUS_COLORS,
+  STATUS_ICONS_ENVIO, STATUS_ICONS_RETIRO, LOGO_URL, PRES_PIEZAS,
+  presLabelPlural, presUnitPrice, presToPiezas, parseDistribucion,
+  PANAMA_ZONAS, mediaDocenaDesdeDistribucion, COLOR_HEX, colorToHex,
+  InvoiceModal, SUPABASE_KEY,
+  precioNormalPiezas, piezasDePresentacion, METODOS_PAGO, BadgeMetodoPago, ENVIO_PERFUMES_DEFAULT, normalizarEnvioPerfumes, envioPerfumesAplica, esProductoPerfume, piezasDeLineasPerfume, useEnvioPerfumes, ofertaInfo, ofertaALineaCarrito, prorratearLinea, tiempoRestante,
+};
