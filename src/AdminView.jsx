@@ -18,7 +18,7 @@ import {
   Spinner, StatusBadge, WHITE, comprimirImagen, estadosDe,
   imagenOptimizada, resolverAreaVenta, sb, useApp, useLockBodyScroll, useRefrescoPeriodico,
   agregarCanvasComoPaginasPdf, ofertaInfo, precioNormalPiezas, piezasDePresentacion, presUnitPrice, idVisitante,
-  normalizarEnvioPerfumes, METODOS_PAGO, BadgeMetodoPago, stockWeb, asegurarLibsPdf, ModalElegirPresentacion,
+  normalizarEnvioPerfumes, METODOS_PAGO, BadgeMetodoPago, stockWeb, asegurarLibsPdf, ModalElegirPresentacion, EtiquetaReservadas,
 } from "./shared.jsx";
 import { useCambiosEnVivo } from "./clienteEnVivo.jsx";
 
@@ -53,7 +53,7 @@ function OrderImageModal({ order, onClose }) {
   const [busy, setBusy] = useState(false);
   const esCot = order.tipo === "cotizacion";
   const acento = esCot ? "#856404" : RED;
-  const etiqueta = esCot ? "Cotización" : "Factura";
+  const etiqueta = order.reservada ? "Reserva" : esCot ? "Cotización" : "Factura";
   const money = (n) => "$" + Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const fecha = order.created_at ? new Date(order.created_at) : new Date();
   const items = order.items || [];
@@ -944,6 +944,18 @@ function StockRankingModal({ tipo, items, itemsSinFiltroNiLimite, proveedores, p
   , document.body);
 }
 
+// Insignia de una cotización: "Cotización" normal o "Reserva" (con fecha y aviso si ya venció)
+function InsigniaCotizacion({ o }) {
+  if (!o.reservada) return <span style={{ background: "#FFF3CD", color: "#856404", padding: "3px 10px", borderRadius: 12, fontSize: 11, fontWeight: 700 }}>Cotización</span>;
+  const fin = o.reserva_vence ? new Date(o.reserva_vence + "T23:59:59") : null;
+  const vencida = fin && fin < new Date();
+  return (
+    <span style={{ background: vencida ? "#FEE2E2" : "#EDE9FE", color: vencida ? "#B91C1C" : "#5B21B6", padding: "3px 10px", borderRadius: 12, fontSize: 11, fontWeight: 800, display: "inline-flex", alignItems: "center", gap: 4, whiteSpace: "nowrap" }}>
+      <Lock size={11} /> Reserva{fin ? ` · hasta ${fin.toLocaleDateString()}` : ""}{vencida ? " · VENCIDA" : ""}
+    </span>
+  );
+}
+
 // ═══════════════════════════════════════════════════════════════
 //  EDITAR COTIZACIÓN
 // ═══════════════════════════════════════════════════════════════
@@ -968,6 +980,8 @@ function EditCotizacionModal({ cotizacion, empresas, sucursales, onClose, onSave
   const [metodoPago, setMetodoPago] = useState(METODOS_PAGO[cotizacion.metodo_pago] ? cotizacion.metodo_pago : ""); // cómo va a pagar el cliente
   const [redondeo, setRedondeo] = useState("no");
   const [guardando, setGuardando] = useState(false);
+  const [reservada, setReservada] = useState(!!cotizacion.reservada); // las piezas quedan apartadas (nadie más las puede vender)
+  const [reservaVence, setReservaVence] = useState(cotizacion.reserva_vence || "");
 
   const empresasActivas = empresas.filter(e => e.activa !== false);
   const sucursalesEmpresa = sucursales.filter(s => s.empresa_id === empresaId && s.activa !== false);
@@ -1018,22 +1032,37 @@ function EditCotizacionModal({ cotizacion, empresas, sucursales, onClose, onSave
   const guardar = async () => {
     if (!cliente.nombre.trim()) { showToast("Escribe el nombre del cliente"); return; }
     if (lineas.length === 0) { showToast("La cotización debe tener al menos un producto"); return; }
-    if (!metodoPago) { showToast("Elige cómo va a pagar el cliente: Yappy, Tarjeta o Transferencia"); return; }
+    if (!metodoPago && !reservada) { showToast("Elige cómo va a pagar el cliente: Yappy, Tarjeta o Transferencia"); return; }
+    // Si va a quedar reservada: las piezas no pueden estar ya reservadas por otro cliente
+    if (reservada) {
+      const antes = {}; // piezas que ESTA reserva ya tenía apartadas (si ya estaba reservada)
+      if (cotizacion.reservada) (cotizacion.items || []).forEach(it => { if (it.producto_id) antes[it.producto_id] = (antes[it.producto_id] || 0) + (Number(it.cantidad) || 0); });
+      const ahora = {};
+      lineas.forEach(l => { if (l.producto_id) ahora[l.producto_id] = (ahora[l.producto_id] || 0) + (Number(l.cantidad) || 0); });
+      const conflictos = [];
+      for (const id of Object.keys(ahora)) {
+        const p = products.find(x => String(x.id) === String(id));
+        if (!p || !p.stock_actualizado_at) continue;
+        const deOtros = Math.max(0, (Number(p.piezas_reservadas) || 0) - (antes[id] || 0));
+        const libres = Math.max(0, Number(p.stock || 0) - deOtros);
+        if (ahora[id] > libres) conflictos.push(`• ${p.nombre}: la reserva lleva ${ahora[id]} y solo hay ${libres} sin reservar por otros`);
+      }
+      if (conflictos.length) { alert("No se puede reservar -- no hay suficientes piezas libres:\n\n" + conflictos.join("\n")); return; }
+    }
     setGuardando(true);
     try {
       // 1) Actualiza los datos del pedido
       await sb.patch("pedidos", cotizacion.id, {
         nombre_cliente: cliente.nombre, telefono: cliente.telefono, direccion: cliente.direccion,
-        notas, total, costo_envio: costoEnvio, metodo_pago: metodoPago,
+        notas, total, costo_envio: costoEnvio, metodo_pago: metodoPago || null,
+        reservada, reserva_vence: reservada && reservaVence ? reservaVence : null,
         empresa_envio_id: empresaId, empresa_envio_nombre: empresaSel?.nombre || "",
         sucursal_id: sucursalId, sucursal_nombre: sucursalSel?.nombre || "",
       });
-      // 2) Borra los items viejos y crea los nuevos
+      // 2) Crea los items nuevos y SOLO DESPUÉS borra los viejos: así, si algo falla a medias,
+      //    la cotización queda como estaba, y una reserva nunca se "abre" por unos segundos.
       let viejos = [];
-      try {
-        viejos = (await sb.get("pedido_items", `?pedido_id=eq.${cotizacion.id}`)) || [];
-        for (const v of viejos) { if (v.id) await sb.delete("pedido_items", v.id); }
-      } catch(e) {}
+      try { viejos = (await sb.get("pedido_items", `?pedido_id=eq.${cotizacion.id}`)) || []; } catch(e) {}
       const nuevosItems = [];
       try {
         for (const l of lineas) {
@@ -1046,13 +1075,12 @@ function EditCotizacionModal({ cotizacion, empresas, sucursales, onClose, onSave
           if (Array.isArray(creado) && creado[0]) nuevosItems.push(creado[0]);
         }
       } catch(errItems) {
-        // Si algo falla a medias, deja la cotización como estaba (borra lo creado y vuelve a poner las líneas originales)
         for (const c of nuevosItems) { try { if (c.id) await sb.delete("pedido_items", c.id); } catch(e) {} }
-        for (const v of viejos) { try { const { id, ...resto } = v; await sb.post("pedido_items", resto); } catch(e) {} }
         throw errItems;
       }
+      for (const v of viejos) { try { if (v.id) await sb.delete("pedido_items", v.id); } catch(e) {} }
       showToast("Cotización actualizada");
-      onSaved({ ...cotizacion, metodo_pago: metodoPago, nombre_cliente: cliente.nombre, telefono: cliente.telefono, direccion: cliente.direccion, notas, total, costo_envio: costoEnvio, empresa_envio_id: empresaId, empresa_envio_nombre: empresaSel?.nombre || "", sucursal_id: sucursalId, sucursal_nombre: sucursalSel?.nombre || "", items: nuevosItems });
+      onSaved({ ...cotizacion, reservada, reserva_vence: reservada && reservaVence ? reservaVence : null, metodo_pago: metodoPago || null, nombre_cliente: cliente.nombre, telefono: cliente.telefono, direccion: cliente.direccion, notas, total, costo_envio: costoEnvio, empresa_envio_id: empresaId, empresa_envio_nombre: empresaSel?.nombre || "", sucursal_id: sucursalId, sucursal_nombre: sucursalSel?.nombre || "", items: nuevosItems });
     } catch(e) { showToast("Error al guardar: " + (e.message || "intenta de nuevo")); }
     setGuardando(false);
   };
@@ -1129,8 +1157,25 @@ function EditCotizacionModal({ cotizacion, empresas, sucursales, onClose, onSave
           <label style={S.label}>Dirección</label>
           <input style={S.input} value={cliente.direccion} onChange={e => setCliente({ ...cliente, direccion: e.target.value })} />
 
+          {/* RESERVA */}
+          <div style={{ background: reservada ? "#F5F3FF" : GRAY, border: `1.5px solid ${reservada ? "#7C3AED" : GRAY2}`, borderRadius: 12, padding: 12, margin: "4px 0 14px" }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, fontSize: 14, cursor: "pointer", color: reservada ? "#5B21B6" : BLACK }}>
+              <input type="checkbox" checked={reservada} onChange={e => setReservada(e.target.checked)} style={{ width: 18, height: 18, accentColor: "#7C3AED" }} />
+              <Lock size={15} /> Reservar estas piezas
+            </label>
+            <div style={{ fontSize: 12, color: GRAY3, marginTop: 4, lineHeight: 1.45 }}>
+              {reservada ? "Quedan apartadas: no se pueden vender ni en la web ni en pedidos manuales hasta que se libere o se convierta en pedido." : "Si lo activas, nadie más podrá vender estas piezas mientras tanto."}
+            </div>
+            {reservada && (
+              <div style={{ marginTop: 8 }}>
+                <label style={{ ...S.label, marginTop: 0 }}>Reservada hasta (opcional)</label>
+                <input type="date" style={{ ...S.input, marginBottom: 0 }} value={reservaVence} onChange={e => setReservaVence(e.target.value)} />
+              </div>
+            )}
+          </div>
+
           {/* ENVÍO */}
-          <div style={{ fontWeight: 800, fontSize: 14, margin: "8px 0" }}>¿Cómo va a pagar el cliente? *</div>
+          <div style={{ fontWeight: 800, fontSize: 14, margin: "8px 0" }}>¿Cómo va a pagar el cliente?{reservada ? " (opcional)" : " *"}</div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginBottom: 12 }}>
             {Object.entries(METODOS_PAGO).map(([k, m]) => (
               <button key={k} type="button" onClick={() => setMetodoPago(k)} className="oft-btn-press"
@@ -4323,6 +4368,35 @@ function AdminView() {
     } catch(e) { showToast("No se pudo guardar: " + e.message); }
   };
 
+  // ── RESERVAR / LIBERAR las piezas de una cotización ─────────────
+  // Reservada = esas piezas dejan de estar a la venta (web y pedidos manuales) hasta liberarla o convertirla en pedido.
+  const alternarReserva = async (cot) => {
+    try {
+      if (cot.reservada) {
+        if (!confirm(`¿Liberar la reserva ${cot.codigo}?\n\nLas piezas vuelven a estar disponibles para vender (web y pedidos manuales).`)) return;
+        await sb.patch("pedidos", cot.id, { reservada: false, reserva_vence: null });
+        setOrders(prev => prev.map(o => o.id === cot.id ? { ...o, reservada: false, reserva_vence: null } : o));
+        showToast("Reserva liberada: las piezas vuelven a estar a la venta");
+        return;
+      }
+      // Antes de reservar: que las piezas no estén ya reservadas por otro cliente
+      const porProducto = {};
+      (cot.items || []).forEach(it => { if (it.producto_id) porProducto[it.producto_id] = (porProducto[it.producto_id] || 0) + (Number(it.cantidad) || 0); });
+      const conflictos = [];
+      for (const id of Object.keys(porProducto)) {
+        const p = products.find(x => String(x.id) === String(id));
+        if (!p || !p.stock_actualizado_at) continue;
+        const libres = Math.max(0, Number(p.stock || 0) - (Number(p.piezas_reservadas) || 0));
+        if (porProducto[id] > libres) conflictos.push(`• ${p.nombre}: la cotización lleva ${porProducto[id]} y solo hay ${libres} sin reservar`);
+      }
+      if (conflictos.length) { alert("No se puede reservar -- no hay suficientes piezas libres:\n\n" + conflictos.join("\n")); return; }
+      if (!confirm(`¿Reservar las piezas de ${cot.codigo}?\n\nNadie más podrá venderlas (ni en la web ni en pedidos manuales) hasta que la liberes o la conviertas en pedido.`)) return;
+      await sb.patch("pedidos", cot.id, { reservada: true });
+      setOrders(prev => prev.map(o => o.id === cot.id ? { ...o, reservada: true } : o));
+      showToast("Piezas reservadas");
+    } catch(e) { showToast("No se pudo guardar: " + (e.message || e)); }
+  };
+
   // ── CONVERTIR COTIZACIÓN EN PEDIDO ─────────────────────────────
   const convertirAPedido = async (cot) => {
     // Candado sincrónico: si ya hay una conversión en curso para ESTA misma
@@ -4380,7 +4454,7 @@ function AdminView() {
             codigo: nuevoCodigo, nombre_cliente: cot.nombre_cliente, email_cliente: null,
             telefono: cot.telefono, direccion: cot.direccion,
             costo_envio: cot.costo_envio, empresa_envio: cot.empresa_envio_nombre,
-            items: itemsOdoo,
+            items: itemsOdoo, reserva_pedido_id: cot.reservada ? cot.id : null,
           }),
         });
         dataOdoo = await respOdoo.json().catch(() => ({}));
@@ -4390,7 +4464,7 @@ function AdminView() {
       }
       if (!dataOdoo.ok) {
         if (dataOdoo.sin_stock) {
-          const detalle = (dataOdoo.problemas || []).map(p => `• ${p.nombre}: pidió ${p.solicitado}, hay ${p.disponible} disponibles`).join("\n");
+          const detalle = (dataOdoo.problemas || []).map(p => `• ${p.nombre}: pidió ${p.solicitado}, hay ${p.disponible} disponibles${p.reservadas_otros ? ` (${p.reservadas_otros} están reservadas para otros clientes)` : ""}`).join("\n");
           alert(`No se pudo convertir -- no hay suficiente stock en Odoo:\n\n${detalle}\n\nLa cotización se quedó tal cual. Ajusta las cantidades o repón stock antes de intentar de nuevo.`);
         } else {
           alert("No se pudo convertir: " + (dataOdoo.mensaje || dataOdoo.error || "error desconocido al sincronizar con Odoo") + "\n\nLa cotización se quedó tal cual -- intenta de nuevo.");
@@ -4403,8 +4477,9 @@ function AdminView() {
       await sb.patch("pedidos", cot.id, {
         tipo: "pedido", codigo: nuevoCodigo, estado: 0, created_at: ahora,
         es_cotizacion_convertida: true, fecha_cotizacion_original: cot.created_at,
+        reservada: false,
       });
-      setOrders(prev => prev.map(o => o.id === cot.id ? { ...o, tipo: "pedido", codigo: nuevoCodigo, estado: 0, created_at: ahora, es_cotizacion_convertida: true, fecha_cotizacion_original: cot.created_at } : o));
+      setOrders(prev => prev.map(o => o.id === cot.id ? { ...o, tipo: "pedido", codigo: nuevoCodigo, estado: 0, created_at: ahora, es_cotizacion_convertida: true, fecha_cotizacion_original: cot.created_at, reservada: false } : o));
       showToast(`¡Cotización convertida en pedido ${nuevoCodigo}!`);
       if (dataOdoo.entrega_error) {
         // La venta y el stock SÍ quedaron reservados en Odoo (eso ya pasó al confirmar la
@@ -5895,7 +5970,7 @@ function AdminView() {
                               <div style={{ marginTop: 4, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}><BadgeMetodoPago metodo={o.metodo_pago} sinRegistrar /><SelectorMetodoPago value={o.metodo_pago} onChange={v => cambiarMetodoPago(o.id, v)} /></div>
                           </div>
                           <div style={{ fontWeight: 800, color: "#856404" }}>{money(o.total)}</div>
-                          <span style={{ background: "#FFF3CD", color: "#856404", padding: "3px 10px", borderRadius: 12, fontSize: 11, fontWeight: 700 }}>Cotización</span>
+                          <InsigniaCotizacion o={o} />
                         </div>
                         <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
                           <button onClick={() => setCotizacionAEditar(o)} className="oft-btn-press" style={{ flex: 1, justifyContent: "center", background: "none", color: BLACK, border: `1.5px solid ${BLACK}`, borderRadius: 8, padding: "9px", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
@@ -5908,6 +5983,9 @@ function AdminView() {
                             {convirtiendoId === o.id ? <>Convirtiendo...</> : <><CheckCircle2 size={15} /> A pedido</>}
                           </button>
                         </div>
+                        <button onClick={() => alternarReserva(o)} className="oft-btn-press" style={{ width: "100%", justifyContent: "center", marginTop: 8, background: o.reservada ? "#EDE9FE" : "none", color: "#5B21B6", border: "1.5px solid #7C3AED", borderRadius: 8, padding: "8px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
+                          <Lock size={14} /> {o.reservada ? "Liberar reserva (las piezas vuelven a estar a la venta)" : "Reservar estas piezas"}
+                        </button>
                       </div>
                     );
                   });
@@ -6005,7 +6083,7 @@ function AdminView() {
                               <div style={{ marginTop: 4, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}><BadgeMetodoPago metodo={o.metodo_pago} sinRegistrar /><SelectorMetodoPago value={o.metodo_pago} onChange={v => cambiarMetodoPago(o.id, v)} /></div>
                             </div>
                             <div style={{ fontWeight: 800, color: "#856404" }}>{money(o.total)}</div>
-                            <span style={{ background: "#FFF3CD", color: "#856404", padding: "3px 10px", borderRadius: 12, fontSize: 11, fontWeight: 700 }}>Cotización</span>
+                            <InsigniaCotizacion o={o} />
                           </div>
                           <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
                             <button onClick={() => setCotizacionAEditar(o)} className="oft-btn-press" style={{ flex: 1, justifyContent: "center", background: "none", color: BLACK, border: `1.5px solid ${BLACK}`, borderRadius: 8, padding: "9px", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
@@ -6018,6 +6096,9 @@ function AdminView() {
                               {convirtiendoId === o.id ? <>Convirtiendo...</> : <><CheckCircle2 size={15} /> A pedido</>}
                             </button>
                           </div>
+                          <button onClick={() => alternarReserva(o)} className="oft-btn-press" style={{ width: "100%", justifyContent: "center", marginTop: 8, background: o.reservada ? "#EDE9FE" : "none", color: "#5B21B6", border: "1.5px solid #7C3AED", borderRadius: 8, padding: "8px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
+                            <Lock size={14} /> {o.reservada ? "Liberar reserva (las piezas vuelven a estar a la venta)" : "Reservar estas piezas"}
+                          </button>
                         </div>
                       );
                     });
@@ -6856,6 +6937,7 @@ function AdminView() {
                             {Number(p.stock) > 0 ? Number(p.stock) : "Agotado"}
                           </span>
                         ) : <span style={{ color: GRAY3, fontSize: 12 }}>Sin Odoo</span>}
+                        {Number(p.piezas_reservadas) > 0 && <div style={{ fontSize: 11, fontWeight: 800, color: "#7C3AED" }}>{Number(p.piezas_reservadas)} reservadas</div>}
                         {p.stock_actualizado_at && !(p.proveedor_id && !p.tiene_stock_fisico) && (
                           <div style={{ marginTop: 4 }}>
                             {Number(p.piezas_muestra) > 0 && <div style={{ fontSize: 11, fontWeight: 700, color: "#92400E", marginBottom: 2 }}>Web: {stockWeb(p) > 0 ? stockWeb(p) : "Agotado"} · {p.piezas_muestra} de muestra</div>}
@@ -6930,6 +7012,7 @@ function AdminView() {
                         Stock: {p.stock_actualizado_at
                           ? <strong style={{ color: Number(p.stock) > 5 ? "#155724" : Number(p.stock) > 0 ? "#856404" : RED }}>{Number(p.stock) > 0 ? Number(p.stock) : "Agotado"}</strong>
                           : <span style={{ color: GRAY3 }}>Sin Odoo</span>}
+                        <EtiquetaReservadas p={p} />
                         {p.stock_actualizado_at && Number(p.piezas_muestra) > 0 && <span style={{ color: "#92400E", fontWeight: 700 }}> · Web: {stockWeb(p) > 0 ? stockWeb(p) : "Agotado"} ({p.piezas_muestra} de muestra)</span>}
                         {p.stock_actualizado_at && !(p.proveedor_id && !p.tiene_stock_fisico) && (
                           <button onClick={() => guardarMuestra(p, Number(p.piezas_muestra) > 0 ? 0 : 1)} style={{ marginLeft: 8, background: Number(p.piezas_muestra) > 0 ? "#FEF3C7" : "none", border: `1px solid ${Number(p.piezas_muestra) > 0 ? "#D97706" : GRAY2}`, color: Number(p.piezas_muestra) > 0 ? "#92400E" : GRAY3, borderRadius: 6, padding: "2px 7px", fontSize: 11, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}>

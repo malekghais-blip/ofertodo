@@ -844,7 +844,10 @@ export const nombreColorLimpio = (nombre) => (nombre || "").replace(/\s*\(#([0-9
 // Disponibilidad para el CLIENTE EN LA WEB: el stock de Odoo menos las piezas abiertas como
 // muestra (siguen contando en Odoo, que mantiene el inventario real, pero la web no las vende).
 // No toca el campo stock. El personal en el pedido manual del admin sigue viendo el stock real.
-export const stockWeb = (p) => Math.max(0, (Number(p?.stock) || 0) - (Number(p?.piezas_muestra) || 0));
+export const stockWeb = (p) => Math.max(0, (Number(p?.stock) || 0) - (Number(p?.piezas_muestra) || 0) - (Number(p?.piezas_reservadas) || 0));
+// Etiqueta "· N reservadas" para listas de productos del personal (solo si hay piezas reservadas)
+export const EtiquetaReservadas = ({ p }) => Number(p?.piezas_reservadas) > 0
+  ? <span style={{ fontWeight: 800, color: "#7C3AED" }}> · {Number(p.piezas_reservadas)} reservadas</span> : null;
 
 // Aviso de stock insuficiente al armar un pedido manual -- reemplaza el confirm()
 // del navegador por algo consistente con el resto de la web, con su misma animación.
@@ -856,9 +859,13 @@ function ModalAvisoStock({ aviso, onConfirmar, onCancelar }) {
         <div style={{ width: 56, height: 56, borderRadius: "50%", background: "#FFF3CD", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 14px" }}>
           <AlertTriangle size={28} color="#856404" />
         </div>
-        <div style={{ fontSize: 17, fontWeight: 900, marginBottom: 8 }}>{aviso.esMuestra ? "Estás vendiendo una muestra" : "Stock insuficiente"}</div>
+        <div style={{ fontSize: 17, fontWeight: 900, marginBottom: 8 }}>{aviso.reservado ? "Piezas reservadas" : aviso.esMuestra ? "Estás vendiendo una muestra" : "Stock insuficiente"}</div>
         <div style={{ fontSize: 13.5, color: GRAY3, lineHeight: 1.5, marginBottom: 20 }}>
-          {aviso.esMuestra ? (
+          {aviso.reservado ? (
+            <>"<strong style={{ color: BLACK }}>{aviso.producto}</strong>" tiene <strong style={{ color: BLACK }}>{aviso.stockDisponible}</strong> en stock, pero <strong style={{ color: "#7C3AED" }}>{aviso.reservadas}</strong> {aviso.reservadas === 1 ? "pieza está reservada" : "piezas están reservadas"} para otros clientes. Disponibles para vender: <strong style={{ color: BLACK }}>{aviso.libres}</strong>
+            {aviso.yaEnCarrito > 0 && <> (ya hay {aviso.yaEnCarrito} en este pedido)</>}, y con esto llevaría <strong style={{ color: BLACK }}>{aviso.totalConEsto}</strong>.
+            {aviso.bloqueado && <div style={{ marginTop: 8 }}>No se puede agregar. Para usar esas piezas, libera o convierte la reserva primero.</div>}</>
+          ) : aviso.esMuestra ? (
             <>"<strong style={{ color: BLACK }}>{aviso.producto}</strong>" tiene <strong style={{ color: BLACK }}>{aviso.muestra}</strong> {aviso.muestra === 1 ? "pieza abierta" : "piezas abiertas"} de <strong style={{ color: BLACK }}>muestra</strong>, que no se debe vender.
             Sin contar la muestra quedan <strong style={{ color: BLACK }}>{aviso.disponiblesSinMuestra}</strong>
             {aviso.yaEnCarrito > 0 && <> (ya hay {aviso.yaEnCarrito} en este pedido)</>}, y con esto el pedido llevaría <strong style={{ color: BLACK }}>{aviso.totalConEsto}</strong>.</>
@@ -872,11 +879,13 @@ function ModalAvisoStock({ aviso, onConfirmar, onCancelar }) {
         </div>
         <div style={{ display: "flex", gap: 10 }}>
           <button onClick={onCancelar} className="oft-btn-press" style={{ flex: 1, padding: "11px", borderRadius: 10, border: `1.5px solid ${GRAY2}`, background: WHITE, fontWeight: 700, fontSize: 14, cursor: "pointer" }}>
-            Cancelar
+            {aviso.bloqueado ? "Entendido" : "Cancelar"}
           </button>
+          {!aviso.bloqueado && (
           <button onClick={onConfirmar} className="oft-btn-press" style={{ flex: 1, padding: "11px", borderRadius: 10, border: "none", background: "#856404", color: WHITE, fontWeight: 700, fontSize: 14, cursor: "pointer" }}>
             {aviso.esMuestra ? "Aceptar y continuar" : "Agregar igual"}
           </button>
+          )}
         </div>
       </div>
     </div>,
@@ -942,6 +951,9 @@ export function CrearPedidoView({ onCreado } = {}) {
   const [empresaId, setEmpresaId] = useState(null);
   const [sucursalId, setSucursalId] = useState(null);
   const [tipo, setTipo] = useState("pedido"); // 'pedido' | 'cotizacion'
+  // "Reserva" = una cotización que aparta las piezas: nadie más (web ni vendedores) las puede vender hasta que se libere o se convierta en pedido
+  const [reservar, setReservar] = useState(false);
+  const [reservaVence, setReservaVence] = useState("");
   const [descuento, setDescuento] = useState(""); // porcentaje
   const [envio, setEnvio] = useState(""); // costo de envío
   const [metodoPago, setMetodoPago] = useState(""); // "yappy" | "tarjeta" | "transferencia" -- cómo pagó el cliente (obligatorio en pedidos)
@@ -1137,6 +1149,14 @@ export function CrearPedidoView({ onCreado } = {}) {
     const yaEnCarrito = piezasYaEnCarrito(product.id, excluirIdx, excluirFlex);
     const totalConEsto = yaEnCarrito + piezasNuevas;
     const muestra = Number(product.piezas_muestra) || 0;
+    // Piezas reservadas para otros clientes: no se pueden vender (en pedidos y reservas se bloquea del todo)
+    const reservadas = Number(product.piezas_reservadas) || 0;
+    if (reservadas > 0 && totalConEsto > stockDisponible - reservadas) {
+      return {
+        excede: true, reservado: true, bloqueado: tipo === "pedido" || reservar, productId: product.id, producto: product.nombre,
+        stockDisponible, reservadas, libres: Math.max(0, stockDisponible - reservadas), yaEnCarrito, totalConEsto, muestra,
+      };
+    }
     // Dentro de lo vendible (sin contar la muestra): sin aviso
     if (totalConEsto <= stockDisponible - muestra) return { excede: false };
     if (totalConEsto <= stockDisponible) {
@@ -1242,7 +1262,23 @@ export function CrearPedidoView({ onCreado } = {}) {
     } else if (modoEnvio === "local") {
       if (localesRetiro.length > 1 && !localRetiroId) { alert("Elige en cuál local retira el cliente."); return; }
     }
-    if (!metodoPago) { alert(tipo === "cotizacion" ? "Elige cómo va a pagar el cliente: Yappy, Tarjeta o Transferencia." : "Elige cómo pagó el cliente: Yappy, Tarjeta o Transferencia."); return; }
+    if (!metodoPago && !reservar) { alert(tipo === "cotizacion" ? "Elige cómo va a pagar el cliente: Yappy, Tarjeta o Transferencia." : "Elige cómo pagó el cliente: Yappy, Tarjeta o Transferencia."); return; }
+    // Pedido o reserva: no se pueden llevar piezas que otro cliente tiene reservadas
+    // (la pantalla ya avisa al agregar, pero el tipo pudo cambiarse después de armar la lista)
+    if (tipo === "pedido" || reservar) {
+      const porProducto = {};
+      items.forEach(it => { porProducto[it.product.id] = (porProducto[it.product.id] || 0) + presToPiezas(it.pres, it.count, it.product); });
+      flexPacks.forEach(pack => pack.lineas.forEach(l => { porProducto[l.product.id] = (porProducto[l.product.id] || 0) + l.piezas; }));
+      const conflictos = [];
+      for (const id of Object.keys(porProducto)) {
+        const p = products.find(x => String(x.id) === String(id));
+        const res = Number(p?.piezas_reservadas) || 0;
+        if (!p || !p.stock_actualizado_at || res <= 0) continue;
+        const libres = Math.max(0, Number(p.stock || 0) - res);
+        if (porProducto[id] > libres) conflictos.push(`• ${p.nombre}: llevas ${porProducto[id]}, pero solo hay ${libres} sin reservar (${res} reservadas para otros clientes)`);
+      }
+      if (conflictos.length) { alert("No se puede continuar -- hay piezas reservadas para otros clientes:\n\n" + conflictos.join("\n") + "\n\nBaja la cantidad, o libera/convierte la reserva primero."); return; }
+    }
     // Validar que cada FLEXPACK esté completo
     for (let i = 0; i < flexPacks.length; i++) {
       const pack = flexPacks[i];
@@ -1336,7 +1372,9 @@ export function CrearPedidoView({ onCreado } = {}) {
         local_retiro_id: localElegidoAdmin?.id || null, local_retiro_nombre: localElegidoAdmin?.nombre || null,
         tipo, num_factura: numFactura, creado_por_admin: true, costo_envio: costoEnvio,
         creado_por_usuario_id: user?.id || null,
-        metodo_pago: metodoPago,
+        metodo_pago: metodoPago || null,
+        reservada: reservar && tipo === "cotizacion",
+        reserva_vence: reservar && tipo === "cotizacion" && reservaVence ? reservaVence : null,
         // Las cotizaciones se marcan pagadas de una vez (no son ventas reales).
         // Los PEDIDOS se insertan como NO pagados y se marcan pagados en un segundo paso
         // (más abajo, después de crear los items) — igual que el flujo web con Yappy.
@@ -1549,7 +1587,7 @@ export function CrearPedidoView({ onCreado } = {}) {
 
       // Datos para la factura
       setInvoice({
-        codigo, numFactura, tipo, fecha: new Date(),
+        codigo, numFactura, tipo, reserva: reservar, fecha: new Date(),
         cliente: { ...cliente }, notas,
         empresa: empresaSel?.nombre || "", sucursal: modoEnvio === "puerta" ? "Puerta a puerta" : (sucursalSel?.nombre || ""),
         items: invoiceItems,
@@ -1559,14 +1597,14 @@ export function CrearPedidoView({ onCreado } = {}) {
       // cotización nuevo -- ya con sus productos reales (no una lista vacía), así
       // aparece completo de una vez, sin tener que refrescar la página.
       if (onCreado && Array.isArray(pedido) && pedido[0]) onCreado({ ...pedido[0], items: itemsCreados });
-      showToast(tipo === "cotizacion" ? "Cotización creada" : "Pedido creado");
+      showToast(reservar ? "Reserva creada: esas piezas ya no se pueden vender" : tipo === "cotizacion" ? "Cotización creada" : "Pedido creado");
     } catch(e) { alert("Error al crear: " + e.message); }
     setSaving(false);
   };
 
   const resetForm = () => {
     muestrasAceptadas.current = new Set(); setItems([]); setFlexPacks([]); setFlexActiveId(null); setCliente({ nombre: "", telefono: "", direccion: "" }); setNotas("");
-    setEmpresaId(null); setSucursalId(null); setModoEnvio(null); setBusquedaSuc(""); setEnvioManual(false); setRetiroNombreAutorizado(""); setLocalRetiroId(null); setTipo("pedido"); setMetodoPago(""); setDescuento(""); setEnvio(""); setRedondeo("arriba"); setInvoice(null);
+    setEmpresaId(null); setSucursalId(null); setModoEnvio(null); setBusquedaSuc(""); setEnvioManual(false); setRetiroNombreAutorizado(""); setLocalRetiroId(null); setTipo("pedido"); setReservar(false); setReservaVence(""); setMetodoPago(""); setDescuento(""); setEnvio(""); setRedondeo("arriba"); setInvoice(null);
   };
 
   return (
@@ -1576,12 +1614,16 @@ export function CrearPedidoView({ onCreado } = {}) {
 
       {/* TIPO */}
       <div style={{ display: "flex", gap: 10, marginBottom: 20 }}>
-        {[["pedido", "Pedido", Package], ["cotizacion", "Cotización", FileText]].map(([k, l, Icon]) => (
-          <button key={k} onClick={() => setTipo(k)} className="oft-btn-press"
-            style={{ flex: 1, padding: "14px", borderRadius: 12, border: `2px solid ${tipo === k ? RED : GRAY2}`, background: tipo === k ? "#FFF5F5" : WHITE, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, fontWeight: 800, color: tipo === k ? RED : BLACK }}>
+        {[["pedido", "Pedido", Package], ["cotizacion", "Cotización", FileText], ["reserva", "Reserva", Lock]].map(([k, l, Icon]) => {
+          const activo = k === "reserva" ? reservar : k === "cotizacion" ? (tipo === "cotizacion" && !reservar) : tipo === "pedido";
+          const colorAct = k === "reserva" ? "#7C3AED" : RED;
+          return (
+          <button key={k} onClick={() => { if (k === "reserva") { setTipo("cotizacion"); setReservar(true); } else { setTipo(k); setReservar(false); } }} className="oft-btn-press"
+            style={{ flex: 1, padding: "14px", borderRadius: 12, border: `2px solid ${activo ? colorAct : GRAY2}`, background: activo ? (k === "reserva" ? "#F5F3FF" : "#FFF5F5") : WHITE, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, fontWeight: 800, color: activo ? colorAct : BLACK }}>
             <Icon size={18} /> {l}
           </button>
-        ))}
+          );
+        })}
       </div>
 
       <div className="oft-dash-grid-2" style={{ display: "grid", gridTemplateColumns: "1.3fr 1fr", gap: 20, alignItems: "start" }}>
@@ -1605,6 +1647,7 @@ export function CrearPedidoView({ onCreado } = {}) {
                         {p.stock_actualizado_at && (
                           <span style={{ fontWeight: 800, color: Number(p.stock) <= 0 ? RED : Number(p.stock) <= 5 ? "#856404" : "#0F6E56" }}> · Stock: {Number(p.stock)}</span>
                         )}
+                        <EtiquetaReservadas p={p} />
                       </div>
                     </div>
                     <Plus size={18} color={RED} />
@@ -1636,6 +1679,7 @@ export function CrearPedidoView({ onCreado } = {}) {
                         {it.product.stock_actualizado_at && (
                           <span style={{ fontWeight: 800, color: Number(it.product.stock) <= 0 ? RED : Number(it.product.stock) <= 5 ? "#856404" : "#0F6E56" }}> · Stock: {Number(it.product.stock)}</span>
                         )}
+                        <EtiquetaReservadas p={it.product} />
                       </div>
                     </div>
                     <div style={{ fontWeight: 800, color: RED }}>{money(itemTotal(it))}</div>
@@ -1857,6 +1901,7 @@ export function CrearPedidoView({ onCreado } = {}) {
                               {l.product.stock_actualizado_at && (
                                 <span style={{ fontWeight: 800, color: Number(l.product.stock) <= 0 ? RED : Number(l.product.stock) <= 5 ? "#856404" : "#0F6E56" }}> · {Number(l.product.stock) <= 0 ? "Sin stock" : `Stock: ${Number(l.product.stock)}`}</span>
                               )}
+                              <EtiquetaReservadas p={l.product} />
                             </div>
                           </div>
                           <div style={{ display: "flex", alignItems: "center", gap: 6, border: `1.5px solid ${GRAY2}`, borderRadius: 8, padding: "2px 6px" }}>
@@ -1966,6 +2011,7 @@ export function CrearPedidoView({ onCreado } = {}) {
                                     {p.stock_actualizado_at && (
                                       <span style={{ fontWeight: 800, color: Number(p.stock) <= 0 ? RED : Number(p.stock) <= 5 ? "#856404" : "#0F6E56" }}> · Stock: {Number(p.stock)}</span>
                                     )}
+                                    <EtiquetaReservadas p={p} />
                                   </div>
                                 </div>
                                 <Plus size={16} color={RED} />
@@ -2288,8 +2334,18 @@ export function CrearPedidoView({ onCreado } = {}) {
             {modoEnvio === null && <div style={{ fontSize: 12, color: GRAY3 }}>Elige cómo se entrega el pedido, o déjalo sin envío.</div>}
           </div>
 
-          <div style={{ background: WHITE, borderRadius: 16, padding: 20, border: `1px solid ${metodoPago ? GRAY2 : RED}` }}>
-            <div style={{ fontWeight: 800, marginBottom: 4, display: "flex", alignItems: "center", gap: 8 }}><CreditCard size={18} color={RED} /> {tipo === "cotizacion" ? "¿Cómo va a pagar el cliente? *" : "¿Cómo pagó el cliente? *"}</div>
+          {reservar && (
+            <div style={{ background: "#F5F3FF", borderRadius: 16, padding: 20, border: "1.5px solid #7C3AED" }}>
+              <div style={{ fontWeight: 800, marginBottom: 6, display: "flex", alignItems: "center", gap: 8, color: "#5B21B6" }}><Lock size={18} color="#7C3AED" /> Reserva de piezas</div>
+              <div style={{ fontSize: 12.5, color: "#4C1D95", lineHeight: 1.5, marginBottom: 12 }}>Las piezas de esta lista quedan apartadas para este cliente: no se podrán vender ni en la web ni en pedidos manuales hasta que liberes la reserva o la conviertas en pedido ("A pedido").</div>
+              <label style={{ ...S.label, marginTop: 0 }}>Reservada hasta (opcional)</label>
+              <input type="date" style={{ ...S.input, marginBottom: 0 }} value={reservaVence} onChange={e => setReservaVence(e.target.value)} />
+              <div style={{ fontSize: 11.5, color: GRAY3, marginTop: 6 }}>La reserva no se libera sola: esta fecha solo sirve para que te avise cuándo está vencida.</div>
+            </div>
+          )}
+
+          <div style={{ background: WHITE, borderRadius: 16, padding: 20, border: `1px solid ${(metodoPago || reservar) ? GRAY2 : RED}` }}>
+            <div style={{ fontWeight: 800, marginBottom: 4, display: "flex", alignItems: "center", gap: 8 }}><CreditCard size={18} color={RED} /> {reservar ? "¿Cómo va a pagar el cliente? (opcional)" : tipo === "cotizacion" ? "¿Cómo va a pagar el cliente? *" : "¿Cómo pagó el cliente? *"}</div>
             <div style={{ fontSize: 12, color: GRAY3, marginBottom: 12 }}>{tipo === "cotizacion" ? "Queda guardado en la cotización y pasa al pedido cuando se convierta." : "Queda registrado en el pedido y en el dashboard."}</div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
               {Object.entries(METODOS_PAGO).map(([k, m]) => (
@@ -2308,7 +2364,7 @@ export function CrearPedidoView({ onCreado } = {}) {
 
           <button onClick={handleGenerate} disabled={saving} className="oft-btn-press"
             style={{ ...S.btnRed, width: "100%", justifyContent: "center", padding: 16, fontSize: 16, opacity: saving ? 0.7 : 1 }}>
-            <Receipt size={18} /> {saving ? "Generando..." : `Generar ${tipo === "cotizacion" ? "cotización" : "pedido"} y factura`}
+            <Receipt size={18} /> {saving ? "Generando..." : reservar ? "Reservar piezas y generar documento" : `Generar ${tipo === "cotizacion" ? "cotización" : "pedido"} y factura`}
           </button>
         </div>
       </div>
@@ -2412,7 +2468,7 @@ function InvoiceModal({ invoice, onClose }) {
       <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 16, maxWidth: 620, width: "92%", margin: "0 auto", overflow: "hidden" }} onClick={e => e.stopPropagation()}>
         {/* Barra superior con acciones - siempre visible arriba */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", borderBottom: `1px solid ${GRAY2}`, background: GRAY, flexWrap: "wrap", gap: 8 }}>
-          <div style={{ fontWeight: 800, display: "flex", alignItems: "center", gap: 8 }}><CheckCircle2 size={18} color="#22c55e" /> {esCot ? "Cotización" : "Pedido"} creado</div>
+          <div style={{ fontWeight: 800, display: "flex", alignItems: "center", gap: 8 }}><CheckCircle2 size={18} color="#22c55e" /> {invoice.reserva ? "Reserva creada" : esCot ? "Cotización creada" : "Pedido creado"}</div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <button onClick={downloadPDF} disabled={busy} className="oft-btn-press" style={{ ...S.btnRed, padding: "8px 14px", fontSize: 13, opacity: busy ? 0.7 : 1 }}>
               <Download size={14} /> PDF
@@ -2441,7 +2497,7 @@ function InvoiceModal({ invoice, onClose }) {
                 </div>
               </div>
               <div style={{ textAlign: "right" }}>
-                <div style={{ fontWeight: 900, fontSize: 20, color: esCot ? "#856404" : RED, textTransform: "uppercase" }}>{esCot ? "Cotización" : "Factura"}</div>
+                <div style={{ fontWeight: 900, fontSize: 20, color: esCot ? "#856404" : RED, textTransform: "uppercase" }}>{invoice.reserva ? "Reserva" : esCot ? "Cotización" : "Factura"}</div>
                 <div style={{ fontSize: 13, fontWeight: 700, marginTop: 4 }}>N° {invoice.numFactura}</div>
                 <div style={{ fontSize: 11, color: GRAY3, marginTop: 2 }}>{invoice.codigo}</div>
                 <div style={{ fontSize: 11, color: GRAY3, marginTop: 4 }}>{invoice.fecha.toLocaleDateString("es-PA", { day: "2-digit", month: "long", year: "numeric" })}</div>

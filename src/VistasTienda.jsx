@@ -776,11 +776,11 @@ export function CheckoutView() {
       }
       const ids = Object.keys(pedidas);
       let frescos = products;
-      try { const r = await sb.get("productos", `?id=in.(${ids.join(",")})&select=id,nombre,stock,piezas_muestra,stock_actualizado_at,proveedor_id,tiene_stock_fisico`); if (Array.isArray(r) && r.length) frescos = r; } catch (e) { /* si no se puede consultar, se usa lo que ya tiene la página */ }
+      try { const r = await sb.get("productos", `?id=in.(${ids.join(",")})&select=id,nombre,stock,piezas_muestra,piezas_reservadas,stock_actualizado_at,proveedor_id,tiene_stock_fisico`); if (Array.isArray(r) && r.length) frescos = r; } catch (e) { /* si no se puede consultar, se usa lo que ya tiene la página */ }
       const sinCupo = [];
       for (const id of ids) {
         const p = frescos.find(x => String(x.id) === String(id));
-        if (!p || !(Number(p.piezas_muestra) > 0) || !p.stock_actualizado_at || (p.proveedor_id && !p.tiene_stock_fisico)) continue;
+        if (!p || !(Number(p.piezas_muestra) > 0 || Number(p.piezas_reservadas) > 0) || !p.stock_actualizado_at || (p.proveedor_id && !p.tiene_stock_fisico)) continue;
         const disponibles = stockWeb(p);
         if (pedidas[id] > disponibles) sinCupo.push(`${p.nombre}: ${disponibles > 0 ? `solo quedan ${disponibles} disponibles` : "ya no está disponible"}`);
       }
