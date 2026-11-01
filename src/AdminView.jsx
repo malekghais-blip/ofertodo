@@ -3792,6 +3792,286 @@ function OfertasAdmin() {
   );
 }
 
+// ═══════════ PROTECCIÓN ANTI-FRAUDE (pestaña "Fraude") ═══════════
+// Insignia chica para mostrar el riesgo de un pedido con tarjeta en las listas de Pedidos.
+function InsigniaRiesgo({ r, style }) {
+  if (!r) return null;
+  let txt = null, fondo = "#E8F5E9", color = "#1B5E20";
+  if (r.contracargo) { txt = "CONTRACARGO"; fondo = "#FDE8E8"; color = "#B71C1C"; }
+  else if (r.revision_estado === "pendiente") { txt = "Retenido: verificar antes de enviar"; fondo = "#FDE8E8"; color = "#B71C1C"; }
+  else if (r.revision_estado === "rechazado") { txt = "Rechazado por riesgo"; fondo = "#EEE"; color = "#555"; }
+  else if (r.revision_estado === "aprobado") { txt = "Riesgo revisado y aprobado"; fondo = "#E8F5E9"; color = "#1B5E20"; }
+  else if (r.nivel === "medio") { txt = "Riesgo medio"; fondo = "#FFF4D6"; color = "#8A5A00"; }
+  if (!txt) return null;
+  return <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 800, padding: "2px 8px", borderRadius: 20, background: fondo, color, ...style }}><AlertTriangle size={11} />{txt}</span>;
+}
+
+function telWhatsApp(t) {
+  let p = String(t || "").replace(/\D/g, "");
+  if (p.length === 8) p = "507" + p;
+  return p;
+}
+
+const TIPOS_BLOQUEO = [
+  ["email", "Correo"], ["telefono", "Teléfono"], ["usuario", "Cuenta (id)"],
+  ["visitante", "Dispositivo (id)"], ["pan_token", "Tarjeta (token)"], ["ip", "IP"],
+];
+
+function FraudePanel({ onCambio }) {
+  const { showToast } = useApp();
+  const [cargando, setCargando] = useState(true);
+  const [riesgos, setRiesgos] = useState([]);
+  const [pedidosMap, setPedidosMap] = useState({});
+  const [itemsMap, setItemsMap] = useState({});
+  const [tarjetas, setTarjetas] = useState([]);
+  const [bloqueos, setBloqueos] = useState([]);
+  const [eventos, setEventos] = useState([]);
+  const [config, setConfig] = useState(null);
+  const [cfgForm, setCfgForm] = useState(null);
+  const [ocupado, setOcupado] = useState(null);
+  const [busca, setBusca] = useState("");
+  const [nuevo, setNuevo] = useState({ tipo: "email", valor: "", motivo: "" });
+  const [verOtros, setVerOtros] = useState(false);
+
+  const cargar = async () => {
+    try {
+      const [rs, bl, ev, cf, tj] = await Promise.all([
+        sb.get("pedidos_riesgo", "?order=created_at.desc&limit=300").catch(() => []),
+        sb.get("fraude_bloqueos", "?order=created_at.desc&limit=500").catch(() => []),
+        sb.get("antifraude_eventos", "?order=created_at.desc&limit=40").catch(() => []),
+        sb.get("antifraude_config", "?id=eq.1").catch(() => []),
+        sb.get("pedidos", "?metodo_pago=eq.tarjeta&pagado=eq.true&order=created_at.desc&limit=120").catch(() => []),
+      ]);
+      setRiesgos(rs || []); setBloqueos(bl || []); setEventos(ev || []); setTarjetas(tj || []);
+      if (cf && cf[0]) { setConfig(cf[0]); setCfgForm(f => f || { activo: cf[0].activo, monto_alto: String(cf[0].monto_alto), monto_muy_alto: String(cf[0].monto_muy_alto), retener_desde: String(cf[0].retener_desde), avisar_desde: String(cf[0].avisar_desde) }); }
+      const ids = [...new Set((rs || []).map(r => r.pedido_id))];
+      if (ids.length) {
+        const [ps, its] = await Promise.all([
+          sb.get("pedidos", `?id=in.(${ids.join(",")})`).catch(() => []),
+          sb.get("pedido_items", `?pedido_id=in.(${ids.join(",")})`).catch(() => []),
+        ]);
+        const pm = {}; (ps || []).forEach(p => { pm[p.id] = p; });
+        const im = {}; (its || []).forEach(i => { (im[i.pedido_id] = im[i.pedido_id] || []).push(i); });
+        setPedidosMap(pm); setItemsMap(im);
+      } else { setPedidosMap({}); setItemsMap({}); }
+    } catch (e) { console.error(e); }
+    setCargando(false);
+  };
+  useEffect(() => { cargar(); }, []);
+  useRefrescoPeriodico(cargar, 60000);
+
+  const rpc = async (fn, args) => {
+    await sb.ensureFreshToken();
+    const r = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${fn}`, { method: "POST", headers: sb.dataHeaders(), body: JSON.stringify(args) });
+    if (!r.ok) throw new Error(await r.text());
+    const t = await r.text();
+    try { return t ? JSON.parse(t) : null; } catch (e) { return null; }
+  };
+
+  const aprobar = async (pid) => {
+    if (!confirm("¿Aprobar este pedido?\n\nSe creará la venta en Odoo y se enviará la confirmación al cliente. Hazlo solo después de verificar la compra con el cliente.")) return;
+    setOcupado(pid);
+    try {
+      await sb.ensureFreshToken();
+      const r = await fetch(`${SUPABASE_URL}/functions/v1/revisar-pedido-riesgo`, { method: "POST", headers: sb.functionHeaders(), body: JSON.stringify({ pedido_id: pid }) });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.ok) throw new Error(d.error || "No se pudo aprobar");
+      if (d.odoo_ok === false) alert("Pedido aprobado, pero Odoo NO descontó el inventario:\n\n" + (d.odoo_detalle || "error desconocido") + "\n\nPuedes volver a pulsar «Aprobar» para reintentar, o revisar en Odoo.");
+      else showToast("Pedido aprobado y enviado a Odoo");
+      await cargar(); onCambio && onCambio();
+    } catch (e) { alert("No se pudo aprobar: " + e.message); }
+    setOcupado(null);
+  };
+  const rechazar = async (pid, codigo) => {
+    const nota = prompt(`Rechazar el pedido ${codigo}.\n\nEscribe el motivo (queda guardado):`, "No se pudo verificar la compra");
+    if (nota === null) return;
+    const bloquear = confirm("¿Bloquear también al cliente (cuenta, correo, teléfono y dispositivo) para que no pueda volver a pagar con tarjeta?\n\nAceptar = bloquear\nCancelar = solo rechazar");
+    setOcupado(pid);
+    try {
+      await rpc("antifraude_rechazar", { p_pedido_id: pid, p_nota: nota || null, p_bloquear: bloquear });
+      alert("Pedido rechazado.\n\nIMPORTANTE: el cobro ya se hizo. Devuelve el dinero al cliente desde el portal de BAC / Powertranz (reembolso o anulación) y avísale por WhatsApp.");
+      await cargar(); onCambio && onCambio();
+    } catch (e) { alert("No se pudo rechazar: " + e.message); }
+    setOcupado(null);
+  };
+  const contracargo = async (p) => {
+    const nota = prompt(`Marcar contracargo en el pedido ${p.codigo} ($${Number(p.total).toFixed(2)}).\n\nEsto bloqueará la cuenta, correo, teléfono y dispositivo del cliente.\nNota (opcional):`, "");
+    if (nota === null) return;
+    setOcupado(p.id);
+    try {
+      const d = await rpc("antifraude_contracargo", { p_pedido_id: p.id, p_nota: nota || null });
+      showToast(`Contracargo marcado. Bloqueos nuevos: ${d?.bloqueos_nuevos ?? 0}`);
+      await cargar(); onCambio && onCambio();
+    } catch (e) { alert("No se pudo marcar: " + e.message); }
+    setOcupado(null);
+  };
+  const agregarBloqueo = async () => {
+    const valor = nuevo.valor.trim();
+    if (!valor) { showToast("Escribe el valor a bloquear"); return; }
+    try {
+      await sb.post("fraude_bloqueos", { tipo: nuevo.tipo, valor: nuevo.tipo === "email" ? valor.toLowerCase() : valor, motivo: nuevo.motivo.trim() || "Bloqueo manual" });
+      setNuevo({ tipo: nuevo.tipo, valor: "", motivo: "" });
+      showToast("Bloqueo agregado"); await cargar(); onCambio && onCambio();
+    } catch (e) { alert("No se pudo bloquear (¿ya existe?): " + (e.message || "")); }
+  };
+  const quitarBloqueo = async (b) => {
+    if (!confirm(`¿Quitar el bloqueo de ${b.valor}?\nEsa persona podrá volver a pagar con tarjeta.`)) return;
+    try { await sb.delete("fraude_bloqueos", b.id); showToast("Bloqueo quitado"); await cargar(); } catch (e) { alert("No se pudo quitar: " + (e.message || "")); }
+  };
+  const guardarConfig = async () => {
+    const n = (x) => Number(String(x).replace(",", "."));
+    const f = cfgForm;
+    if (![f.monto_alto, f.monto_muy_alto, f.retener_desde, f.avisar_desde].every(x => Number.isFinite(n(x)) && n(x) >= 0)) { alert("Revisa que los números sean válidos."); return; }
+    if (n(f.monto_muy_alto) < n(f.monto_alto) || n(f.retener_desde) < n(f.avisar_desde)) { alert("El «muy alto» debe ser mayor que el «alto», y retener mayor o igual que avisar."); return; }
+    try {
+      await sb.patch("antifraude_config", 1, { activo: !!f.activo, monto_alto: n(f.monto_alto), monto_muy_alto: n(f.monto_muy_alto), retener_desde: Math.round(n(f.retener_desde)), avisar_desde: Math.round(n(f.avisar_desde)), updated_at: new Date().toISOString() });
+      showToast("Reglas guardadas"); await cargar();
+    } catch (e) { alert("No se pudo guardar: " + (e.message || "")); }
+  };
+
+  const pendientes = riesgos.filter(r => r.revision_estado === "pendiente");
+  const revisados = riesgos.filter(r => r.revision_estado && r.revision_estado !== "pendiente");
+  const contracargos = riesgos.filter(r => r.contracargo);
+  const riesgoDe = {}; riesgos.forEach(r => { riesgoDe[r.pedido_id] = r; });
+  const q = busca.trim().toLowerCase();
+  const tarjetasFiltradas = tarjetas.filter(p => !q || String(p.codigo || "").toLowerCase().includes(q) || String(p.nombre_cliente || "").toLowerCase().includes(q)).slice(0, 25);
+  const fmtF = (iso) => { try { return new Date(iso).toLocaleString("es-PA", { timeZone: "America/Panama", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }); } catch (e) { return ""; } };
+  const caja = { background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 14, padding: 18, marginBottom: 20 };
+  const titulo = { fontSize: 16, fontWeight: 900, marginBottom: 12, display: "flex", alignItems: "center", gap: 8 };
+  const btn = (bg, col = WHITE) => ({ background: bg, color: col, border: "none", borderRadius: 8, padding: "9px 14px", fontWeight: 800, fontSize: 13, cursor: "pointer" });
+  const inp = { padding: "9px 12px", border: `1px solid ${GRAY2}`, borderRadius: 8, fontSize: 14, fontFamily: "inherit" };
+
+  if (cargando) return <div style={{ padding: 40, textAlign: "center" }}><Spinner /></div>;
+
+  return (
+    <>
+      <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 6, display: "flex", alignItems: "center", gap: 10 }}><Lock size={24} color={RED} /> Protección contra fraude</div>
+      <div style={{ fontSize: 13, color: GRAY3, marginBottom: 20, maxWidth: 760 }}>
+        Los pagos con tarjeta que se ven riesgosos quedan <b>retenidos</b>: no se descuenta inventario ni se confirma al cliente hasta que tú los apruebes. Verifica por WhatsApp antes de enviar.
+      </div>
+
+      <div style={{ display: "flex", gap: 14, marginBottom: 22, flexWrap: "wrap" }}>
+        {[["Por revisar", pendientes.length, pendientes.length ? "#B71C1C" : "#155724"], ["Contracargos", contracargos.length, "#856404"], ["Bloqueos activos", bloqueos.length, GRAY3]].map(([l, n, c]) => (
+          <div key={l} style={S.statCard}><div style={{ fontSize: 28, fontWeight: 900, color: c }}>{n}</div><div style={{ fontSize: 13, color: GRAY3 }}>{l}</div></div>
+        ))}
+      </div>
+
+      {/* ── Pedidos retenidos ── */}
+      <div style={caja}>
+        <div style={titulo}><AlertTriangle size={18} color="#B71C1C" /> Pedidos retenidos por revisar</div>
+        {pendientes.length === 0 && <div style={{ color: GRAY3, fontSize: 14 }}>No hay pedidos retenidos. Todo en orden.</div>}
+        {pendientes.map(r => {
+          const p = pedidosMap[r.pedido_id]; if (!p) return null;
+          const its = itemsMap[p.id] || [];
+          const wa = telWhatsApp(p.telefono);
+          const msg = `Hola ${p.nombre_cliente || ""}, te escribimos de Ofertodo. Para proteger tu compra con tarjeta (pedido ${p.codigo}, $${Number(p.total).toFixed(2)}) necesitamos confirmar que fuiste tú. ¿Nos confirmas tu nombre completo y los últimos 4 dígitos de la tarjeta?`;
+          return (
+            <div key={p.id} style={{ border: "2px solid #F5B5B5", background: "#FFF8F8", borderRadius: 12, padding: 14, marginBottom: 14 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+                <div>
+                  <div style={{ fontWeight: 900, fontSize: 15 }}>{p.codigo} · ${Number(p.total).toFixed(2)}</div>
+                  <div style={{ fontSize: 13, color: GRAY3 }}>{p.nombre_cliente} · {p.telefono || "sin teléfono"} · {fmtF(p.created_at)}</div>
+                  <div style={{ fontSize: 12, color: GRAY3 }}>{p.retiro_local ? "Retiro en el local" : (p.direccion || "Sin dirección")}</div>
+                </div>
+                <div style={{ textAlign: "right" }}>
+                  <div style={{ fontWeight: 900, color: "#B71C1C" }}>Riesgo {r.puntaje} pts</div>
+                  <div style={{ fontSize: 12, color: GRAY3 }}>{r.tds_estado ? `3D-Secure: ${r.tds_estado}${r.tds_eci ? " · ECI " + r.tds_eci : ""}` : "3D-Secure: sin dato"}{r.tarjeta_marca ? " · " + r.tarjeta_marca : ""}{r.pais_ip ? " · " + r.pais_ip : ""}</div>
+                </div>
+              </div>
+              <ul style={{ margin: "10px 0", paddingLeft: 18, fontSize: 13 }}>
+                {(Array.isArray(r.motivos) ? r.motivos : []).map((m, i) => <li key={i}>{m.texto} <span style={{ color: GRAY3 }}>({m.puntos > 0 ? "+" : ""}{m.puntos})</span></li>)}
+              </ul>
+              <div style={{ fontSize: 12, color: GRAY3, marginBottom: 10 }}>{its.map(i => `${i.cantidad}× ${i.nombre_producto}`).join(" · ")}</div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {wa && <a href={`https://wa.me/${wa}?text=${encodeURIComponent(msg)}`} target="_blank" rel="noreferrer" style={{ ...btn("#25D366"), textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 6 }}><MessageCircle size={14} /> Verificar por WhatsApp</a>}
+                <button disabled={ocupado === p.id} onClick={() => aprobar(p.id)} style={{ ...btn("#155724"), opacity: ocupado === p.id ? 0.6 : 1 }}>Aprobar</button>
+                <button disabled={ocupado === p.id} onClick={() => rechazar(p.id, p.codigo)} style={{ ...btn("#B71C1C"), opacity: ocupado === p.id ? 0.6 : 1 }}>Rechazar y devolver dinero</button>
+              </div>
+            </div>
+          );
+        })}
+        {revisados.length > 0 && (
+          <div style={{ marginTop: 6 }}>
+            <button onClick={() => setVerOtros(v => !v)} style={{ background: "none", border: "none", color: RED, fontWeight: 800, cursor: "pointer", fontSize: 13, padding: 0 }}>{verOtros ? "Ocultar" : "Ver"} revisados ({revisados.length})</button>
+            {verOtros && revisados.map(r => {
+              const p = pedidosMap[r.pedido_id]; if (!p) return null;
+              const reintentar = r.revision_estado === "aprobado" && r.odoo_ok === false;
+              return (
+                <div key={r.pedido_id} style={{ borderTop: `1px solid ${GRAY2}`, padding: "8px 0", fontSize: 13, display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                  <div><b>{p.codigo}</b> · ${Number(p.total).toFixed(2)} · {p.nombre_cliente} — <b>{r.revision_estado}</b>{r.revision_nota ? ` («${r.revision_nota}»)` : ""}{reintentar ? <span style={{ color: "#B71C1C", fontWeight: 800 }}> · Odoo pendiente: {r.odoo_detalle}</span> : null}</div>
+                  {reintentar && <button onClick={() => aprobar(p.id)} style={btn("#856404")}>Reintentar Odoo</button>}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* ── Contracargos ── */}
+      <div style={caja}>
+        <div style={titulo}><CreditCard size={18} color={RED} /> Marcar un contracargo</div>
+        <div style={{ fontSize: 13, color: GRAY3, marginBottom: 10 }}>Si el banco te avisa que un pago con tarjeta fue desconocido o devuelto, búscalo aquí y márcalo: se bloquea al cliente para siempre y cualquier nuevo intento suyo queda frenado.</div>
+        <input value={busca} onChange={e => setBusca(e.target.value)} placeholder="Buscar por código o nombre…" style={{ ...inp, width: "100%", maxWidth: 360, marginBottom: 10 }} />
+        {tarjetasFiltradas.length === 0 && <div style={{ fontSize: 13, color: GRAY3 }}>Sin resultados.</div>}
+        {tarjetasFiltradas.map(p => {
+          const r = riesgoDe[p.id];
+          return (
+            <div key={p.id} style={{ borderTop: `1px solid ${GRAY2}`, padding: "8px 0", display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap", fontSize: 13 }}>
+              <div><b>{p.codigo}</b> · ${Number(p.total).toFixed(2)} · {p.nombre_cliente} · {fmtF(p.created_at)} <InsigniaRiesgo r={r} style={{ marginLeft: 6 }} /></div>
+              {r?.contracargo ? <span style={{ color: "#B71C1C", fontWeight: 800 }}>Contracargo marcado</span> : <button disabled={ocupado === p.id} onClick={() => contracargo(p)} style={btn("#856404")}>Marcar contracargo</button>}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* ── Bloqueos ── */}
+      <div style={caja}>
+        <div style={titulo}><Lock size={18} color={RED} /> Lista de bloqueo</div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+          <select value={nuevo.tipo} onChange={e => setNuevo({ ...nuevo, tipo: e.target.value })} style={inp}>{TIPOS_BLOQUEO.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
+          <input value={nuevo.valor} onChange={e => setNuevo({ ...nuevo, valor: e.target.value })} placeholder="Valor a bloquear" style={{ ...inp, flex: "1 1 200px" }} />
+          <input value={nuevo.motivo} onChange={e => setNuevo({ ...nuevo, motivo: e.target.value })} placeholder="Motivo (opcional)" style={{ ...inp, flex: "1 1 200px" }} />
+          <button onClick={agregarBloqueo} style={btn(RED)}>Bloquear</button>
+        </div>
+        {bloqueos.length === 0 && <div style={{ fontSize: 13, color: GRAY3 }}>Todavía no hay nada bloqueado.</div>}
+        {bloqueos.slice(0, 80).map(b => (
+          <div key={b.id} style={{ borderTop: `1px solid ${GRAY2}`, padding: "7px 0", display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap", fontSize: 13 }}>
+            <div><b>{(TIPOS_BLOQUEO.find(t => t[0] === b.tipo) || [0, b.tipo])[1]}</b>: <span style={{ wordBreak: "break-all" }}>{b.valor}</span> <span style={{ color: GRAY3 }}>· {b.motivo || ""}{b.pedido_codigo ? ` · ${b.pedido_codigo}` : ""} · {fmtF(b.created_at)}</span></div>
+            <button onClick={() => quitarBloqueo(b)} style={{ ...btn("transparent", "#B71C1C"), border: "1px solid #F5B5B5", padding: "5px 10px" }}>Quitar</button>
+          </div>
+        ))}
+      </div>
+
+      {/* ── Reglas ── */}
+      {cfgForm && (
+        <div style={caja}>
+          <div style={titulo}><Zap size={18} color={RED} /> Reglas de revisión</div>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14, fontWeight: 700, marginBottom: 12 }}>
+            <input type="checkbox" checked={!!cfgForm.activo} onChange={e => setCfgForm({ ...cfgForm, activo: e.target.checked })} /> Retener pedidos riesgosos (si lo apagas, solo se registra el riesgo, no se frena nada)
+          </label>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: 12, maxWidth: 760 }}>
+            {[["monto_alto", "Monto alto ($)", "suma 15 puntos"], ["monto_muy_alto", "Monto muy alto ($)", "suma 30 puntos"], ["avisar_desde", "Riesgo medio desde (puntos)", "solo se marca"], ["retener_desde", "Retener desde (puntos)", "queda retenido"]].map(([k, l, h]) => (
+              <label key={k} style={{ fontSize: 13, fontWeight: 700 }}>{l}<input value={cfgForm[k]} onChange={e => setCfgForm({ ...cfgForm, [k]: e.target.value })} inputMode="decimal" style={{ ...inp, width: "100%", marginTop: 4, boxSizing: "border-box" }} /><span style={{ fontWeight: 400, color: GRAY3, fontSize: 11 }}>{h}</span></label>
+            ))}
+          </div>
+          <button onClick={guardarConfig} style={{ ...btn(RED), marginTop: 14 }}>Guardar reglas</button>
+        </div>
+      )}
+
+      {/* ── Historial ── */}
+      <div style={caja}>
+        <div style={titulo}><ClipboardList size={18} color={RED} /> Actividad reciente</div>
+        {eventos.length === 0 && <div style={{ fontSize: 13, color: GRAY3 }}>Sin actividad todavía.</div>}
+        {eventos.map(e => (
+          <div key={e.id} style={{ borderTop: `1px solid ${GRAY2}`, padding: "6px 0", fontSize: 12, color: GRAY3, wordBreak: "break-word" }}>
+            <b style={{ color: BLACK }}>{e.tipo}</b> · {fmtF(e.created_at)} · {JSON.stringify(e.detalle || {}).slice(0, 220)}
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
+
 function AdminView() {
   const { products, setProducts, categories, setCategories, gruposCategorias, setGruposCategorias, banners, setBanners, popups, setPopups, empresas, setEmpresas, sucursales, setSucursales, localesRetiro, setLocalesRetiro, retiroLocalHabilitado, setRetiroLocalHabilitado, showToast, setView, setUser, user } = useApp();
   // Rol del usuario actual: 'admin' = módulo completo, 'operador' = acceso limitado.
@@ -3895,6 +4175,17 @@ function AdminView() {
   const [rangoVentas, setRangoVentas] = useState("todo"); // dia | semana | mes | anio | todo | personalizado | rango
   const [filtroMetodo, setFiltroMetodo] = useState("todos"); // "todos" | "yappy" | "tarjeta" | "transferencia" | "sin" -- filtra la pestaña Pedidos por cómo se pagó
   const [busquedaPedidos, setBusquedaPedidos] = useState(""); // busca por # de pedido o nombre de cliente, en la pestaña Pedidos
+  const [riesgosPedidos, setRiesgosPedidos] = useState({}); // riesgo antifraude por pedido (pedido_id -> fila)
+  const cargarRiesgos = async () => {
+    try {
+      const rs = await sb.get("pedidos_riesgo", "?select=pedido_id,nivel,puntaje,revision_estado,contracargo&order=created_at.desc&limit=500");
+      const m = {}; (rs || []).forEach(r => { m[r.pedido_id] = r; });
+      setRiesgosPedidos(m);
+    } catch (e) { /* si falla, simplemente no se muestran las insignias */ }
+  };
+  useEffect(() => { cargarRiesgos(); }, []);
+  useRefrescoPeriodico(cargarRiesgos, 60000);
+  const fraudePend = Object.values(riesgosPedidos).filter(r => r.revision_estado === "pendiente").length;
   const [soloSinImprimir, setSoloSinImprimir] = useState(false); // filtro rápido: solo pedidos con la guía pendiente de imprimir
   const [fechaPersonalizada, setFechaPersonalizada] = useState(null); // Date seleccionada en el calendario
   const [mostrarCalendario, setMostrarCalendario] = useState(false);
@@ -4349,7 +4640,11 @@ function AdminView() {
         const ok = confirm(`Estado actualizado a "${estadosDe(order)[newStatus]}".\n\n¿Notificar al cliente por WhatsApp?`);
         if (ok) notifyWhatsApp({ ...order, estado: newStatus }, newStatus);
       }
-    } catch(e) { alert("Error al actualizar estado"); }
+    } catch(e) {
+      const m = String((e && e.message) || "");
+      if (/revisi(ó|\\u00f3|o)n de riesgo|pesta(ñ|n)a Fraude/i.test(m)) alert("Este pedido está retenido por riesgo de fraude con tarjeta.\n\nVerifícalo con el cliente y apruébalo en la pestaña «Fraude» antes de avanzarlo.");
+      else alert("Error al actualizar estado");
+    }
   };
 
   // Guarda (opcionalmente) quién está autorizado a recoger un pedido de retiro en local
@@ -5563,6 +5858,7 @@ function AdminView() {
     ["analytics", "Analítica Web", Eye],
     ["orders", "Pedidos", Package],
     ["crear", "Crear", FilePlus],
+    ["fraude", "Fraude", Lock],
     ["products", "Productos", Tag],
     ["precios", "Precios", DollarSign],
     ["categories", "Categorías", FolderOpen],
@@ -5594,6 +5890,7 @@ function AdminView() {
           {tabs.map(([k,l,Icon]) => (
             <div key={k} className={"oft-admin-tab" + (tab === k ? " active" : "")} onClick={() => setTab(k)} style={{ padding: "11px 16px", marginBottom: 4, cursor: "pointer", fontWeight: tab === k ? 800 : 600, fontSize: 14, color: tab === k ? WHITE : GRAY3, background: tab === k ? RED : "transparent", borderRadius: 10, display: "flex", alignItems: "center", gap: 11, transition: "all 0.18s ease" }}>
               <Icon size={18} strokeWidth={tab === k ? 2.4 : 2} /> {l}
+              {k === "fraude" && fraudePend > 0 && <span style={{ marginLeft: "auto", background: tab === k ? WHITE : RED, color: tab === k ? RED : WHITE, borderRadius: 20, fontSize: 11, fontWeight: 900, padding: "1px 8px" }}>{fraudePend}</span>}
             </div>
           ))}
           {/* Separador solo visible en escritorio */}
@@ -5969,7 +6266,7 @@ function AdminView() {
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <div style={{ fontWeight: 700, fontSize: 14 }}>{o.codigo} · {o.nombre_cliente}</div>
                             <div style={{ fontSize: 12, color: GRAY3 }}>{(o.items || []).length} producto(s) · {new Date(o.created_at).toLocaleDateString()}</div>
-                              <div style={{ marginTop: 4, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}><BadgeMetodoPago metodo={o.metodo_pago} sinRegistrar /><SelectorMetodoPago value={o.metodo_pago} onChange={v => cambiarMetodoPago(o.id, v)} /></div>
+                              <div style={{ marginTop: 4, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}><BadgeMetodoPago metodo={o.metodo_pago} sinRegistrar /><SelectorMetodoPago value={o.metodo_pago} onChange={v => cambiarMetodoPago(o.id, v)} /><InsigniaRiesgo r={riesgosPedidos[o.id]} /></div>
                           </div>
                           <div style={{ fontWeight: 800, color: "#856404" }}>{money(o.total)}</div>
                           <InsigniaCotizacion o={o} />
@@ -6082,7 +6379,7 @@ function AdminView() {
                             <div style={{ flex: 1, minWidth: 0 }}>
                               <div style={{ fontWeight: 700, fontSize: 14 }}>{o.codigo} · {o.nombre_cliente}</div>
                               <div style={{ fontSize: 12, color: GRAY3 }}>{(o.items || []).length} producto(s) · {new Date(o.created_at).toLocaleDateString()}</div>
-                              <div style={{ marginTop: 4, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}><BadgeMetodoPago metodo={o.metodo_pago} sinRegistrar /><SelectorMetodoPago value={o.metodo_pago} onChange={v => cambiarMetodoPago(o.id, v)} /></div>
+                              <div style={{ marginTop: 4, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}><BadgeMetodoPago metodo={o.metodo_pago} sinRegistrar /><SelectorMetodoPago value={o.metodo_pago} onChange={v => cambiarMetodoPago(o.id, v)} /><InsigniaRiesgo r={riesgosPedidos[o.id]} /></div>
                             </div>
                             <div style={{ fontWeight: 800, color: "#856404" }}>{money(o.total)}</div>
                             <InsigniaCotizacion o={o} />
@@ -6166,7 +6463,7 @@ function AdminView() {
                           {o.codigo}
                           {o.pagado === false && <div style={{ marginTop: 3, display: "inline-block", background: "#FFF3CD", color: "#856404", fontSize: 10, fontWeight: 800, padding: "2px 6px", borderRadius: 6 }}>SIN PAGAR</div>}
                           {o.pagado === true && <div style={{ marginTop: 3, display: "inline-block", background: "#D4EDDA", color: "#155724", fontSize: 10, fontWeight: 800, padding: "2px 6px", borderRadius: 6 }}>PAGADO</div>}
-                          <div style={{ marginTop: 3 }}><BadgeMetodoPago metodo={o.metodo_pago} sinRegistrar={o.pagado !== false} /><SelectorMetodoPago value={o.metodo_pago} onChange={v => cambiarMetodoPago(o.id, v)} style={{ marginLeft: 5 }} /></div>
+                          <div style={{ marginTop: 3 }}><BadgeMetodoPago metodo={o.metodo_pago} sinRegistrar={o.pagado !== false} /><SelectorMetodoPago value={o.metodo_pago} onChange={v => cambiarMetodoPago(o.id, v)} style={{ marginLeft: 5 }} /><InsigniaRiesgo r={riesgosPedidos[o.id]} style={{ marginLeft: 5 }} /></div>
                           <div style={{ marginTop: 3 }}>
                             {o.creado_por_admin
                               ? <span style={{ display: "inline-block", background: GRAY, color: GRAY3, fontSize: 10, fontWeight: 800, padding: "2px 6px", borderRadius: 6 }}>MANUAL</span>
@@ -6227,7 +6524,7 @@ function AdminView() {
                         {o.pagado === false && <span style={{ display: "inline-block", marginTop: 4, background: "#FFF3CD", color: "#856404", fontSize: 10, fontWeight: 800, padding: "2px 7px", borderRadius: 6 }}>SIN PAGAR</span>}
                         {o.pagado === true && <span style={{ display: "inline-block", marginTop: 4, background: "#D4EDDA", color: "#155724", fontSize: 10, fontWeight: 800, padding: "2px 7px", borderRadius: 6 }}>PAGADO</span>}
                         {" "}
-                        <BadgeMetodoPago metodo={o.metodo_pago} sinRegistrar={o.pagado !== false} style={{ marginTop: 4 }} />{" "}
+                        <BadgeMetodoPago metodo={o.metodo_pago} sinRegistrar={o.pagado !== false} style={{ marginTop: 4 }} />{" "}<InsigniaRiesgo r={riesgosPedidos[o.id]} />{" "}
                         <SelectorMetodoPago value={o.metodo_pago} onChange={v => cambiarMetodoPago(o.id, v)} style={{ marginTop: 4 }} />
                         {" "}
                         {o.creado_por_admin
@@ -7499,6 +7796,7 @@ function AdminView() {
 
         {/* ═══════════ DESCUENTOS ═══════════ */}
         {tab === "ofertas" && esAdminCompleto && <OfertasAdmin />}
+        {tab === "fraude" && esAdminCompleto && <FraudePanel onCambio={cargarRiesgos} />}
 
         {tab === "descuentos" && esAdminCompleto && (
           <>
