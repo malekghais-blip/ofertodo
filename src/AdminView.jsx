@@ -18,7 +18,7 @@ import {
   Spinner, StatusBadge, WHITE, comprimirImagen, estadosDe,
   imagenOptimizada, resolverAreaVenta, sb, useApp, useLockBodyScroll, useRefrescoPeriodico,
   agregarCanvasComoPaginasPdf, ofertaInfo, precioNormalPiezas, piezasDePresentacion, presUnitPrice, idVisitante,
-  normalizarEnvioPerfumes, METODOS_PAGO, BadgeMetodoPago, stockWeb, asegurarLibsPdf, ModalElegirPresentacion, EtiquetaReservadas,
+  normalizarEnvioPerfumes, METODOS_PAGO, BadgeMetodoPago, stockWeb, asegurarLibsPdf, ModalElegirPresentacion, EtiquetaReservadas, ofertasVigentesDeProducto,
 } from "./shared.jsx";
 import { useCambiosEnVivo } from "./clienteEnVivo.jsx";
 
@@ -961,7 +961,7 @@ function InsigniaCotizacion({ o }) {
 // ═══════════════════════════════════════════════════════════════
 function EditCotizacionModal({ cotizacion, empresas, sucursales, onClose, onSaved, showToast }) {
   useLockBodyScroll();
-  const { products } = useApp();
+  const { products, campanaActiva } = useApp();
   const money = (n) => "$" + Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   // Líneas editables (a partir de los items guardados)
   const [lineas, setLineas] = useState(() => (cotizacion.items || []).map(it => ({
@@ -971,6 +971,7 @@ function EditCotizacionModal({ cotizacion, empresas, sucursales, onClose, onSave
     // de tallas personalizada -- se guardan tal cual venían, para no perderlas al
     // editar solo la cantidad o el precio de una línea ya existente.
     presentacion: it.presentacion || null, distribucion_tallas: it.distribucion_tallas || null,
+    oferta_id: it.oferta_id || null, oferta_unidades: it.oferta_unidades || null,
   })));
   const [cliente, setCliente] = useState({ nombre: cotizacion.nombre_cliente || "", telefono: cotizacion.telefono || "", direccion: cotizacion.direccion || "" });
   const [notas, setNotas] = useState(cotizacion.notas || "");
@@ -997,13 +998,13 @@ function EditCotizacionModal({ cotizacion, empresas, sucursales, onClose, onSave
   const resultadosBusqueda = busqueda.trim()
     ? products.filter(p => p.activo !== false && (p.nombre + " " + (p.referencia || "")).toLowerCase().includes(busqueda.trim().toLowerCase())).slice(0, 6)
     : [];
-  const agregarProducto = (prod, pres) => {
+  const agregarProducto = (prod, pres, oferta = null) => {
     const unidades = piezasDePresentacion(prod, pres);
     setLineas(prev => {
-      // Si ya está el mismo producto con la misma presentación, suma una unidad más en vez de duplicar la línea
-      const i = prev.findIndex(l => l.producto_id === prod.id && l.nueva && l.presentacion === pres);
+      // Si ya está el mismo producto con la misma presentación (y el mismo precio: oferta o normal), suma una unidad más en vez de duplicar la línea
+      const i = prev.findIndex(l => l.producto_id === prod.id && l.nueva && l.presentacion === pres && (l.oferta_id || null) === (oferta?.id || null));
       if (i >= 0) return prev.map((l, k) => k === i ? { ...l, cantidad: (Number(l.cantidad) || 0) + unidades } : l);
-      return [...prev, { id: null, nueva: true, producto_id: prod.id, nombre: prod.nombre, cantidad: unidades, precio: presUnitPrice(prod, pres), presentacion: pres, distribucion_tallas: null }];
+      return [...prev, { id: null, nueva: true, producto_id: prod.id, nombre: oferta ? `${prod.nombre} (Oferta)` : prod.nombre, cantidad: unidades, precio: oferta ? oferta.precio : presUnitPrice(prod, pres), presentacion: pres, distribucion_tallas: null, oferta_id: oferta?.id || null, oferta_unidades: oferta ? 1 : null }];
     });
     setBusqueda(""); setProductoParaElegir(null);
   };
@@ -1071,6 +1072,7 @@ function EditCotizacionModal({ cotizacion, empresas, sucursales, onClose, onSave
             pedido_id: cotizacion.id, producto_id: l.producto_id, nombre_producto: l.nombre,
             cantidad: Number(l.cantidad) || 0, precio_unitario: Number(l.precio) || 0, subtotal: sub,
             presentacion: l.presentacion || null, distribucion_tallas: l.distribucion_tallas || null,
+            ...(l.oferta_id ? { oferta_id: l.oferta_id, oferta_unidades: l.nueva ? Math.max(1, Math.round((Number(l.cantidad) || 0) / unidadesPresentacion(l.presentacion, l.producto_id))) : (l.oferta_unidades || 1) } : {}),
           });
           if (Array.isArray(creado) && creado[0]) nuevosItems.push(creado[0]);
         }
@@ -1235,7 +1237,7 @@ function EditCotizacionModal({ cotizacion, empresas, sucursales, onClose, onSave
         </div>
       </div>
       {productoParaElegir && (
-        <ModalElegirPresentacion producto={productoParaElegir} onCerrar={() => setProductoParaElegir(null)} onElegir={(pres) => agregarProducto(productoParaElegir, pres)} />
+        <ModalElegirPresentacion producto={productoParaElegir} ofertas={ofertasVigentesDeProducto(campanaActiva, productoParaElegir)} onCerrar={() => setProductoParaElegir(null)} onElegir={(pres, oferta) => agregarProducto(productoParaElegir, pres, oferta || null)} />
       )}
     </div>
   , document.body);
@@ -4464,7 +4466,7 @@ function AdminView() {
       }
       if (!dataOdoo.ok) {
         if (dataOdoo.sin_stock) {
-          const detalle = (dataOdoo.problemas || []).map(p => `• ${p.nombre}: pidió ${p.solicitado}, hay ${p.disponible} disponibles${p.reservadas_otros ? ` (${p.reservadas_otros} están reservadas para otros clientes)` : ""}`).join("\n");
+          const detalle = (dataOdoo.problemas || []).map(p => `• ${p.nombre}: pidió ${p.solicitado}, hay ${p.disponible} disponibles${p.reservadas_otros ? ` (${p.reservadas_otros} están reservadas para otros clientes)` : ""}${p.comprometidas_odoo ? ` (${p.comprometidas_odoo} ya comprometidas en otras entregas pendientes de Odoo)` : ""}`).join("\n");
           alert(`No se pudo convertir -- no hay suficiente stock en Odoo:\n\n${detalle}\n\nLa cotización se quedó tal cual. Ajusta las cantidades o repón stock antes de intentar de nuevo.`);
         } else {
           alert("No se pudo convertir: " + (dataOdoo.mensaje || dataOdoo.error || "error desconocido al sincronizar con Odoo") + "\n\nLa cotización se quedó tal cual -- intenta de nuevo.");
@@ -4484,7 +4486,7 @@ function AdminView() {
       if (dataOdoo.entrega_error) {
         // La venta y el stock SÍ quedaron reservados en Odoo (eso ya pasó al confirmar la
         // orden) -- solo el paso final de "Validar" la entrega no se pudo hacer solo.
-        showToast("Convertido, pero hay que terminar de validar la entrega en Odoo manualmente.");
+        alert("⚠️ ATENCIÓN: el pedido " + nuevoCodigo + " se creó en Odoo, pero el inventario NO se descontó porque la entrega no se pudo validar.\n\nQué hacer: en Odoo entra a Inventario → Entregas, busca la entrega de este pedido y pulsa «Validar».\n\nDetalle: " + String(dataOdoo.entrega_error).slice(0, 300));
       }
     } catch(e) {
       alert("Error al convertir: " + (e.message || e));

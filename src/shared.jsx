@@ -896,9 +896,59 @@ function ModalAvisoStock({ aviso, onConfirmar, onCancelar }) {
 // Popup para elegir con qué presentación se agrega un producto al pedido manual --
 // aparece justo al seleccionarlo en la búsqueda, en vez de agregarlo directo con
 // una presentación por defecto que luego hay que cambiar.
-export function ModalElegirPresentacion({ producto, onElegir, onCerrar }) {
+// Convierte los pedidos anteriores de un cliente en destinos de envío distintos (máx. 3),
+// del más reciente al más viejo. Descarta sucursales que ya no existen o están desactivadas.
+export function destinosDeEnvio(pedidos, empresas, sucursales, localesRetiro) {
+  const out = []; const vistos = new Set();
+  for (const p of (pedidos || [])) {
+    let d = null;
+    if (p.retiro_local) {
+      const locales = localesRetiro || [];
+      const local = locales.find(l => l.id === p.local_retiro_id) || (locales.length === 1 ? locales[0] : null);
+      d = { clave: "local|" + (local?.id || p.local_retiro_nombre || ""), modo: "local", localId: local?.id || null, nombreAutorizado: p.retiro_nombre_autorizado || "", etiqueta: "Retiro en " + (local?.nombre || p.local_retiro_nombre || "el local"), detalle: "" };
+    } else if (p.sucursal_nombre === "Puerta a puerta") {
+      const dir = (p.direccion || "").trim();
+      d = { clave: "puerta|" + dir.toLowerCase(), modo: "puerta", direccion: dir, etiqueta: "Puerta a puerta", detalle: dir };
+    } else if (p.sucursal_id) {
+      const suc = (sucursales || []).find(x => x.id === p.sucursal_id);
+      if (suc && suc.activa !== false) {
+        const emp = (empresas || []).find(e => e.id === suc.empresa_id);
+        d = { clave: "suc|" + suc.id, modo: "sucursal", sucursalId: suc.id, empresaId: suc.empresa_id, direccion: (p.direccion || "").trim(), etiqueta: `${emp?.nombre || p.empresa_envio_nombre || "Envío"} · ${suc.nombre}`, detalle: suc.direccion || "" };
+      }
+    }
+    if (!d || vistos.has(d.clave)) continue;
+    vistos.add(d.clave);
+    out.push({ ...d, codigo: p.codigo, fecha: p.created_at });
+    if (out.length >= 3) break;
+  }
+  return out;
+}
+
+// Ofertas de PRODUCTO vigentes (campaña activa y dentro de fechas) para un producto.
+// Sirve para que el vendedor vea y use el precio en promoción al armar pedidos a mano.
+export function ofertasVigentesDeProducto(campanaActiva, p) {
+  const c = campanaActiva?.campana;
+  if (!c || !p) return [];
+  const ahora = Date.now();
+  if ((c.fecha_fin && new Date(c.fecha_fin).getTime() <= ahora) || (c.fecha_inicio && new Date(c.fecha_inicio).getTime() > ahora)) return [];
+  return (campanaActiva.items || [])
+    .filter(o => o.activo !== false && o.tipo === "producto" && o.producto_id === p.id && Number(o.precio_oferta) > 0)
+    .map(o => {
+      const pres = o.presentacion || "pieza";
+      const manual = Number(o.precio_normal_manual);
+      return {
+        id: o.id, pres, precio: Number(o.precio_oferta),
+        normal: manual > 0 ? manual : presUnitPrice(p, pres),
+        limite: o.limite_por_pedido || null,
+        nombre: `${c.prefijo || ""} ${c.nombre || ""}`.trim() || "Oferta",
+      };
+    });
+}
+
+export function ModalElegirPresentacion({ producto, onElegir, onCerrar, ofertas = [] }) {
   useLockBodyScroll();
   const esPerfumeria = producto.modalidad_presentacion === "perfumeria";
+  const nombrePres = (pres) => pres === "pieza" ? "Pieza" : pres === "media" ? (esPerfumeria ? "3 Piezas" : "Media Docena") : (esPerfumeria ? "6 Piezas" : "Docena");
   const opciones = [
     { pres: "pieza", etiqueta: "Pieza", precio: producto.precio_pieza, detalle: "1 unidad" },
     { pres: "media", etiqueta: esPerfumeria ? "3 Piezas" : "Media Docena", precio: producto.precio_media_docena, detalle: esPerfumeria ? "3 unidades" : "6 unidades" },
@@ -915,7 +965,24 @@ export function ModalElegirPresentacion({ producto, onElegir, onCerrar }) {
           </div>
           <button onClick={onCerrar} style={{ background: "none", border: "none", cursor: "pointer", display: "flex", padding: 4 }}><X size={20} /></button>
         </div>
-        <div style={{ fontSize: 12, fontWeight: 800, color: GRAY3, marginBottom: 10, letterSpacing: 0.5 }}>¿CÓMO SE AGREGA?</div>
+        {ofertas.length > 0 && (
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ fontSize: 12, fontWeight: 800, color: "#B45309", marginBottom: 8 }}>EN OFERTA</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {ofertas.map(of => (
+                <button key={of.id} onClick={() => onElegir(of.pres, of)} className="oft-btn-press"
+                  style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%", padding: "14px 16px", borderRadius: 12, border: "2px solid #F59E0B", background: "#FFFBEB", cursor: "pointer", textAlign: "left" }}>
+                  <div>
+                    <div style={{ fontWeight: 800, fontSize: 14 }}>{nombrePres(of.pres)} · {of.nombre}</div>
+                    <div style={{ fontSize: 11.5, color: GRAY3 }}>Precio normal <span style={{ textDecoration: "line-through" }}>${of.normal}</span>{of.limite ? ` · límite web ${of.limite} por pedido` : ""}</div>
+                  </div>
+                  <div style={{ fontWeight: 900, fontSize: 17, color: "#B45309" }}>${of.precio}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        <div style={{ fontSize: 12, fontWeight: 800, color: GRAY3, marginBottom: 10, letterSpacing: 0.5 }}>{ofertas.length > 0 ? "O A PRECIO NORMAL" : "¿CÓMO SE AGREGA?"}</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {opciones.map(op => (
             <button key={op.pres} onClick={() => onElegir(op.pres)} className="oft-btn-press"
@@ -935,8 +1002,8 @@ export function ModalElegirPresentacion({ producto, onElegir, onCerrar }) {
 }
 
 export function CrearPedidoView({ onCreado } = {}) {
-  const { products, categories, empresas, sucursales, setSucursales, localesRetiro, showToast, user } = useApp();
-  const [items, setItems] = useState([]); // { product, pres, count }
+  const { products, categories, empresas, sucursales, setSucursales, localesRetiro, showToast, user, campanaActiva } = useApp();
+  const [items, setItems] = useState([]); // { product, pres, count, oferta? }
   const [search, setSearch] = useState("");
   const [cliente, setCliente] = useState({ id: null, nombre: "", telefono: "", direccion: "" });
   const [clientesLista, setClientesLista] = useState([]); // clientes registrados para buscar
@@ -961,6 +1028,9 @@ export function CrearPedidoView({ onCreado } = {}) {
   const [modoEnvio, setModoEnvio] = useState(null);
   const retiroLocal = modoEnvio === "local"; // el cliente retira en el local, sin envío
   const [busquedaSuc, setBusquedaSuc] = useState(""); // buscador de sucursales
+  // Envíos anteriores del cliente elegido (los más recientes, sin repetir destino)
+  const [enviosPrevios, setEnviosPrevios] = useState([]);
+  const [envioPrecargado, setEnvioPrecargado] = useState(null); // destino cargado solo al elegir al cliente (para avisarlo)
   const [envioManual, setEnvioManual] = useState(false); // true cuando se escribió el costo a mano (ya no se autocalcula)
   const [costoPuertaCfg, setCostoPuertaCfg] = useState(0);
   useEffect(() => {
@@ -984,6 +1054,40 @@ export function CrearPedidoView({ onCreado } = {}) {
   const empresaSel = empresas.find(e => e.id === empresaId);
   const sucursalSel = sucursales.find(s => s.id === sucursalId);
   const servientregaEmp = empresas.find(e => (e.nombre || "").toLowerCase().includes("servientrega"));
+
+  // ── ENVÍOS ANTERIORES DEL CLIENTE: al elegirlo se carga el de su último pedido (si aún no se eligió envío) ──
+  const modoEnvioRef = useRef(null); modoEnvioRef.current = modoEnvio;
+  const coincideDestino = (d) => !!d && (
+    d.modo === "local" ? modoEnvio === "local" && (localRetiroId || null) === (d.localId || null)
+    : d.modo === "puerta" ? modoEnvio === "puerta" && (cliente.direccion || "").trim().toLowerCase() === (d.direccion || "").toLowerCase()
+    : modoEnvio === "sucursal" && sucursalId === d.sucursalId
+  );
+  const aplicarDestino = (d, forzarDireccion = false) => {
+    setEnvioManual(false); setBusquedaSuc(""); setModoEnvio(d.modo);
+    if (d.modo === "sucursal") { setEmpresaId(d.empresaId); setSucursalId(d.sucursalId); }
+    else if (d.modo === "puerta") { setEmpresaId(servientregaEmp?.id || null); setSucursalId(null); }
+    else { setEmpresaId(null); setSucursalId(null); setEnvio(""); setLocalRetiroId(d.localId || null); setRetiroNombreAutorizado(d.nombreAutorizado || ""); }
+    if (d.direccion) setCliente(c => (!forzarDireccion && c.direccion && c.direccion.trim()) ? c : { ...c, direccion: d.direccion });
+  };
+  const quitarEnvio = () => {
+    setModoEnvio(null); setEmpresaId(null); setSucursalId(null); setEnvio(""); setEnvioManual(false); setBusquedaSuc("");
+  };
+  useEffect(() => {
+    // Si el envío que había lo cargó el sistema para el cliente anterior y nadie lo tocó, se limpia
+    if (envioPrecargado && coincideDestino(envioPrecargado)) quitarEnvio();
+    setEnviosPrevios([]); setEnvioPrecargado(null);
+    if (!cliente.id) return;
+    let vivo = true;
+    sb.get("pedidos", `?usuario_id=eq.${cliente.id}&select=id,codigo,created_at,direccion,empresa_envio_id,empresa_envio_nombre,sucursal_id,sucursal_nombre,retiro_local,local_retiro_id,local_retiro_nombre,retiro_nombre_autorizado&order=created_at.desc&limit=15`)
+      .then(rows => {
+        if (!vivo) return;
+        const destinos = destinosDeEnvio(rows || [], empresas, sucursales, localesRetiro);
+        setEnviosPrevios(destinos);
+        if (destinos.length > 0 && modoEnvioRef.current === null) { aplicarDestino(destinos[0]); setEnvioPrecargado(destinos[0]); }
+      })
+      .catch(() => {});
+    return () => { vivo = false; };
+  }, [cliente.id]);
 
   // Precio por pieza de un producto según el modo del pack (docena ÷12, media ÷6)
   const flexUnitPrice = (product, modo) => modo === "media" ? Number(product.precio_media_docena) / 6 : Number(product.precio_docena) / 12;
@@ -1175,8 +1279,8 @@ export function CrearPedidoView({ onCreado } = {}) {
   const muestrasAceptadas = useRef(new Set());
   const [productoParaElegir, setProductoParaElegir] = useState(null); // null | producto -- para el popup de Pieza/Media/Docena
 
-  const addItem = (product, pres = "docena") => {
-    const ejecutar = () => { setItems(prev => [...prev, { product, pres, count: 1 }]); setSearch(""); };
+  const addItem = (product, pres = "docena", oferta = null) => {
+    const ejecutar = () => { setItems(prev => [...prev, oferta ? { product, pres, count: 1, oferta, precioOverride: String(oferta.precio) } : { product, pres, count: 1 }]); setSearch(""); };
     // Se revisa contra el stock real antes de agregarlo, no solo cuando ya está en 0.
     const chequeo = checarStock(product, presToPiezas(pres, 1, product));
     if (chequeo.excede) { setAvisoStock({ ...chequeo, onConfirmar: ejecutar }); return; }
@@ -1189,7 +1293,7 @@ export function CrearPedidoView({ onCreado } = {}) {
         if (i !== idx) return it2;
         // Si cambia la presentación, se borra el precio editado (era para la otra
         // presentación) y la distribución personalizada (el total objetivo cambió)
-        if (field === "pres") return { ...it2, pres: val, precioOverride: undefined, distribucionPersonalizada: null };
+        if (field === "pres") return { ...it2, pres: val, precioOverride: undefined, distribucionPersonalizada: null, oferta: undefined };
         if (field === "count") {
           const nuevoCount = Math.max(1, val);
           // Ajusta el arreglo de variantes (talla/color por pieza) al nuevo tamaño
@@ -1225,6 +1329,8 @@ export function CrearPedidoView({ onCreado } = {}) {
     }));
   };
   const removeItem = (idx) => setItems(prev => prev.filter((_, i) => i !== idx));
+  const aplicarOferta = (idx, of) => setItems(prev => prev.map((it, i) => i === idx ? { ...it, oferta: of, precioOverride: String(of.precio) } : it));
+  const quitarOferta = (idx) => setItems(prev => prev.map((it, i) => i === idx ? { ...it, oferta: undefined, precioOverride: undefined } : it));
 
   // Deja el costo escrito como el precio fijo de la sucursal elegida (o de puerta a puerta) para los próximos pedidos
   const [guardandoPrecio, setGuardandoPrecio] = useState(false);
@@ -1406,9 +1512,10 @@ export function CrearPedidoView({ onCreado } = {}) {
             const nombreConVariante = variante ? `${it.product.nombre} (${variante})` : it.product.nombre;
             const precioUnit = itemUnitPrice(it);
             const creado = await sb.post("pedido_items", {
-              pedido_id: pedidoId, producto_id: it.product.id, nombre_producto: nombreConVariante,
+              pedido_id: pedidoId, producto_id: it.product.id, nombre_producto: it.oferta ? `${nombreConVariante} (Oferta)` : nombreConVariante,
               cantidad: cantidadGrupo, precio_unitario: precioUnit,
               subtotal: precioUnit * cantidadGrupo, presentacion: "pieza",
+              ...(it.oferta ? { oferta_id: it.oferta.id, oferta_unidades: cantidadGrupo } : {}),
             });
             if (Array.isArray(creado) && creado[0]) itemsCreados.push(creado[0]);
           }
@@ -1417,9 +1524,10 @@ export function CrearPedidoView({ onCreado } = {}) {
           const variantesDisponibles = (eje === "talla" ? it.product.tallas : it.product.colores || "").split(",").map(s => s.trim()).filter(Boolean);
           const distribucionValida = it.distribucionPersonalizada && variantesDisponibles.some(v => Number(it.distribucionPersonalizada[v]) > 0);
           const creado = await sb.post("pedido_items", {
-            pedido_id: pedidoId, producto_id: it.product.id, nombre_producto: it.product.nombre,
+            pedido_id: pedidoId, producto_id: it.product.id, nombre_producto: it.oferta ? `${it.product.nombre} (Oferta)` : it.product.nombre,
             cantidad: presToPiezas(it.pres, it.count, it.product), precio_unitario: itemUnitPrice(it),
             subtotal: itemTotal(it), presentacion: it.pres,
+            ...(it.oferta ? { oferta_id: it.oferta.id, oferta_unidades: it.count } : {}),
             distribucion_tallas: distribucionValida ? JSON.stringify({ eje, cantidades: it.distribucionPersonalizada }) : null,
           });
           if (Array.isArray(creado) && creado[0]) itemsCreados.push(creado[0]);
@@ -1555,7 +1663,7 @@ export function CrearPedidoView({ onCreado } = {}) {
             for (const it of itemsCreados) { try { await sb.delete("pedido_items", it.id); } catch(e) {} }
             try { await sb.delete("pedidos", pedidoId); } catch(e) {}
             if (dataOdoo.sin_stock) {
-              const detalle = (dataOdoo.problemas || []).map(p => `• ${p.nombre}: pidió ${p.solicitado}, hay ${p.disponible} disponibles`).join("\n");
+              const detalle = (dataOdoo.problemas || []).map(p => `• ${p.nombre}: pidió ${p.solicitado}, hay ${p.disponible} disponibles${p.reservadas_otros ? ` (${p.reservadas_otros} reservadas para otros clientes)` : ""}${p.comprometidas_odoo ? ` (${p.comprometidas_odoo} ya comprometidas en otras entregas pendientes de Odoo)` : ""}`).join("\n");
               alert(`No se pudo completar la venta -- no hay suficiente stock en Odoo:\n\n${detalle}\n\nAjusta las cantidades o repón stock antes de intentar de nuevo.`);
             } else {
               alert("No se pudo completar la venta: " + (dataOdoo.mensaje || dataOdoo.error || "error desconocido al sincronizar con Odoo") + "\n\nNo se creó nada -- intenta de nuevo.");
@@ -1567,7 +1675,7 @@ export function CrearPedidoView({ onCreado } = {}) {
             // La venta y el stock SÍ quedaron reservados en Odoo (eso ya pasó al confirmar
             // la orden) -- solo el paso final de "Validar" la entrega no se pudo hacer solo.
             // No detiene nada, pero avisa para que se termine ese paso a mano en Odoo.
-            showToast("Venta creada y confirmada, pero hay que terminar de validar la entrega en Odoo manualmente.");
+            alert("⚠️ ATENCIÓN: la venta " + (codigo || "") + " se creó en Odoo, pero el inventario NO se descontó porque la entrega no se pudo validar.\n\nQué hacer: en Odoo entra a Inventario → Entregas, busca la entrega de este pedido y pulsa «Validar».\n\nDetalle: " + String(dataOdoo.entrega_error).slice(0, 300));
           }
         } catch(e) {
           for (const it of itemsCreados) { try { await sb.delete("pedido_items", it.id); } catch(e2) {} }
@@ -1637,8 +1745,10 @@ export function CrearPedidoView({ onCreado } = {}) {
             <input style={{ ...S.input, paddingLeft: 36, marginBottom: 0 }} placeholder="Buscar producto por nombre o referencia..." value={search} onChange={e => setSearch(e.target.value)} />
             {filtered.length > 0 && (
               <div style={{ position: "absolute", top: "100%", left: 0, right: 0, background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 10, marginTop: 4, zIndex: 20, boxShadow: "0 8px 24px rgba(0,0,0,0.12)", overflow: "hidden" }}>
-                {filtered.map(p => (
-                  <div key={p.id} onClick={() => setProductoParaElegir(p)} className="oft-cat-chip" style={{ padding: 10, display: "flex", alignItems: "center", gap: 10, cursor: "pointer", borderBottom: `1px solid ${GRAY}` }}>
+                {filtered.map(p => {
+                  const ofs = ofertasVigentesDeProducto(campanaActiva, p);
+                  return (
+                  <div key={p.id} onClick={() => setProductoParaElegir(p)} className="oft-cat-chip" style={{ padding: 10, display: "flex", alignItems: "center", gap: 10, cursor: "pointer", borderBottom: `1px solid ${GRAY}`, background: ofs.length ? "#FFFBEB" : undefined }}>
                     {p.imagen_url ? <img src={imagenOptimizada(p.imagen_url, 150)} style={{ width: 36, height: 36, borderRadius: 6, objectFit: "cover" }} /> : <div style={{ width: 36, height: 36, borderRadius: 6, background: GRAY, display: "flex", alignItems: "center", justifyContent: "center" }}><Package size={16} color={GRAY3} /></div>}
                     <div style={{ flex: 1 }}>
                       <div style={{ fontWeight: 700, fontSize: 13 }}>{p.nombre}</div>
@@ -1649,10 +1759,16 @@ export function CrearPedidoView({ onCreado } = {}) {
                         )}
                         <EtiquetaReservadas p={p} />
                       </div>
+                      {ofs.map(of => (
+                        <div key={of.id} style={{ marginTop: 3, display: "inline-flex", alignItems: "center", gap: 6, background: "#FEF3C7", border: "1px solid #F59E0B", color: "#92400E", borderRadius: 6, padding: "2px 7px", fontSize: 11.5, fontWeight: 800 }}>
+                          <Tag size={11} /> OFERTA {of.pres === "pieza" ? "pieza" : of.pres === "media" ? "media docena" : "docena"} ${of.precio} <span style={{ fontWeight: 600, textDecoration: "line-through" }}>${of.normal}</span>
+                        </div>
+                      ))}
                     </div>
                     <Plus size={18} color={RED} />
                   </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
@@ -1667,7 +1783,9 @@ export function CrearPedidoView({ onCreado } = {}) {
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               {items.map((it, idx) => {
                 const precioActual = itemUnitPrice(it);
-                const precioEditado = it.precioOverride !== undefined && it.precioOverride !== "" && Number(it.precioOverride) !== presUnitPrice(it.product, it.pres);
+                const precioBase = it.oferta ? it.oferta.precio : presUnitPrice(it.product, it.pres);
+                const precioEditado = it.precioOverride !== undefined && it.precioOverride !== "" && Number(it.precioOverride) !== precioBase;
+                const ofertasDisp = ofertasVigentesDeProducto(campanaActiva, it.product).filter(o => o.pres === it.pres);
                 return (
                 <div key={idx} style={{ border: `1px solid ${GRAY2}`, borderRadius: 10, padding: 10 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
@@ -1681,6 +1799,11 @@ export function CrearPedidoView({ onCreado } = {}) {
                         )}
                         <EtiquetaReservadas p={it.product} />
                       </div>
+                      {it.oferta && (
+                        <div style={{ marginTop: 3, display: "inline-flex", alignItems: "center", gap: 6, background: "#FEF3C7", border: "1px solid #F59E0B", color: "#92400E", borderRadius: 6, padding: "2px 7px", fontSize: 11.5, fontWeight: 800 }}>
+                          <Tag size={11} /> {it.oferta.nombre} · normal {money(it.oferta.normal)}
+                        </div>
+                      )}
                     </div>
                     <div style={{ fontWeight: 800, color: RED }}>{money(itemTotal(it))}</div>
                     <button onClick={() => removeItem(idx)} style={{ background: "none", border: "none", color: RED, cursor: "pointer", display: "flex" }}><Trash2 size={16} /></button>
@@ -1707,11 +1830,23 @@ export function CrearPedidoView({ onCreado } = {}) {
                       style={{ flex: 1, border: `1.5px solid ${precioEditado ? RED : GRAY2}`, borderRadius: 8, padding: "6px 8px", fontSize: 13, fontFamily: "inherit", color: precioEditado ? RED : BLACK, fontWeight: precioEditado ? 800 : 400 }}
                     />
                     {precioEditado && (
-                      <button onClick={() => updateItem(idx, "precioOverride", undefined)} title="Volver al precio original" style={{ background: "none", border: `1.5px solid ${GRAY2}`, borderRadius: 8, padding: "5px 8px", fontSize: 11, fontWeight: 700, cursor: "pointer", color: GRAY3, whiteSpace: "nowrap" }}>
-                        ↺ Original
+                      <button onClick={() => updateItem(idx, "precioOverride", it.oferta ? String(it.oferta.precio) : undefined)} title={it.oferta ? "Volver al precio de oferta" : "Volver al precio original"} style={{ background: "none", border: `1.5px solid ${GRAY2}`, borderRadius: 8, padding: "5px 8px", fontSize: 11, fontWeight: 700, cursor: "pointer", color: GRAY3, whiteSpace: "nowrap" }}>
+                        {it.oferta ? "↺ Oferta" : "↺ Original"}
                       </button>
                     )}
                   </div>
+                  {it.oferta && (
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: 6, fontSize: 11.5, color: GRAY3 }}>
+                      <span>{it.oferta.limite && it.count > it.oferta.limite ? `⚠ En la web esta oferta limita ${it.oferta.limite} por pedido; aquí tú decides.` : "Precio de oferta aplicado."}</span>
+                      <button onClick={() => quitarOferta(idx)} style={{ background: "none", border: "none", color: RED, fontWeight: 800, fontSize: 11.5, cursor: "pointer", padding: 0, whiteSpace: "nowrap" }}>Quitar oferta</button>
+                    </div>
+                  )}
+                  {!it.oferta && ofertasDisp.map(of => (
+                    <button key={of.id} onClick={() => aplicarOferta(idx, of)} style={{ marginTop: 6, width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, background: "#FFFBEB", border: "1.5px solid #F59E0B", color: "#92400E", borderRadius: 8, padding: "7px 10px", fontSize: 12.5, fontWeight: 800, cursor: "pointer" }}>
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Tag size={13} /> Usar precio de oferta ({of.nombre})</span>
+                      <span>{money(of.precio)}</span>
+                    </button>
+                  ))}
 
                   {/* ASIGNAR TALLA Y COLOR POR CADA PIEZA — solo si es "Por pieza" y el producto tiene variantes */}
                   {it.pres === "pieza" && (it.product.tiene_tallas || it.product.tiene_colores) && (() => {
@@ -2186,6 +2321,36 @@ export function CrearPedidoView({ onCreado } = {}) {
 
           <div style={{ background: WHITE, borderRadius: 16, padding: 20, border: `1px solid ${GRAY2}` }}>
             <div style={{ fontWeight: 800, marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}><Truck size={18} color={RED} /> Envío (opcional)</div>
+            {/* ENVÍOS ANTERIORES DEL CLIENTE */}
+            {enviosPrevios.length > 0 && (
+              <div style={{ background: "#EFF6FF", border: "1px solid #BFDBFE", borderRadius: 12, padding: 12, marginBottom: 14 }}>
+                <div style={{ fontSize: 12.5, fontWeight: 800, color: "#1E3A8A", marginBottom: envioPrecargado && coincideDestino(envioPrecargado) ? 4 : 8 }}>
+                  Envíos anteriores de {cliente.nombre || "este cliente"}
+                </div>
+                {envioPrecargado && coincideDestino(envioPrecargado) && (
+                  <div style={{ fontSize: 12, color: "#1E40AF", marginBottom: 8 }}>
+                    ✓ Se cargó el envío del último pedido ({envioPrecargado.codigo}{envioPrecargado.fecha ? ` · ${new Date(envioPrecargado.fecha).toLocaleDateString("es-PA", { day: "numeric", month: "short" })}` : ""}). Si esta vez es distinto, elige otro aquí o abajo.
+                  </div>
+                )}
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  {enviosPrevios.map((d, i) => {
+                    const act = coincideDestino(d);
+                    return (
+                      <button key={d.clave} type="button" className="oft-btn-press" onClick={() => { aplicarDestino(d, true); setEnvioPrecargado(null); }}
+                        style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, textAlign: "left", width: "100%", padding: "9px 12px", borderRadius: 10, cursor: "pointer", border: `2px solid ${act ? RED : "#BFDBFE"}`, background: act ? "#FFF5F5" : WHITE }}>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontWeight: 800, fontSize: 13, color: BLACK }}>{d.etiqueta}</div>
+                          {d.detalle && <div style={{ fontSize: 11.5, color: GRAY3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.detalle}</div>}
+                        </div>
+                        <div style={{ fontSize: 11, fontWeight: 800, color: act ? RED : GRAY3, whiteSpace: "nowrap" }}>
+                          {act ? "Elegido" : (i === 0 ? "Último" : "")}{d.fecha ? `${act || i === 0 ? " · " : ""}${new Date(d.fecha).toLocaleDateString("es-PA", { day: "numeric", month: "short" })}` : ""}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
             {/* TIPO DE ENVÍO */}
             <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginBottom: 14 }}>
               {[["sucursal", "A sucursal", Building2], ["puerta", "Puerta a puerta", MapPin], ["local", "Retiro en el local", Home]].map(([k, label, Icon]) => {
@@ -2376,7 +2541,8 @@ export function CrearPedidoView({ onCreado } = {}) {
         <ModalElegirPresentacion
           producto={productoParaElegir}
           onCerrar={() => setProductoParaElegir(null)}
-          onElegir={(pres) => { addItem(productoParaElegir, pres); setProductoParaElegir(null); }}
+          ofertas={ofertasVigentesDeProducto(campanaActiva, productoParaElegir)}
+          onElegir={(pres, oferta) => { addItem(productoParaElegir, pres, oferta || null); setProductoParaElegir(null); }}
         />
       )}
       {/* MODAL DE AVISO DE STOCK INSUFICIENTE */}
