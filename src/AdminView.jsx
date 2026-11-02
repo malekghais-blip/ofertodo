@@ -4072,10 +4072,21 @@ function FraudePanel({ onCambio }) {
   );
 }
 
-// ═══════════ MÉTRICAS DEL NEGOCIO (pestaña "Métricas"): ticket, CAC, LTV, conversión, ritmo anual ═══════════
+// ═══════════ MÉTRICAS DEL NEGOCIO (pestaña "Métricas") — panel oscuro con gráficas ═══════════
+// Colores validados para daltonismo sobre la superficie oscura (blue / orange / aqua del set de referencia).
+const MT = {
+  fondo: "#0F131A", tarjeta: "#151B24", borde: "rgba(255,255,255,0.08)", rejilla: "rgba(255,255,255,0.07)", eje: "rgba(255,255,255,0.16)",
+  texto: "#EAF0F7", texto2: "#A9B6C6", suave: "#7E8DA0",
+  azul: "#3987e5", naranja: "#d95926", aqua: "#199e70",
+  bueno: "#0ca30c", malo: "#ec835a", marca: "#ff3b41",
+};
 const usdM = (n, d = 2) => (n === null || n === undefined || Number.isNaN(Number(n))) ? "—" : "$" + Number(n).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
 const pctM = (n, d = 1) => (n === null || n === undefined || Number.isNaN(Number(n))) ? "—" : Number(n).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d }) + "%";
 const numM = (n) => (n === null || n === undefined) ? "—" : Number(n).toLocaleString("en-US");
+const usdCorto = (v) => { const n = Number(v); if (!Number.isFinite(n)) return "—"; if (Math.abs(n) >= 1000) return "$" + (n / 1000).toFixed(n % 1000 === 0 ? 0 : 1) + "K"; return "$" + Math.round(n); };
+const MESES_C = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
+const fechaCortaM = (iso) => { const [, m, d] = String(iso).split("-").map(Number); return `${d} ${MESES_C[(m || 1) - 1]}`; };
+const mesCortoM = (ym) => MESES_C[(Number(String(ym).split("-")[1]) || 1) - 1];
 
 function sumarDiasISO(iso, dias) {
   const d = new Date(iso + "T12:00:00Z"); d.setUTCDate(d.getUTCDate() + dias);
@@ -4090,8 +4101,272 @@ function rangoPresetMetricas(preset) {
   if (preset === "90") return [sumarDiasISO(hoy, -89), hoy];
   if (preset === "mes") return [primeroMes, hoy];
   if (preset === "mespasado") { const fin = sumarDiasISO(primeroMes, -1); return [fin.slice(0, 8) + "01", fin]; }
-  return ["2026-06-01", hoy]; // todo
+  return ["2026-06-01", hoy];
 }
+function escalaBonita(max) {
+  if (!(max > 0)) return { top: 1, ticks: [0, 1] };
+  const raw = max / 4, mag = Math.pow(10, Math.floor(Math.log10(raw))), norm = raw / mag;
+  const paso = (norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 5 ? 5 : 10) * mag;
+  const top = Math.ceil(max / paso) * paso, ticks = [];
+  for (let v = 0; v <= top + 1e-9; v += paso) ticks.push(v);
+  return { top, ticks };
+}
+const sinMovimiento = () => typeof window !== "undefined" && window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+// Cifra que "cuenta" hasta su valor
+function useContar(objetivo, dur = 900) {
+  const [v, setV] = useState(objetivo === null || objetivo === undefined ? null : (sinMovimiento() ? objetivo : 0));
+  const ant = useRef(0);
+  useEffect(() => {
+    if (objetivo === null || objetivo === undefined || Number.isNaN(Number(objetivo))) { setV(null); return; }
+    if (sinMovimiento()) { setV(objetivo); ant.current = objetivo; return; }
+    const ini = ant.current || 0, t0 = performance.now(); let raf;
+    const paso = (t) => { const k = Math.min(1, (t - t0) / dur); const e = 1 - Math.pow(1 - k, 3); setV(ini + (objetivo - ini) * e); if (k < 1) raf = requestAnimationFrame(paso); else ant.current = objetivo; };
+    raf = requestAnimationFrame(paso);
+    return () => cancelAnimationFrame(raf);
+  }, [objetivo]);
+  return v;
+}
+function Cifra({ valor, f }) { const v = useContar(valor); return <>{f(v)}</>; }
+function useMontado() { const [m, setM] = useState(false); useEffect(() => { const t = requestAnimationFrame(() => requestAnimationFrame(() => setM(true))); return () => cancelAnimationFrame(t); }, []); return m; }
+function useAncho(ref) {
+  const [w, setW] = useState(0);
+  useEffect(() => {
+    const el = ref.current; if (!el) return;
+    const medir = () => { const x = Math.floor(el.getBoundingClientRect().width); if (x > 0) setW(x); };
+    medir();
+    let ro; if (typeof ResizeObserver !== "undefined") { ro = new ResizeObserver(medir); ro.observe(el); }
+    window.addEventListener("resize", medir);
+    return () => { ro && ro.disconnect(); window.removeEventListener("resize", medir); };
+  }, []);
+  return w;
+}
+
+function Delta({ actual, previo, menorEsMejor = false }) {
+  if (actual === null || actual === undefined || !(Number(previo) > 0)) return <span style={{ fontSize: 12, color: MT.suave }}>sin periodo anterior para comparar</span>;
+  const pct = ((Number(actual) - Number(previo)) / Number(previo)) * 100;
+  if (!Number.isFinite(pct)) return null;
+  const sube = pct >= 0, bueno = menorEsMejor ? !sube : sube;
+  return <span style={{ fontSize: 12, fontWeight: 700, color: Math.abs(pct) < 0.5 ? MT.texto2 : bueno ? MT.bueno : MT.malo }}>{sube ? "▲" : "▼"} {Math.abs(pct).toFixed(Math.abs(pct) < 10 ? 1 : 0)}% <span style={{ fontWeight: 500, color: MT.suave }}>vs. periodo anterior</span></span>;
+}
+
+function Chispa({ valores, color }) {
+  const pts = valores.map(v => (v === null || v === undefined ? null : Number(v)));
+  const ok = pts.filter(v => v !== null);
+  if (ok.length < 2) return null;
+  const W = 96, H = 30, mn = Math.min(...ok), mx = Math.max(...ok), rg = mx - mn || 1;
+  const xy = pts.map((v, i) => v === null ? null : [4 + (i * (W - 8)) / (pts.length - 1), H - 4 - ((v - mn) / rg) * (H - 8)]).filter(Boolean);
+  const d = xy.map((p, i) => (i ? "L" : "M") + p[0].toFixed(1) + " " + p[1].toFixed(1)).join(" ");
+  const u = xy[xy.length - 1];
+  return (
+    <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} aria-hidden="true" style={{ display: "block" }}>
+      <path d={d} fill="none" stroke={MT.suave} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" opacity="0.8" />
+      <circle cx={u[0]} cy={u[1]} r="3" fill={color} stroke={MT.tarjeta} strokeWidth="2" />
+    </svg>
+  );
+}
+
+// Tarjeta con título, cifra animada, comparación y "cómo se calcula"
+function Kpi({ etiqueta, children, pie, formula, grande, acento, retraso = 0 }) {
+  const [ver, setVer] = useState(false);
+  return (
+    <div className="met-card met-in" style={{ "--d": retraso + "ms", position: "relative", overflow: "hidden" }}>
+      {acento && <div style={{ position: "absolute", left: 0, top: 0, right: 0, height: 2, background: `linear-gradient(90deg, ${MT.marca}, transparent 80%)` }} />}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+        <div className="met-lbl">{etiqueta}</div>
+        {formula && <button className="met-info" onClick={() => setVer(v => !v)} aria-expanded={ver} aria-label={`Cómo se calcula: ${etiqueta}`}>{ver ? "×" : "?"}</button>}
+      </div>
+      <div className={grande ? "met-big" : "met-num"}>{children}</div>
+      {pie}
+      {ver && formula && <div className="met-formula">{formula}</div>}
+    </div>
+  );
+}
+
+function Tooltip({ x, y, ancho, titulo, filas }) {
+  if (x === null) return null;
+  const izq = x > ancho * 0.6;
+  return (
+    <div className="met-tip" style={{ left: izq ? undefined : x + 14, right: izq ? ancho - x + 14 : undefined, top: Math.max(4, y) }}>
+      <div className="met-tip-t">{titulo}</div>
+      {filas.map((r, i) => (
+        <div key={i} className="met-tip-r">
+          <span style={{ width: 12, height: 3, borderRadius: 2, background: r.color || MT.suave, display: "inline-block" }} />
+          <b>{r.valor}</b><span style={{ color: MT.texto2 }}>{r.nombre}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function Leyenda({ series }) {
+  if (series.length < 2) return null;
+  return <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 6 }}>{series.map(s => <span key={s.nombre} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: MT.texto2 }}><span style={{ width: 14, height: 3, borderRadius: 2, background: s.color }} />{s.nombre}</span>)}</div>;
+}
+
+// Líneas / áreas con cruz de lectura y tooltip. series: [{nombre,color,valores,formato,area}]; extra: filas solo para el tooltip
+function GraficaLineas({ etiquetas, series, extra = [], alto = 220, descripcion, etiquetaX }) {
+  const caja = useRef(null); const ancho = useAncho(caja);
+  const uid = useRef("g" + Math.random().toString(36).slice(2, 8));
+  const [hov, setHov] = useState(null);
+  const W = ancho || 600, H = alto, M = { l: 46, r: 18, t: 12, b: 26 };
+  const n = etiquetas.length;
+  const max = Math.max(0, ...series.flatMap(s => s.valores.filter(v => v !== null && v !== undefined).map(Number)));
+  const { top, ticks } = escalaBonita(max);
+  const px = (i) => M.l + (n <= 1 ? (W - M.l - M.r) / 2 : (i * (W - M.l - M.r)) / (n - 1));
+  const py = (v) => M.t + (1 - v / top) * (H - M.t - M.b);
+  const trazos = (vals) => { let d = "", abre = false; vals.forEach((v, i) => { if (v === null || v === undefined) { abre = false; return; } d += (abre ? "L" : "M") + px(i).toFixed(1) + " " + py(Number(v)).toFixed(1) + " "; abre = true; }); return d.trim(); };
+  const paso = Math.max(1, Math.ceil(n / Math.max(2, Math.floor((W - M.l - M.r) / 70))));
+  const mover = (e) => {
+    const r = caja.current.getBoundingClientRect(); const x = e.clientX - r.left;
+    let mejor = 0, dm = 1e9; for (let i = 0; i < n; i++) { const dd = Math.abs(px(i) - x); if (dd < dm) { dm = dd; mejor = i; } }
+    setHov(mejor);
+  };
+  const sig = series.map(s => s.valores.join(",")).join("|");
+  return (
+    <div>
+      <Leyenda series={series} />
+      <div ref={caja} style={{ position: "relative", width: "100%", height: H }} onPointerMove={mover} onPointerLeave={() => setHov(null)}>
+        {ancho > 0 && (
+          <svg key={sig} width={W} height={H} role="img" aria-label={descripcion} style={{ display: "block", overflow: "visible" }}>
+            <defs>{series.map((s, k) => <linearGradient key={k} id={`${uid.current}${k}`} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={s.color} stopOpacity="0.28" /><stop offset="100%" stopColor={s.color} stopOpacity="0" /></linearGradient>)}</defs>
+            {ticks.map(t => <g key={t}><line x1={M.l} x2={W - M.r} y1={py(t)} y2={py(t)} stroke={t === 0 ? MT.eje : MT.rejilla} strokeWidth="1" /><text x={M.l - 8} y={py(t) + 4} textAnchor="end" fontSize="11" fill={MT.suave}>{usdCorto(t)}</text></g>)}
+            {etiquetas.map((e, i) => (i % paso === 0 || i === n - 1) && <text key={i} x={px(i)} y={H - 6} textAnchor={i === 0 ? "start" : i === n - 1 ? "end" : "middle"} fontSize="11" fill={MT.suave}>{etiquetaX ? etiquetaX(e) : e}</text>)}
+            {series.map((s, k) => s.area && s.valores.some(v => v !== null) && <path key={"a" + k} className="met-fade" d={`${trazos(s.valores)} L${px(n - 1).toFixed(1)} ${py(0)} L${px(0).toFixed(1)} ${py(0)} Z`} fill={`url(#${uid.current}${k})`} stroke="none" />)}
+            {series.map((s, k) => <path key={"l" + k} className="met-draw" pathLength="1" d={trazos(s.valores)} fill="none" stroke={s.color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ filter: `drop-shadow(0 0 5px ${s.color}88)` }} />)}
+            {series.map((s, k) => { let u = -1; s.valores.forEach((v, i) => { if (v !== null && v !== undefined) u = i; }); return u >= 0 && hov === null ? <circle key={"d" + k} className="met-fade" cx={px(u)} cy={py(Number(s.valores[u]))} r="4.5" fill={s.color} stroke={MT.tarjeta} strokeWidth="2" /> : null; })}
+            {hov !== null && <g><line x1={px(hov)} x2={px(hov)} y1={M.t} y2={H - M.b} stroke={MT.eje} strokeWidth="1" />{series.map((s, k) => s.valores[hov] !== null && s.valores[hov] !== undefined && <circle key={k} cx={px(hov)} cy={py(Number(s.valores[hov]))} r="5" fill={s.color} stroke={MT.tarjeta} strokeWidth="2" />)}</g>}
+          </svg>
+        )}
+        {hov !== null && <Tooltip x={px(hov)} y={M.t + 6} ancho={W} titulo={etiquetaX ? etiquetaX(etiquetas[hov]) : etiquetas[hov]}
+          filas={[...series.map(s => ({ color: s.color, nombre: s.nombre, valor: s.valores[hov] === null || s.valores[hov] === undefined ? "—" : s.formato(s.valores[hov]) })), ...extra.map(x => ({ color: x.color, nombre: x.nombre, valor: x.formato(x.valores[hov]) }))]} />}
+      </div>
+    </div>
+  );
+}
+
+// Columnas agrupadas (misma unidad). 2px de separación, hasta 24px de grosor, 4px redondeado arriba
+function GraficaBarras({ etiquetas, series, alto = 220, descripcion, etiquetaX, valorSobreBarra, formatoEje = usdCorto }) {
+  const caja = useRef(null); const ancho = useAncho(caja);
+  const [hov, setHov] = useState(null);
+  const W = ancho || 600, H = alto, M = { l: 46, r: 12, t: 16, b: 26 };
+  const n = etiquetas.length, k = series.length;
+  const max = Math.max(0, ...series.flatMap(s => s.valores.map(v => Number(v) || 0)));
+  const { top, ticks } = escalaBonita(max);
+  const banda = (W - M.l - M.r) / Math.max(1, n);
+  const grosor = Math.max(6, Math.min(24, (banda * 0.7 - (k - 1) * 2) / k));
+  const py = (v) => M.t + (1 - v / top) * (H - M.t - M.b);
+  const base = H - M.b;
+  const barra = (x, v, color, i, j) => {
+    const h = Math.max(0, base - py(v)); if (h <= 0) return null;
+    const r = Math.min(4, h, grosor / 2), y = base - h;
+    const d = `M${x} ${base} V${y + r} Q${x} ${y} ${x + r} ${y} H${x + grosor - r} Q${x + grosor} ${y} ${x + grosor} ${y + r} V${base} Z`;
+    return <path key={i + "-" + j} className="met-grow" d={d} fill={color} opacity={hov === null || hov === i ? 1 : 0.45} style={{ animationDelay: (i * 40 + j * 70) + "ms" }} />;
+  };
+  const mover = (e) => { const r = caja.current.getBoundingClientRect(); const x = e.clientX - r.left - M.l; const i = Math.floor(x / banda); setHov(i >= 0 && i < n ? i : null); };
+  const ancGrupo = k * grosor + (k - 1) * 2;
+  return (
+    <div>
+      <Leyenda series={series} />
+      <div ref={caja} style={{ position: "relative", width: "100%", height: H }} onPointerMove={mover} onPointerLeave={() => setHov(null)}>
+        {ancho > 0 && (
+          <svg key={series.map(s => s.valores.join(",")).join("|")} width={W} height={H} role="img" aria-label={descripcion} style={{ display: "block", overflow: "visible" }}>
+            {ticks.map(t => <g key={t}><line x1={M.l} x2={W - M.r} y1={py(t)} y2={py(t)} stroke={t === 0 ? MT.eje : MT.rejilla} strokeWidth="1" /><text x={M.l - 8} y={py(t) + 4} textAnchor="end" fontSize="11" fill={MT.suave}>{formatoEje(t)}</text></g>)}
+            {etiquetas.map((e, i) => {
+              const x0 = M.l + i * banda + (banda - ancGrupo) / 2;
+              return <g key={i}>
+                {series.map((s, j) => barra(x0 + j * (grosor + 2), Number(s.valores[i]) || 0, s.color, i, j))}
+                {valorSobreBarra && series.map((s, j) => (Number(s.valores[i]) || 0) > 0 && <text key={"t" + j} x={x0 + j * (grosor + 2) + grosor / 2} y={py(Number(s.valores[i])) - 6} textAnchor="middle" fontSize="12" fontWeight="700" fill={MT.texto}>{s.formato(s.valores[i])}</text>)}
+                <text x={M.l + i * banda + banda / 2} y={H - 6} textAnchor="middle" fontSize="11" fill={hov === i ? MT.texto : MT.suave}>{etiquetaX ? etiquetaX(e) : e}</text>
+              </g>;
+            })}
+          </svg>
+        )}
+        {hov !== null && <Tooltip x={M.l + hov * banda + banda / 2} y={M.t} ancho={W} titulo={etiquetaX ? etiquetaX(etiquetas[hov]) : etiquetas[hov]} filas={series.map(s => ({ color: s.color, nombre: s.nombre, valor: s.formato(s.valores[hov]) }))} />}
+      </div>
+    </div>
+  );
+}
+
+// Barra horizontal que crece al entrar
+function BarraH({ etiqueta, valor, maximo, color, texto, sub, retraso = 0 }) {
+  const mont = useMontado();
+  const pct = maximo > 0 ? Math.max(valor > 0 ? 1.2 : 0, (valor / maximo) * 100) : 0;
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 13, marginBottom: 5 }}>
+        <span style={{ color: MT.texto2 }}>{etiqueta}</span>
+        <span style={{ color: MT.texto, fontWeight: 800 }}>{texto}{sub && <span style={{ color: MT.suave, fontWeight: 500 }}> · {sub}</span>}</span>
+      </div>
+      <div style={{ height: 10, borderRadius: 6, background: "rgba(255,255,255,0.06)", overflow: "hidden" }}>
+        <div style={{ height: "100%", width: mont ? pct + "%" : "0%", borderRadius: 6, background: color, transition: `width 900ms cubic-bezier(.2,.7,.2,1) ${retraso}ms`, boxShadow: `0 0 12px ${color}66` }} />
+      </div>
+    </div>
+  );
+}
+
+function Medidor({ etiqueta, valor, texto, nota }) {
+  const mont = useMontado();
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 5 }}><span style={{ color: MT.texto2 }}>{etiqueta}</span><b style={{ color: MT.texto }}>{texto}</b></div>
+      <div style={{ height: 8, borderRadius: 6, background: "rgba(57,135,229,0.16)", overflow: "hidden" }}>
+        <div style={{ height: "100%", width: mont ? Math.min(100, Math.max(valor > 0 ? 1 : 0, valor || 0)) + "%" : "0%", borderRadius: 6, background: MT.azul, transition: "width 1000ms cubic-bezier(.2,.7,.2,1)" }} />
+      </div>
+      {nota && <div style={{ fontSize: 11, color: MT.suave, marginTop: 4 }}>{nota}</div>}
+    </div>
+  );
+}
+
+const ESTILO_MET = `
+.met{position:relative;color:${MT.texto};border-radius:22px;padding:26px;overflow:hidden;
+  background:radial-gradient(900px 380px at 12% -8%,rgba(57,135,229,.20),transparent 62%),radial-gradient(700px 320px at 100% 0%,rgba(255,59,65,.10),transparent 60%),${MT.fondo};
+  border:1px solid ${MT.borde};font-family:system-ui,-apple-system,"Segoe UI",sans-serif}
+.met:before{content:"";position:absolute;inset:0;pointer-events:none;background-image:radial-gradient(rgba(255,255,255,.045) 1px,transparent 1px);background-size:22px 22px;mask-image:linear-gradient(180deg,#000,transparent 70%);-webkit-mask-image:linear-gradient(180deg,#000,transparent 70%)}
+.met>*{position:relative}
+.met-h1{font-size:26px;font-weight:800;letter-spacing:-.02em;margin:0}
+.met-sub{font-size:13px;color:${MT.texto2};max-width:720px;line-height:1.5}
+.met-sec{font-size:13px;font-weight:700;color:${MT.texto2};letter-spacing:.01em;margin:30px 0 12px;display:flex;align-items:center;gap:10px}
+.met-sec:after{content:"";flex:1;height:1px;background:linear-gradient(90deg,${MT.rejilla},transparent)}
+.met-grid{display:grid;gap:14px}
+.met-card{background:linear-gradient(180deg,rgba(255,255,255,.035),rgba(255,255,255,0) 40%),${MT.tarjeta};border:1px solid ${MT.borde};border-radius:16px;padding:18px;transition:border-color .2s,transform .2s}
+.met-card:hover{border-color:rgba(57,135,229,.45)}
+.met-lbl{font-size:12.5px;color:${MT.texto2};font-weight:600}
+.met-num{font-size:30px;font-weight:800;letter-spacing:-.02em;margin:8px 0 6px;line-height:1.05}
+.met-big{font-size:42px;font-weight:800;letter-spacing:-.03em;margin:8px 0 6px;line-height:1.02}
+.met-info{width:22px;height:22px;border-radius:50%;border:1px solid ${MT.borde};background:transparent;color:${MT.texto2};font-size:12px;font-weight:700;cursor:pointer;flex-shrink:0;line-height:1}
+.met-info:hover{color:${MT.texto};border-color:${MT.azul}}
+.met-formula{margin-top:10px;padding-top:10px;border-top:1px solid ${MT.rejilla};font-size:12px;line-height:1.5;color:${MT.texto2}}
+.met-chip{padding:7px 14px;border-radius:999px;border:1px solid ${MT.borde};background:rgba(255,255,255,.03);color:${MT.texto2};font-weight:600;font-size:13px;cursor:pointer;transition:all .18s}
+.met-chip:hover{color:${MT.texto};border-color:rgba(57,135,229,.5)}
+.met-chip.on{background:${MT.marca};border-color:${MT.marca};color:#fff;box-shadow:0 0 18px rgba(255,59,65,.35)}
+.met input[type=date]{color-scheme:dark;background:rgba(255,255,255,.04);color:${MT.texto};border:1px solid ${MT.borde};border-radius:10px;padding:7px 10px;font-size:13px}
+.met-tip{position:absolute;z-index:5;pointer-events:none;min-width:150px;background:rgba(10,14,20,.94);backdrop-filter:blur(6px);border:1px solid ${MT.borde};border-radius:10px;padding:9px 11px;box-shadow:0 10px 30px rgba(0,0,0,.45)}
+.met-tip-t{font-size:12px;color:${MT.texto2};margin-bottom:6px;font-weight:600}
+.met-tip-r{display:flex;align-items:center;gap:7px;font-size:12px;margin-top:3px}
+.met-tip-r b{color:${MT.texto};font-size:13px}
+.met-scan{position:absolute;left:0;right:0;top:0;height:2px;overflow:hidden;z-index:6}
+.met-scan:after{content:"";position:absolute;top:0;height:2px;width:30%;background:linear-gradient(90deg,transparent,${MT.azul},${MT.marca},transparent);animation:metScan 1.1s linear infinite}
+.met-live{display:inline-flex;align-items:center;gap:7px;font-size:12px;color:${MT.texto2};padding:5px 11px;border:1px solid ${MT.borde};border-radius:999px;background:rgba(255,255,255,.03)}
+.met-live i{width:7px;height:7px;border-radius:50%;background:${MT.bueno};box-shadow:0 0 0 0 rgba(12,163,12,.6);animation:metPulse 2s infinite}
+.met-in{animation:metIn .65s cubic-bezier(.2,.7,.2,1) both;animation-delay:var(--d,0ms)}
+.met-draw{stroke-dasharray:1;stroke-dashoffset:1;animation:metDraw 1.3s cubic-bezier(.3,.6,.2,1) .15s forwards}
+.met-fade{opacity:0;animation:metFade .9s ease .5s forwards}
+.met-grow{transform-box:fill-box;transform-origin:bottom;transform:scaleY(0);animation:metGrow .8s cubic-bezier(.2,.7,.2,1) forwards}
+.met-tabla{width:100%;border-collapse:collapse;font-size:13px;min-width:640px}
+.met-tabla th{padding:10px 12px;text-align:right;font-weight:700;color:${MT.texto2};border-bottom:1px solid ${MT.rejilla}}
+.met-tabla td{padding:9px 12px;text-align:right;border-bottom:1px solid ${MT.rejilla};font-variant-numeric:tabular-nums}
+.met-tabla th:first-child,.met-tabla td:first-child{text-align:left}
+.met-aviso{background:rgba(250,178,25,.10);border:1px solid rgba(250,178,25,.28);color:#f3d58a;padding:9px 12px;border-radius:10px;font-size:12px;margin:10px 0}
+@keyframes metIn{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+@keyframes metDraw{to{stroke-dashoffset:0}}
+@keyframes metFade{to{opacity:1}}
+@keyframes metGrow{to{transform:scaleY(1)}}
+@keyframes metScan{from{left:-30%}to{left:100%}}
+@keyframes metPulse{70%{box-shadow:0 0 0 8px rgba(12,163,12,0)}100%{box-shadow:0 0 0 0 rgba(12,163,12,0)}}
+@media (prefers-reduced-motion:reduce){.met-in,.met-draw,.met-fade,.met-grow,.met-scan:after,.met-live i{animation:none!important}.met-draw{stroke-dashoffset:0}.met-fade{opacity:1}.met-grow{transform:none}}
+@media (max-width:640px){.met{padding:16px;border-radius:16px}.met-big{font-size:34px}}
+`;
 
 function MetricasPanel() {
   const { showToast } = useApp();
@@ -4099,22 +4374,34 @@ function MetricasPanel() {
   const [desde, setDesde] = useState(() => rangoPresetMetricas("60")[0]);
   const [hasta, setHasta] = useState(() => rangoPresetMetricas("60")[1]);
   const [m, setM] = useState(null);
+  const [previo, setPrevio] = useState(null);
+  const [extra, setExtra] = useState(null);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState("");
+  const [actualizado, setActualizado] = useState(null);
   const [margenTxt, setMargenTxt] = useState("");
   const [guardando, setGuardando] = useState(false);
   const peticion = useRef(0);
 
+  const llamar = async (fn, args) => {
+    const r = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${fn}`, { method: "POST", headers: sb.dataHeaders(), body: JSON.stringify(args) });
+    if (!r.ok) throw new Error(await r.text());
+    return r.json();
+  };
   const cargar = async () => {
     const id = ++peticion.current;
     setCargando(true); setError("");
     try {
       await sb.ensureFreshToken();
-      const r = await fetch(`${SUPABASE_URL}/rest/v1/rpc/metricas_negocio`, { method: "POST", headers: sb.dataHeaders(), body: JSON.stringify({ p_desde: desde, p_hasta: hasta }) });
-      if (!r.ok) throw new Error(await r.text());
-      const d = await r.json();
+      const dias = Math.round((new Date(hasta + "T12:00:00Z") - new Date(desde + "T12:00:00Z")) / 86400000) + 1;
+      const pDesde = sumarDiasISO(desde, -dias), pHasta = sumarDiasISO(desde, -1);
+      const [d, ant, ex] = await Promise.all([
+        llamar("metricas_negocio", { p_desde: desde, p_hasta: hasta }),
+        llamar("metricas_negocio", { p_desde: pDesde, p_hasta: pHasta }).catch(() => null),
+        llamar("metricas_extra", { p_desde: desde, p_hasta: hasta }).catch(() => null),
+      ]);
       if (id !== peticion.current) return;
-      setM(d);
+      setM(d); setPrevio(ant); setExtra(ex); setActualizado(new Date());
       setMargenTxt(t => (t === "" && d.margen_bruto !== null && d.margen_bruto !== undefined) ? String(d.margen_bruto) : t);
     } catch (e) { if (id === peticion.current) setError(String(e.message || e).slice(0, 200)); }
     if (id === peticion.current) setCargando(false);
@@ -4133,139 +4420,211 @@ function MetricasPanel() {
     setGuardando(false);
   };
 
-  const caja = { background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 14, padding: 16 };
-  const tit = { fontSize: 16, fontWeight: 900, margin: "26px 0 12px" };
-  const Tarjeta = ({ etiqueta, valor, formula, color = BLACK, nota }) => (
-    <div style={caja}>
-      <div style={{ fontSize: 13, color: GRAY3, fontWeight: 700 }}>{etiqueta}</div>
-      <div style={{ fontSize: 28, fontWeight: 900, color, margin: "4px 0 6px", lineHeight: 1.1 }}>{valor}</div>
-      <div style={{ fontSize: 12, color: GRAY3, lineHeight: 1.45 }}><b>Cómo se calcula:</b> {formula}</div>
-      {nota && <div style={{ fontSize: 12, color: "#856404", marginTop: 6, lineHeight: 1.45 }}>{nota}</div>}
-    </div>
-  );
-  const chip = (act) => ({ padding: "7px 13px", borderRadius: 20, border: `1px solid ${act ? RED : GRAY2}`, background: act ? RED : WHITE, color: act ? WHITE : BLACK, fontWeight: 700, fontSize: 13, cursor: "pointer" });
-  const grid = { display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(250px,1fr))", gap: 14 };
+  const serie = (m && m.serie) || [];
+  const diaria = (extra && extra.diaria) || [];
+  const dist = extra && extra.distribucion;
+  const hora = actualizado ? actualizado.toLocaleTimeString("es-PA", { timeZone: "America/Panama", hour: "2-digit", minute: "2-digit" }) : "";
+  const totalVentasRec = m ? Number(m.ventas_recurrentes || 0) : 0;
+  const pctRec = m && m.ventas > 0 ? Math.min(100, (totalVentasRec / m.ventas) * 100) : 0;
 
   return (
-    <>
-      <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 6, display: "flex", alignItems: "center", gap: 10 }}><Wallet size={24} color={RED} /> Métricas del negocio</div>
-      <div style={{ fontSize: 13, color: GRAY3, marginBottom: 16, maxWidth: 760 }}>Ticket promedio, costo por cliente nuevo (CAC), valor del cliente (LTV), conversión y ritmo de ventas. Cada número muestra cómo se calculó con tus datos reales.</div>
+    <div className="met" style={{ opacity: cargando && m ? 0.72 : 1, transition: "opacity .25s" }}>
+      <style>{ESTILO_MET}</style>
+      {cargando && <div className="met-scan" />}
 
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 6 }}>
-        {[["30", "Últimos 30 días"], ["60", "Últimos 60 días"], ["90", "Últimos 90 días"], ["mes", "Este mes"], ["mespasado", "Mes pasado"], ["todo", "Todo"], ["custom", "Personalizado"]].map(([k, l]) => <button key={k} onClick={() => elegir(k)} style={chip(preset === k)}>{l}</button>)}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
+        <div>
+          <h2 className="met-h1">Métricas del negocio</h2>
+          <div className="met-sub" style={{ marginTop: 6 }}>Cuánto vendes, cuánto cuesta conseguir un cliente y cuánto vale. Toca la <b>?</b> de cada tarjeta para ver cómo se calcula con tus datos.</div>
+        </div>
+        <div className="met-live"><i /> En vivo{hora ? ` · ${hora}` : ""}</div>
       </div>
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 8, fontSize: 13 }}>
-        <input type="date" value={desde} onChange={e => { setPreset("custom"); setDesde(e.target.value); }} style={{ padding: "7px 10px", border: `1px solid ${GRAY2}`, borderRadius: 8 }} />
+
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", margin: "18px 0 8px" }}>
+        {[["30", "30 días"], ["60", "60 días"], ["90", "90 días"], ["mes", "Este mes"], ["mespasado", "Mes pasado"], ["todo", "Todo"], ["custom", "Personalizado"]].map(([k, l]) => <button key={k} className={"met-chip" + (preset === k ? " on" : "")} onClick={() => elegir(k)}>{l}</button>)}
+      </div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", fontSize: 13, color: MT.texto2 }}>
+        <input type="date" value={desde} onChange={e => { setPreset("custom"); setDesde(e.target.value); }} />
         <span>a</span>
-        <input type="date" value={hasta} onChange={e => { setPreset("custom"); setHasta(e.target.value); }} style={{ padding: "7px 10px", border: `1px solid ${GRAY2}`, borderRadius: 8 }} />
-        {cargando && <span style={{ color: GRAY3 }}>Calculando…</span>}
+        <input type="date" value={hasta} onChange={e => { setPreset("custom"); setHasta(e.target.value); }} />
       </div>
-      {error && <div style={{ background: "#FDE8E8", color: "#B71C1C", padding: 12, borderRadius: 10, margin: "10px 0", fontSize: 13 }}>No se pudieron calcular las métricas: {error}</div>}
+
+      {error && <div className="met-aviso" style={{ background: "rgba(208,59,59,.12)", borderColor: "rgba(208,59,59,.35)", color: "#f4a3a3" }}>No se pudieron calcular las métricas: {error}</div>}
+      {!m && !error && <div style={{ padding: "60px 0", textAlign: "center", color: MT.texto2 }}>Calculando tus métricas…</div>}
 
       {m && (
         <>
-          {(m.ventas_desde && desde < m.ventas_desde) && <div style={{ background: "#FFF4D6", color: "#8A5A00", padding: 10, borderRadius: 10, margin: "8px 0", fontSize: 12 }}>Tus ventas registradas empiezan el {m.ventas_desde}. Antes de esa fecha no hay datos, así que el periodo se calcula desde ahí.</div>}
-          {(m.analitica_desde && desde < m.analitica_desde) && <div style={{ background: "#FFF4D6", color: "#8A5A00", padding: 10, borderRadius: 10, margin: "8px 0", fontSize: 12 }}>Las visitas a la web se registran desde el {m.analitica_desde}. La conversión solo es confiable desde esa fecha.</div>}
+          {(m.ventas_desde && desde < m.ventas_desde) && <div className="met-aviso">Tus ventas registradas empiezan el {m.ventas_desde}; antes de esa fecha no hay datos.</div>}
+          {(m.analitica_desde && desde < m.analitica_desde) && <div className="met-aviso">Las visitas a la web se registran desde el {m.analitica_desde}; la conversión solo es confiable desde esa fecha.</div>}
 
-          <div style={tit}>Ventas</div>
-          <div style={grid}>
-            <Tarjeta etiqueta="Ventas del periodo" valor={usdM(m.ventas)} formula={`suma de ${numM(m.pedidos)} pedidos pagados (sin cotizaciones) en ${m.dias} días.`} color={RED} />
-            <Tarjeta etiqueta="Ticket promedio" valor={usdM(m.ticket)} formula={`${usdM(m.ventas)} ÷ ${numM(m.pedidos)} pedidos. La mitad de los pedidos es menor a ${usdM(m.mediana, 0)} (mediana).`} />
-            <Tarjeta etiqueta="Clientes que compraron" valor={numM(m.compradores)} formula={`clientes distintos con al menos un pedido pagado. ${numM(m.nuevos)} son nuevos y ${numM(m.recurrentes)} ya habían comprado antes del periodo.`} />
+          {/* ── Tarjetas principales ── */}
+          <div className="met-grid" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(185px,1fr))", marginTop: 18 }}>
+            <Kpi acento grande retraso={0} etiqueta="Ventas del periodo"
+              formula={`Suma de ${numM(m.pedidos)} pedidos pagados (sin cotizaciones) en ${m.dias} días.`}
+              pie={<div><Delta actual={m.ventas} previo={previo && previo.ventas} /><div style={{ marginTop: 8 }}><Chispa valores={serie.map(s => s.ventas)} color={MT.azul} /></div></div>}>
+              <Cifra valor={Number(m.ventas)} f={(v) => usdM(v, 0)} />
+            </Kpi>
+            <Kpi retraso={70} etiqueta="Ticket promedio"
+              formula={`${usdM(m.ventas)} ÷ ${numM(m.pedidos)} pedidos. La mitad de los pedidos es menor a ${usdM(m.mediana, 0)} (mediana).`}
+              pie={<div><Delta actual={m.ticket} previo={previo && previo.ticket} /><div style={{ marginTop: 8 }}><Chispa valores={serie.map(s => s.ticket)} color={MT.azul} /></div></div>}>
+              <Cifra valor={m.ticket === null ? null : Number(m.ticket)} f={(v) => usdM(v)} />
+            </Kpi>
+            <Kpi retraso={140} etiqueta="Clientes nuevos"
+              formula={`Clientes cuya primera compra pagada cae dentro del periodo. Compraron en total ${numM(m.compradores)} clientes; ${numM(m.recurrentes)} ya habían comprado antes.`}
+              pie={<div><Delta actual={m.nuevos} previo={previo && previo.nuevos} /><div style={{ marginTop: 8 }}><Chispa valores={serie.map(s => s.nuevos)} color={MT.aqua} /></div></div>}>
+              <Cifra valor={Number(m.nuevos)} f={(v) => numM(Math.round(v))} />
+            </Kpi>
+            <Kpi retraso={210} etiqueta="CAC · costo por cliente nuevo"
+              formula={`${usdM(m.gasto_ads)} gastados en Meta Ads ÷ ${numM(m.nuevos)} clientes nuevos. Es un CAC combinado: no distingue si el cliente llegó por un anuncio o por otro medio.`}
+              pie={<div><Delta actual={m.cac} previo={previo && previo.cac} menorEsMejor /><div style={{ marginTop: 8 }}><Chispa valores={serie.map(s => s.cac)} color={MT.naranja} /></div></div>}>
+              <Cifra valor={m.cac === null ? null : Number(m.cac)} f={(v) => usdM(v)} />
+            </Kpi>
+            <Kpi retraso={280} etiqueta="ROAS · venta por cada $1 en anuncios"
+              formula={`${usdM(m.ventas)} vendidos ÷ ${usdM(m.gasto_ads)} gastados en anuncios.`}
+              pie={<Delta actual={m.roas} previo={previo && previo.roas} />}>
+              <Cifra valor={m.roas === null ? null : Number(m.roas)} f={(v) => v === null ? "—" : "$" + Number(v).toFixed(2)} />
+            </Kpi>
           </div>
 
-          <div style={tit}>Costo de adquirir clientes</div>
-          <div style={grid}>
-            <Tarjeta etiqueta="CAC (costo por cliente nuevo)" valor={usdM(m.cac)} color={RED}
-              formula={`${usdM(m.gasto_ads)} gastados en Meta Ads ÷ ${numM(m.nuevos)} clientes nuevos. "Nuevo" = su primera compra pagada cae dentro de este periodo.`}
-              nota="Es un CAC combinado: no distingue si el cliente llegó por anuncios o por otro medio, y el gasto de Meta Ads del periodo cuenta completo." />
-            <Tarjeta etiqueta="ROAS (venta por cada $1 en anuncios)" valor={m.roas === null ? "—" : "$" + Number(m.roas).toFixed(2)} formula={`${usdM(m.ventas)} vendidos ÷ ${usdM(m.gasto_ads)} gastados en anuncios.`} />
-            <Tarjeta etiqueta="Gasto en anuncios" valor={usdM(m.gasto_ads)} formula="suma del gasto diario de tus campañas de Meta Ads (se sincroniza desde Análisis Ads)." />
+          {/* ── Día a día ── */}
+          <div className="met-sec">Ventas y anuncios día a día</div>
+          <div className="met-card met-in" style={{ "--d": "300ms" }}>
+            {diaria.length > 1 ? (
+              <GraficaLineas
+                etiquetas={diaria.map(d => d.f)} etiquetaX={fechaCortaM}
+                descripcion={`Ventas y gasto en anuncios por día entre ${desde} y ${hasta}`}
+                series={[
+                  { nombre: "Ventas", color: MT.azul, valores: diaria.map(d => Number(d.ventas)), formato: (v) => usdM(v, 0), area: true },
+                  { nombre: "Gasto en anuncios", color: MT.naranja, valores: diaria.map(d => Number(d.gasto)), formato: (v) => usdM(v, 0) },
+                ]}
+                extra={[{ nombre: "pedidos", valores: diaria.map(d => d.pedidos), formato: numM }, { nombre: "clientes nuevos", color: MT.aqua, valores: diaria.map(d => d.nuevos), formato: numM }]}
+                alto={250} />
+            ) : <div style={{ color: MT.texto2, fontSize: 13, padding: 20 }}>Elige un periodo de 2 días o más para ver la evolución diaria.</div>}
           </div>
 
-          <div style={tit}>Valor del cliente (LTV)</div>
-          <div style={grid}>
-            <Tarjeta etiqueta="LTV de los clientes nuevos del periodo" valor={usdM(m.cohorte.ltv)} color={RED}
-              formula={`lo que han gastado hasta hoy los ${numM(m.cohorte.clientes)} clientes cuya primera compra fue en este periodo, en promedio (${Number(m.cohorte.pedidos_por_cliente || 0).toFixed(2)} pedidos por cliente).`}
-              nota="Son ingresos, no ganancia. Y es un piso: estos clientes todavía pueden volver a comprar." />
-            <Tarjeta etiqueta="LTV de todos los clientes" valor={usdM(m.global.ltv)} formula={`gasto total promedio de los ${numM(m.global.clientes)} clientes que han comprado desde ${m.ventas_desde || "el inicio"}.`} />
-            <Tarjeta etiqueta="LTV ÷ CAC (en ingresos)" valor={m.ltv_cac === null ? "—" : Number(m.ltv_cac).toFixed(2) + " veces"} formula={`${usdM(m.cohorte.ltv)} ÷ ${usdM(m.cac)}. Lo sano en ganancia es 3 veces o más; en ingresos hace falta bastante más.`} />
-            <Tarjeta etiqueta="Recompra (clientes nuevos del periodo)" valor={pctM(m.cohorte.recompra_pct)} formula={`${numM(m.cohorte.recompraron)} de ${numM(m.cohorte.clientes)} clientes nuevos ya volvieron a comprar.`} />
-            <Tarjeta etiqueta="Recompra histórica (todos)" valor={pctM(m.global.recompra_pct)} formula={`clientes con 2 o más pedidos ÷ ${numM(m.global.clientes)} clientes. Con 3 o más pedidos: ${pctM(m.global.recompra3_pct)}.`} />
-          </div>
-
-          <div style={{ ...caja, marginTop: 14, borderColor: RED }}>
-            <div style={{ fontWeight: 900, marginBottom: 6 }}>¿La publicidad deja ganancia? Depende de tu margen</div>
-            <div style={{ fontSize: 13, color: GRAY3, marginBottom: 10, lineHeight: 1.5 }}>
-              Para que el LTV de los clientes nuevos ({usdM(m.cohorte.ltv)}) cubra lo que cuesta conseguirlos ({usdM(m.cac)}) necesitas un <b>margen bruto de al menos {pctM(m.margen_minimo_pct)}</b> sobre lo que venden.
+          {/* ── Mes a mes ── */}
+          <div className="met-sec">Mes a mes</div>
+          <div className="met-grid" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,430px),1fr))" }}>
+            <div className="met-card met-in" style={{ "--d": "360ms" }}>
+              <div className="met-lbl" style={{ marginBottom: 8 }}>Ventas vs. gasto en anuncios</div>
+              <GraficaBarras etiquetas={serie.map(s => s.mes)} etiquetaX={mesCortoM} descripcion="Ventas y gasto en anuncios por mes" alto={230}
+                series={[{ nombre: "Ventas", color: MT.azul, valores: serie.map(s => Number(s.ventas)), formato: (v) => usdM(v, 0) }, { nombre: "Gasto en anuncios", color: MT.naranja, valores: serie.map(s => Number(s.gasto)), formato: (v) => usdM(v, 0) }]} />
             </div>
-            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-              <label style={{ fontSize: 13, fontWeight: 700 }}>Tu margen bruto aproximado (%)</label>
-              <input value={margenTxt} onChange={e => setMargenTxt(e.target.value)} inputMode="decimal" placeholder="ej. 30" style={{ width: 90, padding: "8px 10px", border: `1px solid ${GRAY2}`, borderRadius: 8 }} />
-              <button onClick={guardarMargen} disabled={guardando} style={{ background: RED, color: WHITE, border: "none", borderRadius: 8, padding: "9px 14px", fontWeight: 800, cursor: "pointer" }}>Guardar</button>
+            <div className="met-card met-in" style={{ "--d": "420ms" }}>
+              <div className="met-lbl" style={{ marginBottom: 8 }}>CAC por mes (costo por cliente nuevo)</div>
+              <GraficaLineas etiquetas={serie.map(s => s.mes)} etiquetaX={mesCortoM} descripcion="CAC por mes" alto={230}
+                series={[{ nombre: "CAC", color: MT.naranja, valores: serie.map(s => s.cac === null ? null : Number(s.cac)), formato: (v) => usdM(v), area: true }]}
+                extra={[{ nombre: "clientes nuevos", color: MT.aqua, valores: serie.map(s => s.nuevos), formato: numM }, { nombre: "gasto en anuncios", color: MT.naranja, valores: serie.map(s => s.gasto), formato: (v) => usdM(v, 0) }]} />
+              <div style={{ fontSize: 11.5, color: MT.suave, marginTop: 6, lineHeight: 1.45 }}>Junio y julio salen altos porque tus ventas registradas empiezan el 16 de junio; el CAC reciente es el más confiable.</div>
             </div>
-            {m.margen_bruto !== null && m.margen_bruto !== undefined && (
-              <div style={{ marginTop: 10, fontSize: 14, lineHeight: 1.6 }}>
-                Con {pctM(m.margen_bruto, 0)} de margen: cada cliente nuevo te deja <b>{usdM(m.ltv_ganancia)}</b> de ganancia bruta y te costó {usdM(m.cac)}. Ganancia ÷ CAC = <b style={{ color: Number(m.ltv_cac_ganancia) >= 1 ? "#155724" : "#B71C1C" }}>{m.ltv_cac_ganancia === null ? "—" : Number(m.ltv_cac_ganancia).toFixed(2) + " veces"}</b> {Number(m.ltv_cac_ganancia) >= 1 ? "(recuperas lo gastado)" : "(todavía no recuperas lo gastado con la primera compra; depende de que vuelvan)"}.
+            <div className="met-card met-in" style={{ "--d": "480ms" }}>
+              <div className="met-lbl" style={{ marginBottom: 8 }}>Ticket promedio por mes</div>
+              <GraficaLineas etiquetas={serie.map(s => s.mes)} etiquetaX={mesCortoM} descripcion="Ticket promedio por mes" alto={200}
+                series={[{ nombre: "Ticket promedio", color: MT.azul, valores: serie.map(s => s.ticket === null ? null : Number(s.ticket)), formato: (v) => usdM(v), area: true }]}
+                extra={[{ nombre: "pedidos", valores: serie.map(s => s.pedidos), formato: numM }]} />
+            </div>
+            <div className="met-card met-in" style={{ "--d": "540ms" }}>
+              <div className="met-lbl" style={{ marginBottom: 8 }}>Clientes nuevos por mes</div>
+              <GraficaBarras etiquetas={serie.map(s => s.mes)} etiquetaX={mesCortoM} descripcion="Clientes nuevos por mes" alto={200} formatoEje={(v) => String(Math.round(v))} valorSobreBarra
+                series={[{ nombre: "Clientes nuevos", color: MT.aqua, valores: serie.map(s => Number(s.nuevos)), formato: numM }]} />
+            </div>
+          </div>
+
+          {/* ── Conversión ── */}
+          <div className="met-sec">Conversión: de visitante a cliente</div>
+          <div className="met-grid" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,340px),1fr))" }}>
+            <div className="met-card met-in" style={{ "--d": "100ms" }}>
+              <div className="met-lbl" style={{ marginBottom: 14 }}>Embudo de la tienda web</div>
+              <BarraH etiqueta="Visitantes" valor={m.visitantes} maximo={m.visitantes} color={MT.azul} texto={numM(m.visitantes)} />
+              <BarraH etiqueta="Agregaron al carrito" valor={m.con_carrito} maximo={m.visitantes} color={MT.azul} texto={numM(m.con_carrito)} sub={pctM(m.conv_carrito_pct, 1) + " de visitantes"} retraso={120} />
+              <BarraH etiqueta="Iniciaron un pedido en la web" valor={m.web_iniciados} maximo={m.visitantes} color={MT.azul} texto={numM(m.web_iniciados)} retraso={240} />
+              <BarraH etiqueta="Pagaron en la web" valor={m.web_pagados} maximo={m.visitantes} color={MT.azul} texto={numM(m.web_pagados)} sub={pctM(m.conv_checkout_pct, 0) + " de los iniciados"} retraso={360} />
+              <div style={{ fontSize: 11.5, color: MT.suave, marginTop: 4, lineHeight: 1.45 }}>Además, {numM(m.whatsapp)} visitantes tocaron un botón de WhatsApp: ahí se cierran muchas ventas que no pasan por el pago web.</div>
+            </div>
+            <div className="met-card met-in" style={{ "--d": "160ms" }}>
+              <div className="met-lbl" style={{ marginBottom: 14 }}>Qué tan bien convierte</div>
+              <Medidor etiqueta="Conversión global (visitante → cliente nuevo)" valor={Number(m.conv_global_pct) * 10} texto={pctM(m.conv_global_pct, 2)} nota={`${numM(m.nuevos)} clientes nuevos ÷ ${numM(m.visitantes)} visitantes, por web y WhatsApp. (Medidor a escala: 10% = barra llena.)`} />
+              <Medidor etiqueta="Compra directa en la web" valor={Number(m.conv_web_pct) * 10} texto={pctM(m.conv_web_pct, 2)} nota={`${numM(m.web_pagados)} pedidos pagados en la web ÷ ${numM(m.visitantes)} visitantes.`} />
+              <Medidor etiqueta="Pago completado (checkout)" valor={Number(m.conv_checkout_pct)} texto={pctM(m.conv_checkout_pct, 0)} nota={`${numM(m.web_pagados)} pagados ÷ ${numM(m.web_iniciados)} pedidos iniciados.`} />
+            </div>
+          </div>
+
+          {/* ── Valor del cliente ── */}
+          <div className="met-sec">Valor del cliente (LTV)</div>
+          <div className="met-grid" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,340px),1fr))" }}>
+            <div className="met-card met-in" style={{ "--d": "100ms" }}>
+              <div className="met-lbl" style={{ marginBottom: 14 }}>Lo que deja un cliente nuevo vs. lo que cuesta conseguirlo</div>
+              {(() => {
+                const mx = Math.max(Number(m.cohorte.ltv) || 0, Number(m.cac) || 0, 1);
+                return <>
+                  <BarraH etiqueta={`Ingresos por cliente nuevo (LTV, ${numM(m.cohorte.clientes)} clientes)`} valor={Number(m.cohorte.ltv) || 0} maximo={mx} color={MT.azul} texto={usdM(m.cohorte.ltv)} />
+                  {m.ltv_ganancia !== null && m.ltv_ganancia !== undefined && <BarraH etiqueta={`Ganancia bruta con ${pctM(m.margen_bruto, 0)} de margen`} valor={Number(m.ltv_ganancia)} maximo={mx} color={MT.azul} texto={usdM(m.ltv_ganancia)} retraso={120} />}
+                  <BarraH etiqueta="Lo que costó conseguirlo (CAC)" valor={Number(m.cac) || 0} maximo={mx} color={MT.naranja} texto={usdM(m.cac)} retraso={240} />
+                </>;
+              })()}
+              <div style={{ fontSize: 13, color: MT.texto2, lineHeight: 1.55, marginTop: 6 }}>
+                LTV ÷ CAC = <b style={{ color: MT.texto }}>{m.ltv_cac === null ? "—" : Number(m.ltv_cac).toFixed(2) + " veces"}</b> en ingresos. Para recuperar el CAC con la primera compra necesitas un margen bruto de al menos <b style={{ color: MT.texto }}>{pctM(m.margen_minimo_pct)}</b>.
               </div>
-            )}
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 12 }}>
+                <label style={{ fontSize: 12.5, color: MT.texto2, fontWeight: 600 }}>Tu margen bruto (%)</label>
+                <input value={margenTxt} onChange={e => setMargenTxt(e.target.value)} inputMode="decimal" placeholder="ej. 30" style={{ width: 80, background: "rgba(255,255,255,.04)", color: MT.texto, border: `1px solid ${MT.borde}`, borderRadius: 10, padding: "7px 10px", fontSize: 13 }} />
+                <button className="met-chip on" onClick={guardarMargen} disabled={guardando}>Guardar</button>
+              </div>
+              {m.ltv_cac_ganancia !== null && m.ltv_cac_ganancia !== undefined && (
+                <div style={{ marginTop: 10, fontSize: 13, color: MT.texto2 }}>Ganancia ÷ CAC = <b style={{ color: Number(m.ltv_cac_ganancia) >= 1 ? MT.bueno : MT.malo }}>{Number(m.ltv_cac_ganancia).toFixed(2)} veces</b> {Number(m.ltv_cac_ganancia) >= 1 ? "· recuperas lo gastado" : "· aún no recuperas lo gastado con la primera compra; depende de que vuelvan"}.</div>
+              )}
+            </div>
+            <div className="met-card met-in" style={{ "--d": "160ms" }}>
+              <div className="met-lbl" style={{ marginBottom: 8 }}>Cuántas veces compra cada cliente</div>
+              {dist ? (
+                <GraficaBarras etiquetas={["1 pedido", "2 pedidos", "3 pedidos", "4 o más"]} descripcion="Clientes según cuántos pedidos han hecho" alto={210} valorSobreBarra formatoEje={(v) => String(Math.round(v))}
+                  series={[{ nombre: "Clientes", color: MT.aqua, valores: [dist.un_pedido, dist.dos_pedidos, dist.tres_pedidos, dist.cuatro_mas], formato: numM }]} />
+              ) : <div style={{ color: MT.texto2, fontSize: 13 }}>No se pudo cargar esta gráfica.</div>}
+              <div style={{ marginTop: 10 }}>
+                <Medidor etiqueta="Recompra de los clientes nuevos del periodo" valor={Number(m.cohorte.recompra_pct) || 0} texto={pctM(m.cohorte.recompra_pct)} nota={`${numM(m.cohorte.recompraron)} de ${numM(m.cohorte.clientes)} ya volvieron a comprar.`} />
+                <Medidor etiqueta="Recompra histórica (todos los clientes)" valor={Number(m.global.recompra_pct) || 0} texto={pctM(m.global.recompra_pct)} nota={`Con 3 o más pedidos: ${pctM(m.global.recompra3_pct)}. LTV de todos los clientes: ${usdM(m.global.ltv)}.`} />
+              </div>
+            </div>
           </div>
 
-          <div style={tit}>Conversión</div>
-          <div style={grid}>
-            <Tarjeta etiqueta="Visitantes únicos a la web" valor={numM(m.visitantes)} formula="dispositivos distintos que entraron a la tienda en el periodo." />
-            <Tarjeta etiqueta="Conversión global (visitante → cliente nuevo)" valor={pctM(m.conv_global_pct, 2)} color={RED} formula={`${numM(m.nuevos)} clientes nuevos ÷ ${numM(m.visitantes)} visitantes. Cuenta ventas por web y por WhatsApp.`} />
-            <Tarjeta etiqueta="Conversión de compra directa en la web" valor={pctM(m.conv_web_pct, 2)} formula={`${numM(m.web_pagados)} pedidos pagados en la web ÷ ${numM(m.visitantes)} visitantes. Baja porque muchos compran por WhatsApp.`} />
-            <Tarjeta etiqueta="Pago completado (checkout)" valor={pctM(m.conv_checkout_pct)} formula={`${numM(m.web_pagados)} pagados ÷ ${numM(m.web_iniciados)} pedidos iniciados en la web.`} />
-            <Tarjeta etiqueta="Visitantes que agregaron al carrito" valor={`${numM(m.con_carrito)} (${pctM(m.conv_carrito_pct)})`} formula={`${numM(m.con_carrito)} ÷ ${numM(m.visitantes)} visitantes.`} />
-            <Tarjeta etiqueta="Visitantes que consultaron por WhatsApp" valor={numM(m.whatsapp)} formula="dispositivos distintos que tocaron un botón de WhatsApp." />
+          {/* ── Ritmo ── */}
+          <div className="met-sec">Ritmo de ventas (equivalente a MRR / ARR)</div>
+          <div className="met-sub" style={{ marginBottom: 12 }}>Ofertodo no vende por suscripción, así que no hay un MRR/ARR formal. Esto es lo que venderías al mes y al año si mantuvieras el ritmo del periodo elegido. No es ingreso asegurado.</div>
+          <div className="met-grid" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(210px,1fr))" }}>
+            <Kpi retraso={0} etiqueta="Ventas por mes (ritmo)" formula={`${usdM(m.ventas)} ÷ ${m.dias} días × 30.4 días.`}><Cifra valor={Number(m.ritmo_mensual)} f={(v) => usdM(v, 0)} /></Kpi>
+            <Kpi acento retraso={70} etiqueta="Ventas por año (ritmo)" formula={`${usdM(m.ventas)} ÷ ${m.dias} días × 365.`}><Cifra valor={Number(m.ritmo_anual)} f={(v) => usdM(v, 0)} /></Kpi>
+            <Kpi retraso={140} etiqueta="Parte recurrente por mes" formula={`Ventas de clientes que ya habían comprado antes del periodo (${usdM(m.ventas_recurrentes)}) llevadas a un mes. Es lo más parecido a un MRR.`}><Cifra valor={Number(m.ritmo_mensual_recurrente)} f={(v) => usdM(v, 0)} /></Kpi>
+            <Kpi retraso={210} etiqueta="Parte recurrente por año" formula="La parte recurrente llevada a 12 meses."><Cifra valor={Number(m.ritmo_anual_recurrente)} f={(v) => usdM(v, 0)} /></Kpi>
+          </div>
+          <div className="met-card met-in" style={{ marginTop: 14, "--d": "250ms" }}>
+            <div className="met-lbl" style={{ marginBottom: 10 }}>De dónde vienen las ventas del periodo</div>
+            <div style={{ display: "flex", height: 8, borderRadius: 8, overflow: "hidden", gap: 2 }} role="img" aria-label={`Ventas de clientes recurrentes ${pctM(pctRec)} y de clientes nuevos u otros ${pctM(100 - pctRec)}`}>
+              <div style={{ width: pctRec + "%", background: MT.aqua, borderRadius: 8, transition: "width 900ms cubic-bezier(.2,.7,.2,1)" }} />
+              <div style={{ flex: 1, background: MT.azul, borderRadius: 8 }} />
+            </div>
+            <div style={{ display: "flex", gap: 18, flexWrap: "wrap", marginTop: 10, fontSize: 12.5, color: MT.texto2 }}>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><i style={{ width: 10, height: 10, borderRadius: 3, background: MT.aqua }} />Clientes que ya habían comprado: <b style={{ color: MT.texto }}>{usdM(m.ventas_recurrentes, 0)} ({pctM(pctRec, 0)})</b></span>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><i style={{ width: 10, height: 10, borderRadius: 3, background: MT.azul }} />Clientes nuevos y otros: <b style={{ color: MT.texto }}>{usdM(Number(m.ventas) - totalVentasRec, 0)} ({pctM(100 - pctRec, 0)})</b></span>
+            </div>
           </div>
 
-          <div style={tit}>Ritmo de ventas (equivalente a MRR / ARR)</div>
-          <div style={{ fontSize: 12, color: GRAY3, marginBottom: 10, maxWidth: 760 }}>Ofertodo no vende por suscripción, así que no existe un MRR/ARR formal. Estos son los equivalentes: qué venderías al mes y al año si mantuvieras el ritmo del periodo elegido. No es ingreso asegurado.</div>
-          <div style={grid}>
-            <Tarjeta etiqueta="Ventas por mes (ritmo)" valor={usdM(m.ritmo_mensual, 0)} formula={`${usdM(m.ventas)} ÷ ${m.dias} días × 30.4 días.`} />
-            <Tarjeta etiqueta="Ventas por año (ritmo)" valor={usdM(m.ritmo_anual, 0)} color={RED} formula={`${usdM(m.ventas)} ÷ ${m.dias} días × 365.`} />
-            <Tarjeta etiqueta="Parte recurrente por mes" valor={usdM(m.ritmo_mensual_recurrente, 0)} formula={`ventas de clientes que ya habían comprado antes del periodo (${usdM(m.ventas_recurrentes)}) llevadas a un mes. Es lo más parecido a un MRR.`} />
-            <Tarjeta etiqueta="Parte recurrente por año" valor={usdM(m.ritmo_anual_recurrente, 0)} formula="la parte recurrente llevada a 12 meses." />
-          </div>
+          {/* ── Tabla (la misma información, sin depender de color ni de pasar el cursor) ── */}
+          <details style={{ marginTop: 26 }}>
+            <summary style={{ cursor: "pointer", fontSize: 13, fontWeight: 700, color: MT.texto2 }}>Ver los datos mes a mes en tabla</summary>
+            <div className="met-card" style={{ marginTop: 10, overflowX: "auto", padding: 0 }}>
+              <table className="met-tabla">
+                <thead><tr>{["Mes", "Ventas", "Pedidos", "Ticket", "Clientes nuevos", "Gasto anuncios", "CAC"].map(h => <th key={h}>{h}</th>)}</tr></thead>
+                <tbody>{serie.map(s => <tr key={s.mes}><td>{s.mes}</td><td>{usdM(s.ventas, 0)}</td><td>{numM(s.pedidos)}</td><td>{usdM(s.ticket)}</td><td>{numM(s.nuevos)}</td><td>{usdM(s.gasto, 0)}</td><td><b>{usdM(s.cac)}</b></td></tr>)}</tbody>
+              </table>
+            </div>
+          </details>
 
-          <div style={tit}>Mes a mes</div>
-          <div style={{ ...caja, overflowX: "auto", padding: 0 }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 620 }}>
-              <thead><tr style={{ background: "#F7F7F7", textAlign: "right" }}>
-                {["Mes", "Ventas", "Pedidos", "Ticket", "Clientes nuevos", "Gasto anuncios", "CAC"].map((h, i) => <th key={h} style={{ padding: "10px 12px", textAlign: i === 0 ? "left" : "right", fontWeight: 800 }}>{h}</th>)}
-              </tr></thead>
-              <tbody>
-                {(m.serie || []).map(s => (
-                  <tr key={s.mes} style={{ borderTop: `1px solid ${GRAY2}` }}>
-                    <td style={{ padding: "9px 12px", fontWeight: 700 }}>{s.mes}</td>
-                    <td style={{ padding: "9px 12px", textAlign: "right" }}>{usdM(s.ventas, 0)}</td>
-                    <td style={{ padding: "9px 12px", textAlign: "right" }}>{numM(s.pedidos)}</td>
-                    <td style={{ padding: "9px 12px", textAlign: "right" }}>{usdM(s.ticket)}</td>
-                    <td style={{ padding: "9px 12px", textAlign: "right" }}>{numM(s.nuevos)}</td>
-                    <td style={{ padding: "9px 12px", textAlign: "right" }}>{usdM(s.gasto, 0)}</td>
-                    <td style={{ padding: "9px 12px", textAlign: "right", fontWeight: 800 }}>{usdM(s.cac)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <div style={{ fontSize: 12, color: GRAY3, marginTop: 8, maxWidth: 760, lineHeight: 1.5 }}>El CAC de junio y julio sale muy alto porque tus ventas registradas empiezan el 16 de junio y esos meses tenían pocos clientes nuevos registrados; el CAC más confiable es el de los meses recientes.</div>
-
-          <div style={{ ...caja, marginTop: 22 }}>
-            <div style={{ fontWeight: 900, marginBottom: 8 }}>Cómo leer estas métricas</div>
-            <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, color: GRAY3, lineHeight: 1.6 }}>
-              <li><b>Se cuentan</b> pedidos pagados, tanto de la web como los que crean tus vendedores. <b>No se cuentan</b> cotizaciones ni pedidos con pago pendiente, ni las compras del equipo.</li>
-              <li><b>Cliente nuevo</b>: primera compra pagada dentro del periodo, según tu historial registrado (desde el 16 de junio de 2026).</li>
-              <li>Los pedidos sin cliente asignado se incluyen en las ventas pero no en CAC ni LTV.</li>
-              <li>No incluye ventas que existan solo en el punto de venta de Odoo.</li>
-              <li>Las fechas se cuentan con la hora de Panamá.</li>
-            </ul>
+          <div style={{ marginTop: 22, fontSize: 12, color: MT.suave, lineHeight: 1.6, maxWidth: 780 }}>
+            <b style={{ color: MT.texto2 }}>Cómo leer estas métricas.</b> Se cuentan pedidos pagados (web y los que crean tus vendedores); no se cuentan cotizaciones, pedidos sin pagar ni compras del equipo. “Cliente nuevo” es quien hace su primera compra pagada dentro del periodo, según tu historial desde el 16 de junio de 2026. Los pedidos sin cliente asignado suman a las ventas pero no al CAC ni al LTV. No incluye ventas que existan solo en el punto de venta de Odoo. Fechas con hora de Panamá.
           </div>
         </>
       )}
-    </>
+    </div>
   );
 }
 
