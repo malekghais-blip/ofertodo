@@ -4075,10 +4075,10 @@ function FraudePanel({ onCambio }) {
 // ═══════════ MÉTRICAS DEL NEGOCIO (pestaña "Métricas") — panel oscuro con gráficas ═══════════
 // Colores validados para daltonismo sobre la superficie oscura (blue / orange / aqua del set de referencia).
 const MT = {
-  fondo: "#0F131A", tarjeta: "#151B24", borde: "rgba(255,255,255,0.08)", rejilla: "rgba(255,255,255,0.07)", eje: "rgba(255,255,255,0.16)",
-  texto: "#EAF0F7", texto2: "#A9B6C6", suave: "#7E8DA0",
-  azul: "#3987e5", naranja: "#d95926", aqua: "#199e70",
-  bueno: "#0ca30c", malo: "#ec835a", marca: "#ff3b41",
+  fondo: "#F7F7F8", tarjeta: "#FFFFFF", borde: "rgba(17,17,17,0.09)", rejilla: "rgba(17,17,17,0.07)", eje: "rgba(17,17,17,0.24)",
+  texto: "#111111", texto2: "#52525B", suave: "#767680",
+  rojo: "#E31E24", rojoOsc: "#B01519", tinta: "#2B2B2E",
+  bueno: "#0B7A2B", malo: "#C2410C", marca: "#E31E24",
 };
 const usdM = (n, d = 2) => (n === null || n === undefined || Number.isNaN(Number(n))) ? "—" : "$" + Number(n).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
 const pctM = (n, d = 1) => (n === null || n === undefined || Number.isNaN(Number(n))) ? "—" : Number(n).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d }) + "%";
@@ -4171,7 +4171,7 @@ function Kpi({ etiqueta, children, pie, formula, grande, acento, retraso = 0 }) 
   const [ver, setVer] = useState(false);
   return (
     <div className="met-card met-in" style={{ "--d": retraso + "ms", position: "relative", overflow: "hidden" }}>
-      {acento && <div style={{ position: "absolute", left: 0, top: 0, right: 0, height: 2, background: `linear-gradient(90deg, ${MT.marca}, transparent 80%)` }} />}
+      {acento && <div style={{ position: "absolute", left: 0, top: 0, right: 0, height: 2, background: `linear-gradient(90deg, ${MT.marca}, rgba(227,30,36,0) 85%)` }} />}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
         <div className="met-lbl">{etiqueta}</div>
         {formula && <button className="met-info" onClick={() => setVer(v => !v)} aria-expanded={ver} aria-label={`Cómo se calcula: ${etiqueta}`}>{ver ? "×" : "?"}</button>}
@@ -4229,11 +4229,11 @@ function GraficaLineas({ etiquetas, series, extra = [], alto = 220, descripcion,
       <div ref={caja} style={{ position: "relative", width: "100%", height: H }} onPointerMove={mover} onPointerLeave={() => setHov(null)}>
         {ancho > 0 && (
           <svg key={sig} width={W} height={H} role="img" aria-label={descripcion} style={{ display: "block", overflow: "visible" }}>
-            <defs>{series.map((s, k) => <linearGradient key={k} id={`${uid.current}${k}`} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={s.color} stopOpacity="0.28" /><stop offset="100%" stopColor={s.color} stopOpacity="0" /></linearGradient>)}</defs>
+            <defs>{series.map((s, k) => <linearGradient key={k} id={`${uid.current}${k}`} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={s.color} stopOpacity="0.22" /><stop offset="100%" stopColor={s.color} stopOpacity="0" /></linearGradient>)}</defs>
             {ticks.map(t => <g key={t}><line x1={M.l} x2={W - M.r} y1={py(t)} y2={py(t)} stroke={t === 0 ? MT.eje : MT.rejilla} strokeWidth="1" /><text x={M.l - 8} y={py(t) + 4} textAnchor="end" fontSize="11" fill={MT.suave}>{usdCorto(t)}</text></g>)}
             {etiquetas.map((e, i) => (i % paso === 0 || i === n - 1) && <text key={i} x={px(i)} y={H - 6} textAnchor={i === 0 ? "start" : i === n - 1 ? "end" : "middle"} fontSize="11" fill={MT.suave}>{etiquetaX ? etiquetaX(e) : e}</text>)}
             {series.map((s, k) => s.area && s.valores.some(v => v !== null) && <path key={"a" + k} className="met-fade" d={`${trazos(s.valores)} L${px(n - 1).toFixed(1)} ${py(0)} L${px(0).toFixed(1)} ${py(0)} Z`} fill={`url(#${uid.current}${k})`} stroke="none" />)}
-            {series.map((s, k) => <path key={"l" + k} className="met-draw" pathLength="1" d={trazos(s.valores)} fill="none" stroke={s.color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ filter: `drop-shadow(0 0 5px ${s.color}88)` }} />)}
+            {series.map((s, k) => <path key={"l" + k} className="met-draw" pathLength="1" d={trazos(s.valores)} fill="none" stroke={s.color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ filter: `drop-shadow(0 0 4px ${s.color}55)` }} />)}
             {series.map((s, k) => { let u = -1; s.valores.forEach((v, i) => { if (v !== null && v !== undefined) u = i; }); return u >= 0 && hov === null ? <circle key={"d" + k} className="met-fade" cx={px(u)} cy={py(Number(s.valores[u]))} r="4.5" fill={s.color} stroke={MT.tarjeta} strokeWidth="2" /> : null; })}
             {hov !== null && <g><line x1={px(hov)} x2={px(hov)} y1={M.t} y2={H - M.b} stroke={MT.eje} strokeWidth="1" />{series.map((s, k) => s.valores[hov] !== null && s.valores[hov] !== undefined && <circle key={k} cx={px(hov)} cy={py(Number(s.valores[hov]))} r="5" fill={s.color} stroke={MT.tarjeta} strokeWidth="2" />)}</g>}
           </svg>
@@ -4298,8 +4298,8 @@ function BarraH({ etiqueta, valor, maximo, color, texto, sub, retraso = 0 }) {
         <span style={{ color: MT.texto2 }}>{etiqueta}</span>
         <span style={{ color: MT.texto, fontWeight: 800 }}>{texto}{sub && <span style={{ color: MT.suave, fontWeight: 500 }}> · {sub}</span>}</span>
       </div>
-      <div style={{ height: 10, borderRadius: 6, background: "rgba(255,255,255,0.06)", overflow: "hidden" }}>
-        <div style={{ height: "100%", width: mont ? pct + "%" : "0%", borderRadius: 6, background: color, transition: `width 900ms cubic-bezier(.2,.7,.2,1) ${retraso}ms`, boxShadow: `0 0 12px ${color}66` }} />
+      <div style={{ height: 10, borderRadius: 6, background: "rgba(17,17,17,0.07)", overflow: "hidden" }}>
+        <div style={{ height: "100%", width: mont ? pct + "%" : "0%", borderRadius: 6, background: color, transition: `width 900ms cubic-bezier(.2,.7,.2,1) ${retraso}ms`, boxShadow: `0 0 10px ${color}40` }} />
       </div>
     </div>
   );
@@ -4310,8 +4310,8 @@ function Medidor({ etiqueta, valor, texto, nota }) {
   return (
     <div style={{ marginBottom: 14 }}>
       <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 5 }}><span style={{ color: MT.texto2 }}>{etiqueta}</span><b style={{ color: MT.texto }}>{texto}</b></div>
-      <div style={{ height: 8, borderRadius: 6, background: "rgba(57,135,229,0.16)", overflow: "hidden" }}>
-        <div style={{ height: "100%", width: mont ? Math.min(100, Math.max(valor > 0 ? 1 : 0, valor || 0)) + "%" : "0%", borderRadius: 6, background: MT.azul, transition: "width 1000ms cubic-bezier(.2,.7,.2,1)" }} />
+      <div style={{ height: 8, borderRadius: 6, background: "rgba(227,30,36,0.12)", overflow: "hidden" }}>
+        <div style={{ height: "100%", width: mont ? Math.min(100, Math.max(valor > 0 ? 1 : 0, valor || 0)) + "%" : "0%", borderRadius: 6, background: MT.rojo, transition: "width 1000ms cubic-bezier(.2,.7,.2,1)" }} />
       </div>
       {nota && <div style={{ fontSize: 11, color: MT.suave, marginTop: 4 }}>{nota}</div>}
     </div>
@@ -4320,35 +4320,37 @@ function Medidor({ etiqueta, valor, texto, nota }) {
 
 const ESTILO_MET = `
 .met{position:relative;color:${MT.texto};border-radius:22px;padding:26px;overflow:hidden;
-  background:radial-gradient(900px 380px at 12% -8%,rgba(57,135,229,.20),transparent 62%),radial-gradient(700px 320px at 100% 0%,rgba(255,59,65,.10),transparent 60%),${MT.fondo};
+  background:radial-gradient(900px 380px at 10% -10%,rgba(227,30,36,.10),transparent 62%),radial-gradient(700px 300px at 100% 0%,rgba(17,17,17,.05),transparent 60%),${MT.fondo};
   border:1px solid ${MT.borde};font-family:system-ui,-apple-system,"Segoe UI",sans-serif}
-.met:before{content:"";position:absolute;inset:0;pointer-events:none;background-image:radial-gradient(rgba(255,255,255,.045) 1px,transparent 1px);background-size:22px 22px;mask-image:linear-gradient(180deg,#000,transparent 70%);-webkit-mask-image:linear-gradient(180deg,#000,transparent 70%)}
+.met:before{content:"";position:absolute;inset:0;pointer-events:none;background-image:radial-gradient(rgba(17,17,17,.07) 1px,transparent 1px);background-size:22px 22px;mask-image:linear-gradient(180deg,#000,transparent 55%);-webkit-mask-image:linear-gradient(180deg,#000,transparent 55%)}
 .met>*{position:relative}
-.met-h1{font-size:26px;font-weight:800;letter-spacing:-.02em;margin:0}
+.met-h1{font-size:26px;font-weight:800;letter-spacing:-.02em;margin:0;display:flex;align-items:center;gap:10px}
+.met-h1:before{content:"";width:6px;height:26px;border-radius:3px;background:linear-gradient(180deg,${MT.rojo},${MT.rojoOsc})}
 .met-sub{font-size:13px;color:${MT.texto2};max-width:720px;line-height:1.5}
-.met-sec{font-size:13px;font-weight:700;color:${MT.texto2};letter-spacing:.01em;margin:30px 0 12px;display:flex;align-items:center;gap:10px}
-.met-sec:after{content:"";flex:1;height:1px;background:linear-gradient(90deg,${MT.rejilla},transparent)}
+.met-sec{font-size:13px;font-weight:800;color:${MT.texto};letter-spacing:.01em;margin:30px 0 12px;display:flex;align-items:center;gap:10px}
+.met-sec:after{content:"";flex:1;height:1px;background:linear-gradient(90deg,rgba(17,17,17,.14),transparent)}
 .met-grid{display:grid;gap:14px}
-.met-card{background:linear-gradient(180deg,rgba(255,255,255,.035),rgba(255,255,255,0) 40%),${MT.tarjeta};border:1px solid ${MT.borde};border-radius:16px;padding:18px;transition:border-color .2s,transform .2s}
-.met-card:hover{border-color:rgba(57,135,229,.45)}
+.met-card{background:${MT.tarjeta};border:1px solid ${MT.borde};border-radius:16px;padding:18px;box-shadow:0 1px 2px rgba(17,17,17,.04),0 12px 28px -18px rgba(17,17,17,.22);transition:border-color .2s,box-shadow .2s}
+.met-card:hover{border-color:rgba(227,30,36,.40);box-shadow:0 1px 2px rgba(17,17,17,.05),0 16px 32px -16px rgba(227,30,36,.28)}
 .met-lbl{font-size:12.5px;color:${MT.texto2};font-weight:600}
 .met-num{font-size:30px;font-weight:800;letter-spacing:-.02em;margin:8px 0 6px;line-height:1.05}
-.met-big{font-size:42px;font-weight:800;letter-spacing:-.03em;margin:8px 0 6px;line-height:1.02}
-.met-info{width:22px;height:22px;border-radius:50%;border:1px solid ${MT.borde};background:transparent;color:${MT.texto2};font-size:12px;font-weight:700;cursor:pointer;flex-shrink:0;line-height:1}
-.met-info:hover{color:${MT.texto};border-color:${MT.azul}}
+.met-big{font-size:42px;font-weight:800;letter-spacing:-.03em;margin:8px 0 6px;line-height:1.02;color:${MT.rojo}}
+.met-info{width:22px;height:22px;border-radius:50%;border:1px solid ${MT.borde};background:#fff;color:${MT.texto2};font-size:12px;font-weight:700;cursor:pointer;flex-shrink:0;line-height:1}
+.met-info:hover{color:${MT.rojo};border-color:${MT.rojo}}
 .met-formula{margin-top:10px;padding-top:10px;border-top:1px solid ${MT.rejilla};font-size:12px;line-height:1.5;color:${MT.texto2}}
-.met-chip{padding:7px 14px;border-radius:999px;border:1px solid ${MT.borde};background:rgba(255,255,255,.03);color:${MT.texto2};font-weight:600;font-size:13px;cursor:pointer;transition:all .18s}
-.met-chip:hover{color:${MT.texto};border-color:rgba(57,135,229,.5)}
-.met-chip.on{background:${MT.marca};border-color:${MT.marca};color:#fff;box-shadow:0 0 18px rgba(255,59,65,.35)}
-.met input[type=date]{color-scheme:dark;background:rgba(255,255,255,.04);color:${MT.texto};border:1px solid ${MT.borde};border-radius:10px;padding:7px 10px;font-size:13px}
-.met-tip{position:absolute;z-index:5;pointer-events:none;min-width:150px;background:rgba(10,14,20,.94);backdrop-filter:blur(6px);border:1px solid ${MT.borde};border-radius:10px;padding:9px 11px;box-shadow:0 10px 30px rgba(0,0,0,.45)}
-.met-tip-t{font-size:12px;color:${MT.texto2};margin-bottom:6px;font-weight:600}
-.met-tip-r{display:flex;align-items:center;gap:7px;font-size:12px;margin-top:3px}
-.met-tip-r b{color:${MT.texto};font-size:13px}
-.met-scan{position:absolute;left:0;right:0;top:0;height:2px;overflow:hidden;z-index:6}
-.met-scan:after{content:"";position:absolute;top:0;height:2px;width:30%;background:linear-gradient(90deg,transparent,${MT.azul},${MT.marca},transparent);animation:metScan 1.1s linear infinite}
-.met-live{display:inline-flex;align-items:center;gap:7px;font-size:12px;color:${MT.texto2};padding:5px 11px;border:1px solid ${MT.borde};border-radius:999px;background:rgba(255,255,255,.03)}
-.met-live i{width:7px;height:7px;border-radius:50%;background:${MT.bueno};box-shadow:0 0 0 0 rgba(12,163,12,.6);animation:metPulse 2s infinite}
+.met-chip{padding:7px 14px;border-radius:999px;border:1px solid ${MT.borde};background:#fff;color:${MT.texto2};font-weight:600;font-size:13px;cursor:pointer;transition:all .18s}
+.met-chip:hover{color:${MT.texto};border-color:rgba(227,30,36,.5)}
+.met-chip.on{background:${MT.rojo};border-color:${MT.rojo};color:#fff;box-shadow:0 6px 18px -6px rgba(227,30,36,.55)}
+.met input[type=date]{color-scheme:light;background:#fff;color:${MT.texto};border:1px solid ${MT.borde};border-radius:10px;padding:7px 10px;font-size:13px}
+.met-tip{position:absolute;z-index:5;pointer-events:none;min-width:150px;background:rgba(17,17,17,.94);backdrop-filter:blur(6px);border:1px solid rgba(255,255,255,.08);border-radius:10px;padding:9px 11px;box-shadow:0 12px 30px rgba(17,17,17,.30)}
+.met-tip-t{font-size:12px;color:#C9C9D0;margin-bottom:6px;font-weight:600}
+.met-tip-r{display:flex;align-items:center;gap:7px;font-size:12px;margin-top:3px;color:#C9C9D0}
+.met-tip-r b{color:#fff;font-size:13px}
+.met-tip-r span:last-child{color:#C9C9D0!important}
+.met-scan{position:absolute;left:0;right:0;top:0;height:3px;overflow:hidden;z-index:6}
+.met-scan:after{content:"";position:absolute;top:0;height:3px;width:30%;background:linear-gradient(90deg,transparent,${MT.rojo},${MT.tinta},transparent);animation:metScan 1.1s linear infinite}
+.met-live{display:inline-flex;align-items:center;gap:7px;font-size:12px;color:${MT.texto2};padding:5px 11px;border:1px solid ${MT.borde};border-radius:999px;background:#fff}
+.met-live i{width:7px;height:7px;border-radius:50%;background:#16A34A;box-shadow:0 0 0 0 rgba(22,163,74,.55);animation:metPulse 2s infinite}
 .met-in{animation:metIn .65s cubic-bezier(.2,.7,.2,1) both;animation-delay:var(--d,0ms)}
 .met-draw{stroke-dasharray:1;stroke-dashoffset:1;animation:metDraw 1.3s cubic-bezier(.3,.6,.2,1) .15s forwards}
 .met-fade{opacity:0;animation:metFade .9s ease .5s forwards}
@@ -4357,13 +4359,13 @@ const ESTILO_MET = `
 .met-tabla th{padding:10px 12px;text-align:right;font-weight:700;color:${MT.texto2};border-bottom:1px solid ${MT.rejilla}}
 .met-tabla td{padding:9px 12px;text-align:right;border-bottom:1px solid ${MT.rejilla};font-variant-numeric:tabular-nums}
 .met-tabla th:first-child,.met-tabla td:first-child{text-align:left}
-.met-aviso{background:rgba(250,178,25,.10);border:1px solid rgba(250,178,25,.28);color:#f3d58a;padding:9px 12px;border-radius:10px;font-size:12px;margin:10px 0}
+.met-aviso{background:#FFF4D6;border:1px solid #F3D58A;color:#8A5A00;padding:9px 12px;border-radius:10px;font-size:12px;margin:10px 0}
 @keyframes metIn{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
 @keyframes metDraw{to{stroke-dashoffset:0}}
 @keyframes metFade{to{opacity:1}}
 @keyframes metGrow{to{transform:scaleY(1)}}
 @keyframes metScan{from{left:-30%}to{left:100%}}
-@keyframes metPulse{70%{box-shadow:0 0 0 8px rgba(12,163,12,0)}100%{box-shadow:0 0 0 0 rgba(12,163,12,0)}}
+@keyframes metPulse{70%{box-shadow:0 0 0 8px rgba(22,163,74,0)}100%{box-shadow:0 0 0 0 rgba(22,163,74,0)}}
 @media (prefers-reduced-motion:reduce){.met-in,.met-draw,.met-fade,.met-grow,.met-scan:after,.met-live i{animation:none!important}.met-draw{stroke-dashoffset:0}.met-fade{opacity:1}.met-grow{transform:none}}
 @media (max-width:640px){.met{padding:16px;border-radius:16px}.met-big{font-size:34px}}
 `;
@@ -4449,7 +4451,7 @@ function MetricasPanel() {
         <input type="date" value={hasta} onChange={e => { setPreset("custom"); setHasta(e.target.value); }} />
       </div>
 
-      {error && <div className="met-aviso" style={{ background: "rgba(208,59,59,.12)", borderColor: "rgba(208,59,59,.35)", color: "#f4a3a3" }}>No se pudieron calcular las métricas: {error}</div>}
+      {error && <div className="met-aviso" style={{ background: "#FDE8E8", borderColor: "#F5B5B5", color: "#B71C1C" }}>No se pudieron calcular las métricas: {error}</div>}
       {!m && !error && <div style={{ padding: "60px 0", textAlign: "center", color: MT.texto2 }}>Calculando tus métricas…</div>}
 
       {m && (
@@ -4461,22 +4463,22 @@ function MetricasPanel() {
           <div className="met-grid" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(185px,1fr))", marginTop: 18 }}>
             <Kpi acento grande retraso={0} etiqueta="Ventas del periodo"
               formula={`Suma de ${numM(m.pedidos)} pedidos pagados (sin cotizaciones) en ${m.dias} días.`}
-              pie={<div><Delta actual={m.ventas} previo={previo && previo.ventas} /><div style={{ marginTop: 8 }}><Chispa valores={serie.map(s => s.ventas)} color={MT.azul} /></div></div>}>
+              pie={<div><Delta actual={m.ventas} previo={previo && previo.ventas} /><div style={{ marginTop: 8 }}><Chispa valores={serie.map(s => s.ventas)} color={MT.rojo} /></div></div>}>
               <Cifra valor={Number(m.ventas)} f={(v) => usdM(v, 0)} />
             </Kpi>
             <Kpi retraso={70} etiqueta="Ticket promedio"
               formula={`${usdM(m.ventas)} ÷ ${numM(m.pedidos)} pedidos. La mitad de los pedidos es menor a ${usdM(m.mediana, 0)} (mediana).`}
-              pie={<div><Delta actual={m.ticket} previo={previo && previo.ticket} /><div style={{ marginTop: 8 }}><Chispa valores={serie.map(s => s.ticket)} color={MT.azul} /></div></div>}>
+              pie={<div><Delta actual={m.ticket} previo={previo && previo.ticket} /><div style={{ marginTop: 8 }}><Chispa valores={serie.map(s => s.ticket)} color={MT.rojo} /></div></div>}>
               <Cifra valor={m.ticket === null ? null : Number(m.ticket)} f={(v) => usdM(v)} />
             </Kpi>
             <Kpi retraso={140} etiqueta="Clientes nuevos"
               formula={`Clientes cuya primera compra pagada cae dentro del periodo. Compraron en total ${numM(m.compradores)} clientes; ${numM(m.recurrentes)} ya habían comprado antes.`}
-              pie={<div><Delta actual={m.nuevos} previo={previo && previo.nuevos} /><div style={{ marginTop: 8 }}><Chispa valores={serie.map(s => s.nuevos)} color={MT.aqua} /></div></div>}>
+              pie={<div><Delta actual={m.nuevos} previo={previo && previo.nuevos} /><div style={{ marginTop: 8 }}><Chispa valores={serie.map(s => s.nuevos)} color={MT.rojo} /></div></div>}>
               <Cifra valor={Number(m.nuevos)} f={(v) => numM(Math.round(v))} />
             </Kpi>
             <Kpi retraso={210} etiqueta="CAC · costo por cliente nuevo"
               formula={`${usdM(m.gasto_ads)} gastados en Meta Ads ÷ ${numM(m.nuevos)} clientes nuevos. Es un CAC combinado: no distingue si el cliente llegó por un anuncio o por otro medio.`}
-              pie={<div><Delta actual={m.cac} previo={previo && previo.cac} menorEsMejor /><div style={{ marginTop: 8 }}><Chispa valores={serie.map(s => s.cac)} color={MT.naranja} /></div></div>}>
+              pie={<div><Delta actual={m.cac} previo={previo && previo.cac} menorEsMejor /><div style={{ marginTop: 8 }}><Chispa valores={serie.map(s => s.cac)} color={MT.tinta} /></div></div>}>
               <Cifra valor={m.cac === null ? null : Number(m.cac)} f={(v) => usdM(v)} />
             </Kpi>
             <Kpi retraso={280} etiqueta="ROAS · venta por cada $1 en anuncios"
@@ -4494,10 +4496,10 @@ function MetricasPanel() {
                 etiquetas={diaria.map(d => d.f)} etiquetaX={fechaCortaM}
                 descripcion={`Ventas y gasto en anuncios por día entre ${desde} y ${hasta}`}
                 series={[
-                  { nombre: "Ventas", color: MT.azul, valores: diaria.map(d => Number(d.ventas)), formato: (v) => usdM(v, 0), area: true },
-                  { nombre: "Gasto en anuncios", color: MT.naranja, valores: diaria.map(d => Number(d.gasto)), formato: (v) => usdM(v, 0) },
+                  { nombre: "Ventas", color: MT.rojo, valores: diaria.map(d => Number(d.ventas)), formato: (v) => usdM(v, 0), area: true },
+                  { nombre: "Gasto en anuncios", color: MT.tinta, valores: diaria.map(d => Number(d.gasto)), formato: (v) => usdM(v, 0) },
                 ]}
-                extra={[{ nombre: "pedidos", valores: diaria.map(d => d.pedidos), formato: numM }, { nombre: "clientes nuevos", color: MT.aqua, valores: diaria.map(d => d.nuevos), formato: numM }]}
+                extra={[{ nombre: "pedidos", valores: diaria.map(d => d.pedidos), formato: numM }, { nombre: "clientes nuevos", color: MT.suave, valores: diaria.map(d => d.nuevos), formato: numM }]}
                 alto={250} />
             ) : <div style={{ color: MT.texto2, fontSize: 13, padding: 20 }}>Elige un periodo de 2 días o más para ver la evolución diaria.</div>}
           </div>
@@ -4508,25 +4510,25 @@ function MetricasPanel() {
             <div className="met-card met-in" style={{ "--d": "360ms" }}>
               <div className="met-lbl" style={{ marginBottom: 8 }}>Ventas vs. gasto en anuncios</div>
               <GraficaBarras etiquetas={serie.map(s => s.mes)} etiquetaX={mesCortoM} descripcion="Ventas y gasto en anuncios por mes" alto={230}
-                series={[{ nombre: "Ventas", color: MT.azul, valores: serie.map(s => Number(s.ventas)), formato: (v) => usdM(v, 0) }, { nombre: "Gasto en anuncios", color: MT.naranja, valores: serie.map(s => Number(s.gasto)), formato: (v) => usdM(v, 0) }]} />
+                series={[{ nombre: "Ventas", color: MT.rojo, valores: serie.map(s => Number(s.ventas)), formato: (v) => usdM(v, 0) }, { nombre: "Gasto en anuncios", color: MT.tinta, valores: serie.map(s => Number(s.gasto)), formato: (v) => usdM(v, 0) }]} />
             </div>
             <div className="met-card met-in" style={{ "--d": "420ms" }}>
               <div className="met-lbl" style={{ marginBottom: 8 }}>CAC por mes (costo por cliente nuevo)</div>
               <GraficaLineas etiquetas={serie.map(s => s.mes)} etiquetaX={mesCortoM} descripcion="CAC por mes" alto={230}
-                series={[{ nombre: "CAC", color: MT.naranja, valores: serie.map(s => s.cac === null ? null : Number(s.cac)), formato: (v) => usdM(v), area: true }]}
-                extra={[{ nombre: "clientes nuevos", color: MT.aqua, valores: serie.map(s => s.nuevos), formato: numM }, { nombre: "gasto en anuncios", color: MT.naranja, valores: serie.map(s => s.gasto), formato: (v) => usdM(v, 0) }]} />
+                series={[{ nombre: "CAC", color: MT.tinta, valores: serie.map(s => s.cac === null ? null : Number(s.cac)), formato: (v) => usdM(v), area: true }]}
+                extra={[{ nombre: "clientes nuevos", color: MT.suave, valores: serie.map(s => s.nuevos), formato: numM }, { nombre: "gasto en anuncios", color: MT.tinta, valores: serie.map(s => s.gasto), formato: (v) => usdM(v, 0) }]} />
               <div style={{ fontSize: 11.5, color: MT.suave, marginTop: 6, lineHeight: 1.45 }}>Junio y julio salen altos porque tus ventas registradas empiezan el 16 de junio; el CAC reciente es el más confiable.</div>
             </div>
             <div className="met-card met-in" style={{ "--d": "480ms" }}>
               <div className="met-lbl" style={{ marginBottom: 8 }}>Ticket promedio por mes</div>
               <GraficaLineas etiquetas={serie.map(s => s.mes)} etiquetaX={mesCortoM} descripcion="Ticket promedio por mes" alto={200}
-                series={[{ nombre: "Ticket promedio", color: MT.azul, valores: serie.map(s => s.ticket === null ? null : Number(s.ticket)), formato: (v) => usdM(v), area: true }]}
+                series={[{ nombre: "Ticket promedio", color: MT.rojo, valores: serie.map(s => s.ticket === null ? null : Number(s.ticket)), formato: (v) => usdM(v), area: true }]}
                 extra={[{ nombre: "pedidos", valores: serie.map(s => s.pedidos), formato: numM }]} />
             </div>
             <div className="met-card met-in" style={{ "--d": "540ms" }}>
               <div className="met-lbl" style={{ marginBottom: 8 }}>Clientes nuevos por mes</div>
               <GraficaBarras etiquetas={serie.map(s => s.mes)} etiquetaX={mesCortoM} descripcion="Clientes nuevos por mes" alto={200} formatoEje={(v) => String(Math.round(v))} valorSobreBarra
-                series={[{ nombre: "Clientes nuevos", color: MT.aqua, valores: serie.map(s => Number(s.nuevos)), formato: numM }]} />
+                series={[{ nombre: "Clientes nuevos", color: MT.rojo, valores: serie.map(s => Number(s.nuevos)), formato: numM }]} />
             </div>
           </div>
 
@@ -4535,10 +4537,10 @@ function MetricasPanel() {
           <div className="met-grid" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,340px),1fr))" }}>
             <div className="met-card met-in" style={{ "--d": "100ms" }}>
               <div className="met-lbl" style={{ marginBottom: 14 }}>Embudo de la tienda web</div>
-              <BarraH etiqueta="Visitantes" valor={m.visitantes} maximo={m.visitantes} color={MT.azul} texto={numM(m.visitantes)} />
-              <BarraH etiqueta="Agregaron al carrito" valor={m.con_carrito} maximo={m.visitantes} color={MT.azul} texto={numM(m.con_carrito)} sub={pctM(m.conv_carrito_pct, 1) + " de visitantes"} retraso={120} />
-              <BarraH etiqueta="Iniciaron un pedido en la web" valor={m.web_iniciados} maximo={m.visitantes} color={MT.azul} texto={numM(m.web_iniciados)} retraso={240} />
-              <BarraH etiqueta="Pagaron en la web" valor={m.web_pagados} maximo={m.visitantes} color={MT.azul} texto={numM(m.web_pagados)} sub={pctM(m.conv_checkout_pct, 0) + " de los iniciados"} retraso={360} />
+              <BarraH etiqueta="Visitantes" valor={m.visitantes} maximo={m.visitantes} color={MT.rojo} texto={numM(m.visitantes)} />
+              <BarraH etiqueta="Agregaron al carrito" valor={m.con_carrito} maximo={m.visitantes} color={MT.rojo} texto={numM(m.con_carrito)} sub={pctM(m.conv_carrito_pct, 1) + " de visitantes"} retraso={120} />
+              <BarraH etiqueta="Iniciaron un pedido en la web" valor={m.web_iniciados} maximo={m.visitantes} color={MT.rojo} texto={numM(m.web_iniciados)} retraso={240} />
+              <BarraH etiqueta="Pagaron en la web" valor={m.web_pagados} maximo={m.visitantes} color={MT.rojo} texto={numM(m.web_pagados)} sub={pctM(m.conv_checkout_pct, 0) + " de los iniciados"} retraso={360} />
               <div style={{ fontSize: 11.5, color: MT.suave, marginTop: 4, lineHeight: 1.45 }}>Además, {numM(m.whatsapp)} visitantes tocaron un botón de WhatsApp: ahí se cierran muchas ventas que no pasan por el pago web.</div>
             </div>
             <div className="met-card met-in" style={{ "--d": "160ms" }}>
@@ -4557,9 +4559,9 @@ function MetricasPanel() {
               {(() => {
                 const mx = Math.max(Number(m.cohorte.ltv) || 0, Number(m.cac) || 0, 1);
                 return <>
-                  <BarraH etiqueta={`Ingresos por cliente nuevo (LTV, ${numM(m.cohorte.clientes)} clientes)`} valor={Number(m.cohorte.ltv) || 0} maximo={mx} color={MT.azul} texto={usdM(m.cohorte.ltv)} />
-                  {m.ltv_ganancia !== null && m.ltv_ganancia !== undefined && <BarraH etiqueta={`Ganancia bruta con ${pctM(m.margen_bruto, 0)} de margen`} valor={Number(m.ltv_ganancia)} maximo={mx} color={MT.azul} texto={usdM(m.ltv_ganancia)} retraso={120} />}
-                  <BarraH etiqueta="Lo que costó conseguirlo (CAC)" valor={Number(m.cac) || 0} maximo={mx} color={MT.naranja} texto={usdM(m.cac)} retraso={240} />
+                  <BarraH etiqueta={`Ingresos por cliente nuevo (LTV, ${numM(m.cohorte.clientes)} clientes)`} valor={Number(m.cohorte.ltv) || 0} maximo={mx} color={MT.rojo} texto={usdM(m.cohorte.ltv)} />
+                  {m.ltv_ganancia !== null && m.ltv_ganancia !== undefined && <BarraH etiqueta={`Ganancia bruta con ${pctM(m.margen_bruto, 0)} de margen`} valor={Number(m.ltv_ganancia)} maximo={mx} color={MT.rojo} texto={usdM(m.ltv_ganancia)} retraso={120} />}
+                  <BarraH etiqueta="Lo que costó conseguirlo (CAC)" valor={Number(m.cac) || 0} maximo={mx} color={MT.tinta} texto={usdM(m.cac)} retraso={240} />
                 </>;
               })()}
               <div style={{ fontSize: 13, color: MT.texto2, lineHeight: 1.55, marginTop: 6 }}>
@@ -4567,7 +4569,7 @@ function MetricasPanel() {
               </div>
               <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 12 }}>
                 <label style={{ fontSize: 12.5, color: MT.texto2, fontWeight: 600 }}>Tu margen bruto (%)</label>
-                <input value={margenTxt} onChange={e => setMargenTxt(e.target.value)} inputMode="decimal" placeholder="ej. 30" style={{ width: 80, background: "rgba(255,255,255,.04)", color: MT.texto, border: `1px solid ${MT.borde}`, borderRadius: 10, padding: "7px 10px", fontSize: 13 }} />
+                <input value={margenTxt} onChange={e => setMargenTxt(e.target.value)} inputMode="decimal" placeholder="ej. 30" style={{ width: 80, background: "#fff", color: MT.texto, border: `1px solid ${MT.borde}`, borderRadius: 10, padding: "7px 10px", fontSize: 13 }} />
                 <button className="met-chip on" onClick={guardarMargen} disabled={guardando}>Guardar</button>
               </div>
               {m.ltv_cac_ganancia !== null && m.ltv_cac_ganancia !== undefined && (
@@ -4578,7 +4580,7 @@ function MetricasPanel() {
               <div className="met-lbl" style={{ marginBottom: 8 }}>Cuántas veces compra cada cliente</div>
               {dist ? (
                 <GraficaBarras etiquetas={["1 pedido", "2 pedidos", "3 pedidos", "4 o más"]} descripcion="Clientes según cuántos pedidos han hecho" alto={210} valorSobreBarra formatoEje={(v) => String(Math.round(v))}
-                  series={[{ nombre: "Clientes", color: MT.aqua, valores: [dist.un_pedido, dist.dos_pedidos, dist.tres_pedidos, dist.cuatro_mas], formato: numM }]} />
+                  series={[{ nombre: "Clientes", color: MT.rojo, valores: [dist.un_pedido, dist.dos_pedidos, dist.tres_pedidos, dist.cuatro_mas], formato: numM }]} />
               ) : <div style={{ color: MT.texto2, fontSize: 13 }}>No se pudo cargar esta gráfica.</div>}
               <div style={{ marginTop: 10 }}>
                 <Medidor etiqueta="Recompra de los clientes nuevos del periodo" valor={Number(m.cohorte.recompra_pct) || 0} texto={pctM(m.cohorte.recompra_pct)} nota={`${numM(m.cohorte.recompraron)} de ${numM(m.cohorte.clientes)} ya volvieron a comprar.`} />
@@ -4599,12 +4601,12 @@ function MetricasPanel() {
           <div className="met-card met-in" style={{ marginTop: 14, "--d": "250ms" }}>
             <div className="met-lbl" style={{ marginBottom: 10 }}>De dónde vienen las ventas del periodo</div>
             <div style={{ display: "flex", height: 8, borderRadius: 8, overflow: "hidden", gap: 2 }} role="img" aria-label={`Ventas de clientes recurrentes ${pctM(pctRec)} y de clientes nuevos u otros ${pctM(100 - pctRec)}`}>
-              <div style={{ width: pctRec + "%", background: MT.aqua, borderRadius: 8, transition: "width 900ms cubic-bezier(.2,.7,.2,1)" }} />
-              <div style={{ flex: 1, background: MT.azul, borderRadius: 8 }} />
+              <div style={{ width: pctRec + "%", background: MT.tinta, borderRadius: 8, transition: "width 900ms cubic-bezier(.2,.7,.2,1)" }} />
+              <div style={{ flex: 1, background: MT.rojo, borderRadius: 8 }} />
             </div>
             <div style={{ display: "flex", gap: 18, flexWrap: "wrap", marginTop: 10, fontSize: 12.5, color: MT.texto2 }}>
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><i style={{ width: 10, height: 10, borderRadius: 3, background: MT.aqua }} />Clientes que ya habían comprado: <b style={{ color: MT.texto }}>{usdM(m.ventas_recurrentes, 0)} ({pctM(pctRec, 0)})</b></span>
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><i style={{ width: 10, height: 10, borderRadius: 3, background: MT.azul }} />Clientes nuevos y otros: <b style={{ color: MT.texto }}>{usdM(Number(m.ventas) - totalVentasRec, 0)} ({pctM(100 - pctRec, 0)})</b></span>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><i style={{ width: 10, height: 10, borderRadius: 3, background: MT.tinta }} />Clientes que ya habían comprado: <b style={{ color: MT.texto }}>{usdM(m.ventas_recurrentes, 0)} ({pctM(pctRec, 0)})</b></span>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><i style={{ width: 10, height: 10, borderRadius: 3, background: MT.rojo }} />Clientes nuevos y otros: <b style={{ color: MT.texto }}>{usdM(Number(m.ventas) - totalVentasRec, 0)} ({pctM(100 - pctRec, 0)})</b></span>
             </div>
           </div>
 
