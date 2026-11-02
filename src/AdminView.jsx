@@ -4370,11 +4370,8 @@ const ESTILO_MET = `
 @media (max-width:640px){.met{padding:16px;border-radius:16px}.met-big{font-size:34px}}
 `;
 
-function MetricasPanel() {
+function MetricasPanel({ desde, hasta, filtro }) {
   const { showToast } = useApp();
-  const [preset, setPreset] = useState("60");
-  const [desde, setDesde] = useState(() => rangoPresetMetricas("60")[0]);
-  const [hasta, setHasta] = useState(() => rangoPresetMetricas("60")[1]);
   const [m, setM] = useState(null);
   const [previo, setPrevio] = useState(null);
   const [extra, setExtra] = useState(null);
@@ -4411,7 +4408,6 @@ function MetricasPanel() {
   useEffect(() => { if (desde && hasta) cargar(); }, [desde, hasta]);
   useRefrescoPeriodico(cargar, 120000);
 
-  const elegir = (p) => { setPreset(p); if (p !== "custom") { const [a, b] = rangoPresetMetricas(p); setDesde(a); setHasta(b); } };
   const guardarMargen = async () => {
     const txt = margenTxt.trim().replace(",", ".");
     const n = txt === "" ? null : Number(txt);
@@ -4442,14 +4438,7 @@ function MetricasPanel() {
         <div className="met-live"><i /> En vivo{hora ? ` · ${hora}` : ""}</div>
       </div>
 
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", margin: "18px 0 8px" }}>
-        {[["30", "30 días"], ["60", "60 días"], ["90", "90 días"], ["mes", "Este mes"], ["mespasado", "Mes pasado"], ["todo", "Todo"], ["custom", "Personalizado"]].map(([k, l]) => <button key={k} className={"met-chip" + (preset === k ? " on" : "")} onClick={() => elegir(k)}>{l}</button>)}
-      </div>
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", fontSize: 13, color: MT.texto2 }}>
-        <input type="date" value={desde} onChange={e => { setPreset("custom"); setDesde(e.target.value); }} />
-        <span>a</span>
-        <input type="date" value={hasta} onChange={e => { setPreset("custom"); setHasta(e.target.value); }} />
-      </div>
+      <div style={{ margin: "18px 0 8px" }}>{filtro}</div>
 
       {error && <div className="met-aviso" style={{ background: "#FDE8E8", borderColor: "#F5B5B5", color: "#B71C1C" }}>No se pudieron calcular las métricas: {error}</div>}
       {!m && !error && <div style={{ padding: "60px 0", textAlign: "center", color: MT.texto2 }}>Calculando tus métricas…</div>}
@@ -4982,6 +4971,117 @@ function AdminView() {
   });
   const fmtCorta = (d) => new Date(d).toLocaleDateString("es-PA", { day: "2-digit", month: "short" });
   const etiquetaRango = { dia: "Hoy", semana: "Última semana", mes: "Este mes", anio: "Este año", todo: "Todo el tiempo", personalizado: fechaPersonalizada ? new Date(fechaPersonalizada).toLocaleDateString("es-PA", { day: "2-digit", month: "long", year: "numeric" }) : "Fecha específica", rango: (rangoInicio && rangoFin) ? `${fmtCorta(rangoInicio)} → ${fmtCorta(rangoFin)}` : "Rango de fechas" }[rangoVentas];
+
+  // Selector de periodo UNICO: se usa en el Dashboard y en Métricas, comparten el mismo estado
+  const renderFiltroPeriodo = () => (
+    <div style={{ marginBottom: 22 }}>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        {[["dia","Día"],["semana","Semana"],["mes","Mes"],["anio","Año"],["todo","Todo"]].map(([k,l]) => (
+          <button key={k} onClick={() => { setRangoVentas(k); setMostrarCalendario(false); }} className="oft-btn-press"
+            style={{ padding: "8px 16px", borderRadius: 20, border: `2px solid ${rangoVentas === k ? RED : GRAY2}`, background: rangoVentas === k ? RED : WHITE, color: rangoVentas === k ? WHITE : BLACK, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+            {l}
+          </button>
+        ))}
+        <button onClick={() => setMostrarCalendario(v => !v)} className="oft-btn-press"
+          style={{ padding: "8px 14px", borderRadius: 20, border: `2px solid ${(rangoVentas === "personalizado" || rangoVentas === "rango") ? RED : GRAY2}`, background: (rangoVentas === "personalizado" || rangoVentas === "rango") ? RED : WHITE, color: (rangoVentas === "personalizado" || rangoVentas === "rango") ? WHITE : BLACK, fontWeight: 700, fontSize: 13, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}>
+          <CalendarIcon size={15} /> {rangoVentas === "personalizado" && fechaPersonalizada ? new Date(fechaPersonalizada).toLocaleDateString("es-PA", { day: "2-digit", month: "short" }) : rangoVentas === "rango" && rangoInicio && rangoFin ? `${fmtCorta(rangoInicio)}–${fmtCorta(rangoFin)}` : "Fecha"}
+        </button>
+        <span style={{ fontSize: 13, color: GRAY3, marginLeft: 4 }}>· Mostrando: <strong style={{ color: BLACK }}>{etiquetaRango}</strong></span>
+      </div>
+
+      {/* CALENDARIO ANIMADO */}
+      {mostrarCalendario && (
+        <div className="oft-cal-pop" style={{ marginTop: 12, background: WHITE, border: `2px solid ${GRAY2}`, borderRadius: 16, padding: 16, maxWidth: 320, boxShadow: "0 12px 32px rgba(0,0,0,0.12)" }}>
+          {/* Modo: un día o rango */}
+          <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+            {[["dia","Un día"],["rango","Rango (X → Y)"]].map(([k,l]) => (
+              <button key={k} onClick={() => { setModoCalendario(k); setRangoInicio(null); setRangoFin(null); }} className="oft-btn-press"
+                style={{ flex: 1, padding: "7px 4px", borderRadius: 8, border: `2px solid ${modoCalendario === k ? RED : GRAY2}`, background: modoCalendario === k ? RED : WHITE, color: modoCalendario === k ? WHITE : BLACK, fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+                {l}
+              </button>
+            ))}
+          </div>
+          {modoCalendario === "rango" && (
+            <div style={{ fontSize: 12, color: GRAY3, marginBottom: 10, textAlign: "center" }}>
+              {!rangoInicio ? "Toca el día de inicio" : !rangoFin ? "Ahora toca el día final" : `${fmtCorta(rangoInicio)} → ${fmtCorta(rangoFin)}`}
+            </div>
+          )}
+          {/* Cabecera del mes */}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+            <button onClick={() => setMesCalendario(new Date(mesCalendario.getFullYear(), mesCalendario.getMonth() - 1, 1))} className="oft-btn-press" style={{ background: GRAY, border: "none", borderRadius: 8, width: 32, height: 32, cursor: "pointer", fontSize: 16, fontWeight: 800, color: RED }}>‹</button>
+            <div style={{ fontWeight: 800, fontSize: 15, textTransform: "capitalize" }}>{mesCalendario.toLocaleDateString("es-PA", { month: "long", year: "numeric" })}</div>
+            <button onClick={() => setMesCalendario(new Date(mesCalendario.getFullYear(), mesCalendario.getMonth() + 1, 1))} className="oft-btn-press" style={{ background: GRAY, border: "none", borderRadius: 8, width: 32, height: 32, cursor: "pointer", fontSize: 16, fontWeight: 800, color: RED }}>›</button>
+          </div>
+          {/* Días de la semana */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 2, marginBottom: 4 }}>
+            {["D","L","M","M","J","V","S"].map((d, i) => <div key={i} style={{ textAlign: "center", fontSize: 11, fontWeight: 700, color: GRAY3, padding: "4px 0" }}>{d}</div>)}
+          </div>
+          {/* Días del mes */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 2 }}>
+            {(() => {
+              const y = mesCalendario.getFullYear(), m = mesCalendario.getMonth();
+              const primerDia = new Date(y, m, 1).getDay();
+              const diasMes = new Date(y, m + 1, 0).getDate();
+              const celdas = [];
+              for (let i = 0; i < primerDia; i++) celdas.push(<div key={"e"+i} />);
+              for (let d = 1; d <= diasMes; d++) {
+                const fecha = new Date(y, m, d);
+                const esHoy = fecha.toDateString() === new Date().toDateString();
+                const selDia = fechaPersonalizada && new Date(fechaPersonalizada).toDateString() === fecha.toDateString();
+                // Resaltado para modo rango
+                const esInicio = rangoInicio && new Date(rangoInicio).toDateString() === fecha.toDateString();
+                const esFin = rangoFin && new Date(rangoFin).toDateString() === fecha.toDateString();
+                const dentroRango = rangoInicio && rangoFin && fecha >= new Date(new Date(rangoInicio).setHours(0,0,0,0)) && fecha <= new Date(new Date(rangoFin).setHours(23,59,59,999));
+                const sel = modoCalendario === "dia" ? selDia : (esInicio || esFin);
+                const tienePedidos = pedidosRealesTodos.some(o => new Date(o.created_at).toDateString() === fecha.toDateString());
+                const clickDia = () => {
+                  if (modoCalendario === "dia") {
+                    setFechaPersonalizada(fecha); setRangoVentas("personalizado"); setMostrarCalendario(false);
+                  } else {
+                    // Modo rango: primer clic = inicio, segundo = fin
+                    if (!rangoInicio || (rangoInicio && rangoFin)) {
+                      setRangoInicio(fecha); setRangoFin(null);
+                    } else {
+                      // segundo clic: ordena por si elige al revés
+                      if (fecha < new Date(rangoInicio)) { setRangoFin(new Date(rangoInicio)); setRangoInicio(fecha); }
+                      else { setRangoFin(fecha); }
+                      setRangoVentas("rango");
+                    }
+                  }
+                };
+                celdas.push(
+                  <button key={d} onClick={clickDia} className="oft-cal-day oft-btn-press"
+                    style={{ aspectRatio: "1", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: sel || esHoy ? 800 : 600, background: sel ? RED : dentroRango ? "#FFD9DB" : esHoy ? "#FFE5E6" : "transparent", color: sel ? WHITE : BLACK, position: "relative" }}>
+                    {d}
+                    {tienePedidos && !sel && <span style={{ position: "absolute", bottom: 3, left: "50%", transform: "translateX(-50%)", width: 4, height: 4, borderRadius: "50%", background: RED }} />}
+                  </button>
+                );
+              }
+              return celdas;
+            })()}
+          </div>
+          {/* Botón aplicar rango */}
+          {modoCalendario === "rango" && rangoInicio && rangoFin && (
+            <button onClick={() => setMostrarCalendario(false)} className="oft-btn-press" style={{ ...S.btnRed, width: "100%", justifyContent: "center", marginTop: 12, padding: 10, fontSize: 13 }}>
+              Aplicar {fmtCorta(rangoInicio)} → {fmtCorta(rangoFin)}
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+  const isoLocal = (d) => { const x = new Date(d); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, "0")}-${String(x.getDate()).padStart(2, "0")}`; };
+  const rangoMetricasISO = (() => {
+    const hoyP = fechaPanama();
+    const [aa, mm] = hoyP.split("-");
+    if (rangoVentas === "dia") return [hoyP, hoyP];
+    if (rangoVentas === "semana") return [sumarDiasISO(hoyP, -7), hoyP];
+    if (rangoVentas === "mes") return [`${aa}-${mm}-01`, hoyP];
+    if (rangoVentas === "anio") return [`${aa}-01-01`, hoyP];
+    if (rangoVentas === "personalizado" && fechaPersonalizada) { const d = isoLocal(fechaPersonalizada); return [d, d]; }
+    if (rangoVentas === "rango" && rangoInicio && rangoFin) return [isoLocal(rangoInicio), isoLocal(rangoFin)];
+    return ["2026-06-01", hoyP];
+  })();
 
   // ── MÉTRICAS (solo pedidos reales) ─────────────────────────────
   const ingresoTotal = pedidosReales.reduce((s, o) => s + Number(o.total || 0), 0);
@@ -6485,102 +6585,8 @@ function AdminView() {
             <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 24, display: "flex", alignItems: "center", gap: 10 }}><BarChart3 size={24} color={RED} /> Dashboard</div>
             {loadingData ? <Spinner /> : (
               <>
-                {/* FILTRO POR PERIODO */}
-                <div style={{ marginBottom: 22 }}>
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                    {[["dia","Día"],["semana","Semana"],["mes","Mes"],["anio","Año"],["todo","Todo"]].map(([k,l]) => (
-                      <button key={k} onClick={() => { setRangoVentas(k); setMostrarCalendario(false); }} className="oft-btn-press"
-                        style={{ padding: "8px 16px", borderRadius: 20, border: `2px solid ${rangoVentas === k ? RED : GRAY2}`, background: rangoVentas === k ? RED : WHITE, color: rangoVentas === k ? WHITE : BLACK, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
-                        {l}
-                      </button>
-                    ))}
-                    <button onClick={() => setMostrarCalendario(v => !v)} className="oft-btn-press"
-                      style={{ padding: "8px 14px", borderRadius: 20, border: `2px solid ${(rangoVentas === "personalizado" || rangoVentas === "rango") ? RED : GRAY2}`, background: (rangoVentas === "personalizado" || rangoVentas === "rango") ? RED : WHITE, color: (rangoVentas === "personalizado" || rangoVentas === "rango") ? WHITE : BLACK, fontWeight: 700, fontSize: 13, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}>
-                      <CalendarIcon size={15} /> {rangoVentas === "personalizado" && fechaPersonalizada ? new Date(fechaPersonalizada).toLocaleDateString("es-PA", { day: "2-digit", month: "short" }) : rangoVentas === "rango" && rangoInicio && rangoFin ? `${fmtCorta(rangoInicio)}–${fmtCorta(rangoFin)}` : "Fecha"}
-                    </button>
-                    <span style={{ fontSize: 13, color: GRAY3, marginLeft: 4 }}>· Mostrando: <strong style={{ color: BLACK }}>{etiquetaRango}</strong></span>
-                  </div>
-
-                  {/* CALENDARIO ANIMADO */}
-                  {mostrarCalendario && (
-                    <div className="oft-cal-pop" style={{ marginTop: 12, background: WHITE, border: `2px solid ${GRAY2}`, borderRadius: 16, padding: 16, maxWidth: 320, boxShadow: "0 12px 32px rgba(0,0,0,0.12)" }}>
-                      {/* Modo: un día o rango */}
-                      <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
-                        {[["dia","Un día"],["rango","Rango (X → Y)"]].map(([k,l]) => (
-                          <button key={k} onClick={() => { setModoCalendario(k); setRangoInicio(null); setRangoFin(null); }} className="oft-btn-press"
-                            style={{ flex: 1, padding: "7px 4px", borderRadius: 8, border: `2px solid ${modoCalendario === k ? RED : GRAY2}`, background: modoCalendario === k ? RED : WHITE, color: modoCalendario === k ? WHITE : BLACK, fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
-                            {l}
-                          </button>
-                        ))}
-                      </div>
-                      {modoCalendario === "rango" && (
-                        <div style={{ fontSize: 12, color: GRAY3, marginBottom: 10, textAlign: "center" }}>
-                          {!rangoInicio ? "Toca el día de inicio" : !rangoFin ? "Ahora toca el día final" : `${fmtCorta(rangoInicio)} → ${fmtCorta(rangoFin)}`}
-                        </div>
-                      )}
-                      {/* Cabecera del mes */}
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                        <button onClick={() => setMesCalendario(new Date(mesCalendario.getFullYear(), mesCalendario.getMonth() - 1, 1))} className="oft-btn-press" style={{ background: GRAY, border: "none", borderRadius: 8, width: 32, height: 32, cursor: "pointer", fontSize: 16, fontWeight: 800, color: RED }}>‹</button>
-                        <div style={{ fontWeight: 800, fontSize: 15, textTransform: "capitalize" }}>{mesCalendario.toLocaleDateString("es-PA", { month: "long", year: "numeric" })}</div>
-                        <button onClick={() => setMesCalendario(new Date(mesCalendario.getFullYear(), mesCalendario.getMonth() + 1, 1))} className="oft-btn-press" style={{ background: GRAY, border: "none", borderRadius: 8, width: 32, height: 32, cursor: "pointer", fontSize: 16, fontWeight: 800, color: RED }}>›</button>
-                      </div>
-                      {/* Días de la semana */}
-                      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 2, marginBottom: 4 }}>
-                        {["D","L","M","M","J","V","S"].map((d, i) => <div key={i} style={{ textAlign: "center", fontSize: 11, fontWeight: 700, color: GRAY3, padding: "4px 0" }}>{d}</div>)}
-                      </div>
-                      {/* Días del mes */}
-                      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 2 }}>
-                        {(() => {
-                          const y = mesCalendario.getFullYear(), m = mesCalendario.getMonth();
-                          const primerDia = new Date(y, m, 1).getDay();
-                          const diasMes = new Date(y, m + 1, 0).getDate();
-                          const celdas = [];
-                          for (let i = 0; i < primerDia; i++) celdas.push(<div key={"e"+i} />);
-                          for (let d = 1; d <= diasMes; d++) {
-                            const fecha = new Date(y, m, d);
-                            const esHoy = fecha.toDateString() === new Date().toDateString();
-                            const selDia = fechaPersonalizada && new Date(fechaPersonalizada).toDateString() === fecha.toDateString();
-                            // Resaltado para modo rango
-                            const esInicio = rangoInicio && new Date(rangoInicio).toDateString() === fecha.toDateString();
-                            const esFin = rangoFin && new Date(rangoFin).toDateString() === fecha.toDateString();
-                            const dentroRango = rangoInicio && rangoFin && fecha >= new Date(new Date(rangoInicio).setHours(0,0,0,0)) && fecha <= new Date(new Date(rangoFin).setHours(23,59,59,999));
-                            const sel = modoCalendario === "dia" ? selDia : (esInicio || esFin);
-                            const tienePedidos = pedidosRealesTodos.some(o => new Date(o.created_at).toDateString() === fecha.toDateString());
-                            const clickDia = () => {
-                              if (modoCalendario === "dia") {
-                                setFechaPersonalizada(fecha); setRangoVentas("personalizado"); setMostrarCalendario(false);
-                              } else {
-                                // Modo rango: primer clic = inicio, segundo = fin
-                                if (!rangoInicio || (rangoInicio && rangoFin)) {
-                                  setRangoInicio(fecha); setRangoFin(null);
-                                } else {
-                                  // segundo clic: ordena por si elige al revés
-                                  if (fecha < new Date(rangoInicio)) { setRangoFin(new Date(rangoInicio)); setRangoInicio(fecha); }
-                                  else { setRangoFin(fecha); }
-                                  setRangoVentas("rango");
-                                }
-                              }
-                            };
-                            celdas.push(
-                              <button key={d} onClick={clickDia} className="oft-cal-day oft-btn-press"
-                                style={{ aspectRatio: "1", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: sel || esHoy ? 800 : 600, background: sel ? RED : dentroRango ? "#FFD9DB" : esHoy ? "#FFE5E6" : "transparent", color: sel ? WHITE : BLACK, position: "relative" }}>
-                                {d}
-                                {tienePedidos && !sel && <span style={{ position: "absolute", bottom: 3, left: "50%", transform: "translateX(-50%)", width: 4, height: 4, borderRadius: "50%", background: RED }} />}
-                              </button>
-                            );
-                          }
-                          return celdas;
-                        })()}
-                      </div>
-                      {/* Botón aplicar rango */}
-                      {modoCalendario === "rango" && rangoInicio && rangoFin && (
-                        <button onClick={() => setMostrarCalendario(false)} className="oft-btn-press" style={{ ...S.btnRed, width: "100%", justifyContent: "center", marginTop: 12, padding: 10, fontSize: 13 }}>
-                          Aplicar {fmtCorta(rangoInicio)} → {fmtCorta(rangoFin)}
-                        </button>
-                      )}
-                    </div>
-                  )}
-                </div>
+                {/* FILTRO POR PERIODO (compartido con Métricas) */}
+                {renderFiltroPeriodo()}
 
                 {/* TARJETAS DE MÉTRICAS */}
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 16, marginBottom: 20 }}>
@@ -8356,7 +8362,7 @@ function AdminView() {
         {/* ═══════════ DESCUENTOS ═══════════ */}
         {tab === "ofertas" && esAdminCompleto && <OfertasAdmin />}
         {tab === "fraude" && esAdminCompleto && <FraudePanel onCambio={cargarRiesgos} />}
-        {tab === "metricas" && esAdminCompleto && <MetricasPanel />}
+        {tab === "metricas" && esAdminCompleto && <MetricasPanel desde={rangoMetricasISO[0]} hasta={rangoMetricasISO[1]} filtro={renderFiltroPeriodo()} />}
 
         {tab === "descuentos" && esAdminCompleto && (
           <>
