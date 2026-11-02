@@ -4072,6 +4072,203 @@ function FraudePanel({ onCambio }) {
   );
 }
 
+// ═══════════ MÉTRICAS DEL NEGOCIO (pestaña "Métricas"): ticket, CAC, LTV, conversión, ritmo anual ═══════════
+const usdM = (n, d = 2) => (n === null || n === undefined || Number.isNaN(Number(n))) ? "—" : "$" + Number(n).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
+const pctM = (n, d = 1) => (n === null || n === undefined || Number.isNaN(Number(n))) ? "—" : Number(n).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d }) + "%";
+const numM = (n) => (n === null || n === undefined) ? "—" : Number(n).toLocaleString("en-US");
+
+function sumarDiasISO(iso, dias) {
+  const d = new Date(iso + "T12:00:00Z"); d.setUTCDate(d.getUTCDate() + dias);
+  return d.toISOString().slice(0, 10);
+}
+function rangoPresetMetricas(preset) {
+  const hoy = fechaPanama();
+  const [a, m] = hoy.split("-").map(Number);
+  const primeroMes = `${a}-${String(m).padStart(2, "0")}-01`;
+  if (preset === "30") return [sumarDiasISO(hoy, -29), hoy];
+  if (preset === "60") return [sumarDiasISO(hoy, -59), hoy];
+  if (preset === "90") return [sumarDiasISO(hoy, -89), hoy];
+  if (preset === "mes") return [primeroMes, hoy];
+  if (preset === "mespasado") { const fin = sumarDiasISO(primeroMes, -1); return [fin.slice(0, 8) + "01", fin]; }
+  return ["2026-06-01", hoy]; // todo
+}
+
+function MetricasPanel() {
+  const { showToast } = useApp();
+  const [preset, setPreset] = useState("60");
+  const [desde, setDesde] = useState(() => rangoPresetMetricas("60")[0]);
+  const [hasta, setHasta] = useState(() => rangoPresetMetricas("60")[1]);
+  const [m, setM] = useState(null);
+  const [cargando, setCargando] = useState(true);
+  const [error, setError] = useState("");
+  const [margenTxt, setMargenTxt] = useState("");
+  const [guardando, setGuardando] = useState(false);
+  const peticion = useRef(0);
+
+  const cargar = async () => {
+    const id = ++peticion.current;
+    setCargando(true); setError("");
+    try {
+      await sb.ensureFreshToken();
+      const r = await fetch(`${SUPABASE_URL}/rest/v1/rpc/metricas_negocio`, { method: "POST", headers: sb.dataHeaders(), body: JSON.stringify({ p_desde: desde, p_hasta: hasta }) });
+      if (!r.ok) throw new Error(await r.text());
+      const d = await r.json();
+      if (id !== peticion.current) return;
+      setM(d);
+      setMargenTxt(t => (t === "" && d.margen_bruto !== null && d.margen_bruto !== undefined) ? String(d.margen_bruto) : t);
+    } catch (e) { if (id === peticion.current) setError(String(e.message || e).slice(0, 200)); }
+    if (id === peticion.current) setCargando(false);
+  };
+  useEffect(() => { if (desde && hasta) cargar(); }, [desde, hasta]);
+  useRefrescoPeriodico(cargar, 120000);
+
+  const elegir = (p) => { setPreset(p); if (p !== "custom") { const [a, b] = rangoPresetMetricas(p); setDesde(a); setHasta(b); } };
+  const guardarMargen = async () => {
+    const txt = margenTxt.trim().replace(",", ".");
+    const n = txt === "" ? null : Number(txt);
+    if (n !== null && (!Number.isFinite(n) || n < 0 || n > 100)) { alert("Escribe un porcentaje entre 0 y 100."); return; }
+    setGuardando(true);
+    try { await sb.patch("metricas_config", 1, { margen_bruto: n, updated_at: new Date().toISOString() }); showToast("Margen guardado"); await cargar(); }
+    catch (e) { alert("No se pudo guardar el margen: " + (e.message || "")); }
+    setGuardando(false);
+  };
+
+  const caja = { background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 14, padding: 16 };
+  const tit = { fontSize: 16, fontWeight: 900, margin: "26px 0 12px" };
+  const Tarjeta = ({ etiqueta, valor, formula, color = BLACK, nota }) => (
+    <div style={caja}>
+      <div style={{ fontSize: 13, color: GRAY3, fontWeight: 700 }}>{etiqueta}</div>
+      <div style={{ fontSize: 28, fontWeight: 900, color, margin: "4px 0 6px", lineHeight: 1.1 }}>{valor}</div>
+      <div style={{ fontSize: 12, color: GRAY3, lineHeight: 1.45 }}><b>Cómo se calcula:</b> {formula}</div>
+      {nota && <div style={{ fontSize: 12, color: "#856404", marginTop: 6, lineHeight: 1.45 }}>{nota}</div>}
+    </div>
+  );
+  const chip = (act) => ({ padding: "7px 13px", borderRadius: 20, border: `1px solid ${act ? RED : GRAY2}`, background: act ? RED : WHITE, color: act ? WHITE : BLACK, fontWeight: 700, fontSize: 13, cursor: "pointer" });
+  const grid = { display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(250px,1fr))", gap: 14 };
+
+  return (
+    <>
+      <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 6, display: "flex", alignItems: "center", gap: 10 }}><Wallet size={24} color={RED} /> Métricas del negocio</div>
+      <div style={{ fontSize: 13, color: GRAY3, marginBottom: 16, maxWidth: 760 }}>Ticket promedio, costo por cliente nuevo (CAC), valor del cliente (LTV), conversión y ritmo de ventas. Cada número muestra cómo se calculó con tus datos reales.</div>
+
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 6 }}>
+        {[["30", "Últimos 30 días"], ["60", "Últimos 60 días"], ["90", "Últimos 90 días"], ["mes", "Este mes"], ["mespasado", "Mes pasado"], ["todo", "Todo"], ["custom", "Personalizado"]].map(([k, l]) => <button key={k} onClick={() => elegir(k)} style={chip(preset === k)}>{l}</button>)}
+      </div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 8, fontSize: 13 }}>
+        <input type="date" value={desde} onChange={e => { setPreset("custom"); setDesde(e.target.value); }} style={{ padding: "7px 10px", border: `1px solid ${GRAY2}`, borderRadius: 8 }} />
+        <span>a</span>
+        <input type="date" value={hasta} onChange={e => { setPreset("custom"); setHasta(e.target.value); }} style={{ padding: "7px 10px", border: `1px solid ${GRAY2}`, borderRadius: 8 }} />
+        {cargando && <span style={{ color: GRAY3 }}>Calculando…</span>}
+      </div>
+      {error && <div style={{ background: "#FDE8E8", color: "#B71C1C", padding: 12, borderRadius: 10, margin: "10px 0", fontSize: 13 }}>No se pudieron calcular las métricas: {error}</div>}
+
+      {m && (
+        <>
+          {(m.ventas_desde && desde < m.ventas_desde) && <div style={{ background: "#FFF4D6", color: "#8A5A00", padding: 10, borderRadius: 10, margin: "8px 0", fontSize: 12 }}>Tus ventas registradas empiezan el {m.ventas_desde}. Antes de esa fecha no hay datos, así que el periodo se calcula desde ahí.</div>}
+          {(m.analitica_desde && desde < m.analitica_desde) && <div style={{ background: "#FFF4D6", color: "#8A5A00", padding: 10, borderRadius: 10, margin: "8px 0", fontSize: 12 }}>Las visitas a la web se registran desde el {m.analitica_desde}. La conversión solo es confiable desde esa fecha.</div>}
+
+          <div style={tit}>Ventas</div>
+          <div style={grid}>
+            <Tarjeta etiqueta="Ventas del periodo" valor={usdM(m.ventas)} formula={`suma de ${numM(m.pedidos)} pedidos pagados (sin cotizaciones) en ${m.dias} días.`} color={RED} />
+            <Tarjeta etiqueta="Ticket promedio" valor={usdM(m.ticket)} formula={`${usdM(m.ventas)} ÷ ${numM(m.pedidos)} pedidos. La mitad de los pedidos es menor a ${usdM(m.mediana, 0)} (mediana).`} />
+            <Tarjeta etiqueta="Clientes que compraron" valor={numM(m.compradores)} formula={`clientes distintos con al menos un pedido pagado. ${numM(m.nuevos)} son nuevos y ${numM(m.recurrentes)} ya habían comprado antes del periodo.`} />
+          </div>
+
+          <div style={tit}>Costo de adquirir clientes</div>
+          <div style={grid}>
+            <Tarjeta etiqueta="CAC (costo por cliente nuevo)" valor={usdM(m.cac)} color={RED}
+              formula={`${usdM(m.gasto_ads)} gastados en Meta Ads ÷ ${numM(m.nuevos)} clientes nuevos. "Nuevo" = su primera compra pagada cae dentro de este periodo.`}
+              nota="Es un CAC combinado: no distingue si el cliente llegó por anuncios o por otro medio, y el gasto de Meta Ads del periodo cuenta completo." />
+            <Tarjeta etiqueta="ROAS (venta por cada $1 en anuncios)" valor={m.roas === null ? "—" : "$" + Number(m.roas).toFixed(2)} formula={`${usdM(m.ventas)} vendidos ÷ ${usdM(m.gasto_ads)} gastados en anuncios.`} />
+            <Tarjeta etiqueta="Gasto en anuncios" valor={usdM(m.gasto_ads)} formula="suma del gasto diario de tus campañas de Meta Ads (se sincroniza desde Análisis Ads)." />
+          </div>
+
+          <div style={tit}>Valor del cliente (LTV)</div>
+          <div style={grid}>
+            <Tarjeta etiqueta="LTV de los clientes nuevos del periodo" valor={usdM(m.cohorte.ltv)} color={RED}
+              formula={`lo que han gastado hasta hoy los ${numM(m.cohorte.clientes)} clientes cuya primera compra fue en este periodo, en promedio (${Number(m.cohorte.pedidos_por_cliente || 0).toFixed(2)} pedidos por cliente).`}
+              nota="Son ingresos, no ganancia. Y es un piso: estos clientes todavía pueden volver a comprar." />
+            <Tarjeta etiqueta="LTV de todos los clientes" valor={usdM(m.global.ltv)} formula={`gasto total promedio de los ${numM(m.global.clientes)} clientes que han comprado desde ${m.ventas_desde || "el inicio"}.`} />
+            <Tarjeta etiqueta="LTV ÷ CAC (en ingresos)" valor={m.ltv_cac === null ? "—" : Number(m.ltv_cac).toFixed(2) + " veces"} formula={`${usdM(m.cohorte.ltv)} ÷ ${usdM(m.cac)}. Lo sano en ganancia es 3 veces o más; en ingresos hace falta bastante más.`} />
+            <Tarjeta etiqueta="Recompra (clientes nuevos del periodo)" valor={pctM(m.cohorte.recompra_pct)} formula={`${numM(m.cohorte.recompraron)} de ${numM(m.cohorte.clientes)} clientes nuevos ya volvieron a comprar.`} />
+            <Tarjeta etiqueta="Recompra histórica (todos)" valor={pctM(m.global.recompra_pct)} formula={`clientes con 2 o más pedidos ÷ ${numM(m.global.clientes)} clientes. Con 3 o más pedidos: ${pctM(m.global.recompra3_pct)}.`} />
+          </div>
+
+          <div style={{ ...caja, marginTop: 14, borderColor: RED }}>
+            <div style={{ fontWeight: 900, marginBottom: 6 }}>¿La publicidad deja ganancia? Depende de tu margen</div>
+            <div style={{ fontSize: 13, color: GRAY3, marginBottom: 10, lineHeight: 1.5 }}>
+              Para que el LTV de los clientes nuevos ({usdM(m.cohorte.ltv)}) cubra lo que cuesta conseguirlos ({usdM(m.cac)}) necesitas un <b>margen bruto de al menos {pctM(m.margen_minimo_pct)}</b> sobre lo que venden.
+            </div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <label style={{ fontSize: 13, fontWeight: 700 }}>Tu margen bruto aproximado (%)</label>
+              <input value={margenTxt} onChange={e => setMargenTxt(e.target.value)} inputMode="decimal" placeholder="ej. 30" style={{ width: 90, padding: "8px 10px", border: `1px solid ${GRAY2}`, borderRadius: 8 }} />
+              <button onClick={guardarMargen} disabled={guardando} style={{ background: RED, color: WHITE, border: "none", borderRadius: 8, padding: "9px 14px", fontWeight: 800, cursor: "pointer" }}>Guardar</button>
+            </div>
+            {m.margen_bruto !== null && m.margen_bruto !== undefined && (
+              <div style={{ marginTop: 10, fontSize: 14, lineHeight: 1.6 }}>
+                Con {pctM(m.margen_bruto, 0)} de margen: cada cliente nuevo te deja <b>{usdM(m.ltv_ganancia)}</b> de ganancia bruta y te costó {usdM(m.cac)}. Ganancia ÷ CAC = <b style={{ color: Number(m.ltv_cac_ganancia) >= 1 ? "#155724" : "#B71C1C" }}>{m.ltv_cac_ganancia === null ? "—" : Number(m.ltv_cac_ganancia).toFixed(2) + " veces"}</b> {Number(m.ltv_cac_ganancia) >= 1 ? "(recuperas lo gastado)" : "(todavía no recuperas lo gastado con la primera compra; depende de que vuelvan)"}.
+              </div>
+            )}
+          </div>
+
+          <div style={tit}>Conversión</div>
+          <div style={grid}>
+            <Tarjeta etiqueta="Visitantes únicos a la web" valor={numM(m.visitantes)} formula="dispositivos distintos que entraron a la tienda en el periodo." />
+            <Tarjeta etiqueta="Conversión global (visitante → cliente nuevo)" valor={pctM(m.conv_global_pct, 2)} color={RED} formula={`${numM(m.nuevos)} clientes nuevos ÷ ${numM(m.visitantes)} visitantes. Cuenta ventas por web y por WhatsApp.`} />
+            <Tarjeta etiqueta="Conversión de compra directa en la web" valor={pctM(m.conv_web_pct, 2)} formula={`${numM(m.web_pagados)} pedidos pagados en la web ÷ ${numM(m.visitantes)} visitantes. Baja porque muchos compran por WhatsApp.`} />
+            <Tarjeta etiqueta="Pago completado (checkout)" valor={pctM(m.conv_checkout_pct)} formula={`${numM(m.web_pagados)} pagados ÷ ${numM(m.web_iniciados)} pedidos iniciados en la web.`} />
+            <Tarjeta etiqueta="Visitantes que agregaron al carrito" valor={`${numM(m.con_carrito)} (${pctM(m.conv_carrito_pct)})`} formula={`${numM(m.con_carrito)} ÷ ${numM(m.visitantes)} visitantes.`} />
+            <Tarjeta etiqueta="Visitantes que consultaron por WhatsApp" valor={numM(m.whatsapp)} formula="dispositivos distintos que tocaron un botón de WhatsApp." />
+          </div>
+
+          <div style={tit}>Ritmo de ventas (equivalente a MRR / ARR)</div>
+          <div style={{ fontSize: 12, color: GRAY3, marginBottom: 10, maxWidth: 760 }}>Ofertodo no vende por suscripción, así que no existe un MRR/ARR formal. Estos son los equivalentes: qué venderías al mes y al año si mantuvieras el ritmo del periodo elegido. No es ingreso asegurado.</div>
+          <div style={grid}>
+            <Tarjeta etiqueta="Ventas por mes (ritmo)" valor={usdM(m.ritmo_mensual, 0)} formula={`${usdM(m.ventas)} ÷ ${m.dias} días × 30.4 días.`} />
+            <Tarjeta etiqueta="Ventas por año (ritmo)" valor={usdM(m.ritmo_anual, 0)} color={RED} formula={`${usdM(m.ventas)} ÷ ${m.dias} días × 365.`} />
+            <Tarjeta etiqueta="Parte recurrente por mes" valor={usdM(m.ritmo_mensual_recurrente, 0)} formula={`ventas de clientes que ya habían comprado antes del periodo (${usdM(m.ventas_recurrentes)}) llevadas a un mes. Es lo más parecido a un MRR.`} />
+            <Tarjeta etiqueta="Parte recurrente por año" valor={usdM(m.ritmo_anual_recurrente, 0)} formula="la parte recurrente llevada a 12 meses." />
+          </div>
+
+          <div style={tit}>Mes a mes</div>
+          <div style={{ ...caja, overflowX: "auto", padding: 0 }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 620 }}>
+              <thead><tr style={{ background: "#F7F7F7", textAlign: "right" }}>
+                {["Mes", "Ventas", "Pedidos", "Ticket", "Clientes nuevos", "Gasto anuncios", "CAC"].map((h, i) => <th key={h} style={{ padding: "10px 12px", textAlign: i === 0 ? "left" : "right", fontWeight: 800 }}>{h}</th>)}
+              </tr></thead>
+              <tbody>
+                {(m.serie || []).map(s => (
+                  <tr key={s.mes} style={{ borderTop: `1px solid ${GRAY2}` }}>
+                    <td style={{ padding: "9px 12px", fontWeight: 700 }}>{s.mes}</td>
+                    <td style={{ padding: "9px 12px", textAlign: "right" }}>{usdM(s.ventas, 0)}</td>
+                    <td style={{ padding: "9px 12px", textAlign: "right" }}>{numM(s.pedidos)}</td>
+                    <td style={{ padding: "9px 12px", textAlign: "right" }}>{usdM(s.ticket)}</td>
+                    <td style={{ padding: "9px 12px", textAlign: "right" }}>{numM(s.nuevos)}</td>
+                    <td style={{ padding: "9px 12px", textAlign: "right" }}>{usdM(s.gasto, 0)}</td>
+                    <td style={{ padding: "9px 12px", textAlign: "right", fontWeight: 800 }}>{usdM(s.cac)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div style={{ fontSize: 12, color: GRAY3, marginTop: 8, maxWidth: 760, lineHeight: 1.5 }}>El CAC de junio y julio sale muy alto porque tus ventas registradas empiezan el 16 de junio y esos meses tenían pocos clientes nuevos registrados; el CAC más confiable es el de los meses recientes.</div>
+
+          <div style={{ ...caja, marginTop: 22 }}>
+            <div style={{ fontWeight: 900, marginBottom: 8 }}>Cómo leer estas métricas</div>
+            <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, color: GRAY3, lineHeight: 1.6 }}>
+              <li><b>Se cuentan</b> pedidos pagados, tanto de la web como los que crean tus vendedores. <b>No se cuentan</b> cotizaciones ni pedidos con pago pendiente, ni las compras del equipo.</li>
+              <li><b>Cliente nuevo</b>: primera compra pagada dentro del periodo, según tu historial registrado (desde el 16 de junio de 2026).</li>
+              <li>Los pedidos sin cliente asignado se incluyen en las ventas pero no en CAC ni LTV.</li>
+              <li>No incluye ventas que existan solo en el punto de venta de Odoo.</li>
+              <li>Las fechas se cuentan con la hora de Panamá.</li>
+            </ul>
+          </div>
+        </>
+      )}
+    </>
+  );
+}
+
 function AdminView() {
   const { products, setProducts, categories, setCategories, gruposCategorias, setGruposCategorias, banners, setBanners, popups, setPopups, empresas, setEmpresas, sucursales, setSucursales, localesRetiro, setLocalesRetiro, retiroLocalHabilitado, setRetiroLocalHabilitado, showToast, setView, setUser, user } = useApp();
   // Rol del usuario actual: 'admin' = módulo completo, 'operador' = acceso limitado.
@@ -5856,6 +6053,7 @@ function AdminView() {
   ] : [
     ["dashboard", "Dashboard", BarChart3],
     ["analytics", "Analítica Web", Eye],
+    ["metricas", "Métricas", Wallet],
     ["orders", "Pedidos", Package],
     ["crear", "Crear", FilePlus],
     ["fraude", "Fraude", Lock],
@@ -7797,6 +7995,7 @@ function AdminView() {
         {/* ═══════════ DESCUENTOS ═══════════ */}
         {tab === "ofertas" && esAdminCompleto && <OfertasAdmin />}
         {tab === "fraude" && esAdminCompleto && <FraudePanel onCambio={cargarRiesgos} />}
+        {tab === "metricas" && esAdminCompleto && <MetricasPanel />}
 
         {tab === "descuentos" && esAdminCompleto && (
           <>
