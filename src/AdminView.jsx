@@ -3389,8 +3389,8 @@ function OfertasAdmin() {
     if (f.tipo === "combo" && (filas.length === 0 || filas.some(r => r.cantidad <= 0))) return null;
     const info = ofertaInfo(tmp, productosPorId, filas);
     if (!info) return null;
-    const costo = info.lineas.reduce((s, l) => s + (Number(l.product.costo) || 0) * l.piezas, 0);
-    const sinCosto = info.lineas.some(l => !(Number(l.product.costo) > 0));
+    const costo = info.lineas.reduce((s, l) => s + costoProducto(l.product) * l.piezas, 0);
+    const sinCosto = info.lineas.some(l => !(costoProducto(l.product) > 0));
     return { info, costo, sinCosto };
   };
   const guardarOferta = async () => {
@@ -3487,7 +3487,7 @@ function OfertasAdmin() {
           <div style={{ display: "grid", gap: 10 }}>
             {lista.map(o => {
               const info = ofertaInfo(o, productosPorId, comboRows);
-              const costo = info ? info.lineas.reduce((s, l) => s + (Number(l.product.costo) || 0) * l.piezas, 0) : 0;
+              const costo = info ? info.lineas.reduce((s, l) => s + costoProducto(l.product) * l.piezas, 0) : 0;
               const bajoCosto = info && costo > 0 && Number(o.precio_oferta) < costo;
               return (
                 <div key={o.id} style={{ display: "flex", gap: 12, alignItems: "center", background: WHITE, border: `1px solid ${info ? GRAY2 : RED}`, borderRadius: 12, padding: 12, opacity: o.activo ? 1 : 0.55, flexWrap: "wrap" }}>
@@ -4610,12 +4610,815 @@ function MetricasPanel({ desde, hasta, filtro }) {
             </div>
           </details>
 
+          <div style={{ marginTop: 8 }}><TiendaFisicaPanel desde={desde} hasta={hasta} /></div>
+
           <div style={{ marginTop: 22, fontSize: 12, color: MT.suave, lineHeight: 1.6, maxWidth: 780 }}>
-            <b style={{ color: MT.texto2 }}>Cómo leer estas métricas.</b> Se cuentan pedidos pagados (web y los que crean tus vendedores); no se cuentan cotizaciones, pedidos sin pagar ni compras del equipo. “Cliente nuevo” es quien hace su primera compra pagada dentro del periodo, según tu historial desde el 16 de junio de 2026. Los pedidos sin cliente asignado suman a las ventas pero no al CAC ni al LTV. No incluye ventas que existan solo en el punto de venta de Odoo. Fechas con hora de Panamá.
+            <b style={{ color: MT.texto2 }}>Cómo leer estas métricas.</b> Se cuentan pedidos pagados (web y los que crean tus vendedores); no se cuentan cotizaciones, pedidos sin pagar ni compras del equipo. “Cliente nuevo” es quien hace su primera compra pagada dentro del periodo, según tu historial desde el 16 de junio de 2026. Los pedidos sin cliente asignado suman a las ventas pero no al CAC ni al LTV. Las ventas del punto de venta de Odoo (tienda física) no entran en estas cifras: se muestran aparte, en la sección “Ventas de tienda física”. Fechas con hora de Panamá.
           </div>
         </>
       )}
     </div>
+  );
+}
+
+// ═══════════ FINANZAS (pestaña "Finanzas") — SOLO PARA EL DUEÑO ═══════════
+// Todos los datos viven en tablas privadas de Supabase (sin acceso público). La página solo habla con
+// funciones del servidor que vuelven a comprobar que quien pregunta es el dueño. Un operador o un visitante
+// recibe "No autorizado" aunque conozca la dirección.
+const COSTOS_FIN = new Map(); // producto_id -> costo por pieza (solo se llena si eres el dueño)
+const COSTOS_ORIGEN = new Map(); // producto_id -> "manual" | "odoo"
+const costoProducto = (p) => { const c = p ? COSTOS_FIN.get(p.id) : undefined; return c === undefined ? 0 : Number(c); };
+async function finRpc(fn, args = {}) {
+  await sb.ensureFreshToken();
+  const r = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${fn}`, { method: "POST", headers: sb.dataHeaders(), body: JSON.stringify(args) });
+  if (!r.ok) {
+    let t = await r.text();
+    try { t = JSON.parse(t).message || t; } catch (_e) { /* texto plano */ }
+    throw new Error(t);
+  }
+  return r.json();
+}
+async function finCargarCostos() {
+  const lista = await finRpc("fin_costos_listar");
+  COSTOS_FIN.clear(); COSTOS_ORIGEN.clear();
+  (lista || []).forEach(x => { COSTOS_FIN.set(Number(x.producto_id), Number(x.costo)); COSTOS_ORIGEN.set(Number(x.producto_id), x.origen || "manual"); });
+  return COSTOS_FIN;
+}
+const MODOS_ODOO = [["solo_vacios", "Odoo llena y actualiza los suyos; respeta los que escribo a mano (recomendado mientras configuras Odoo)"], ["siempre", "Odoo manda: actualizar siempre con el costo de Odoo"], ["apagado", "Apagado: no traer nada de Odoo"]];
+const METODOS_FIN = [["efectivo", "Efectivo"], ["transferencia", "Transferencia"], ["tarjeta", "Tarjeta"], ["yappy", "Yappy"], ["credito", "A crédito (aún sin pagar)"], ["otro", "Otro"]];
+const METODOS_ABONO = METODOS_FIN.filter(([k]) => k !== "credito");
+const GRUPOS_FIN = { operativo: "Operativo", personal: "Personal", logistica: "Logística", marketing: "Marketing", impuestos: "Impuestos", financiero: "Financiero", inventario: "Compra de mercancía", otro: "Otros" };
+const inpF = { background: "#fff", color: MT.texto, border: `1px solid ${MT.borde}`, borderRadius: 10, padding: "8px 10px", fontSize: 13, minWidth: 0, fontFamily: "inherit" };
+const lblF = { fontSize: 11.5, color: MT.texto2, fontWeight: 600, display: "block", marginBottom: 4 };
+const ESTADO_DOC = { pendiente: ["Pendiente", MT.texto2], parcial: ["Pago parcial", "#8A5A00"], vencido: ["Vencido", MT.malo], pagado: ["Pagado", MT.bueno], anulado: ["Anulado", MT.suave] };
+
+function useFinDatos(fn, args, deps) {
+  const [datos, setDatos] = useState(null);
+  const [error, setError] = useState("");
+  const [cargando, setCargando] = useState(true);
+  const id = useRef(0);
+  const recargar = async () => {
+    const n = ++id.current;
+    setCargando(true); setError("");
+    try { const d = await finRpc(fn, args); if (n === id.current) setDatos(d); }
+    catch (e) { if (n === id.current) setError(String(e.message || e).slice(0, 220)); }
+    if (n === id.current) setCargando(false);
+  };
+  useEffect(() => { recargar(); }, deps);
+  return { datos, error, cargando, recargar };
+}
+const AvisoFin = ({ children, malo }) => <div className="met-aviso" style={malo ? { background: "#FDE8E8", borderColor: "#F5B5B5", color: "#B71C1C" } : undefined}>{children}</div>;
+
+// ── Resumen: ganancia real, gastos, caja ──
+function FinResumen({ desde, hasta, irA }) {
+  const { datos: r, error, cargando } = useFinDatos("fin_resumen", { p_desde: desde, p_hasta: hasta }, [desde, hasta]);
+  if (error) return <AvisoFin malo>No se pudo calcular: {error}</AvisoFin>;
+  if (!r) return <div style={{ padding: "50px 0", textAlign: "center", color: MT.texto2 }}>Calculando tus finanzas…</div>;
+  const serie = r.serie || [];
+  const ventasProd = Number(r.ventas_productos) || 0;
+  const gb = r.ganancia_bruta_est === null || r.ganancia_bruta_est === undefined ? null : Number(r.ganancia_bruta_est);
+  const neta = r.ganancia_neta_est === null || r.ganancia_neta_est === undefined ? null : Number(r.ganancia_neta_est);
+  const costoEst = gb === null ? null : ventasProd - gb;
+  const gastosTot = Number(r.gastos_operativos) + Number(r.gasto_ads) + Number(r.comisiones);
+  const f = r.flujo || {};
+  const cob = r.cobertura_pct === null || r.cobertura_pct === undefined ? 0 : Number(r.cobertura_pct);
+  const pasos = [
+    ["Ventas de productos", ventasProd, MT.tinta, "+"],
+    ["Costo de la mercancía vendida (estimado)", costoEst, MT.suave, "−"],
+    ["Envíos cobrados a clientes", Number(r.envio_cobrado), MT.tinta, "+"],
+    ["Reembolsos a clientes", Number(r.reembolsos), MT.malo, "−"],
+    ["Publicidad en Meta (automático)", Number(r.gasto_ads), MT.malo, "−"],
+    ["Comisiones de tarjeta y Yappy (estimadas)", Number(r.comisiones), MT.malo, "−"],
+    ["Gastos operativos que registraste", Number(r.gastos_operativos), MT.malo, "−"],
+  ];
+  const maxPaso = Math.max(ventasProd, 1);
+  const cat = (r.gastos_por_categoria || []);
+  const maxCat = Math.max(1, ...cat.map(c => Number(c.total)));
+  return (
+    <div style={{ opacity: cargando ? 0.7 : 1, transition: "opacity .25s" }}>
+      {cob < 100 && <AvisoFin>Solo el <b>{pctM(cob, 0)}</b> de tus ventas tiene costo cargado, por eso la ganancia es una <b>estimación</b> (se extiende el margen de los productos con costo al resto). Carga los costos en <button className="met-chip" style={{ padding: "2px 10px" }} onClick={() => irA("costos")}>Costos de productos</button> para tener la cifra real.</AvisoFin>}
+      {Number(r.gastos_operativos) === 0 && <AvisoFin>Aún no hay gastos operativos registrados en este periodo (alquiler, planilla, servicios…). Hasta que los registres, la ganancia neta se verá mejor de lo que realmente es. <button className="met-chip" style={{ padding: "2px 10px" }} onClick={() => irA("gastos")}>Registrar gastos</button></AvisoFin>}
+      {!r.comisiones_configuradas && <AvisoFin>Las comisiones de tarjeta y Yappy no están configuradas, así que no se descuentan. Ponlas en <button className="met-chip" style={{ padding: "2px 10px" }} onClick={() => irA("control")}>Ajustes</button>.</AvisoFin>}
+
+      <div className="met-grid" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", marginTop: 14 }}>
+        <Kpi retraso={0} etiqueta="Ventas del periodo" formula={`Suma de ${numM(r.pedidos)} pedidos pagados. Incluye ${usdM(r.envio_cobrado)} de envíos cobrados a clientes.`}>
+          <Cifra valor={Number(r.ventas)} f={(v) => usdM(v, 0)} />
+        </Kpi>
+        <Kpi retraso={60} etiqueta="Ganancia bruta (estimada)" formula={`Ventas de productos − costo de la mercancía. Con el margen de los productos que sí tienen costo (${pctM(r.margen_pct)}) aplicado a todas las ventas de productos.`}
+          pie={<div style={{ fontSize: 12, color: MT.suave }}>Margen {pctM(r.margen_pct)} · costo cargado en {pctM(cob, 0)} de las ventas</div>}>
+          {gb === null ? <span style={{ fontSize: 15, color: MT.suave }}>Carga costos para verla</span> : <Cifra valor={gb} f={(v) => usdM(v, 0)} />}
+        </Kpi>
+        <Kpi retraso={120} etiqueta="Gastos, anuncios y comisiones" formula={`Gastos operativos ${usdM(r.gastos_operativos)} + anuncios Meta ${usdM(r.gasto_ads)} + comisiones ${usdM(r.comisiones)}. No incluye compras de mercancía (esas ya están en el costo de lo vendido).`}>
+          <Cifra valor={gastosTot} f={(v) => usdM(v, 0)} />
+        </Kpi>
+        <Kpi acento grande retraso={180} etiqueta="Ganancia neta (estimada)" formula="Ganancia bruta + envíos cobrados − reembolsos − anuncios − comisiones − gastos operativos."
+          pie={<div style={{ fontSize: 12, color: MT.suave }}>{r.margen_neto_pct === null || r.margen_neto_pct === undefined ? "" : `${pctM(r.margen_neto_pct)} de las ventas`}</div>}>
+          {neta === null ? <span style={{ fontSize: 15, color: MT.suave }}>Carga costos para verla</span> : <span style={{ color: neta >= 0 ? MT.bueno : MT.malo }}><Cifra valor={neta} f={(v) => (v < 0 ? "−" : "") + usdM(Math.abs(v), 0)} /></span>}
+        </Kpi>
+      </div>
+
+      <div className="met-sec">Cómo se llega a la ganancia</div>
+      <div className="met-grid" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,420px),1fr))" }}>
+        <div className="met-card met-in" style={{ "--d": "80ms" }}>
+          {pasos.map(([et, val, color, signo], i) => val === null ? null : <BarraH key={et} etiqueta={et} valor={Math.abs(val)} maximo={maxPaso} color={color} texto={`${signo === "−" ? "−" : "+"}${usdM(Math.abs(val), 0)}`} retraso={i * 80} />)}
+          <div style={{ borderTop: `1px solid ${MT.rejilla}`, marginTop: 6, paddingTop: 10, display: "flex", justifyContent: "space-between", fontSize: 14, fontWeight: 800 }}>
+            <span>Ganancia neta estimada</span>
+            <span style={{ color: neta === null ? MT.suave : neta >= 0 ? MT.bueno : MT.malo }}>{neta === null ? "—" : (neta < 0 ? "−" : "") + usdM(Math.abs(neta), 0)}</span>
+          </div>
+        </div>
+        <div className="met-card met-in" style={{ "--d": "140ms" }}>
+          <div className="met-lbl" style={{ marginBottom: 12 }}>Punto de equilibrio</div>
+          {r.punto_equilibrio === null || r.punto_equilibrio === undefined
+            ? <div style={{ fontSize: 13, color: MT.texto2 }}>Se calcula cuando tienes costos cargados.</div>
+            : <>
+              <div style={{ fontSize: 13, color: MT.texto2, lineHeight: 1.55, marginBottom: 12 }}>Para cubrir tus gastos de este periodo necesitas vender unos <b style={{ color: MT.texto }}>{usdM(r.punto_equilibrio, 0)}</b> en productos. Llevas <b style={{ color: MT.texto }}>{usdM(ventasProd, 0)}</b>.</div>
+              <Medidor etiqueta="Avance hacia el equilibrio" valor={Number(r.punto_equilibrio) > 0 ? (ventasProd / Number(r.punto_equilibrio)) * 100 : 100} texto={Number(r.punto_equilibrio) > 0 ? pctM((ventasProd / Number(r.punto_equilibrio)) * 100, 0) : "—"} nota="100% = ya cubriste todos los gastos del periodo." />
+            </>}
+          <div className="met-lbl" style={{ margin: "16px 0 8px" }}>Por cobrar y por pagar (hoy)</div>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <button className="met-card" style={{ flex: 1, minWidth: 140, textAlign: "left", cursor: "pointer", padding: 12 }} onClick={() => irA("cuentas")}>
+              <div className="met-lbl">Te deben</div><div style={{ fontSize: 22, fontWeight: 800 }}>{usdM(r.por_cobrar.total, 0)}</div>
+              <div style={{ fontSize: 11.5, color: Number(r.por_cobrar.vencido) > 0 ? MT.malo : MT.suave }}>{Number(r.por_cobrar.vencido) > 0 ? `${usdM(r.por_cobrar.vencido, 0)} vencido` : `${r.por_cobrar.documentos} documento(s)`}</div>
+            </button>
+            <button className="met-card" style={{ flex: 1, minWidth: 140, textAlign: "left", cursor: "pointer", padding: 12 }} onClick={() => irA("cuentas")}>
+              <div className="met-lbl">Debes</div><div style={{ fontSize: 22, fontWeight: 800 }}>{usdM(r.por_pagar.total, 0)}</div>
+              <div style={{ fontSize: 11.5, color: Number(r.por_pagar.vencido) > 0 ? MT.malo : MT.suave }}>{Number(r.por_pagar.vencido) > 0 ? `${usdM(r.por_pagar.vencido, 0)} vencido` : `${r.por_pagar.documentos} documento(s)`}</div>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <FinTiendaFisica desde={desde} hasta={hasta} netaWeb={neta} />
+
+      <div className="met-sec">Mes a mes</div>
+      <div className="met-grid" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,430px),1fr))" }}>
+        <div className="met-card met-in" style={{ "--d": "100ms" }}>
+          <div className="met-lbl" style={{ marginBottom: 8 }}>Ventas vs. gastos (anuncios + operativos)</div>
+          <GraficaBarras etiquetas={serie.map(s => s.mes)} etiquetaX={mesCortoM} descripcion="Ventas y gastos por mes" alto={230}
+            series={[{ nombre: "Ventas", color: MT.rojo, valores: serie.map(s => Number(s.ventas)), formato: (v) => usdM(v, 0) }, { nombre: "Gastos", color: MT.tinta, valores: serie.map(s => Number(s.gasto_ads) + Number(s.gastos_operativos)), formato: (v) => usdM(v, 0) }]} />
+        </div>
+        <div className="met-card met-in" style={{ "--d": "160ms" }}>
+          <div className="met-lbl" style={{ marginBottom: 8 }}>Ganancia neta estimada por mes</div>
+          <GraficaLineas etiquetas={serie.map(s => s.mes)} etiquetaX={mesCortoM} descripcion="Ganancia neta estimada por mes" alto={230}
+            series={[{ nombre: "Ganancia neta", color: MT.rojo, valores: serie.map(s => s.ganancia_neta_est === null || s.ganancia_neta_est === undefined || Number(s.ganancia_neta_est) < 0 ? (s.ganancia_neta_est === null || s.ganancia_neta_est === undefined ? null : 0) : Number(s.ganancia_neta_est)), formato: (v) => usdM(v, 0), area: true }]}
+            extra={[{ nombre: "ganancia real del mes", valores: serie.map(s => s.ganancia_neta_est), formato: (v) => v === null || v === undefined ? "—" : (Number(v) < 0 ? "−" : "") + usdM(Math.abs(v), 0) }]} />
+          <div style={{ fontSize: 11.5, color: MT.suave, marginTop: 6, lineHeight: 1.45 }}>Los meses con pérdida se dibujan en $0; el tooltip muestra la cifra real. Antes de cargar tus gastos de cada mes, la ganancia sale más alta de lo real.</div>
+        </div>
+      </div>
+
+      <div className="met-sec">Gastos por categoría</div>
+      <div className="met-card met-in" style={{ "--d": "100ms" }}>
+        {cat.length === 0 ? <div style={{ fontSize: 13, color: MT.texto2 }}>No hay gastos registrados en este periodo. El gasto de Meta Ads ({usdM(r.gasto_ads, 0)}) se suma solo.</div>
+          : cat.map((c, i) => <BarraH key={c.categoria} etiqueta={c.categoria} valor={Number(c.total)} maximo={maxCat} color={c.grupo === "inventario" ? MT.suave : MT.rojo} texto={usdM(c.total, 0)} sub={GRUPOS_FIN[c.grupo] || c.grupo} retraso={i * 60} />)}
+        {cat.some(c => c.grupo === "inventario") && <div style={{ fontSize: 11.5, color: MT.suave, lineHeight: 1.45 }}>Las compras de mercancía (gris) salen de tu caja pero no se restan de la ganancia: ya están dentro del costo de lo vendido.</div>}
+      </div>
+
+      <div className="met-sec">Flujo de caja del periodo</div>
+      <div className="met-grid" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,420px),1fr))" }}>
+        <div className="met-card met-in" style={{ "--d": "100ms" }}>
+          {[["Entró por ventas", f.entradas_ventas, 1], ["Entró por cobros de cuentas por cobrar", f.entradas_cobros, 1], ["Salió en gastos y compras (pagados)", f.salidas_gastos, -1], ["Salió en publicidad Meta", f.salidas_ads, -1], ["Salió en pagos a proveedores (cuentas por pagar)", f.salidas_pagos, -1]].map(([et, v, s]) => (
+            <div key={et} style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 13, padding: "6px 0", borderBottom: `1px solid ${MT.rejilla}` }}><span style={{ color: MT.texto2 }}>{et}</span><b style={{ color: s > 0 ? MT.texto : MT.malo }}>{s > 0 ? "+" : "−"}{usdM(v, 0)}</b></div>
+          ))}
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 14, fontWeight: 800, paddingTop: 10 }}><span>Movimiento neto de caja</span><span style={{ color: Number(f.neto) >= 0 ? MT.bueno : MT.malo }}>{Number(f.neto) < 0 ? "−" : ""}{usdM(Math.abs(Number(f.neto)), 0)}</span></div>
+        </div>
+        <div className="met-card met-in" style={{ "--d": "160ms" }}>
+          <div className="met-lbl">Saldo de caja estimado hoy</div>
+          {f.saldo_estimado === null || f.saldo_estimado === undefined
+            ? <div style={{ fontSize: 13, color: MT.texto2, lineHeight: 1.55, marginTop: 8 }}>Para ver cuánto dinero deberías tener, escribe tu saldo inicial y la fecha en <button className="met-chip" style={{ padding: "2px 10px" }} onClick={() => irA("control")}>Ajustes</button>.</div>
+            : <>
+              <div className="met-num" style={{ color: Number(f.saldo_estimado) >= 0 ? MT.texto : MT.malo }}>{usdM(f.saldo_estimado, 0)}</div>
+              <div style={{ fontSize: 12, color: MT.suave, lineHeight: 1.5 }}>Saldo inicial {usdM(f.saldo_inicial, 0)} al {f.fecha_saldo} + todo lo que entró − todo lo que salió desde esa fecha. Es una estimación: no se concilia con el banco.</div>
+            </>}
+        </div>
+      </div>
+      <details style={{ marginTop: 22 }}>
+        <summary style={{ cursor: "pointer", fontSize: 13, fontWeight: 700, color: MT.texto2 }}>Ver los datos mes a mes en tabla</summary>
+        <div className="met-card" style={{ marginTop: 10, overflowX: "auto", padding: 0 }}>
+          <table className="met-tabla">
+            <thead><tr>{["Mes", "Ventas", "Anuncios", "Gastos operativos", "Ganancia neta est."].map(h => <th key={h}>{h}</th>)}</tr></thead>
+            <tbody>{serie.map(s => <tr key={s.mes}><td>{s.mes}</td><td>{usdM(s.ventas, 0)}</td><td>{usdM(s.gasto_ads, 0)}</td><td>{usdM(s.gastos_operativos, 0)}</td><td><b>{s.ganancia_neta_est === null || s.ganancia_neta_est === undefined ? "—" : usdM(s.ganancia_neta_est, 0)}</b></td></tr>)}</tbody>
+          </table>
+        </div>
+      </details>
+    </div>
+  );
+}
+
+// ── Gastos ──
+function FinGastos({ desde, hasta }) {
+  const { showToast } = useApp();
+  const { datos: lista, error, cargando, recargar } = useFinDatos("fin_gastos_listar", { p_desde: desde, p_hasta: hasta }, [desde, hasta]);
+  const [cats, setCats] = useState([]);
+  const [provs, setProvs] = useState([]);
+  const vacio = { fecha: fechaPanama(), categoria_id: "", monto: "", metodo: "efectivo", proveedor_id: "", descripcion: "", comprobante: "" };
+  const [f, setF] = useState(vacio);
+  const [editId, setEditId] = useState(null);
+  const [guardando, setGuardando] = useState(false);
+  useEffect(() => {
+    finRpc("fin_categorias_listar").then(c => setCats((c || []).filter(x => x.activo))).catch(() => {});
+    sb.get("proveedores", "?select=id,nombre&order=nombre").then(p => setProvs(p || [])).catch(() => {});
+  }, []);
+  const guardar = async () => {
+    setGuardando(true);
+    try {
+      await finRpc("fin_gasto_guardar", { p: { ...f, id: editId || undefined } });
+      showToast(editId ? "Gasto actualizado" : "Gasto registrado");
+      setF({ ...vacio, fecha: f.fecha, categoria_id: f.categoria_id }); setEditId(null); recargar();
+    } catch (e) { showToast("No se pudo guardar: " + String(e.message || e).slice(0, 140)); }
+    setGuardando(false);
+  };
+  const anular = async (g) => {
+    const motivo = prompt(`¿Anular el gasto de ${usdM(g.monto)} (${g.categoria || "sin categoría"})? Escribe el motivo:`);
+    if (motivo === null) return;
+    try { await finRpc("fin_gasto_anular", { p_id: g.id, p_motivo: motivo }); showToast("Gasto anulado"); recargar(); }
+    catch (e) { showToast("No se pudo anular: " + String(e.message || e).slice(0, 140)); }
+  };
+  const editar = (g) => { setEditId(g.id); setF({ fecha: g.fecha, categoria_id: g.categoria_id || "", monto: String(g.monto), metodo: g.metodo, proveedor_id: g.proveedor_id || "", descripcion: g.descripcion || "", comprobante: g.comprobante || "" }); window.scrollTo({ top: 0, behavior: "smooth" }); };
+  const vivos = (lista || []).filter(g => !g.anulado);
+  const total = vivos.reduce((s, g) => s + Number(g.monto), 0);
+  return (
+    <div>
+      <div className="met-card" style={{ marginTop: 14 }}>
+        <div className="met-lbl" style={{ marginBottom: 10 }}>{editId ? "Editar gasto" : "Registrar un gasto"} <span style={{ color: MT.suave, fontWeight: 500 }}>· la publicidad de Meta no se registra aquí: entra sola</span></div>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
+          <div><label style={lblF}>Fecha</label><input type="date" style={inpF} value={f.fecha} max={fechaPanama()} onChange={e => setF({ ...f, fecha: e.target.value })} /></div>
+          <div><label style={lblF}>Categoría</label>
+            <select style={{ ...inpF, minWidth: 190 }} value={f.categoria_id} onChange={e => setF({ ...f, categoria_id: e.target.value })}>
+              <option value="">Elegir…</option>{cats.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+            </select></div>
+          <div><label style={lblF}>Monto ($)</label><input style={{ ...inpF, width: 100 }} inputMode="decimal" placeholder="0.00" value={f.monto} onChange={e => setF({ ...f, monto: e.target.value.replace(",", ".") })} /></div>
+          <div><label style={lblF}>Cómo se pagó</label>
+            <select style={inpF} value={f.metodo} onChange={e => setF({ ...f, metodo: e.target.value })}>{METODOS_FIN.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></div>
+          <div><label style={lblF}>Proveedor (opcional)</label>
+            <select style={{ ...inpF, minWidth: 150 }} value={f.proveedor_id} onChange={e => setF({ ...f, proveedor_id: e.target.value })}><option value="">—</option>{provs.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}</select></div>
+          <div style={{ flex: 1, minWidth: 180 }}><label style={lblF}>Detalle</label><input style={{ ...inpF, width: "100%", boxSizing: "border-box" }} placeholder="ej. Alquiler de bodega, noviembre" value={f.descripcion} onChange={e => setF({ ...f, descripcion: e.target.value })} /></div>
+          <div><label style={lblF}>N.º de factura / recibo</label><input style={{ ...inpF, width: 130 }} value={f.comprobante} onChange={e => setF({ ...f, comprobante: e.target.value })} /></div>
+          <button className="met-chip on" disabled={guardando || !f.categoria_id || !(Number(f.monto) > 0)} onClick={guardar} style={{ opacity: guardando || !f.categoria_id || !(Number(f.monto) > 0) ? 0.5 : 1 }}>{editId ? "Guardar cambios" : "Registrar gasto"}</button>
+          {editId && <button className="met-chip" onClick={() => { setEditId(null); setF(vacio); }}>Cancelar</button>}
+        </div>
+        <div style={{ fontSize: 11.5, color: MT.suave, marginTop: 8, lineHeight: 1.5 }}>“A crédito” significa que lo debes y aún no sale dinero: se cuenta como gasto pero no baja la caja hasta que lo pagues desde Por cobrar y pagar. Los meses cerrados no se pueden modificar.</div>
+      </div>
+      {error && <AvisoFin malo>{error}</AvisoFin>}
+      <div className="met-sec">Gastos del periodo · {usdM(total)} en {vivos.length} registro(s)</div>
+      <div className="met-card" style={{ padding: 0, overflowX: "auto", opacity: cargando ? 0.7 : 1 }}>
+        <table className="met-tabla">
+          <thead><tr>{["Fecha", "Categoría", "Detalle", "Pago", "Monto", ""].map(h => <th key={h}>{h}</th>)}</tr></thead>
+          <tbody>
+            {(lista || []).length === 0 && <tr><td colSpan={6} style={{ color: MT.texto2, padding: 18 }}>Aún no hay gastos en este periodo. Cambia las fechas de arriba o registra el primero.</td></tr>}
+            {(lista || []).map(g => (
+              <tr key={g.id} style={{ opacity: g.anulado ? 0.45 : 1, textDecoration: g.anulado ? "line-through" : "none" }}>
+                <td>{g.fecha}</td><td>{g.categoria || "—"}</td>
+                <td>{g.descripcion || ""}{g.proveedor ? <span style={{ color: MT.suave }}> · {g.proveedor}</span> : null}{g.comprobante ? <span style={{ color: MT.suave }}> · #{g.comprobante}</span> : null}</td>
+                <td>{(METODOS_FIN.find(m => m[0] === g.metodo) || [0, g.metodo])[1]}</td>
+                <td><b>{usdM(g.monto)}</b></td>
+                <td style={{ whiteSpace: "nowrap" }}>{!g.anulado && <><button className="met-chip" style={{ padding: "3px 10px", fontSize: 12 }} onClick={() => editar(g)}>Editar</button> <button className="met-chip" style={{ padding: "3px 10px", fontSize: 12 }} onClick={() => anular(g)}>Anular</button></>}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// ── Margen por producto y categoría ──
+function FinMargen({ desde, hasta, irA }) {
+  const { datos: d, error, cargando } = useFinDatos("fin_productos_margen", { p_desde: desde, p_hasta: hasta }, [desde, hasta]);
+  const [orden, setOrden] = useState("ingreso");
+  const [solo, setSolo] = useState("todos");
+  if (error) return <AvisoFin malo>{error}</AvisoFin>;
+  if (!d) return <div style={{ padding: "50px 0", textAlign: "center", color: MT.texto2 }}>Calculando márgenes…</div>;
+  const cats = d.categorias || [];
+  const maxC = Math.max(1, ...cats.map(c => Number(c.ingreso)));
+  let filas = [...(d.productos || [])];
+  if (solo === "sin") filas = filas.filter(p => p.costo_unit === null || p.costo_unit === undefined);
+  if (solo === "bajo") filas = filas.filter(p => p.margen_pct !== null && p.margen_pct !== undefined && Number(p.margen_pct) < 20);
+  filas.sort((a, b) => orden === "margen_pct" ? (Number(a.margen_pct ?? 1e9) - Number(b.margen_pct ?? 1e9)) : orden === "margen" ? (Number(b.margen ?? -1e9) - Number(a.margen ?? -1e9)) : Number(b.ingreso) - Number(a.ingreso));
+  return (
+    <div style={{ opacity: cargando ? 0.7 : 1 }}>
+      {Number(d.vendidos_sin_costo) > 0 && <AvisoFin>{d.vendidos_sin_costo} de los {d.vendidos_total} productos vendidos en este periodo no tienen costo cargado; no aparecen con margen. Quedan {d.activos_sin_costo} de {d.activos_total} productos activos sin costo. <button className="met-chip" style={{ padding: "2px 10px" }} onClick={() => irA("costos")}>Cargar costos</button></AvisoFin>}
+      <div className="met-sec">Margen por categoría</div>
+      <div className="met-card">
+        {cats.length === 0 ? <div style={{ fontSize: 13, color: MT.texto2 }}>No hay ventas en este periodo.</div> : cats.map((c, i) => (
+          <BarraH key={c.categoria} etiqueta={c.categoria} valor={Number(c.ingreso)} maximo={maxC} color={c.margen_pct === null || c.margen_pct === undefined ? MT.suave : MT.rojo}
+            texto={usdM(c.ingreso, 0)} sub={c.margen_pct === null || c.margen_pct === undefined ? "sin costos cargados" : `margen ${pctM(c.margen_pct, 0)} · ${usdM(c.margen, 0)} de ganancia`} retraso={i * 50} />
+        ))}
+      </div>
+      <div className="met-sec">Productos</div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+        {[["ingreso", "Más vendidos"], ["margen", "Más ganancia"], ["margen_pct", "Menor margen %"]].map(([k, l]) => <button key={k} className={"met-chip" + (orden === k ? " on" : "")} onClick={() => setOrden(k)}>{l}</button>)}
+        <span style={{ width: 10 }} />
+        {[["todos", "Todos"], ["bajo", "Margen menor a 20%"], ["sin", "Sin costo"]].map(([k, l]) => <button key={k} className={"met-chip" + (solo === k ? " on" : "")} onClick={() => setSolo(k)}>{l}</button>)}
+      </div>
+      <div className="met-card" style={{ padding: 0, overflowX: "auto" }}>
+        <table className="met-tabla">
+          <thead><tr>{["Producto", "Categoría", "Piezas", "Ventas", "Costo", "Ganancia", "Margen"].map(h => <th key={h}>{h}</th>)}</tr></thead>
+          <tbody>
+            {filas.length === 0 && <tr><td colSpan={7} style={{ padding: 18, color: MT.texto2 }}>Nada para mostrar con este filtro.</td></tr>}
+            {filas.slice(0, 150).map(p => (
+              <tr key={p.producto_id}>
+                <td><b>{p.nombre}</b>{p.referencia ? <span style={{ color: MT.suave }}> · {p.referencia}</span> : null}</td>
+                <td>{p.categoria}</td><td>{numM(p.piezas)}</td><td>{usdM(p.ingreso, 0)}</td>
+                <td>{p.costo_unit === null || p.costo_unit === undefined ? <span style={{ color: MT.suave }}>sin costo</span> : usdM(p.costo_total, 0)}</td>
+                <td>{p.margen === null || p.margen === undefined ? "—" : usdM(p.margen, 0)}</td>
+                <td><b style={{ color: p.margen_pct === null || p.margen_pct === undefined ? MT.suave : Number(p.margen_pct) < 20 ? MT.malo : MT.bueno }}>{p.margen_pct === null || p.margen_pct === undefined ? "—" : pctM(p.margen_pct, 0)}</b></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {filas.length > 150 && <div style={{ fontSize: 12, color: MT.suave, marginTop: 8 }}>Se muestran los primeros 150 de {filas.length}.</div>}
+    </div>
+  );
+}
+
+// ── Costos de productos (privados) ──
+function FinCostos({ productos, onGuardado }) {
+  const { showToast } = useApp();
+  const [listo, setListo] = useState(false);
+  const [error, setError] = useState("");
+  const [edits, setEdits] = useState({}); // id -> texto
+  const [buscar, setBuscar] = useState("");
+  const [solo, setSolo] = useState("sin");
+  const [limite, setLimite] = useState(80);
+  const [pegar, setPegar] = useState("");
+  const [verPegar, setVerPegar] = useState(false);
+  const [guardando, setGuardando] = useState(false);
+  const [, setVer] = useState(0);
+  const [cfg, setCfg] = useState(null);
+  const [sincro, setSincro] = useState(false);
+  useEffect(() => { finCargarCostos().then(() => setListo(true)).catch(e => setError(String(e.message || e).slice(0, 200))); finRpc("fin_config_leer").then(setCfg).catch(() => {}); }, []);
+  const traerOdoo = async () => {
+    setSincro(true);
+    try {
+      await sb.ensureFreshToken();
+      const r = await fetch(`${SUPABASE_URL}/functions/v1/sync-odoo-costos`, { method: "POST", headers: sb.functionHeaders(), body: "{}" });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.detalle || j.error || "Error");
+      await finCargarCostos(); setVer(v => v + 1); onGuardado && onGuardado(); setCfg(await finRpc("fin_config_leer"));
+      const rs = j.resumen || {}; showToast(rs.nota || `Odoo: ${rs.nuevos || 0} nuevos, ${rs.actualizados || 0} actualizados`);
+    } catch (e) { showToast("No se pudo traer de Odoo: " + String(e.message || e).slice(0, 140)); }
+    setSincro(false);
+  };
+  const actuales = (id) => COSTOS_FIN.get(id);
+  const valor = (p) => edits[p.id] !== undefined ? edits[p.id] : (actuales(p.id) !== undefined ? String(actuales(p.id)) : "");
+  const activos = (productos || []).filter(p => p.activo !== false);
+  const sinCosto = activos.filter(p => actuales(p.id) === undefined).length;
+  const t = buscar.trim().toLowerCase();
+  let filas = activos.filter(p => (!t || (p.referencia || "").toLowerCase().includes(t) || (p.nombre || "").toLowerCase().includes(t)));
+  if (solo === "sin") filas = filas.filter(p => actuales(p.id) === undefined || edits[p.id] !== undefined);
+  const cambios = Object.keys(edits).length;
+  const aplicarPegado = () => {
+    const mapa = new Map(); (productos || []).forEach(p => { if (p.referencia) mapa.set(String(p.referencia).trim().toLowerCase(), p.id); });
+    const nuevo = { ...edits }; let ok = 0, fallo = 0;
+    pegar.split(/\r?\n/).forEach(l => {
+      const partes = l.split(/[\t;,]/).map(x => x.trim()); if (partes.length < 2 || !partes[0]) return;
+      const id = mapa.get(partes[0].toLowerCase()); const c = Number(partes[1].replace("$", "").replace(",", "."));
+      if (id !== undefined && Number.isFinite(c) && c >= 0) { nuevo[id] = String(c); ok++; } else fallo++;
+    });
+    setEdits(nuevo); setPegar(""); setVerPegar(false);
+    showToast(`${ok} costo(s) listos para guardar${fallo ? ` · ${fallo} línea(s) no se reconocieron` : ""}`);
+  };
+  const guardar = async () => {
+    setGuardando(true);
+    try {
+      const items = Object.entries(edits).map(([id, v]) => ({ producto_id: Number(id), costo: String(v).trim() === "" ? null : Number(String(v).replace(",", ".")) }));
+      if (items.some(i => i.costo !== null && !(i.costo >= 0))) throw new Error("Hay un costo que no es un número válido");
+      await finRpc("fin_costos_guardar", { p_items: items });
+      await finCargarCostos(); setEdits({}); setVer(v => v + 1); onGuardado && onGuardado();
+      showToast("Costos guardados");
+    } catch (e) { showToast("No se pudo guardar: " + String(e.message || e).slice(0, 140)); }
+    setGuardando(false);
+  };
+  if (error) return <AvisoFin malo>No se pudieron cargar los costos: {error}</AvisoFin>;
+  if (!listo) return <div style={{ padding: "50px 0", textAlign: "center", color: MT.texto2 }}>Cargando costos…</div>;
+  return (
+    <div>
+      <div className="met-aviso" style={{ background: "#EEF6FF", borderColor: "#BBD7F5", color: "#1D4F86" }}>
+        Costo de <b>cada pieza</b> (lo que te cuesta a ti, por unidad). Son <b>privados</b>: se guardan en una tabla cerrada que ni los clientes ni tus operadores pueden leer. Se traen <b>solos desde Odoo cada hora</b> (solo lectura: la web nunca cambia nada en Odoo); si escribes uno a mano, ese manda y Odoo no lo pisa (salvo que cambies el modo a “Odoo manda”). Los que vienen de Odoo se mantienen al día solos.
+      </div>
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginTop: 10, fontSize: 12.5, color: MT.texto2 }}>
+        <button className="met-chip on" onClick={traerOdoo} disabled={sincro} style={{ opacity: sincro ? 0.6 : 1 }}>{sincro ? "Trayendo de Odoo…" : "Traer costos de Odoo ahora"}</button>
+        {cfg && cfg.costos_odoo_ultima
+          ? <span>Última vez: {new Date(cfg.costos_odoo_ultima).toLocaleString("es-PA", { timeZone: "America/Panama", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}{cfg.costos_odoo_resumen ? ` · ${cfg.costos_odoo_resumen.nuevos} nuevos, ${cfg.costos_odoo_resumen.actualizados} actualizados, ${cfg.costos_odoo_resumen.sin_costo_en_odoo} sin costo en Odoo` : ""}</span>
+          : <span>Aún no se ha traído ninguno.</span>}
+        {cfg && cfg.costos_odoo_modo !== "solo_vacios" && <span style={{ color: MT.malo }}>Modo: {cfg.costos_odoo_modo === "siempre" ? "Odoo manda" : "apagado"} (se cambia en Ajustes y control)</span>}
+      </div>
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", margin: "12px 0" }}>
+        <input style={{ ...inpF, minWidth: 230 }} placeholder="Buscar por referencia o nombre…" value={buscar} onChange={e => { setBuscar(e.target.value); setLimite(80); }} />
+        {[["sin", `Sin costo (${sinCosto})`], ["todos", "Todos"]].map(([k, l]) => <button key={k} className={"met-chip" + (solo === k ? " on" : "")} onClick={() => { setSolo(k); setLimite(80); }}>{l}</button>)}
+        <button className="met-chip" onClick={() => setVerPegar(v => !v)}>Pegar desde Excel</button>
+        <span style={{ flex: 1 }} />
+        <button className="met-chip on" disabled={!cambios || guardando} style={{ opacity: !cambios || guardando ? 0.5 : 1 }} onClick={guardar}>{guardando ? "Guardando…" : `Guardar ${cambios || ""} cambio(s)`}</button>
+        {cambios > 0 && <button className="met-chip" onClick={() => setEdits({})}>Descartar</button>}
+      </div>
+      {verPegar && (
+        <div className="met-card" style={{ marginBottom: 12 }}>
+          <div className="met-lbl" style={{ marginBottom: 6 }}>Una línea por producto: referencia, un espacio de tabulación (o coma) y el costo por pieza</div>
+          <textarea style={{ ...inpF, width: "100%", boxSizing: "border-box", minHeight: 110, fontFamily: "ui-monospace,monospace" }} placeholder={"99140\t2.15\n99141,3.40"} value={pegar} onChange={e => setPegar(e.target.value)} />
+          <div style={{ marginTop: 8 }}><button className="met-chip on" onClick={aplicarPegado} disabled={!pegar.trim()}>Cargar a la lista</button> <span style={{ fontSize: 12, color: MT.suave }}>Revisa la lista y toca “Guardar” para confirmar.</span></div>
+        </div>
+      )}
+      <div className="met-card" style={{ padding: 0, overflowX: "auto" }}>
+        <table className="met-tabla">
+          <thead><tr>{["Referencia", "Producto", "Precio pieza", "Costo por pieza", "Margen"].map(h => <th key={h}>{h}</th>)}</tr></thead>
+          <tbody>
+            {filas.length === 0 && <tr><td colSpan={5} style={{ padding: 18, color: MT.texto2 }}>{solo === "sin" ? "¡Todos los productos activos tienen costo!" : "Nada que mostrar."}</td></tr>}
+            {filas.slice(0, limite).map(p => {
+              const v = valor(p); const c = Number(String(v).replace(",", ".")); const pr = Number(p.precio_pieza) || 0;
+              const mg = v !== "" && Number.isFinite(c) && pr > 0 ? ((pr - c) / pr) * 100 : null;
+              return (
+                <tr key={p.id} style={edits[p.id] !== undefined ? { background: "#FFF8E5" } : undefined}>
+                  <td>{p.referencia || "—"}</td><td>{p.nombre}</td><td>{pr > 0 ? usdM(pr) : "—"}</td>
+                  <td><input style={{ ...inpF, width: 96 }} inputMode="decimal" placeholder="0.00" value={v} onChange={e => setEdits({ ...edits, [p.id]: e.target.value.replace(",", ".") })} />{edits[p.id] === undefined && COSTOS_ORIGEN.get(p.id) === "odoo" && <span style={{ marginLeft: 6, fontSize: 11, color: MT.suave }}>de Odoo</span>}</td>
+                  <td><b style={{ color: mg === null ? MT.suave : mg < 0 ? MT.malo : mg < 20 ? "#8A5A00" : MT.bueno }}>{mg === null ? "—" : pctM(mg, 0)}</b></td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      {filas.length > limite && <div style={{ marginTop: 10 }}><button className="met-chip" onClick={() => setLimite(l => l + 120)}>Mostrar más ({filas.length - limite} restantes)</button></div>}
+    </div>
+  );
+}
+
+// ── Por cobrar y por pagar ──
+function FinCuentas() {
+  const { showToast } = useApp();
+  const [tipo, setTipo] = useState("cobrar");
+  const { datos: docs, error, cargando, recargar } = useFinDatos("fin_docs_listar", { p_tipo: tipo }, [tipo]);
+  const [provs, setProvs] = useState([]);
+  const vacio = { contraparte: "", monto: "", fecha: fechaPanama(), vence: "", descripcion: "", proveedor_id: "" };
+  const [f, setF] = useState(vacio);
+  const [abonando, setAbonando] = useState(null); // id del documento
+  const [ab, setAb] = useState({ monto: "", metodo: "efectivo", fecha: fechaPanama(), nota: "" });
+  useEffect(() => { sb.get("proveedores", "?select=id,nombre&order=nombre").then(p => setProvs(p || [])).catch(() => {}); }, []);
+  const crear = async () => {
+    try { await finRpc("fin_doc_guardar", { p: { ...f, tipo } }); showToast("Registrado"); setF(vacio); recargar(); }
+    catch (e) { showToast("No se pudo guardar: " + String(e.message || e).slice(0, 140)); }
+  };
+  const abonar = async (d) => {
+    try { await finRpc("fin_abono_registrar", { p_documento: d.id, p_fecha: ab.fecha, p_monto: Number(ab.monto), p_metodo: ab.metodo, p_nota: ab.nota }); showToast(tipo === "cobrar" ? "Cobro registrado" : "Pago registrado"); setAbonando(null); setAb({ monto: "", metodo: "efectivo", fecha: fechaPanama(), nota: "" }); recargar(); }
+    catch (e) { showToast("No se pudo registrar: " + String(e.message || e).slice(0, 140)); }
+  };
+  const anular = async (d) => {
+    if (!confirm(`¿Anular el registro de ${d.contraparte} por ${usdM(d.monto)}?`)) return;
+    try { await finRpc("fin_doc_anular", { p_id: d.id }); showToast("Anulado"); recargar(); }
+    catch (e) { showToast("No se pudo anular: " + String(e.message || e).slice(0, 140)); }
+  };
+  const vivos = (docs || []).filter(d => !d.anulado);
+  const pendiente = vivos.reduce((s, d) => s + Math.max(0, Number(d.saldo)), 0);
+  const venc = vivos.filter(d => d.estado === "vencido").reduce((s, d) => s + Number(d.saldo), 0);
+  const esCobrar = tipo === "cobrar";
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", margin: "14px 0" }}>
+        <button className={"met-chip" + (esCobrar ? " on" : "")} onClick={() => setTipo("cobrar")}>Por cobrar (te deben)</button>
+        <button className={"met-chip" + (!esCobrar ? " on" : "")} onClick={() => setTipo("pagar")}>Por pagar (debes)</button>
+      </div>
+      <div className="met-grid" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))" }}>
+        <Kpi etiqueta={esCobrar ? "Total que te deben" : "Total que debes"} grande acento><Cifra valor={pendiente} f={(v) => usdM(v, 0)} /></Kpi>
+        <Kpi etiqueta="De eso, ya vencido"><span style={{ color: venc > 0 ? MT.malo : MT.texto }}><Cifra valor={venc} f={(v) => usdM(v, 0)} /></span></Kpi>
+      </div>
+      <div className="met-card" style={{ marginTop: 14 }}>
+        <div className="met-lbl" style={{ marginBottom: 10 }}>{esCobrar ? "Anotar una venta a crédito" : "Anotar una deuda con un proveedor"}</div>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
+          {esCobrar
+            ? <div><label style={lblF}>Cliente</label><input style={{ ...inpF, minWidth: 170 }} value={f.contraparte} onChange={e => setF({ ...f, contraparte: e.target.value })} placeholder="Nombre del cliente" /></div>
+            : <div><label style={lblF}>Proveedor</label>
+              <select style={{ ...inpF, minWidth: 170 }} value={f.proveedor_id} onChange={e => { const p = provs.find(x => String(x.id) === e.target.value); setF({ ...f, proveedor_id: e.target.value, contraparte: p ? p.nombre : f.contraparte }); }}><option value="">Otro / escribir abajo…</option>{provs.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}</select>
+              {!f.proveedor_id && <input style={{ ...inpF, marginTop: 6, width: "100%", boxSizing: "border-box" }} value={f.contraparte} onChange={e => setF({ ...f, contraparte: e.target.value })} placeholder="Nombre" />}</div>}
+          <div><label style={lblF}>Monto ($)</label><input style={{ ...inpF, width: 100 }} inputMode="decimal" value={f.monto} onChange={e => setF({ ...f, monto: e.target.value.replace(",", ".") })} placeholder="0.00" /></div>
+          <div><label style={lblF}>Fecha</label><input type="date" style={inpF} value={f.fecha} onChange={e => setF({ ...f, fecha: e.target.value })} /></div>
+          <div><label style={lblF}>Vence</label><input type="date" style={inpF} value={f.vence} min={f.fecha} onChange={e => setF({ ...f, vence: e.target.value })} /></div>
+          <div style={{ flex: 1, minWidth: 160 }}><label style={lblF}>Detalle</label><input style={{ ...inpF, width: "100%", boxSizing: "border-box" }} value={f.descripcion} onChange={e => setF({ ...f, descripcion: e.target.value })} placeholder="ej. Factura 1234" /></div>
+          <button className="met-chip on" disabled={!f.contraparte.trim() || !(Number(f.monto) > 0)} style={{ opacity: !f.contraparte.trim() || !(Number(f.monto) > 0) ? 0.5 : 1 }} onClick={crear}>Registrar</button>
+        </div>
+      </div>
+      {error && <AvisoFin malo>{error}</AvisoFin>}
+      <div className="met-sec">{esCobrar ? "Cuentas por cobrar" : "Cuentas por pagar"}</div>
+      <div style={{ display: "grid", gap: 10, opacity: cargando ? 0.7 : 1 }}>
+        {vivos.length === 0 && <div className="met-card" style={{ color: MT.texto2, fontSize: 13 }}>{esCobrar ? "Nadie te debe nada registrado." : "No tienes deudas registradas con proveedores."}</div>}
+        {vivos.map(d => {
+          const [lab, col] = ESTADO_DOC[d.estado] || ESTADO_DOC.pendiente;
+          return (
+            <div key={d.id} className="met-card" style={{ padding: 14 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                <div><b>{d.contraparte}</b> <span style={{ color: MT.suave, fontSize: 12.5 }}>· {d.fecha}{d.vence ? ` · vence ${d.vence}` : ""}{d.descripcion ? ` · ${d.descripcion}` : ""}</span></div>
+                <div style={{ textAlign: "right" }}><b style={{ fontSize: 16 }}>{usdM(d.saldo)}</b> <span style={{ fontSize: 12, color: MT.suave }}>de {usdM(d.monto)}</span> <span style={{ fontSize: 12, fontWeight: 700, color: col, marginLeft: 6 }}>{lab}</span></div>
+              </div>
+              {d.abonos.length > 0 && <div style={{ fontSize: 12, color: MT.texto2, marginTop: 6 }}>{d.abonos.map(a => <span key={a.id} style={{ marginRight: 12 }}>{a.fecha}: {usdM(a.monto)}{a.nota ? ` (${a.nota})` : ""}</span>)}</div>}
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8, alignItems: "flex-end" }}>
+                {Number(d.saldo) > 0 && abonando !== d.id && <button className="met-chip" style={{ padding: "4px 12px", fontSize: 12 }} onClick={() => { setAbonando(d.id); setAb({ ...ab, monto: String(d.saldo) }); }}>{esCobrar ? "Registrar cobro" : "Registrar pago"}</button>}
+                <button className="met-chip" style={{ padding: "4px 12px", fontSize: 12 }} onClick={() => anular(d)}>Anular</button>
+              </div>
+              {abonando === d.id && (
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end", marginTop: 10, paddingTop: 10, borderTop: `1px solid ${MT.rejilla}` }}>
+                  <div><label style={lblF}>Monto ($)</label><input style={{ ...inpF, width: 100 }} inputMode="decimal" value={ab.monto} onChange={e => setAb({ ...ab, monto: e.target.value.replace(",", ".") })} /></div>
+                  <div><label style={lblF}>Fecha</label><input type="date" style={inpF} value={ab.fecha} onChange={e => setAb({ ...ab, fecha: e.target.value })} /></div>
+                  <div><label style={lblF}>Método</label><select style={inpF} value={ab.metodo} onChange={e => setAb({ ...ab, metodo: e.target.value })}>{METODOS_ABONO.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></div>
+                  <div><label style={lblF}>Nota</label><input style={{ ...inpF, width: 150 }} value={ab.nota} onChange={e => setAb({ ...ab, nota: e.target.value })} /></div>
+                  <button className="met-chip on" disabled={!(Number(ab.monto) > 0)} onClick={() => abonar(d)}>Confirmar</button>
+                  <button className="met-chip" onClick={() => setAbonando(null)}>Cancelar</button>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ── Ajustes, cierre de meses y bitácora ──
+const TABLA_BIT = { fin_gastos: "Gasto", fin_costos_producto: "Costo de producto", fin_documentos: "Cuenta por cobrar/pagar", fin_abonos: "Cobro o pago", fin_config: "Ajustes", fin_periodos_cerrados: "Cierre de mes", fin_categorias_gasto: "Categoría de gasto" };
+const ACCION_BIT = { INSERT: "Creó", UPDATE: "Cambió", DELETE: "Borró" };
+function resumenBit(b) {
+  const d = b.despues || b.antes || {}; const p = [];
+  if (d.monto !== undefined) p.push(usdM(d.monto));
+  if (d.costo !== undefined) p.push("costo " + usdM(d.costo, 2));
+  if (d.producto_id !== undefined) p.push("producto " + d.producto_id);
+  if (d.contraparte) p.push(d.contraparte);
+  if (d.descripcion) p.push(String(d.descripcion).slice(0, 40));
+  if (d.mes) p.push(String(d.mes).slice(0, 7));
+  if (d.anulado === true && b.accion === "UPDATE") p.push("anulado");
+  return p.join(" · ");
+}
+function FinControl() {
+  const { showToast } = useApp();
+  const cfg = useFinDatos("fin_config_leer", {}, []);
+  const per = useFinDatos("fin_periodos_listar", {}, []);
+  const bit = useFinDatos("fin_bitacora_listar", { p_limite: 120 }, []);
+  const [c, setC] = useState(null);
+  useEffect(() => { if (cfg.datos && !c) setC({ saldo_inicial: String(cfg.datos.saldo_inicial ?? 0), fecha_saldo: cfg.datos.fecha_saldo || "", comision_tarjeta_pct: cfg.datos.comision_tarjeta_pct ?? "", comision_yappy_pct: cfg.datos.comision_yappy_pct ?? "", costos_odoo_modo: cfg.datos.costos_odoo_modo || "solo_vacios" }); }, [cfg.datos]);
+  const guardar = async () => {
+    try { await finRpc("fin_config_guardar", { p: c }); showToast("Ajustes guardados"); cfg.recargar(); bit.recargar(); }
+    catch (e) { showToast("No se pudo guardar: " + String(e.message || e).slice(0, 140)); }
+  };
+  const mesAnterior = (() => { const [a, m] = fechaPanama().split("-").map(Number); const d = new Date(Date.UTC(a, m - 2, 1)); return d.toISOString().slice(0, 10); })();
+  const cerrados = per.datos || [];
+  const accion = async (fn, mes, ok) => {
+    try { await finRpc(fn, { p_mes: mes }); showToast(ok); per.recargar(); bit.recargar(); }
+    catch (e) { showToast("No se pudo: " + String(e.message || e).slice(0, 140)); }
+  };
+  return (
+    <div>
+      <div className="met-sec">Ajustes</div>
+      <div className="met-card">
+        {!c ? <div style={{ color: MT.texto2, fontSize: 13 }}>{cfg.error || "Cargando…"}</div> : (
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
+            <div><label style={lblF}>Dinero en caja y bancos ($)</label><input style={{ ...inpF, width: 130 }} inputMode="decimal" value={c.saldo_inicial} onChange={e => setC({ ...c, saldo_inicial: e.target.value.replace(",", ".") })} /></div>
+            <div><label style={lblF}>… al día</label><input type="date" style={inpF} value={c.fecha_saldo} max={fechaPanama()} onChange={e => setC({ ...c, fecha_saldo: e.target.value })} /></div>
+            <div><label style={lblF}>Comisión de tarjeta (%)</label><input style={{ ...inpF, width: 90 }} inputMode="decimal" placeholder="ej. 3.5" value={c.comision_tarjeta_pct} onChange={e => setC({ ...c, comision_tarjeta_pct: e.target.value.replace(",", ".") })} /></div>
+            <div><label style={lblF}>Comisión de Yappy (%)</label><input style={{ ...inpF, width: 90 }} inputMode="decimal" placeholder="ej. 1" value={c.comision_yappy_pct} onChange={e => setC({ ...c, comision_yappy_pct: e.target.value.replace(",", ".") })} /></div>
+            <div style={{ flexBasis: "100%" }}><label style={lblF}>Costos de productos desde Odoo (cada hora)</label>
+              <select style={{ ...inpF, width: "100%", maxWidth: 520 }} value={c.costos_odoo_modo} onChange={e => setC({ ...c, costos_odoo_modo: e.target.value })}>{MODOS_ODOO.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></div>
+            <button className="met-chip on" onClick={guardar}>Guardar ajustes</button>
+          </div>
+        )}
+        <div style={{ fontSize: 11.5, color: MT.suave, marginTop: 8, lineHeight: 1.5 }}>El saldo y su fecha sirven para estimar cuánto dinero deberías tener hoy. Las comisiones se descuentan de la ganancia según lo cobrado por tarjeta y Yappy. Pregunta a tu banco el % exacto.</div>
+      </div>
+
+      <div className="met-sec">Cierre de meses</div>
+      <div className="met-card">
+        <div style={{ fontSize: 13, color: MT.texto2, lineHeight: 1.55, marginBottom: 10 }}>Cuando un mes ya está revisado, ciérralo: nadie podrá agregar, editar ni anular gastos o pagos de ese mes (tampoco tú) hasta que lo vuelvas a abrir. Así los números de meses pasados no cambian por accidente.</div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          {!cerrados.some(x => x.mes === mesAnterior.slice(0, 7)) && <button className="met-chip on" onClick={() => accion("fin_periodo_cerrar", mesAnterior, "Mes cerrado")}>Cerrar {mesAnterior.slice(0, 7)}</button>}
+          {cerrados.map(x => <span key={x.mes} className="met-chip" style={{ display: "inline-flex", gap: 8, alignItems: "center", cursor: "default" }}>{x.mes} cerrado <button className="met-info" title="Abrir de nuevo" aria-label={`Abrir ${x.mes}`} onClick={() => accion("fin_periodo_abrir", x.mes + "-01", "Mes abierto")}>↺</button></span>)}
+          {cerrados.length === 0 && mesAnterior && <span style={{ fontSize: 12.5, color: MT.suave }}>Aún no has cerrado ningún mes.</span>}
+        </div>
+      </div>
+
+      <div className="met-sec">Bitácora: quién cambió qué y cuándo</div>
+      <div className="met-card" style={{ padding: 0, overflowX: "auto" }}>
+        <table className="met-tabla">
+          <thead><tr>{["Cuándo", "Quién", "Qué", "Detalle"].map(h => <th key={h}>{h}</th>)}</tr></thead>
+          <tbody>
+            {(bit.datos || []).length === 0 && <tr><td colSpan={4} style={{ padding: 18, color: MT.texto2 }}>{bit.error || "Aún no hay movimientos."}</td></tr>}
+            {(bit.datos || []).map(b => <tr key={b.id}><td style={{ whiteSpace: "nowrap" }}>{new Date(b.at).toLocaleString("es-PA", { timeZone: "America/Panama", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</td><td>{b.usuario || "sistema"}</td><td>{ACCION_BIT[b.accion] || b.accion} · {TABLA_BIT[b.tabla] || b.tabla}</td><td>{resumenBit(b)}</td></tr>)}
+          </tbody>
+        </table>
+      </div>
+      <div className="met-card" style={{ marginTop: 18 }}>
+        <div className="met-lbl" style={{ marginBottom: 6 }}>Conexión con Odoo</div>
+        <div style={{ fontSize: 13, color: MT.texto2, lineHeight: 1.6 }}>Los costos de tus productos ya se traen solos desde Odoo (solo lectura). Mientras tu contabilidad en Odoo no esté lista, los gastos y deudas se llevan aquí; cuando Odoo sea tu libro oficial se pueden conectar o importar para no duplicar el trabajo (cada gasto y cuenta ya trae un campo reservado para enlazarse con Odoo). Cuando tengas Odoo listo, cambia el modo a “Odoo manda”.</div>
+      </div>
+    </div>
+  );
+}
+
+function FinanzasPanel({ desde, hasta, filtro, productos, onCostosCambio }) {
+  const [vista, setVista] = useState("resumen");
+  const VISTAS = [["resumen", "Resumen"], ["gastos", "Gastos"], ["margen", "Márgenes"], ["costos", "Costos de productos"], ["cuentas", "Por cobrar y pagar"], ["control", "Ajustes y control"]];
+  return (
+    <div className="met">
+      <style>{ESTILO_MET}</style>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
+        <div>
+          <h2 className="met-h1">Finanzas</h2>
+          <div className="met-sub" style={{ marginTop: 6 }}>Cuánto ganas de verdad después de costos, anuncios y gastos; qué productos dejan más; y cuánto dinero te deben y debes. Visible solo para ti.</div>
+        </div>
+        <div className="met-live"><Lock size={12} /> Privado · solo dueño</div>
+      </div>
+      <div style={{ margin: "18px 0 8px" }}>{filtro}</div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", margin: "14px 0 4px" }}>
+        {VISTAS.map(([k, l]) => <button key={k} className={"met-chip" + (vista === k ? " on" : "")} onClick={() => setVista(k)}>{l}</button>)}
+      </div>
+      {vista === "resumen" && <FinResumen desde={desde} hasta={hasta} irA={setVista} />}
+      {vista === "gastos" && <FinGastos desde={desde} hasta={hasta} />}
+      {vista === "margen" && <FinMargen desde={desde} hasta={hasta} irA={setVista} />}
+      {vista === "costos" && <FinCostos productos={productos} onGuardado={onCostosCambio} />}
+      {vista === "cuentas" && <FinCuentas />}
+      {vista === "control" && <FinControl />}
+    </div>
+  );
+}
+
+// ═══════════ VENTAS DE TIENDA FÍSICA (punto de venta de Odoo) — SOLO DUEÑO ═══════════
+// Las ventas del POS de Odoo se copian (solo lectura) a tablas privadas cada 10 minutos. Esta vista solo habla con
+// la función pos_resumen, que vuelve a comprobar que quien pregunta es el dueño.
+function haceCuanto(iso) {
+  if (!iso) return "";
+  const min = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
+  if (min < 1) return "hace un momento";
+  if (min < 60) return `hace ${min} min`;
+  if (min < 1440) return `hace ${Math.round(min / 60)} h`;
+  return `hace ${Math.round(min / 1440)} días`;
+}
+function TiendaFisicaPanel({ desde, hasta, ventasWeb = null, envolver = false, titulo = "Ventas de tienda física" }) {
+  const { showToast } = useApp();
+  const { datos: r, error, cargando, recargar } = useFinDatos("pos_resumen", { p_desde: desde, p_hasta: hasta }, [desde, hasta]);
+  const [sincro, setSincro] = useState(false);
+  const sincronizar = async () => {
+    setSincro(true);
+    try {
+      await sb.ensureFreshToken();
+      const resp = await fetch(`${SUPABASE_URL}/functions/v1/sync-odoo-pos`, { method: "POST", headers: sb.functionHeaders(), body: "{}" });
+      const j = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(j.detalle || j.error || "Error");
+      await recargar();
+      showToast(j.nuevas > 0 ? `Tienda física: ${j.nuevas} venta(s) nueva(s) de Odoo` : "Tienda física al día");
+    } catch (e) { showToast("No se pudo actualizar desde Odoo: " + String(e.message || e).slice(0, 140)); }
+    setSincro(false);
+  };
+
+  let cuerpo;
+  if (error) cuerpo = <AvisoFin malo>No se pudieron cargar las ventas de la tienda física: {error}</AvisoFin>;
+  else if (!r) cuerpo = <div style={{ padding: "40px 0", textAlign: "center", color: MT.texto2 }}>Cargando ventas de la tienda…</div>;
+  else {
+    const ventas = Number(r.ventas) || 0;
+    const tickets = Number(r.tickets) || 0;
+    const ganancia = r.ganancia_est === null || r.ganancia_est === undefined ? null : Number(r.ganancia_est);
+    const cob = r.cobertura_costo_pct === null || r.cobertura_costo_pct === undefined ? null : Number(r.cobertura_costo_pct);
+    const hayVentas = tickets > 0 || ventas !== 0;
+    // Serie: por día (periodos cortos) o por mes (periodos largos)
+    const mapaDia = new Map((r.serie || []).map(s => [String(s.dia).slice(0, 10), Number(s.ventas) || 0]));
+    const dias = []; for (let d = desde; d <= hasta && dias.length < 800; d = sumarDiasISO(d, 1)) dias.push(d);
+    const porMes = dias.length > 62;
+    let etiquetas, valores;
+    if (porMes) {
+      const m = new Map(); (r.serie || []).forEach(s => { const k = String(s.dia).slice(0, 7); m.set(k, (m.get(k) || 0) + (Number(s.ventas) || 0)); });
+      etiquetas = [...m.keys()].sort(); valores = etiquetas.map(k => Math.round(m.get(k) * 100) / 100);
+    } else { etiquetas = dias; valores = dias.map(d => mapaDia.get(d) || 0); }
+    // Horas
+    const mh = new Map((r.por_hora || []).map(h => [Number(h.hora), Number(h.ventas) || 0]));
+    const hs = [...mh.keys()]; const h0 = hs.length ? Math.min(...hs) : 8, h1 = hs.length ? Math.max(...hs) : 18;
+    const horas = []; for (let h = h0; h <= h1; h++) horas.push(h);
+    const pagos = r.pagos || []; const totalPagos = pagos.reduce((a, p) => a + Math.max(0, Number(p.monto) || 0), 0) || 1;
+    const maxCaj = Math.max(1, ...(r.cajeros || []).map(c => Number(c.ventas) || 0));
+    const web = ventasWeb === null ? null : Number(ventasWeb) || 0;
+    const totalNeg = web === null ? null : web + ventas;
+    cuerpo = (
+      <div style={{ opacity: cargando ? 0.7 : 1, transition: "opacity .25s" }}>
+        {!hayVentas ? <div className="met-card" style={{ textAlign: "center", color: MT.texto2, padding: 28 }}>No hubo ventas en la tienda física en este periodo.</div> : <>
+          {cob !== null && cob < 97 && <AvisoFin>Solo el <b>{pctM(cob, 0)}</b> de las ventas de la tienda tiene costo en Odoo, por eso la ganancia es una <b>estimación</b>: se aplica el margen de los productos con costo al resto. Completa el costo de esos productos en Odoo y se corrige sola.</AvisoFin>}
+          <div className="met-grid" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(190px,1fr))", marginTop: 12 }}>
+            <Kpi acento retraso={0} etiqueta="Ventas de la tienda" formula={`Todo lo cobrado en caja en el periodo (${numM(tickets)} ventas), ya restados los reembolsos (${usdM(Math.abs(Number(r.reembolsos) || 0))}). Fechas con hora de Panamá.`}
+              pie={<div style={{ fontSize: 12, color: MT.suave }}>{numM(tickets)} venta{tickets === 1 ? "" : "s"}{Number(r.n_reembolsos) > 0 ? ` · ${numM(r.n_reembolsos)} reembolso${Number(r.n_reembolsos) === 1 ? "" : "s"}` : ""}</div>}>
+              <Cifra valor={ventas} f={(v) => usdM(v, 0)} />
+            </Kpi>
+            <Kpi retraso={60} etiqueta="Ticket promedio" formula="Ventas de la tienda ÷ número de ventas (sin contar reembolsos como venta).">
+              <Cifra valor={Number(r.ticket_promedio) || 0} f={(v) => usdM(v)} />
+            </Kpi>
+            <Kpi retraso={120} etiqueta="Ganancia estimada" formula={`Ventas sin impuesto × margen de los productos que tienen costo en Odoo (${pctM(r.margen_pct)}). Costo de lo vendido: ${usdM(r.costo, 0)}. No descuenta gastos operativos.`}
+              pie={<div style={{ fontSize: 12, color: MT.suave }}>{r.margen_pct === null || r.margen_pct === undefined ? "Sin costos en Odoo" : `Margen ${pctM(r.margen_pct)}`}{cob !== null ? ` · costo en ${pctM(cob, 0)} de las ventas` : ""}</div>}>
+              {ganancia === null ? <span style={{ fontSize: 15, color: MT.suave }}>Faltan costos</span> : <Cifra valor={ganancia} f={(v) => usdM(v, 0)} />}
+            </Kpi>
+            <Kpi retraso={180} etiqueta="Unidades vendidas" formula="Suma de piezas de todas las líneas vendidas (los reembolsos restan).">
+              <Cifra valor={Number(r.unidades) || 0} f={(v) => numM(Math.round(v))} />
+            </Kpi>
+          </div>
+
+          {web !== null && (
+            <div className="met-card met-in" style={{ marginTop: 14, "--d": "120ms" }}>
+              <div className="met-lbl" style={{ marginBottom: 10 }}>Web vs. tienda física en el periodo</div>
+              <div style={{ display: "flex", height: 8, borderRadius: 8, overflow: "hidden", gap: 2 }} role="img" aria-label={`Web ${usdM(web, 0)} y tienda física ${usdM(ventas, 0)}`}>
+                <div style={{ width: (totalNeg > 0 ? (Math.max(0, web) / totalNeg) * 100 : 50) + "%", background: MT.tinta, borderRadius: 8, transition: "width 900ms cubic-bezier(.2,.7,.2,1)" }} />
+                <div style={{ flex: 1, background: MT.rojo, borderRadius: 8 }} />
+              </div>
+              <div style={{ display: "flex", gap: 18, flexWrap: "wrap", marginTop: 10, fontSize: 12.5, color: MT.texto2 }}>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><i style={{ width: 10, height: 10, borderRadius: 3, background: MT.tinta }} />Web y pedidos de vendedores: <b style={{ color: MT.texto }}>{usdM(web, 0)}{totalNeg > 0 ? ` (${pctM((web / totalNeg) * 100, 0)})` : ""}</b></span>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><i style={{ width: 10, height: 10, borderRadius: 3, background: MT.rojo }} />Tienda física: <b style={{ color: MT.texto }}>{usdM(ventas, 0)}{totalNeg > 0 ? ` (${pctM((ventas / totalNeg) * 100, 0)})` : ""}</b></span>
+                <span>Total del negocio: <b style={{ color: MT.texto }}>{usdM(totalNeg, 0)}</b></span>
+              </div>
+            </div>
+          )}
+
+          <div className="met-grid" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,430px),1fr))", marginTop: 14 }}>
+            <div className="met-card met-in" style={{ "--d": "100ms" }}>
+              <div className="met-lbl" style={{ marginBottom: 8 }}>Ventas de la tienda {porMes ? "por mes" : "por día"}</div>
+              {porMes
+                ? <GraficaBarras etiquetas={etiquetas} etiquetaX={mesCortoM} descripcion="Ventas de la tienda física por mes" alto={230} series={[{ nombre: "Tienda física", color: MT.rojo, valores, formato: (v) => usdM(v, 0) }]} />
+                : <GraficaLineas etiquetas={etiquetas} etiquetaX={fechaCortaM} descripcion="Ventas de la tienda física por día" alto={230} series={[{ nombre: "Tienda física", color: MT.rojo, valores, formato: (v) => usdM(v, 0), area: true }]} />}
+            </div>
+            <div className="met-card met-in" style={{ "--d": "160ms" }}>
+              <div className="met-lbl" style={{ marginBottom: 8 }}>A qué horas se vende (hora de Panamá)</div>
+              <GraficaBarras etiquetas={horas.map(String)} etiquetaX={(h) => h + "h"} descripcion="Ventas de la tienda por hora del día" alto={230} series={[{ nombre: "Ventas", color: MT.tinta, valores: horas.map(h => mh.get(h) || 0), formato: (v) => usdM(v, 0) }]} />
+            </div>
+          </div>
+
+          <div className="met-grid" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,430px),1fr))", marginTop: 14 }}>
+            <div className="met-card met-in" style={{ "--d": "100ms" }}>
+              <div className="met-lbl" style={{ marginBottom: 12 }}>Cómo pagan en la tienda</div>
+              {pagos.length === 0 ? <div style={{ fontSize: 13, color: MT.texto2 }}>Sin pagos registrados.</div>
+                : pagos.map((p, i) => <BarraH key={p.metodo} etiqueta={p.metodo} valor={Math.max(0, Number(p.monto) || 0)} maximo={totalPagos} color={i === 0 ? MT.rojo : MT.tinta} texto={usdM(p.monto, 0)} sub={pctM((Math.max(0, Number(p.monto) || 0) / totalPagos) * 100, 0)} retraso={i * 70} />)}
+              <div className="met-lbl" style={{ margin: "16px 0 10px" }}>Ventas por cajero</div>
+              {(r.cajeros || []).map((c, i) => <BarraH key={c.cajero} etiqueta={c.cajero} valor={Math.max(0, Number(c.ventas) || 0)} maximo={maxCaj} color={MT.tinta} texto={usdM(c.ventas, 0)} sub={`${numM(c.tickets)} ventas`} retraso={i * 70} />)}
+            </div>
+            <div className="met-card met-in" style={{ "--d": "160ms", overflowX: "auto" }}>
+              <div className="met-lbl" style={{ marginBottom: 8 }}>Los 15 productos que más venden en la tienda</div>
+              <table className="met-tabla" style={{ minWidth: 380 }}>
+                <thead><tr><th>Producto</th><th>Unid.</th><th>Ventas</th><th>Margen</th></tr></thead>
+                <tbody>{(r.top_productos || []).map((p, i) => {
+                  const vs = Number(p.ventas_sin_itbms) || 0, co = Number(p.costo) || 0;
+                  const mg = co > 0 && vs > 0 ? (1 - co / vs) * 100 : null;
+                  return <tr key={i}><td style={{ textAlign: "left", maxWidth: 230, whiteSpace: "normal", lineHeight: 1.3 }}>{p.nombre || p.ref || "—"}{p.ref && p.nombre ? <div style={{ fontSize: 11, color: MT.suave }}>{p.ref}</div> : null}</td><td>{numM(Math.round(Number(p.unidades) || 0))}</td><td>{usdM(p.ventas, 0)}</td><td style={{ color: mg === null ? MT.suave : mg < 25 ? MT.malo : MT.texto }}>{mg === null ? "sin costo" : pctM(mg, 0)}</td></tr>;
+                })}</tbody>
+              </table>
+            </div>
+          </div>
+        </>}
+        <div style={{ marginTop: 16, fontSize: 12, color: MT.suave, lineHeight: 1.6, maxWidth: 780 }}>
+          <b style={{ color: MT.texto2 }}>De dónde salen estos datos.</b> Son las ventas del punto de venta de Odoo, copiadas en modo solo lectura (esta página nunca cambia nada en Odoo). Los costos son los que tengas cargados en Odoo. Los clientes de la tienda casi siempre son anónimos, por eso no entran en CAC ni LTV. No se duplican con los pedidos de la web: son canales distintos.
+        </div>
+      </div>
+    );
+  }
+
+  const encabezado = (
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
+      <div>
+        {envolver ? <h2 className="met-h1">{titulo}</h2> : <div className="met-sec" style={{ margin: "0 0 4px" }}>{titulo}</div>}
+        <div className="met-sub" style={{ marginTop: envolver ? 6 : 0 }}>Lo que se vende en el local, tomado del punto de venta de Odoo, separado de la web.</div>
+      </div>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        {r && r.ultima_venta && <div className="met-live"><i /> Última venta: {new Date(r.ultima_venta).toLocaleString("es-PA", { timeZone: "America/Panama", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}{r.ultima_sync ? ` · revisado ${haceCuanto(r.ultima_sync)}` : ""}</div>}
+        <button className="met-chip" onClick={sincronizar} disabled={sincro}>{sincro ? "Actualizando…" : "Actualizar ahora"}</button>
+      </div>
+    </div>
+  );
+  const interior = <>{encabezado}<div style={{ marginTop: 10 }}>{cuerpo}</div></>;
+  return envolver ? <div className="met" style={{ padding: 22, marginBottom: 28 }}><style>{ESTILO_MET}</style>{interior}</div> : <div style={{ marginTop: 6 }}>{interior}</div>;
+}
+
+// ── Finanzas: ganancia del negocio completo (web + tienda física) ──
+function FinTiendaFisica({ desde, hasta, netaWeb }) {
+  const { datos: r, error } = useFinDatos("pos_resumen", { p_desde: desde, p_hasta: hasta }, [desde, hasta]);
+  const { datos: cfg } = useFinDatos("fin_config_leer", {}, []);
+  if (error || !r || !cfg) return null;
+  const ganancia = r.ganancia_est === null || r.ganancia_est === undefined ? null : Number(r.ganancia_est);
+  const pct = (m) => { const x = (r.pagos || []).find(p => String(p.metodo).toLowerCase().includes(m)); return x ? Math.max(0, Number(x.monto) || 0) : 0; };
+  const ct = Number(cfg.comision_tarjeta_pct), cy = Number(cfg.comision_yappy_pct);
+  const comisiones = (Number.isFinite(ct) ? pct("tarjeta") * ct / 100 : 0) + (Number.isFinite(cy) ? pct("yappy") * cy / 100 : 0);
+  const gananciaTienda = ganancia === null ? null : ganancia - comisiones;
+  const total = netaWeb === null || netaWeb === undefined || gananciaTienda === null ? null : Number(netaWeb) + gananciaTienda;
+  if (!(Number(r.tickets) > 0)) return null;
+  return (
+    <>
+      <div className="met-sec">Con la tienda física incluida</div>
+      <div className="met-grid" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,420px),1fr))" }}>
+        <div className="met-card met-in" style={{ "--d": "100ms" }}>
+          {[["Ganancia neta de la web (la de arriba)", netaWeb, 1], ["Ventas de la tienda física", Number(r.ventas), 0], ["Ganancia estimada de la tienda (sin gastos)", ganancia, 1], ["Comisiones de tarjeta y Yappy de la tienda", comisiones, -1]].map(([et, v, s]) => (
+            v === null || v === undefined ? null :
+            <div key={et} style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 13, padding: "6px 0", borderBottom: `1px solid ${MT.rejilla}` }}>
+              <span style={{ color: MT.texto2 }}>{et}</span>
+              <b style={{ color: s < 0 ? MT.malo : s === 0 ? MT.suave : MT.texto }}>{s < 0 ? "−" : s > 0 && Number(v) >= 0 ? "+" : ""}{usdM(Math.abs(Number(v)), 0)}</b>
+            </div>
+          ))}
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 14, fontWeight: 800, paddingTop: 10 }}>
+            <span>Ganancia neta total estimada</span>
+            <span style={{ color: total === null ? MT.suave : total >= 0 ? MT.bueno : MT.malo }}>{total === null ? "—" : (total < 0 ? "−" : "") + usdM(Math.abs(total), 0)}</span>
+          </div>
+        </div>
+        <div className="met-card met-in" style={{ "--d": "160ms" }}>
+          <div className="met-lbl">Cómo leerlo</div>
+          <div style={{ fontSize: 12.5, color: MT.texto2, lineHeight: 1.6, marginTop: 8 }}>
+            Los gastos operativos que registraste (alquiler, planilla…) ya se restaron en la ganancia de la web, así que aquí solo se suma lo que deja la tienda: ventas sin impuesto × margen, menos comisiones de tarjeta y Yappy si las configuraste. Es una estimación; cuando Odoo tenga la contabilidad real se podrá reemplazar por la cifra exacta.
+          </div>
+        </div>
+      </div>
+    </>
   );
 }
 
@@ -4627,6 +5430,8 @@ function AdminView() {
   const esAdminCompleto = user?.rol === "admin" || (user?.es_admin && !user?.rol);
   const esOperador = user?.rol === "operador";
   const [tab, setTab] = useState("dashboard");
+  const [, setCostosVer] = useState(0); // fuerza redibujar cuando cambian los costos privados (Finanzas)
+  useEffect(() => { if (esAdminCompleto) finCargarCostos().then(() => setCostosVer(v => v + 1)).catch(() => {}); }, [esAdminCompleto]);
   const [orders, setOrders] = useState([]);
   const [users, setUsers] = useState([]);
   const [loadingData, setLoadingData] = useState(true);
@@ -5083,6 +5888,9 @@ function AdminView() {
     return ["2026-06-01", hoyP];
   })();
 
+  // La tienda física tiene historial desde nov-2025 (antes que la web): "todo el tiempo" arranca allí
+  const rangoTiendaISO = rangoVentas === "todo" ? ["2025-11-01", fechaPanama()] : rangoMetricasISO;
+
   // ── MÉTRICAS (solo pedidos reales) ─────────────────────────────
   const ingresoTotal = pedidosReales.reduce((s, o) => s + Number(o.total || 0), 0);
   const ordenesTotal = pedidosReales.length;
@@ -5180,7 +5988,7 @@ function AdminView() {
       // (para no diluir la velocidad de algo que apenas lleva unos días a la venta).
       const diasVentana = Math.min(VENTANA_VELOCIDAD_DIAS, diasDesdeInicio);
       const velocidadDiaria = m.cantidadReciente / diasVentana; // unidades vendidas por día, RECIENTE
-      const costoUnit = Number(prod.costo || 0);
+      const costoUnit = costoProducto(prod);
       const margen = costoUnit > 0 ? m.ingreso - (costoUnit * m.cantidad) : null; // null = sin dato de costo
       // Stock actual (si está sincronizado con Odoo)
       const tieneStock = !!prod.stock_actualizado_at;
@@ -6515,6 +7323,7 @@ function AdminView() {
     ["dashboard", "Dashboard", BarChart3],
     ["analytics", "Analítica Web", Eye],
     ["metricas", "Métricas", Wallet],
+    ["finanzas", "Finanzas", Receipt],
     ["orders", "Pedidos", Package],
     ["crear", "Crear", FilePlus],
     ["fraude", "Fraude", Lock],
@@ -6638,6 +7447,9 @@ function AdminView() {
                     </div>
                   );
                 })()}
+
+                {/* VENTAS DE TIENDA FÍSICA (punto de venta de Odoo) */}
+                <TiendaFisicaPanel envolver desde={rangoTiendaISO[0]} hasta={rangoTiendaISO[1]} ventasWeb={ingresoTotal} />
 
                 {/* WIDGET: AOV OVER TIME + MINI-TABLA DE VENTAS */}
                 <div className="oft-dash-grid-2" style={{ display: "grid", gridTemplateColumns: "1.3fr 1fr", gap: 16, marginBottom: 28 }}>
@@ -8363,6 +9175,7 @@ function AdminView() {
         {tab === "ofertas" && esAdminCompleto && <OfertasAdmin />}
         {tab === "fraude" && esAdminCompleto && <FraudePanel onCambio={cargarRiesgos} />}
         {tab === "metricas" && esAdminCompleto && <MetricasPanel desde={rangoMetricasISO[0]} hasta={rangoMetricasISO[1]} filtro={renderFiltroPeriodo()} />}
+        {tab === "finanzas" && esAdminCompleto && <FinanzasPanel desde={rangoMetricasISO[0]} hasta={rangoMetricasISO[1]} filtro={renderFiltroPeriodo()} productos={products} onCostosCambio={() => setCostosVer(v => v + 1)} />}
 
         {tab === "descuentos" && esAdminCompleto && (
           <>
