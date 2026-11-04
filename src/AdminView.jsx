@@ -5711,6 +5711,174 @@ function ProveedoresOdoo({ proveedoresWeb, onCambio }) {
   );
 }
 
+// ═══════════ RETORNAR UN PEDIDO (desde Pedidos) → devuelve la mercancía al inventario de Odoo ═══════════
+// Total  : usa cancelar-venta-odoo (devolución de la entrega + nota de crédito con confirmación + venta cancelada).
+// Parcial: usa devolver-items-odoo (solo devuelve al inventario las piezas indicadas).
+// Siempre deja registrado el retorno (tabla retornos, estado "aprobado") para que el reembolso se descuente en Finanzas.
+const MOTIVOS_RETORNO = ["Talla o modelo incorrecto", "Producto dañado o defectuoso", "El cliente se arrepintió", "Error en el pedido", "Pedido cancelado antes de entregar", "Otro"];
+const retornosDePedido = (retornos, o) => (retornos || []).filter(r => r.estado !== "rechazado" && ((r.pedido_id && r.pedido_id === o.id) || (r.codigo_pedido && r.codigo_pedido === o.codigo)));
+
+function InsigniaRetorno({ retornos, o }) {
+  const rs = retornosDePedido(retornos, o);
+  if (rs.length === 0) return null;
+  const total = rs.some(r => r.tipo_retorno === "total");
+  const pendienteOdoo = rs.some(r => r.odoo_estado === "pendiente");
+  return (
+    <div style={{ marginTop: 3, display: "flex", gap: 4, flexWrap: "wrap" }}>
+      <span style={{ background: "#F8D7DA", color: "#721C24", fontSize: 10, fontWeight: 800, padding: "2px 6px", borderRadius: 6 }}>{total ? "RETORNADO" : rs.some(r => r.tipo_retorno === "parcial") ? "RETORNO PARCIAL" : "CON RETORNO"}</span>
+      {pendienteOdoo && <span title="El retorno se registró en la web pero el inventario no se devolvió en Odoo" style={{ background: "#FFF3CD", color: "#856404", fontSize: 10, fontWeight: 800, padding: "2px 6px", borderRadius: 6 }}>ODOO PENDIENTE</span>}
+    </div>
+  );
+}
+
+function RetornarPedidoModal({ pedido, productos, retornos, onClose, onHecho }) {
+  const idRetorno = useRef(null);
+  if (!idRetorno.current) idRetorno.current = (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, c => { const r = Math.random() * 16 | 0; return (c === "x" ? r : (r & 3 | 8)).toString(16); });
+  const enCurso = useRef(false);
+  const previos = retornosDePedido(retornos, pedido).filter(r => r.tipo_retorno);
+  const devueltoAntes = (pid) => previos.reduce((s, r) => s + (r.items_retornados || []).filter(i => i.product_id === pid).reduce((a, i) => a + (Number(i.cantidad) || 0), 0), 0);
+  const filas = (pedido.items || []).map(it => {
+    const prod = (productos || []).find(p => p.id === it.producto_id);
+    const vendido = Number(it.cantidad) || 0, ya = devueltoAntes(it.producto_id), maximo = Math.max(0, vendido - ya);
+    return { producto_id: it.producto_id, referencia: prod?.referencia || "", nombre: it.nombre_producto, vendido, ya, maximo, subtotal: Number(it.subtotal) || 0 };
+  });
+  const [cant, setCant] = useState(() => Object.fromEntries(filas.map((f, i) => [i, f.maximo])));
+  const [motivo, setMotivo] = useState(MOTIVOS_RETORNO[0]);
+  const [otro, setOtro] = useState("");
+  const [nota, setNota] = useState("");
+  const [montoTxt, setMontoTxt] = useState(null);
+  const [trabajando, setTrabajando] = useState(false);
+  const [error, setError] = useState("");
+  const [fallaDb, setFallaDb] = useState(null);
+  useLockBodyScroll(true);
+
+  const elegidas = filas.map((f, i) => ({ ...f, cantidad: Math.min(f.maximo, Math.max(0, Math.floor(Number(cant[i]) || 0))) })).filter(f => f.cantidad > 0);
+  const hayAntes = previos.length > 0;
+  const esTotal = !hayAntes && filas.length > 0 && filas.every((f, i) => Math.min(f.maximo, Math.max(0, Math.floor(Number(cant[i]) || 0))) === f.vendido);
+  const montoSugerido = esTotal ? Number(pedido.total) || 0 : elegidas.reduce((s, f) => s + (f.vendido > 0 ? f.subtotal * f.cantidad / f.vendido : 0), 0);
+  const monto = montoTxt === null ? montoSugerido : (Number(montoTxt) || 0);
+  const sinRef = elegidas.filter(f => !f.referencia);
+  const piezas = elegidas.reduce((s, f) => s + f.cantidad, 0);
+  const usd = (n) => "$" + Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const motivoFinal = motivo === "Otro" ? otro.trim() : motivo;
+
+  const llamar = async (fn, cuerpo) => {
+    const r = await fetch(`${SUPABASE_URL}/functions/v1/${fn}`, { method: "POST", headers: sb.functionHeaders(), body: JSON.stringify(cuerpo) });
+    return await r.json().catch(() => ({}));
+  };
+
+  const guardar = async (odoo) => {
+    const fila = {
+      id: idRetorno.current, pedido_id: pedido.id, codigo_pedido: pedido.codigo, nombre_cliente: pedido.nombre_cliente, motivo: motivoFinal,
+      productos_retornados: elegidas.map(i => `${i.cantidad}x ${i.nombre} (${i.referencia})`).join(", "),
+      items_retornados: elegidas.map(i => ({ product_id: i.producto_id, referencia: i.referencia, nombre: i.nombre, cantidad: i.cantidad })),
+      monto_reembolso: Math.round(monto * 100) / 100, estado: "aprobado", notas: nota.trim(), tipo_retorno: esTotal ? "total" : "parcial",
+      odoo_estado: odoo.estado, odoo_detalle: odoo.detalle || "", odoo_at: odoo.estado === "devuelto" ? new Date().toISOString() : null,
+      updated_at: new Date().toISOString(),
+    };
+    const creada = await sb.post("retornos", fila);
+    onHecho((Array.isArray(creada) && creada[0]) || fila, odoo);
+  };
+
+  const confirmar = async () => {
+    if (enCurso.current) return;
+    setError("");
+    if (!motivoFinal) { setError("Escribe el motivo del retorno."); return; }
+    if (elegidas.length === 0) { setError("Elige al menos una pieza para retornar."); return; }
+    if (sinRef.length > 0) { setError(`Estos productos no tienen referencia, así que no se pueden devolver en Odoo: ${sinRef.map(f => f.nombre).join(", ")}. Agrégales la referencia o registra el retorno desde la pestaña Retornos.`); return; }
+    enCurso.current = true; setTrabajando(true);
+    try {
+      // Si Odoo ya se hizo en un intento anterior y solo falló guardar en la web, se reintenta SOLO guardar.
+      if (fallaDb) { await guardar(fallaDb); return; }
+      let odoo = { estado: "devuelto", detalle: "" };
+      let data = null, falloConexion = null;
+      try {
+        if (esTotal) {
+          data = await llamar("cancelar-venta-odoo", { codigo: pedido.codigo, acepta_nota_credito: false });
+          if (data?.requiere_confirmacion) {
+            const est = (e) => e === "not_paid" ? "sin pagar" : e === "partial" ? "pago parcial" : "ya pagada";
+            const lineas = (data.facturas || []).map(f => `  • ${f.factura} — $${Number(f.total).toFixed(2)} (${est(f.estado_pago)})`).join("\n");
+            const hayPagadas = (data.facturas || []).some(f => f.estado_pago !== "not_paid");
+            const ok = confirm(`Este pedido ya está facturado en Odoo:\n\n${lineas}\n\nSi continúas, en Odoo se va a:\n  1. Devolver la mercancía al inventario\n  2. Emitir la nota de crédito de la factura\n  3. Cancelar la venta\n` + (hayPagadas ? `\nComo la factura ya está pagada, la nota de crédito deja un saldo a favor del cliente. El reembolso del dinero (Yappy/tarjeta) lo registras tú a mano.\n` : "") + `\n¿Continuar?`);
+            if (!ok) return;
+            data = await llamar("cancelar-venta-odoo", { codigo: pedido.codigo, acepta_nota_credito: true });
+          }
+        } else {
+          data = await llamar("devolver-items-odoo", { codigo: pedido.codigo, retorno_id: idRetorno.current, items: elegidas.map(f => ({ referencia: f.referencia, cantidad: f.cantidad })) });
+        }
+      } catch (e) { falloConexion = e.message || String(e); }
+
+      if (falloConexion || !data?.ok) {
+        const motivoFallo = falloConexion ? `No se pudo conectar con Odoo (${falloConexion}).` : (data?.mensaje || data?.error || "Odoo respondió con un error.");
+        const seguir = confirm(`No se pudo devolver la mercancía en Odoo:\n\n${motivoFallo}\n\nEl retorno todavía NO se ha registrado.\n\n¿Registrarlo SOLO en la web de todas formas? (Tendrás que devolver el inventario tú a mano en Odoo.)`);
+        if (!seguir) { setError(motivoFallo); return; }
+        odoo = { estado: "pendiente", detalle: String(motivoFallo).slice(0, 400) };
+      } else if (data.encontrada === false) {
+        odoo = { estado: "sin_odoo", detalle: "El pedido no estaba en Odoo" };
+      } else {
+        const nNotas = (data.ordenes || []).reduce((s, o) => s + (o.notas_credito?.length || 0), 0);
+        odoo = { estado: "devuelto", detalle: esTotal ? `Venta cancelada y mercancía devuelta${nNotas ? ` · ${nNotas} nota(s) de crédito` : ""}` : `${data.unidades || piezas} pieza(s) devueltas${data.devoluciones?.length ? ` (${data.devoluciones.join(", ")})` : ""}`, aviso: data.aviso_factura || null };
+      }
+      try { await guardar(odoo); }
+      catch (e) { setFallaDb(odoo); setError("En Odoo ya quedó hecho, pero no se pudo guardar el retorno en la web: " + (e.message || e) + ". Pulsa «Guardar retorno» otra vez (no se repite nada en Odoo)."); }
+    } finally { enCurso.current = false; setTrabajando(false); }
+  };
+
+  const inpN = { width: 64, padding: "6px 8px", borderRadius: 8, border: `1.5px solid ${GRAY2}`, fontSize: 14, textAlign: "center", fontFamily: "inherit" };
+  return createPortal(
+    <div className="oft-overlay" style={{ ...S.overlay, alignItems: "flex-start", overflowY: "auto", padding: "20px 12px" }} onClick={() => !trabajando && onClose()}>
+      <div className="oft-qv-pop" role="dialog" aria-label="Retornar pedido" style={{ background: WHITE, borderRadius: 16, maxWidth: 560, width: "100%", margin: "0 auto", padding: 22 }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+          <div style={{ fontWeight: 900, fontSize: 18, display: "flex", alignItems: "center", gap: 8 }}><RefreshCw size={18} color={RED} /> Retornar pedido {pedido.codigo}</div>
+          <button onClick={() => !trabajando && onClose()} aria-label="Cerrar" style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}><X size={22} /></button>
+        </div>
+        <div style={{ fontSize: 13, color: GRAY3, marginBottom: 14 }}>{pedido.nombre_cliente} · total {usd(pedido.total)}</div>
+
+        {hayAntes && <div style={{ fontSize: 12.5, background: "#FFF3CD", color: "#856404", borderRadius: 8, padding: "8px 10px", marginBottom: 12 }}>Este pedido ya tiene {previos.length} retorno(s). Solo se pueden retornar las piezas que faltan.</div>}
+
+        <div style={{ fontWeight: 800, fontSize: 13, marginBottom: 6 }}>¿Qué piezas regresan?</div>
+        <div style={{ border: `1px solid ${GRAY2}`, borderRadius: 10, overflow: "hidden", marginBottom: 14 }}>
+          {filas.length === 0 && <div style={{ padding: 14, fontSize: 13, color: GRAY3 }}>Este pedido no tiene productos cargados.</div>}
+          {filas.map((f, i) => (
+            <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", borderBottom: i < filas.length - 1 ? `1px solid ${GRAY}` : "none", opacity: f.maximo === 0 ? 0.5 : 1 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis" }}>{f.nombre}</div>
+                <div style={{ fontSize: 11, color: f.referencia ? GRAY3 : RED }}>{f.referencia || "Sin referencia"} · compró {f.vendido}{f.ya ? ` · ya retornó ${f.ya}` : ""}</div>
+              </div>
+              <input type="number" min={0} max={f.maximo} disabled={f.maximo === 0 || trabajando} value={cant[i] ?? 0} onChange={e => setCant({ ...cant, [i]: e.target.value })} style={inpN} aria-label={`Cantidad a retornar de ${f.nombre}`} />
+            </div>
+          ))}
+        </div>
+
+        <label style={S.label}>Motivo *</label>
+        <select style={S.input} value={motivo} onChange={e => setMotivo(e.target.value)} disabled={trabajando}>{MOTIVOS_RETORNO.map(m => <option key={m}>{m}</option>)}</select>
+        {motivo === "Otro" && <input style={S.input} placeholder="Escribe el motivo" value={otro} onChange={e => setOtro(e.target.value)} disabled={trabajando} />}
+
+        <label style={S.label}>Monto a reembolsar al cliente ($)</label>
+        <input style={S.input} type="number" min={0} step="0.01" value={montoTxt === null ? montoSugerido.toFixed(2) : montoTxt} onChange={e => setMontoTxt(e.target.value)} disabled={trabajando} />
+        <label style={S.label}>Nota (opcional)</label>
+        <input style={S.input} value={nota} onChange={e => setNota(e.target.value)} disabled={trabajando} />
+
+        <div style={{ fontSize: 12.5, color: GRAY3, background: GRAY, borderRadius: 10, padding: "10px 12px", margin: "14px 0", lineHeight: 1.55 }}>
+          <b style={{ color: BLACK }}>Qué va a pasar:</b>
+          <div>• <b>Web:</b> queda registrado como retorno aprobado por {usd(monto)} (se descuenta en Dashboard y Finanzas).</div>
+          {esTotal
+            ? <div>• <b>Odoo:</b> es un retorno <b>total</b>: se devuelve toda la mercancía al inventario, se emite la nota de crédito si ya está facturado (te pedirá confirmar) y se cancela la venta.</div>
+            : <div>• <b>Odoo:</b> se devuelven <b>{piezas} pieza(s)</b> al inventario. No se emite nota de crédito ni se cancela la venta: si el pedido está facturado, esa nota la haces a mano en Odoo.</div>}
+          <div>• <b>Dinero:</b> el reembolso al cliente (Yappy/tarjeta/efectivo) lo haces tú; el sistema no mueve dinero.</div>
+        </div>
+
+        {error && <div role="alert" style={{ fontSize: 13, color: "#B71C1C", background: "#FDE8E8", borderRadius: 8, padding: "8px 10px", marginBottom: 12 }}>{error}</div>}
+        <div style={{ display: "flex", gap: 10 }}>
+          <button onClick={onClose} disabled={trabajando} className="oft-btn-press" style={{ ...S.btnOutline, flex: 1, justifyContent: "center" }}>Cancelar</button>
+          <button onClick={confirmar} disabled={trabajando || filas.length === 0} className="oft-btn-press" style={{ ...S.btnRed, flex: 1, justifyContent: "center", opacity: trabajando ? 0.7 : 1 }}>
+            {trabajando ? "Procesando…" : fallaDb ? "Guardar retorno" : "Retornar y devolver al inventario"}
+          </button>
+        </div>
+      </div>
+    </div>, document.body);
+}
+
 function AdminView() {
   const { products, setProducts, categories, setCategories, gruposCategorias, setGruposCategorias, banners, setBanners, popups, setPopups, empresas, setEmpresas, sucursales, setSucursales, localesRetiro, setLocalesRetiro, retiroLocalHabilitado, setRetiroLocalHabilitado, showToast, setView, setUser, user } = useApp();
   // Rol del usuario actual: 'admin' = módulo completo, 'operador' = acceso limitado.
@@ -5759,6 +5927,7 @@ function AdminView() {
   const [bulkEdit, setBulkEdit] = useState(emptyBulkEdit);
   const [shippingLabel, setShippingLabel] = useState(null); // pedido para la guía de envío
   const [pedidoAEliminar, setPedidoAEliminar] = useState(null); // pedido pendiente de eliminar (confirmación)
+  const [pedidoARetornar, setPedidoARetornar] = useState(null); // pedido que se va a retornar (devuelve mercancía a Odoo)
   const eliminandoRef = useRef(false); // candado sincrónico contra doble clic al eliminar
   const [cotizacionAEditar, setCotizacionAEditar] = useState(null); // cotización que se está editando
   const [cotizacionImagen, setCotizacionImagen] = useState(null); // cotización a la que se le está generando la imagen
@@ -8165,6 +8334,7 @@ function AdminView() {
                               ? <span style={{ display: "inline-block", background: GRAY, color: GRAY3, fontSize: 10, fontWeight: 800, padding: "2px 6px", borderRadius: 6 }}>MANUAL</span>
                               : <span style={{ display: "inline-flex", alignItems: "center", gap: 3, background: "#DBEAFE", color: "#1D4ED8", fontSize: 10, fontWeight: 800, padding: "2px 6px", borderRadius: 6 }}><Zap size={10} /> WEB</span>}
                           </div>
+                          <InsigniaRetorno retornos={retornos} o={o} />
                         </td>
                         <td style={S.td}>{o.nombre_cliente}</td>
                         <td style={S.td}>{o.telefono}</td>
@@ -8183,7 +8353,7 @@ function AdminView() {
                           </select>
                         </td>
                         <td style={S.td}>
-                          <div style={{ display: "flex", gap: 6 }}>
+                          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                             <button onClick={() => notifyWhatsApp(o, o.estado)} title="Enviar notificación por WhatsApp" style={{ ...S.btnWA, padding: "6px 10px", fontSize: 12 }}>
                               <MessageCircle size={14} /> Avisar
                             </button>
@@ -8194,6 +8364,11 @@ function AdminView() {
                             <button onClick={() => setFacturaImagen(o)} title="Descargar imagen/PDF de la factura" style={{ background: "none", border: `1.5px solid ${RED}`, color: RED, borderRadius: 6, padding: "6px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}>
                               <ImageIcon size={14} /> Factura
                             </button>
+                            {o.tipo !== "cotizacion" && !retornosDePedido(retornos, o).some(r => r.tipo_retorno === "total") && (
+                              <button onClick={() => setPedidoARetornar(o)} title="Retornar pedido (devuelve la mercancía al inventario de Odoo)" style={{ background: "none", border: `1.5px solid ${BLACK}`, color: BLACK, borderRadius: 6, padding: "6px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                                <RefreshCw size={14} /> Retornar
+                              </button>
+                            )}
                             <button onClick={() => setPedidoAEliminar(o)} title="Eliminar pedido" style={{ background: "none", border: `1.5px solid ${RED}`, color: RED, borderRadius: 6, padding: "6px 9px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}>
                               <Trash2 size={14} />
                             </button>
@@ -8226,6 +8401,7 @@ function AdminView() {
                         {o.creado_por_admin
                           ? <span style={{ display: "inline-block", marginTop: 4, background: GRAY, color: GRAY3, fontSize: 10, fontWeight: 800, padding: "2px 7px", borderRadius: 6 }}>MANUAL</span>
                           : <span style={{ display: "inline-flex", alignItems: "center", gap: 3, marginTop: 4, background: "#DBEAFE", color: "#1D4ED8", fontSize: 10, fontWeight: 800, padding: "2px 7px", borderRadius: 6 }}><Zap size={10} /> WEB</span>}
+                        <InsigniaRetorno retornos={retornos} o={o} />
                       </div>
                       <div style={{ textAlign: "right" }}>
                         <div style={{ fontWeight: 900, fontSize: 18 }}>{money(o.total)}</div>
@@ -8264,6 +8440,11 @@ function AdminView() {
                       <button onClick={() => setFacturaImagen(o)} style={{ background: "none", color: RED, border: `1.5px solid ${RED}`, borderRadius: 10, padding: "12px 14px", fontSize: 14, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}>
                         <ImageIcon size={16} /> Factura
                       </button>
+                      {o.tipo !== "cotizacion" && !retornosDePedido(retornos, o).some(r => r.tipo_retorno === "total") && (
+                        <button onClick={() => setPedidoARetornar(o)} style={{ background: "none", color: BLACK, border: `1.5px solid ${BLACK}`, borderRadius: 10, padding: "12px 14px", fontSize: 14, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}>
+                          <RefreshCw size={16} /> Retornar
+                        </button>
+                      )}
                       <button onClick={() => setPedidoAEliminar(o)} title="Eliminar" style={{ background: "none", color: RED, border: `1.5px solid ${RED}`, borderRadius: 10, padding: "12px 14px", cursor: "pointer", display: "inline-flex", alignItems: "center" }}>
                         <Trash2 size={16} />
                       </button>
@@ -8283,6 +8464,24 @@ function AdminView() {
             )}
             {/* MODAL IMAGEN/PDF DE FACTURA */}
             {facturaImagen && <OrderImageModal order={facturaImagen} onClose={() => setFacturaImagen(null)} />}
+            {/* MODAL RETORNAR PEDIDO */}
+            {pedidoARetornar && (
+              <RetornarPedidoModal
+                pedido={pedidoARetornar}
+                productos={products}
+                retornos={retornos}
+                onClose={() => setPedidoARetornar(null)}
+                onHecho={(fila, odoo) => {
+                  setRetornos(prev => [fila, ...prev.filter(r => r.id !== fila.id)]);
+                  const cod = pedidoARetornar.codigo;
+                  setPedidoARetornar(null);
+                  if (odoo.estado === "devuelto") showToast(`Retorno de ${cod} registrado · Odoo: ${odoo.detalle}`);
+                  else if (odoo.estado === "sin_odoo") showToast(`Retorno de ${cod} registrado (el pedido no estaba en Odoo)`);
+                  else showToast(`Retorno de ${cod} registrado SOLO en la web: falta devolver el inventario en Odoo`);
+                  if (odoo.aviso) alert(odoo.aviso);
+                }}
+              />
+            )}
             {/* MODAL CONFIRMAR ELIMINACIÓN */}
             {pedidoAEliminar && createPortal(
               <div className="oft-overlay" style={S.overlay} onClick={() => !eliminando && setPedidoAEliminar(null)}>
