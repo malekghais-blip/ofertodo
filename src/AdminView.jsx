@@ -1731,12 +1731,8 @@ function AnalyticsPanel() {
   // y se cortaban en 20.000: en una semana o un mes con mas visitas, los numeros salian incompletos.
   // Aqui cada grupo se vuelve a repetir "n" veces para que el resto de la pantalla cuente igual que siempre.
   const cargarEventosCompactos = async (desdeISO, hastaISO) => {
-    await sb.ensureFreshToken();
-    const r = await fetch(`${SUPABASE_URL}/rest/v1/rpc/analitica_eventos`, {
-      method: "POST", headers: sb.dataHeaders(), body: JSON.stringify({ p_desde: desdeISO, p_hasta: hastaISO }),
-    });
-    if (!r.ok) throw new Error(await r.text());
-    const filas = await r.json();
+    // Con "Todo" esta consulta es la más pesada; si la base de datos tarda de más, se reintenta sola.
+    const filas = await rpcConReintento("analitica_eventos", { p_desde: desdeISO, p_hasta: hastaISO });
     const out = [];
     for (const f of filas || []) { const n = Number(f.n) || 1; for (let i = 0; i < n; i++) out.push(f); }
     return out;
@@ -1775,10 +1771,12 @@ function AnalyticsPanel() {
         sb.get("pedidos", `?or=(and(tipo.eq.cotizacion,created_at.gte.${desdeCotizacionesISO},created_at.lte.${hastaISO}),and(es_cotizacion_convertida.eq.true,fecha_cotizacion_original.gte.${desdeCotizacionesISO},fecha_cotizacion_original.lte.${hastaISO}))&select=id,es_cotizacion_convertida,creado_por_usuario_id`),
         // Cuentas del equipo (admin/operadores), para poder mostrar el nombre de cada uno
         sb.get("usuarios", `?or=(rol.not.is.null,es_admin.eq.true)&select=id,nombre`),
-        // Mismo trío, pero del periodo anterior -- para calcular el % de cambio
-        cargarEventosCompactos(desdeAntISO, hastaAntISO),
-        sb.get("usuarios", `?created_at=gte.${desdeAntISO}&created_at=lte.${hastaAntISO}&origen_cuenta=eq.web`),
-        sb.get("usuarios", `?created_at=gte.${desdeAntISO}&created_at=lte.${hastaAntISO}&origen_cuenta=eq.admin_manual`),
+        // Mismo trío, pero del periodo anterior -- para calcular el % de cambio.
+        // Con "Todo" no existe periodo anterior (empezaría antes de que existiera el negocio): se
+        // omite para no hacer tres consultas pesadas que siempre devuelven vacío.
+        rangoTipo === "todo" ? Promise.resolve([]) : cargarEventosCompactos(desdeAntISO, hastaAntISO),
+        rangoTipo === "todo" ? Promise.resolve([]) : sb.get("usuarios", `?created_at=gte.${desdeAntISO}&created_at=lte.${hastaAntISO}&origen_cuenta=eq.web`),
+        rangoTipo === "todo" ? Promise.resolve([]) : sb.get("usuarios", `?created_at=gte.${desdeAntISO}&created_at=lte.${hastaAntISO}&origen_cuenta=eq.admin_manual`),
       ]);
       // Si mientras esperábamos ya se disparó una petición más nueva (otro clic de
       // filtro), esta respuesta quedó vieja -- se descarta en silencio, sin tocar
@@ -1790,6 +1788,8 @@ function AnalyticsPanel() {
     } catch(e) {
       if (miId !== idPeticionRef.current) return;
       console.warn("Error cargando analítica:", e.message);
+      // En un refresco automático (silencioso) que falla, se conservan los números que ya se veían
+      if (silencioso === true) { if (miId === idPeticionRef.current) setCargando(false); return; }
       setEventos([]); setUsuariosNuevos([]); setClientesManuales([]); setPedidosPres([]); setCotizaciones([]); setEquipoNombres([]);
       setEventosAnterior([]); setUsuariosAnterior([]); setManualesAnterior([]);
     }
@@ -1806,7 +1806,8 @@ function AnalyticsPanel() {
     clearTimeout(timerVivoRef.current);
     timerVivoRef.current = setTimeout(() => cargarDatos(true), 4000);
   });
-  useRefrescoPeriodico(() => cargarDatos(true), 60000);
+  // Con "Todo" el cálculo es más pesado: se refresca cada 5 min en vez de cada minuto
+  useRefrescoPeriodico(() => cargarDatos(true), rangoTipo === "todo" ? 300000 : 60000);
   useEffect(() => () => clearTimeout(timerVivoRef.current), []);
 
   // Visitas en vivo: independiente del filtro de fecha. Se refresca cada 5 segundos y
@@ -4382,31 +4383,36 @@ function MetricasPanel({ desde, hasta, filtro }) {
   const [guardando, setGuardando] = useState(false);
   const peticion = useRef(0);
 
-  const llamar = async (fn, args) => {
-    const r = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${fn}`, { method: "POST", headers: sb.dataHeaders(), body: JSON.stringify(args) });
-    if (!r.ok) throw new Error(await r.text());
-    return r.json();
-  };
-  const cargar = async () => {
+  // Reintenta solo si la base de datos tarda de más justo al abrir (ver rpcConReintento)
+  const llamar = (fn, args) => rpcConReintento(fn, args);
+  const cargar = async (silencioso = false) => {
     const id = ++peticion.current;
-    setCargando(true); setError("");
+    if (silencioso !== true) { setCargando(true); setError(""); setPrevio(null); }
     try {
-      await sb.ensureFreshToken();
       const dias = Math.round((new Date(hasta + "T12:00:00Z") - new Date(desde + "T12:00:00Z")) / 86400000) + 1;
       const pDesde = sumarDiasISO(desde, -dias), pHasta = sumarDiasISO(desde, -1);
-      const [d, ant, ex] = await Promise.all([
+      // Primero lo principal (con un solo cálculo pesado a la vez la base responde rápido)...
+      const [d, ex] = await Promise.all([
         llamar("metricas_negocio", { p_desde: desde, p_hasta: hasta }),
-        llamar("metricas_negocio", { p_desde: pDesde, p_hasta: pHasta }).catch(() => null),
         llamar("metricas_extra", { p_desde: desde, p_hasta: hasta }).catch(() => null),
       ]);
       if (id !== peticion.current) return;
-      setM(d); setPrevio(ant); setExtra(ex); setActualizado(new Date());
+      setM(d); setExtra(ex); setActualizado(new Date()); setError("");
       setMargenTxt(t => (t === "" && d.margen_manual !== null && d.margen_manual !== undefined) ? String(d.margen_manual) : t);
-    } catch (e) { if (id === peticion.current) setError(String(e.message || e).slice(0, 200)); }
+      setCargando(false);
+      // ...y después, sin bloquear la pantalla, el periodo anterior (solo sirve para las flechas de % de cambio).
+      llamar("metricas_negocio", { p_desde: pDesde, p_hasta: pHasta })
+        .then(ant => { if (id === peticion.current) setPrevio(ant); })
+        .catch(() => { if (id === peticion.current) setPrevio(null); });
+      return;
+    } catch (e) {
+      // Un refresco automático que falla no borra lo que ya se ve; solo una carga normal muestra el error
+      if (id === peticion.current && silencioso !== true) setError(String(e.message || e).slice(0, 200));
+    }
     if (id === peticion.current) setCargando(false);
   };
   useEffect(() => { if (desde && hasta) cargar(); }, [desde, hasta]);
-  useRefrescoPeriodico(cargar, 120000);
+  useRefrescoPeriodico(() => cargar(true), 120000);
 
   const guardarMargen = async () => {
     const txt = margenTxt.trim().replace(",", ".");
@@ -4636,15 +4642,37 @@ function MetricasPanel({ desde, hasta, filtro }) {
 const COSTOS_FIN = new Map(); // producto_id -> costo por pieza (solo se llena si eres el dueño)
 const COSTOS_ORIGEN = new Map(); // producto_id -> "manual" | "odoo"
 const costoProducto = (p) => { const c = p ? COSTOS_FIN.get(p.id) : undefined; return c === undefined ? 0 : Number(c); };
-async function finRpc(fn, args = {}) {
-  await sb.ensureFreshToken();
-  const r = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${fn}`, { method: "POST", headers: sb.dataHeaders(), body: JSON.stringify(args) });
-  if (!r.ok) {
-    let t = await r.text();
-    try { t = JSON.parse(t).message || t; } catch (_e) { /* texto plano */ }
-    throw new Error(t);
+// Llama a una función de lectura del servidor y, si la base de datos se pone lenta justo en ese
+// momento (tiempo de espera agotado, error 5xx o corte de red), vuelve a intentarlo sola hasta 2 veces
+// con una pausa corta. Los errores "de verdad" (sin permiso, datos inválidos) NO se reintentan.
+// soloTimeout: para funciones que ESCRIBEN datos, solo se reintenta cuando el servidor canceló la
+// operación por tiempo (así queda deshecha y es seguro repetirla), nunca ante un corte de red dudoso.
+const ES_TIMEOUT_DB = /57014|statement timeout|canceling statement/i;
+async function rpcConReintento(fn, args = {}, { soloTimeout = false, intentos = 2, pausaMs = 1500 } = {}) {
+  let ultimoError = null;
+  for (let i = 0; i <= intentos; i++) {
+    let reintentable = false;
+    try {
+      await sb.ensureFreshToken();
+      const r = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${fn}`, { method: "POST", headers: sb.dataHeaders(), body: JSON.stringify(args) });
+      if (r.ok) return await r.json();
+      let t = await r.text();
+      try { t = JSON.parse(t).message || t; } catch (_e) { /* texto plano */ }
+      ultimoError = new Error(t);
+      const esTimeout = ES_TIMEOUT_DB.test(t);
+      reintentable = esTimeout || (!soloTimeout && (r.status >= 500 || r.status === 408 || r.status === 429));
+    } catch (e) {
+      ultimoError = e;
+      reintentable = !soloTimeout && e instanceof TypeError; // corte de red / "Failed to fetch"
+    }
+    if (!reintentable || i === intentos) break;
+    await new Promise(res => setTimeout(res, pausaMs * (i + 1)));
   }
-  return r.json();
+  throw ultimoError;
+}
+async function finRpc(fn, args = {}) {
+  // Solo se reintenta ante tiempo de espera agotado (la operación queda cancelada, es seguro repetirla)
+  return rpcConReintento(fn, args, { soloTimeout: true });
 }
 async function finCargarCostos() {
   const lista = await finRpc("fin_costos_listar");
@@ -6017,7 +6045,7 @@ function AdminView() {
   const [busquedaRetorno, setBusquedaRetorno] = useState("");
   const [eliminando, setEliminando] = useState(false);
   // Filtro de ventas por periodo en el dashboard
-  const [rangoVentas, setRangoVentas] = useState("todo"); // dia | semana | mes | anio | todo | personalizado | rango
+  const [rangoVentas, setRangoVentas] = useState("mes"); // dia | semana | mes | anio | todo | personalizado | rango
   const [filtroMetodo, setFiltroMetodo] = useState("todos"); // "todos" | "yappy" | "tarjeta" | "transferencia" | "sin" -- filtra la pestaña Pedidos por cómo se pagó
   const [busquedaPedidos, setBusquedaPedidos] = useState(""); // busca por # de pedido o nombre de cliente, en la pestaña Pedidos
   const [riesgosPedidos, setRiesgosPedidos] = useState({}); // riesgo antifraude por pedido (pedido_id -> fila)
