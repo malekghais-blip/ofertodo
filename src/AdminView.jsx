@@ -4401,7 +4401,7 @@ function MetricasPanel({ desde, hasta, filtro }) {
       ]);
       if (id !== peticion.current) return;
       setM(d); setPrevio(ant); setExtra(ex); setActualizado(new Date());
-      setMargenTxt(t => (t === "" && d.margen_bruto !== null && d.margen_bruto !== undefined) ? String(d.margen_bruto) : t);
+      setMargenTxt(t => (t === "" && d.margen_manual !== null && d.margen_manual !== undefined) ? String(d.margen_manual) : t);
     } catch (e) { if (id === peticion.current) setError(String(e.message || e).slice(0, 200)); }
     if (id === peticion.current) setCargando(false);
   };
@@ -4549,7 +4549,7 @@ function MetricasPanel({ desde, hasta, filtro }) {
                 const mx = Math.max(Number(m.cohorte.ltv) || 0, Number(m.cac) || 0, 1);
                 return <>
                   <BarraH etiqueta={`Ingresos por cliente nuevo (LTV, ${numM(m.cohorte.clientes)} clientes)`} valor={Number(m.cohorte.ltv) || 0} maximo={mx} color={MT.rojo} texto={usdM(m.cohorte.ltv)} />
-                  {m.ltv_ganancia !== null && m.ltv_ganancia !== undefined && <BarraH etiqueta={`Ganancia bruta con ${pctM(m.margen_bruto, 0)} de margen`} valor={Number(m.ltv_ganancia)} maximo={mx} color={MT.rojo} texto={usdM(m.ltv_ganancia)} retraso={120} />}
+                  {m.ltv_ganancia !== null && m.ltv_ganancia !== undefined && <BarraH etiqueta={`Ganancia bruta con ${pctM(m.margen_bruto, 0)} de margen${m.margen_origen === "real" ? " real" : ""}`} valor={Number(m.ltv_ganancia)} maximo={mx} color={MT.rojo} texto={usdM(m.ltv_ganancia)} retraso={120} />}
                   <BarraH etiqueta="Lo que costó conseguirlo (CAC)" valor={Number(m.cac) || 0} maximo={mx} color={MT.tinta} texto={usdM(m.cac)} retraso={240} />
                 </>;
               })()}
@@ -4557,10 +4557,18 @@ function MetricasPanel({ desde, hasta, filtro }) {
                 LTV ÷ CAC = <b style={{ color: MT.texto }}>{m.ltv_cac === null ? "—" : Number(m.ltv_cac).toFixed(2) + " veces"}</b> en ingresos. Para recuperar el CAC con la primera compra necesitas un margen bruto de al menos <b style={{ color: MT.texto }}>{pctM(m.margen_minimo_pct)}</b>.
               </div>
               <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 12 }}>
-                <label style={{ fontSize: 12.5, color: MT.texto2, fontWeight: 600 }}>Tu margen bruto (%)</label>
+                <label style={{ fontSize: 12.5, color: MT.texto2, fontWeight: 600 }}>{m.margen_origen === "real" ? "Margen de respaldo (%)" : "Tu margen bruto (%)"}</label>
                 <input value={margenTxt} onChange={e => setMargenTxt(e.target.value)} inputMode="decimal" placeholder="ej. 30" style={{ width: 80, background: "#fff", color: MT.texto, border: `1px solid ${MT.borde}`, borderRadius: 10, padding: "7px 10px", fontSize: 13 }} />
                 <button className="met-chip on" onClick={guardarMargen} disabled={guardando}>Guardar</button>
               </div>
+              {m.margen_origen === "real" ? (
+                <div data-testid="margen-real" style={{ marginTop: 8, fontSize: 12, color: MT.suave, lineHeight: 1.5 }}>
+                  Usando tu <b style={{ color: MT.texto2 }}>margen real de {pctM(m.margen_bruto, 1)}</b>, calculado con los costos de Odoo de lo que compraron estos clientes
+                  {m.margen_cobertura_pct !== null && m.margen_cobertura_pct !== undefined ? ` (hay costo en el ${pctM(m.margen_cobertura_pct, 0)} de sus compras)` : ""}. El campo de arriba solo se usa si algún día no hay costos cargados.
+                </div>
+              ) : m.margen_origen === "manual" ? (
+                <div style={{ marginTop: 8, fontSize: 12, color: MT.suave, lineHeight: 1.5 }}>Usando el margen que escribiste, porque todavía no hay costos de Odoo para estas compras.</div>
+              ) : null}
               {m.ltv_cac_ganancia !== null && m.ltv_cac_ganancia !== undefined && (
                 <div style={{ marginTop: 10, fontSize: 13, color: MT.texto2 }}>Ganancia ÷ CAC = <b style={{ color: Number(m.ltv_cac_ganancia) >= 1 ? MT.bueno : MT.malo }}>{Number(m.ltv_cac_ganancia).toFixed(2)} veces</b> {Number(m.ltv_cac_ganancia) >= 1 ? "· recuperas lo gastado" : "· aún no recuperas lo gastado con la primera compra; depende de que vuelvan"}.</div>
               )}
@@ -4814,7 +4822,7 @@ function FinResumen({ desde, hasta, irA }) {
   const avisoCobTienda = cobTienda < 97 && canal !== "web" && pos && nF(pos.tickets) > 0;
   const pasos = [
     ["Ventas de productos", E.ventasProd, MT.tinta, "+"],
-    ["Costo de la mercancía vendida (estimado)", E.costo, MT.suave, "−"],
+    [`Costo de la mercancía vendida (estimado)${canal !== "tienda" && nF(r.costo_devuelto) > 0 ? " · sin lo devuelto al inventario" : ""}`, E.costo, MT.suave, "−"],
     ["Envíos cobrados a clientes", E.envio, MT.tinta, "+"],
     ["Reembolsos a clientes", E.reembolsos, MT.malo, "−"],
     ["Publicidad en Meta (automático)", E.ads, MT.malo, "−"],
