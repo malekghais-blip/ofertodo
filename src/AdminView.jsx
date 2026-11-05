@@ -5440,6 +5440,8 @@ function haceCuanto(iso) {
 function TiendaFisicaPanel({ desde, hasta, ventasWeb = null, envolver = false, titulo = "Ventas de tienda física" }) {
   const { showToast } = useApp();
   const { datos: r, error, cargando, recargar } = useFinDatos("pos_resumen", { p_desde: desde, p_hasta: hasta }, [desde, hasta]);
+  // Los productos que más vende la web en el mismo periodo (para ponerlos al lado de los de la tienda)
+  const { datos: prodWeb, error: errProdWeb } = useFinDatos("fin_productos_margen", { p_desde: desde, p_hasta: hasta }, [desde, hasta]);
   const [sincro, setSincro] = useState(false);
   const sincronizar = async () => {
     setSincro(true);
@@ -5534,10 +5536,15 @@ function TiendaFisicaPanel({ desde, hasta, ventasWeb = null, envolver = false, t
               <div className="met-lbl" style={{ marginBottom: 12 }}>Cómo pagan en la tienda</div>
               {pagos.length === 0 ? <div style={{ fontSize: 13, color: MT.texto2 }}>Sin pagos registrados.</div>
                 : pagos.map((p, i) => <BarraH key={p.metodo} etiqueta={p.metodo} valor={Math.max(0, Number(p.monto) || 0)} maximo={totalPagos} color={i === 0 ? MT.rojo : MT.tinta} texto={usdM(p.monto, 0)} sub={pctM((Math.max(0, Number(p.monto) || 0) / totalPagos) * 100, 0)} retraso={i * 70} />)}
-              <div className="met-lbl" style={{ margin: "16px 0 10px" }}>Ventas por cajero</div>
+            </div>
+            <div className="met-card met-in" style={{ "--d": "160ms" }}>
+              <div className="met-lbl" style={{ marginBottom: 12 }}>Ventas por cajero</div>
               {(r.cajeros || []).map((c, i) => <BarraH key={c.cajero} etiqueta={c.cajero} valor={Math.max(0, Number(c.ventas) || 0)} maximo={maxCaj} color={MT.tinta} texto={usdM(c.ventas, 0)} sub={`${numM(c.tickets)} ventas`} retraso={i * 70} />)}
             </div>
-            <div className="met-card met-in" style={{ "--d": "160ms", overflowX: "auto" }}>
+          </div>
+
+          <div className="met-grid" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,430px),1fr))", marginTop: 14 }}>
+            <div className="met-card met-in" style={{ "--d": "100ms", overflowX: "auto" }}>
               <div className="met-lbl" style={{ marginBottom: 8 }}>Los 15 productos que más venden en la tienda</div>
               <table className="met-tabla" style={{ minWidth: 380 }}>
                 <thead><tr><th>Producto</th><th>Unid.</th><th>Ventas</th><th>Margen</th></tr></thead>
@@ -5547,6 +5554,22 @@ function TiendaFisicaPanel({ desde, hasta, ventasWeb = null, envolver = false, t
                   return <tr key={i}><td style={{ textAlign: "left", maxWidth: 230, whiteSpace: "normal", lineHeight: 1.3 }}>{p.nombre || p.ref || "—"}{p.ref && p.nombre ? <div style={{ fontSize: 11, color: MT.suave }}>{p.ref}</div> : null}</td><td>{numM(Math.round(Number(p.unidades) || 0))}</td><td>{usdM(p.ventas, 0)}</td><td style={{ color: mg === null ? MT.suave : mg < 25 ? MT.malo : MT.texto }}>{mg === null ? "sin costo" : pctM(mg, 0)}</td></tr>;
                 })}</tbody>
               </table>
+            </div>
+            <div className="met-card met-in" data-testid="top-web" style={{ "--d": "160ms", overflowX: "auto" }}>
+              <div className="met-lbl" style={{ marginBottom: 8 }}>Los 15 productos que más venden en la web</div>
+              {errProdWeb ? <div style={{ fontSize: 13, color: MT.texto2 }}>No se pudieron cargar los productos de la web: {errProdWeb}</div>
+                : !prodWeb ? <div style={{ fontSize: 13, color: MT.texto2, padding: "24px 0" }}>Cargando productos de la web…</div>
+                : (prodWeb.productos || []).length === 0 ? <div style={{ fontSize: 13, color: MT.texto2 }}>Sin ventas de la web en este periodo.</div>
+                : <>
+                  <table className="met-tabla" style={{ minWidth: 380 }}>
+                    <thead><tr><th>Producto</th><th>Unid.</th><th>Ventas</th><th>Margen</th></tr></thead>
+                    <tbody>{(prodWeb.productos || []).slice(0, 15).map((p, i) => {
+                      const mg = p.margen_pct === null || p.margen_pct === undefined ? null : Number(p.margen_pct);
+                      return <tr key={p.producto_id || i}><td style={{ textAlign: "left", maxWidth: 230, whiteSpace: "normal", lineHeight: 1.3 }}>{p.nombre || p.referencia || "—"}{p.referencia && p.nombre ? <div style={{ fontSize: 11, color: MT.suave }}>{p.referencia}</div> : null}</td><td>{numM(Math.round(Number(p.piezas) || 0))}</td><td>{usdM(p.ingreso, 0)}</td><td style={{ color: mg === null ? MT.suave : mg < 25 ? MT.malo : MT.texto }}>{mg === null ? "sin costo" : pctM(mg, 0)}</td></tr>;
+                    })}</tbody>
+                  </table>
+                  <div style={{ fontSize: 11.5, color: MT.suave, marginTop: 8, lineHeight: 1.45 }}>Pedidos pagados de la web y de tus vendedores, ordenados por ventas (sin cotizaciones). Ya sin lo que se devolvió.</div>
+                </>}
             </div>
           </div>
         </>}
