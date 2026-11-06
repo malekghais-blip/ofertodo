@@ -4081,7 +4081,13 @@ const MT = {
   rojo: "#E31E24", rojoOsc: "#B01519", tinta: "#2B2B2E",
   bueno: "#0B7A2B", malo: "#C2410C", marca: "#E31E24",
 };
-const usdM = (n, d = 2) => (n === null || n === undefined || Number.isNaN(Number(n))) ? "—" : "$" + Number(n).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
+// Montos de menos de $1,000 siempre con centavos: redondear a dólares enteros hacía ver $3.50 como "$4"
+// (la cifra real de la caja). Las cifras grandes siguen redondeadas a dólares para que se lean fácil.
+const usdM = (n, d = 2) => {
+  if (n === null || n === undefined || Number.isNaN(Number(n))) return "—";
+  const dd = (d === 0 && Math.abs(Number(n)) < 1000) ? 2 : d;
+  return "$" + Number(n).toLocaleString("en-US", { minimumFractionDigits: dd, maximumFractionDigits: dd });
+};
 const pctM = (n, d = 1) => (n === null || n === undefined || Number.isNaN(Number(n))) ? "—" : Number(n).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d }) + "%";
 const numM = (n) => (n === null || n === undefined) ? "—" : Number(n).toLocaleString("en-US");
 const usdCorto = (v) => { const n = Number(v); if (!Number.isFinite(n)) return "—"; if (Math.abs(n) >= 1000) return "$" + (n / 1000).toFixed(n % 1000 === 0 ? 0 : 1) + "K"; return "$" + Math.round(n); };
