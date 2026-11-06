@@ -5796,6 +5796,19 @@ function InsigniaRetorno({ retornos, o }) {
   );
 }
 
+// Llama a una función del servidor (Odoo) y devuelve su respuesta JSON.
+async function llamarFnOdoo(fn, cuerpo) {
+  const r = await fetch(`${SUPABASE_URL}/functions/v1/${fn}`, { method: "POST", headers: sb.functionHeaders(), body: JSON.stringify(cuerpo) });
+  return await r.json().catch(() => ({}));
+}
+// Texto de confirmación cuando la venta ya tiene factura PUBLICADA en Odoo y hay que emitir una nota de crédito parcial.
+function confirmarNotaCreditoParcial(data) {
+  const est = (e) => e === "not_paid" ? "sin pagar" : e === "partial" ? "pago parcial" : "ya pagada";
+  const lineas = (data.facturas || []).map(f => `  • ${f.factura} — $${Number(f.total).toFixed(2)} (${est(f.estado_pago)})`).join("\n");
+  const hayPagadas = (data.facturas || []).some(f => f.estado_pago !== "not_paid");
+  return confirm(`Este pedido ya está facturado en Odoo:\n\n${lineas}\n\nSi continúas, en Odoo se va a:\n  1. Devolver la mercancía al inventario (si aún no se devolvió)\n  2. Emitir una nota de crédito SOLO por las piezas devueltas\n  3. Bajar esas piezas de la venta\n` + (hayPagadas ? `\nComo la factura ya está pagada, la nota de crédito deja un saldo a favor del cliente (el reembolso del dinero lo registras tú).\n` : "") + `\n¿Continuar?`);
+}
+
 function RetornarPedidoModal({ pedido, productos, retornos, onClose, onHecho }) {
   const idRetorno = useRef(null);
   if (!idRetorno.current) idRetorno.current = (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, c => { const r = Math.random() * 16 | 0; return (c === "x" ? r : (r & 3 | 8)).toString(16); });
@@ -5869,7 +5882,13 @@ function RetornarPedidoModal({ pedido, productos, retornos, onClose, onHecho }) 
             data = await llamar("cancelar-venta-odoo", { codigo: pedido.codigo, acepta_nota_credito: true });
           }
         } else {
-          data = await llamar("devolver-items-odoo", { codigo: pedido.codigo, retorno_id: idRetorno.current, items: elegidas.map(f => ({ referencia: f.referencia, cantidad: f.cantidad })) });
+          const cuerpoParcial = { codigo: pedido.codigo, retorno_id: idRetorno.current, ajustar_factura: true, items: elegidas.map(f => ({ referencia: f.referencia, cantidad: f.cantidad })) };
+          data = await llamar("devolver-items-odoo", cuerpoParcial);
+          if (data?.requiere_confirmacion) {
+            // Factura ya publicada: hace falta una nota de crédito. Sin tu confirmación no se toca nada.
+            if (!confirmarNotaCreditoParcial(data)) return;
+            data = await llamar("devolver-items-odoo", { ...cuerpoParcial, acepta_nota_credito: true });
+          }
         }
       } catch (e) { falloConexion = e.message || String(e); }
 
@@ -5882,7 +5901,7 @@ function RetornarPedidoModal({ pedido, productos, retornos, onClose, onHecho }) 
         odoo = { estado: "sin_odoo", detalle: "El pedido no estaba en Odoo" };
       } else {
         const nNotas = (data.ordenes || []).reduce((s, o) => s + (o.notas_credito?.length || 0), 0);
-        odoo = { estado: "devuelto", detalle: esTotal ? `Venta cancelada y mercancía devuelta${nNotas ? ` · ${nNotas} nota(s) de crédito` : ""}` : `${data.unidades || piezas} pieza(s) devueltas${data.devoluciones?.length ? ` (${data.devoluciones.join(", ")})` : ""}`, aviso: data.aviso_factura || null };
+        odoo = { estado: "devuelto", detalle: esTotal ? `Venta cancelada y mercancía devuelta${nNotas ? ` · ${nNotas} nota(s) de crédito` : ""}` : `${data.unidades || piezas} pieza(s) devueltas${data.devoluciones?.length ? ` (${data.devoluciones.join(", ")})` : ""}${data.resumen_ajuste ? ` · ${data.resumen_ajuste}` : ""}`, aviso: data.ajuste_factura_error || data.aviso_factura || null };
       }
       try { await guardar(odoo); }
       catch (e) { setFallaDb(odoo); setError("En Odoo ya quedó hecho, pero no se pudo guardar el retorno en la web: " + (e.message || e) + ". Pulsa «Guardar retorno» otra vez (no se repite nada en Odoo)."); }
@@ -5929,7 +5948,7 @@ function RetornarPedidoModal({ pedido, productos, retornos, onClose, onHecho }) 
           <div>• <b>Web:</b> queda registrado como retorno aprobado por {usd(monto)} (se descuenta en Dashboard y Finanzas).</div>
           {esTotal
             ? <div>• <b>Odoo:</b> es un retorno <b>total</b>: se devuelve toda la mercancía al inventario, se emite la nota de crédito si ya está facturado (te pedirá confirmar) y se cancela la venta.</div>
-            : <div>• <b>Odoo:</b> se devuelven <b>{piezas} pieza(s)</b> al inventario. No se emite nota de crédito ni se cancela la venta: si el pedido está facturado, esa nota la haces a mano en Odoo.</div>}
+            : <div>• <b>Odoo:</b> se devuelven <b>{piezas} pieza(s)</b> al inventario y se corrige la factura: si aún no está facturado o está en borrador, se bajan esas piezas de la venta para que la factura salga correcta; si ya está publicada, se emite una nota de crédito solo por esas piezas (te pedirá confirmar). No se cancela la venta.</div>}
           <div>• <b>Dinero:</b> el reembolso al cliente (Yappy/tarjeta/efectivo) lo haces tú; el sistema no mueve dinero.</div>
         </div>
 
@@ -6995,6 +7014,24 @@ function AdminView() {
     } catch(e) { showToast("Error al eliminar"); }
   };
 
+  // Corrige en Odoo la venta/factura de un retorno parcial ya hecho (no vuelve a mover inventario).
+  const [corrigiendoFacturaId, setCorrigiendoFacturaId] = useState(null);
+  const corregirFacturaRetorno = async (r) => {
+    if (corrigiendoFacturaId) return;
+    setCorrigiendoFacturaId(r.id);
+    try {
+      const cuerpo = { codigo: r.codigo_pedido, retorno_id: r.id, solo_factura: true, items: (r.items_retornados || []).map(i => ({ referencia: i.referencia, cantidad: i.cantidad })) };
+      let data = await llamarFnOdoo("devolver-items-odoo", cuerpo);
+      if (data?.requiere_confirmacion) {
+        if (!confirmarNotaCreditoParcial(data)) return;
+        data = await llamarFnOdoo("devolver-items-odoo", { ...cuerpo, acepta_nota_credito: true });
+      }
+      if (!data?.ok) { alert("No se pudo corregir la factura en Odoo:\n\n" + (data?.mensaje || data?.error || "Odoo respondió con un error.")); return; }
+      if (data.encontrada === false) { alert(data.mensaje || "El pedido no está en Odoo."); return; }
+      alert(data.resumen_ajuste ? "Listo, corregido en Odoo:\n\n" + data.resumen_ajuste : "Nada que corregir: la venta y la factura en Odoo ya estaban correctas.");
+    } catch (e) { alert("No se pudo conectar con Odoo: " + (e.message || e)); }
+    finally { setCorrigiendoFacturaId(null); }
+  };
   const cambiarEstadoRetorno = async (r, nuevoEstado) => {
     try {
       await sb.patch("retornos", r.id, { estado: nuevoEstado, updated_at: new Date().toISOString() });
@@ -9989,6 +10026,12 @@ function AdminView() {
                               <option value="reembolsado">Reembolsado</option>
                               <option value="rechazado">Rechazado</option>
                             </select>
+                            {r.tipo_retorno === "parcial" && r.estado !== "rechazado" && r.codigo_pedido && r.odoo_estado === "devuelto" && (r.items_retornados || []).length > 0 && (
+                              <button onClick={() => corregirFacturaRetorno(r)} disabled={!!corrigiendoFacturaId} className="oft-btn-press" title="Baja de la venta/factura de Odoo las piezas devueltas (o emite la nota de crédito si ya está publicada). Se puede repetir sin riesgo."
+                                style={{ background: "none", color: BLACK, border: `1.5px solid ${BLACK}`, borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6, opacity: corrigiendoFacturaId ? 0.6 : 1 }}>
+                                {corrigiendoFacturaId === r.id ? "Corrigiendo…" : "Corregir factura en Odoo"}
+                              </button>
+                            )}
                             <button onClick={() => abrirEditarRetorno(r)} className="oft-btn-press" style={{ background: "none", color: BLACK, border: `1.5px solid ${BLACK}`, borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 5 }}>
                               <PencilIcon size={14} /> Editar
                             </button>
