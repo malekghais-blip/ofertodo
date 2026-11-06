@@ -4463,7 +4463,7 @@ function MetricasPanel({ desde, hasta, filtro }) {
           {/* ── Tarjetas principales ── */}
           <div className="met-grid" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(185px,1fr))", marginTop: 18 }}>
             <Kpi acento grande retraso={0} etiqueta="Ventas del periodo"
-              formula={`Suma de ${numM(m.pedidos)} pedidos pagados (sin cotizaciones) en ${m.dias} días.`}
+              formula={`Suma de ${numM(m.pedidos)} pedidos pagados (sin cotizaciones) en ${m.dias} días${Number(m.reembolsos) > 0 ? `, menos ${usdM(m.reembolsos)} reembolsados por retornos de mercancía` : ""}.`}
               pie={<div><Delta actual={m.ventas} previo={previo && previo.ventas} /><div style={{ marginTop: 8 }}><Chispa valores={serie.map(s => s.ventas)} color={MT.rojo} /></div></div>}>
               <Cifra valor={Number(m.ventas)} f={(v) => usdM(v, 0)} />
             </Kpi>
@@ -6419,7 +6419,13 @@ function AdminView() {
   const rangoTiendaISO = rangoVentas === "todo" ? ["2025-11-01", fechaPanama()] : rangoMetricasISO;
 
   // ── MÉTRICAS (solo pedidos reales) ─────────────────────────────
-  const ingresoTotal = pedidosReales.reduce((s, o) => s + Number(o.total || 0), 0);
+  // Ingresos = lo vendido en pedidos MENOS lo reembolsado por retornos de mercancía (aprobados) en el periodo,
+  // igual que el desglose de ventas y Finanzas. El ticket promedio sigue usando lo vendido en pedidos.
+  const ingresoBruto = pedidosReales.reduce((s, o) => s + Number(o.total || 0), 0);
+  const reembolsosPeriodo = retornos
+    .filter(r => (r.estado === "reembolsado" || r.estado === "aprobado") && enRango(r.created_at))
+    .reduce((s, r) => s + Number(r.monto_reembolso || 0), 0);
+  const ingresoTotal = ingresoBruto - reembolsosPeriodo;
   const ordenesTotal = pedidosReales.length;
   const clientesTotal = users.length;
   const balance = pedidosReales.filter(o => o.estado === 3).reduce((s, o) => s + Number(o.total || 0), 0); // entregados = cobrado
@@ -6449,7 +6455,7 @@ function AdminView() {
   })();
 
   // ── AVERAGE ORDER VALUE OVER TIME (valor + serie para gráfica) ──
-  const aovActual = ordenesTotal > 0 ? ingresoTotal / ordenesTotal : 0;
+  const aovActual = ordenesTotal > 0 ? ingresoBruto / ordenesTotal : 0;
   const aovPorFecha = (() => {
     const map = {};
     pedidosReales.forEach(o => {
