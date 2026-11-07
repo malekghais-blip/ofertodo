@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, Fragment } from "react";
 import { createPortal } from "react-dom";
 import {
   ShoppingCart, Search, Trash2, MessageCircle, X, Package, CheckCircle2,
@@ -4743,6 +4743,189 @@ function explicarStock(p, lead) {
 
 function csvCelda(v) { const s = String(v ?? ""); return /[",\n;]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }
 
+const STK_TIPO_ACC = {
+  comprar_mas: { clase: "stk-b-ok", texto: "Comprar más", orden: 0 },
+  mantener: { clase: "stk-b-nuevo", texto: "Mantener", orden: 1 },
+  reducir: { clase: "stk-b-pronto", texto: "Comprar menos", orden: 2 },
+  pausar: { clase: "stk-b-ya", texto: "Frenar compras", orden: 3 },
+  sin_ventas: { clase: "stk-b-no", texto: "Sin ventas", orden: 4 },
+};
+
+function motivoTipo(t) {
+  const di = t.dias_inventario, tend = t.tendencia_pct, ind = t.indice;
+  const inv = di === undefined ? "" : di === 0 ? "No te queda inventario" : `Tu inventario alcanza para ${numM(di)} días`;
+  const tn = tend === undefined ? "" : tend >= 15 ? `y lo que se vende subió ${numM(tend)}% este último mes` : tend <= -15 ? `y lo que se vende bajó ${numM(Math.abs(tend))}% este último mes` : "";
+  switch (t.accion) {
+    case "comprar_mas":
+      if (di !== undefined && di <= 30) return `${inv}${tn ? " " + tn : ""}. Deja ${usdM(t.ganancia_dia)} de ganancia al día y se está agotando.`;
+      if (ind && ind >= 1.25) return `Aporta más ganancia de la parte de tus compras que se lleva: el ${t.pct_comprado ?? 0}% de lo que compraste vs el ${t.pct_sugerido ?? 0}% que conviene. ${inv}.`;
+      return `Deja ganancia y casi no has comprado en el periodo. ${inv}.`;
+    case "mantener": return `${inv}${tn ? " " + tn : ""}. Compra al ritmo de lo que vendes.`;
+    case "reducir": return ind && ind <= 0.7 ? `Compras más de lo que aporta en ganancia (${t.pct_comprado ?? 0}% de tus compras vs ${t.pct_sugerido ?? 0}% de lo que conviene). ${inv}.` : `${inv}: ya tienes de sobra. Compra menos hasta que baje.`;
+    case "pausar": return t.ganancia <= 0 ? "No deja ganancia en el periodo: revisa precio o costo antes de volver a comprar." : `${inv}${tn ? " " + tn : ""}. No compres más hasta que se mueva lo que tienes.`;
+    default: return "";
+  }
+}
+
+function TiposTiendaSeccion({ dias, prods }) {
+  const [d, setD] = useState(null);
+  const [cargando, setCargando] = useState(true);
+  const [error, setError] = useState("");
+  const [nivel, setNivel] = useState("tipo"); // tipo | linea
+  const [abierto, setAbierto] = useState(null);
+  const peticion = useRef(0);
+
+  const cargar = async (silencioso = false) => {
+    const id = ++peticion.current;
+    if (silencioso !== true) { setCargando(true); setError(""); }
+    try {
+      const r = await rpcConReintento("analisis_tipos_tienda", { p_dias: dias });
+      if (id !== peticion.current) return;
+      setD(r); setError("");
+    } catch (e) {
+      if (id === peticion.current && silencioso !== true) setError(String(e.message || e).slice(0, 220));
+    }
+    if (id === peticion.current) setCargando(false);
+  };
+  useEffect(() => { setAbierto(null); cargar(); }, [dias]);
+  useRefrescoPeriodico(() => cargar(true), 600000);
+
+  const filas = (d && (nivel === "tipo" ? d.tipos : d.lineas)) || [];
+  const mapa = (d && d.mapa) || {};
+  const res = (d && d.resumen) || {};
+  const lineaDe = (tp) => (!tp ? null : tp[1] === "Sin especificar" ? tp[0] : tp[0] + " · " + tp[1]);
+  const grupoDe = (ref) => { const tp = mapa[ref]; if (!tp) return null; return nivel === "tipo" ? tp[0] : lineaDe(tp); };
+  const porGrupo = (nombre) => (prods || []).filter(p => p.ref && grupoDe(p.ref) === nombre && p.origen !== "web");
+  const ordenadas = [...filas].sort((a, b) => (STK_TIPO_ACC[a.accion] || { orden: 9 }).orden - (STK_TIPO_ACC[b.accion] || { orden: 9 }).orden || Number(b.ganancia_dia || 0) - Number(a.ganancia_dia || 0));
+  const lista = (acc) => filas.filter(f => f.accion === acc).sort((a, b) => Number(b.ganancia_dia || 0) - Number(a.ganancia_dia || 0));
+  const masMax = Math.max(1, ...filas.map(f => Math.max(Number(f.pct_comprado || 0), Number(f.pct_sugerido || 0))));
+  const pctOtros = res.unidades > 0 ? (100 * Number(res.unidades_otros || 0)) / Number(res.unidades) : 0;
+
+  const resumenCol = (acc, titulo, color) => {
+    const l = lista(acc).slice(0, 6);
+    return (
+      <div className="met-card met-in" style={{ "--d": "60ms", borderTop: `3px solid ${color}` }}>
+        <div className="met-lbl" style={{ marginBottom: 10 }}>{titulo}</div>
+        {l.length === 0 ? <div style={{ fontSize: 13, color: MT.suave }}>Ninguno por ahora.</div> : l.map(f => (
+          <div key={f.nombre} style={{ display: "flex", justifyContent: "space-between", gap: 10, padding: "5px 0", fontSize: 13.5, borderBottom: `1px solid ${MT.rejilla}` }}>
+            <b style={{ color: MT.texto }}>{f.nombre}</b>
+            <span style={{ color: MT.texto2, whiteSpace: "nowrap" }}>{usdM(f.ganancia_dia)}/día</span>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  return (
+    <>
+      <div className="met-sec">Qué tipos de producto comprar en la tienda</div>
+      <div className="met-sub" style={{ marginBottom: 12 }}>
+        Cruza lo que ganas con cada tipo de producto en la caja, cuánto inventario te queda y cuánto de tu dinero de compras se fue a cada uno (últimos {dias} días). {d ? <>La ganancia de la tienda en el periodo fue <b>{usdM(res.ganancia, 0)}</b> y compraste <b>{usdM(res.comprado, 0)}</b> en mercancía.</> : null}
+      </div>
+      {cargando && !d && <div className="met-card" style={{ color: MT.texto2 }}>Calculando tipos de producto…</div>}
+      {error && !d && <div className="met-card" style={{ color: MT.malo }}>No se pudo cargar esta sección: {error} <button className="met-chip" style={{ marginLeft: 10 }} onClick={() => cargar()}>Reintentar</button></div>}
+      {d && (
+        <>
+          <div className="met-grid" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,250px),1fr))" }}>
+            {resumenCol("comprar_mas", "Compra más de esto", MT.bueno)}
+            {resumenCol("mantener", "Sigue comprando igual", "#3B5BDB")}
+            {resumenCol("reducir", "Compra menos", "#D97706")}
+            {resumenCol("pausar", "Frena las compras", MT.rojo)}
+          </div>
+
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", margin: "18px 0 10px" }}>
+            <button className={"met-chip" + (nivel === "tipo" ? " on" : "")} onClick={() => { setNivel("tipo"); setAbierto(null); }}>Por tipo</button>
+            <button className={"met-chip" + (nivel === "linea" ? " on" : "")} onClick={() => { setNivel("linea"); setAbierto(null); }}>Por tipo y público (hombre / dama / niños)</button>
+            <span style={{ fontSize: 12, color: MT.suave }}>Toca una fila para ver los productos de ese grupo.</span>
+          </div>
+
+          <div className="met-card met-in" style={{ "--d": "100ms", padding: 0 }}>
+            <div style={{ overflowX: "auto" }}>
+              <table className="stk-tabla" style={{ minWidth: 860 }}>
+                <thead><tr><th>Tipo de producto</th><th>Ganancia</th><th>Venta último mes</th><th>Inventario</th><th>Tus compras vs lo que conviene</th><th>Qué hacer</th></tr></thead>
+                <tbody>
+                  {ordenadas.map(t => {
+                    const ab = abierto === t.nombre;
+                    const acc = STK_TIPO_ACC[t.accion] || STK_TIPO_ACC.sin_ventas;
+                    const items = ab ? porGrupo(t.nombre) : [];
+                    const comprarItems = items.filter(p => p.accion === "comprar_ya" || p.accion === "comprar_pronto").sort((a, b) => (a.accion === "comprar_ya" ? 0 : 1) - (b.accion === "comprar_ya" ? 0 : 1) || Number(b.ganancia_dia || 0) - Number(a.ganancia_dia || 0));
+                    const noItems = items.filter(p => p.accion === "no_recomprar");
+                    return (
+                      <Fragment key={t.nombre}>
+                        <tr onClick={() => setAbierto(ab ? null : t.nombre)} style={{ cursor: "pointer" }}>
+                          <td style={{ maxWidth: 260 }}>
+                            <div className="stk-nom">{ab ? "▾" : "▸"} {t.nombre}</div>
+                            <div className="stk-sub">{numM(t.unidades)} uds · {numM(t.skus)} productos · {numM(t.tickets)} ventas</div>
+                          </td>
+                          <td>
+                            <div style={{ fontWeight: 800, color: t.ganancia > 0 ? MT.bueno : MT.malo }}>{usdM(t.ganancia, 0)}</div>
+                            <div className="stk-sub">{t.margen_pct === undefined ? "sin costo" : `margen ${pctM(t.margen_pct, 0)}`} · {usdM(t.ganancia_dia)}/día</div>
+                          </td>
+                          <td>
+                            <div style={{ fontWeight: 800 }}>{numM(t.vendido_30)} uds</div>
+                            <div className="stk-sub" style={{ color: t.tendencia_pct >= 15 ? MT.bueno : t.tendencia_pct <= -15 ? MT.malo : MT.suave }}>
+                              {t.tendencia_pct === undefined ? "sin comparación" : `${t.tendencia_pct > 0 ? "+" : ""}${numM(t.tendencia_pct)}% vs. mes típico`}
+                            </div>
+                          </td>
+                          <td>
+                            <div style={{ fontWeight: 800 }}>{usdM(t.inv_valor, 0)}</div>
+                            <div className="stk-sub">{t.dias_inventario === undefined ? "—" : t.dias_inventario === 0 ? "agotado" : `alcanza ${numM(t.dias_inventario)} días`} · {numM(t.inv_uds)} uds</div>
+                          </td>
+                          <td style={{ minWidth: 220 }}>
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: "4px 10px", alignItems: "center", textAlign: "left" }}>
+                              <div style={{ height: 6, borderRadius: 4, background: "rgba(17,17,17,.07)", overflow: "hidden" }}><div style={{ height: "100%", width: Math.max(1, (Number(t.pct_comprado || 0) / masMax) * 100) + "%", background: MT.suave, borderRadius: 4 }} /></div>
+                              <span className="stk-sub" style={{ margin: 0 }}>compraste {pctM(t.pct_comprado ?? 0, 0)}</span>
+                              <div style={{ height: 6, borderRadius: 4, background: "rgba(17,17,17,.07)", overflow: "hidden" }}><div style={{ height: "100%", width: Math.max(1, (Number(t.pct_sugerido || 0) / masMax) * 100) + "%", background: MT.rojo, borderRadius: 4 }} /></div>
+                              <span className="stk-sub" style={{ margin: 0, color: MT.rojoOsc, fontWeight: 700 }}>conviene {pctM(t.pct_sugerido ?? 0, 0)}</span>
+                            </div>
+                          </td>
+                          <td style={{ minWidth: 150 }}><span className={`stk-badge ${acc.clase}`}><i />{acc.texto}</span></td>
+                        </tr>
+                        {ab && (
+                          <tr>
+                            <td colSpan={6} style={{ textAlign: "left", background: "rgba(17,17,17,.025)", padding: "14px 18px" }}>
+                              <div style={{ fontSize: 13.5, color: MT.texto, marginBottom: 10 }}>{motivoTipo(t)}</div>
+                              {comprarItems.length > 0 ? (
+                                <>
+                                  <div className="met-lbl" style={{ marginBottom: 6 }}>Productos de este grupo que ya conviene comprar ({comprarItems.length})</div>
+                                  {comprarItems.slice(0, 8).map(p => (
+                                    <div key={p.ref} style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "5px 0", fontSize: 13, borderBottom: `1px solid ${MT.rejilla}` }}>
+                                      <span><b>{p.nombre}</b> <span className="stk-sub" style={{ display: "inline" }}>· {p.ref}</span></span>
+                                      <span style={{ whiteSpace: "nowrap", color: MT.texto2 }}>stock {numM(Math.round(p.stock ?? 0))} · comprar <b style={{ color: MT.texto }}>{numM(p.sugerido)}</b></span>
+                                    </div>
+                                  ))}
+                                  {comprarItems.length > 8 && <div className="stk-sub">y {comprarItems.length - 8} más en la tabla “Qué comprar” de arriba.</div>}
+                                </>
+                              ) : <div className="stk-sub">Ningún producto de este grupo está por agotarse ahora mismo.</div>}
+                              {noItems.length > 0 && <div className="stk-sub" style={{ marginTop: 8 }}>Hay {numM(noItems.length)} producto{noItems.length === 1 ? "" : "s"} de este grupo marcado{noItems.length === 1 ? "" : "s"} como “No recomprar” (se mueven poco).</div>}
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    );
+                  })}
+                  {ordenadas.length === 0 && <tr><td colSpan={6} style={{ textAlign: "center", padding: "30px 12px", color: MT.texto2 }}>Aún no hay ventas de tienda en este periodo.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div className="stk-sub" style={{ marginTop: 10, lineHeight: 1.6 }}>
+            Los productos de Odoo no tienen categoría, así que el tipo se deduce del nombre (zapatilla, jeans, perfume, brasier…). {pctOtros > 0 ? `Un ${pctM(pctOtros, 1)} de las unidades vendidas no encaja en ningún tipo y queda en “Otros”. ` : ""}Las compras de mercancía son las mismas para web y tienda, por eso “lo que compraste” incluye ambos canales; la ganancia y las ventas son solo de la caja de la tienda.
+          </div>
+          <div className="met-card met-in" style={{ "--d": "100ms", marginTop: 14 }}>
+            <ul className="stk-reglas">
+              <li><b>Compra más.</b> Te alcanza el inventario menos de 30 días; o el tipo deja bastante más ganancia de la parte de tus compras que se lleva (y sigue vendiéndose); o deja ganancia y casi no compraste.</li>
+              <li><b>Compra menos.</b> Tienes inventario para más de 90 días, o compras mucho más de lo que ese tipo te deja de ganancia.</li>
+              <li><b>Frena las compras.</b> Inventario para más de 120 días, o el tipo no dejó ganancia en el periodo.</li>
+              <li><b>Conviene %.</b> Reparte tu presupuesto según la ganancia diaria de cada tipo, descontando los que ya tienen mucho inventario. Úsalo como guía de proporción, no como monto fijo.</li>
+            </ul>
+          </div>
+        </>
+      )}
+    </>
+  );
+}
+
 function AnalisisStockPanel({ categories = [], ingresoPorCategoria = [], ventasPorArea = [], extra = null }) {
   const [dias, setDias] = useState(90);
   const [d, setD] = useState(null);
@@ -5074,6 +5257,9 @@ function AnalisisStockPanel({ categories = [], ingresoPorCategoria = [], ventasP
               </div>
             )}
           </div>
+
+          {/* ── Qué tipos de producto comprar (tienda) ── */}
+          <TiposTiendaSeccion dias={dias} prods={prods} />
 
           {/* ── Ventas web por categoría y zona (histórico) ── */}
           {(ingresoPorCategoria.length > 0 || ventasPorArea.length > 0) && (
