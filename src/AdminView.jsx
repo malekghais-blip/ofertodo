@@ -4641,6 +4641,488 @@ function MetricasPanel({ desde, hasta, filtro }) {
   );
 }
 
+// ═══════════ ANÁLISIS DE STOCK Y COMPRAS (pestaña "Análisis de stock") — SOLO PARA EL DUEÑO ═══════════
+// Une compras (Odoo), costos, márgenes, stock y ventas (web + tienda) para decir QUÉ comprar, CUÁNTO y qué NO volver a traer.
+// Todo el cálculo vive en la función privada analisis_compras_stock del servidor (solo la puede ejecutar el dueño).
+const ESTILO_STK = `
+.stk-tabla{width:100%;border-collapse:collapse;font-size:13px;min-width:900px}
+.stk-tabla th{padding:10px 12px;text-align:right;font-weight:700;color:${MT.texto2};border-bottom:1px solid ${MT.rejilla};white-space:nowrap;font-size:12.5px}
+.stk-tabla td{padding:12px;text-align:right;border-bottom:1px solid ${MT.rejilla};font-variant-numeric:tabular-nums;vertical-align:top}
+.stk-tabla th:first-child,.stk-tabla td:first-child{text-align:left}
+.stk-tabla tbody tr:hover td{background:rgba(227,30,36,.03)}
+.stk-nom{font-weight:700;color:${MT.texto};line-height:1.3}
+.stk-sub{font-size:11.5px;color:${MT.suave};margin-top:3px;line-height:1.45;font-weight:500}
+.stk-why{font-size:12px;color:${MT.texto2};margin-top:5px;line-height:1.45;font-weight:500}
+.stk-badge{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:800;padding:3px 9px;border-radius:999px;white-space:nowrap}
+.stk-badge i{width:6px;height:6px;border-radius:50%;background:currentColor}
+.stk-b-ya{background:rgba(227,30,36,.10);color:#B01519}
+.stk-b-pronto{background:#FFF1D6;color:#8A5A00}
+.stk-b-ok{background:rgba(11,122,43,.10);color:#0B7A2B}
+.stk-b-no{background:rgba(17,17,17,.08);color:#2B2B2E}
+.stk-b-nuevo{background:rgba(59,91,219,.10);color:#2F4AB5}
+.stk-prov{display:block;width:100%;text-align:left;background:none;border:1px solid transparent;border-radius:12px;padding:8px 10px 2px;cursor:pointer;font:inherit;color:inherit;transition:border-color .18s,background .18s}
+.stk-prov:hover{border-color:rgba(227,30,36,.35)}
+.stk-prov.on{border-color:${MT.rojo};background:rgba(227,30,36,.04)}
+.stk-sel{background:#fff;color:${MT.texto};border:1px solid ${MT.borde};border-radius:10px;padding:8px 10px;font-size:13px;max-width:100%}
+.stk-q{background:#fff;color:${MT.texto};border:1px solid ${MT.borde};border-radius:10px;padding:8px 12px;font-size:13px;min-width:200px;flex:1;max-width:340px}
+.stk-q:focus,.stk-sel:focus{outline:2px solid rgba(227,30,36,.45);outline-offset:1px}
+.stk-reglas{margin:10px 0 0;padding:0;list-style:none;display:grid;gap:10px}
+.stk-reglas li{font-size:13px;line-height:1.55;color:${MT.texto2};padding-left:14px;position:relative}
+.stk-reglas li:before{content:"";position:absolute;left:0;top:.62em;width:6px;height:6px;border-radius:2px;background:${MT.rojo}}
+.stk-reglas b{color:${MT.texto}}
+`;
+
+const STK_ESTADOS = {
+  comprar_ya: { clase: "stk-b-ya", texto: "Comprar ya" },
+  comprar_pronto: { clase: "stk-b-pronto", texto: "Comprar pronto" },
+  ok: { clase: "stk-b-ok", texto: "Stock sano" },
+  no_recomprar: { clase: "stk-b-no", texto: "No recomprar" },
+  nuevo: { clase: "stk-b-nuevo", texto: "Recién comprado" },
+  inactivo: { clase: "stk-b-no", texto: "Sin movimiento" },
+  sin_datos: { clase: "stk-b-no", texto: "Sin datos" },
+  sin_stock: { clase: "stk-b-no", texto: "Sin stock sincronizado" },
+};
+function InsigniaStock({ accion }) {
+  const e = STK_ESTADOS[accion] || STK_ESTADOS.sin_datos;
+  return <span className={`stk-badge ${e.clase}`}><i />{e.texto}</span>;
+}
+
+function ritmoTexto(v) {
+  const n = Number(v) || 0;
+  if (n <= 0) return "sin ventas";
+  if (n >= 10) return `${Math.round(n)}/día`;
+  if (n >= 1) return `${n.toFixed(1)}/día`;
+  return `${(n * 7).toFixed(1)}/semana`;
+}
+
+// Pista: cuántos días de venta le quedan al producto. La marca vertical es el tiempo que tarda en llegar tu mercancía.
+function PistaStock({ dias, lead = 7, tope = 60 }) {
+  const mont = useMontado();
+  if (dias === null || dias === undefined || Number.isNaN(Number(dias))) return <span style={{ color: MT.suave }}>—</span>;
+  const d = Math.max(0, Number(dias));
+  const pct = Math.min(100, (d / tope) * 100);
+  const color = d <= lead ? MT.rojo : d <= lead + 14 ? "#D97706" : d > 120 ? MT.suave : MT.bueno;
+  const txt = d > 365 ? "más de 1 año" : d > 120 ? `${Math.round(d)} días (de sobra)` : d === 0 ? "agotado" : `${Math.round(d)} día${Math.round(d) === 1 ? "" : "s"}`;
+  return (
+    <div style={{ width: 132, marginLeft: "auto" }} role="img" aria-label={`Alcanza para ${txt}`}>
+      <div style={{ position: "relative", height: 8, borderRadius: 6, background: "rgba(17,17,17,0.07)" }}>
+        <div style={{ height: "100%", width: mont ? Math.max(d > 0 ? 3 : 0, pct) + "%" : "0%", borderRadius: 6, background: color, transition: "width 900ms cubic-bezier(.2,.7,.2,1)", boxShadow: `0 0 8px ${color}55` }} />
+        <i title={`${lead} días: lo que tarda en llegar tu compra`} style={{ position: "absolute", left: (lead / tope) * 100 + "%", top: -3, width: 2, height: 14, background: MT.tinta, opacity: 0.5, borderRadius: 1 }} />
+      </div>
+      <div style={{ fontSize: 12, marginTop: 5, fontWeight: 700, color }}>{txt}</div>
+    </div>
+  );
+}
+
+function explicarStock(p, lead) {
+  const ritmo = ritmoTexto(p.vel_dia);
+  const cob = p.dias_cobertura;
+  switch (p.accion) {
+    case "comprar_ya":
+      if (!(Number(p.stock) > 0) && !(Number(p.pendiente) > 0)) return `Agotado y se vende ${ritmo}. Cada día sin stock es venta perdida.`;
+      return `Con ${ritmo} te alcanza ${cob} día${cob === 1 ? "" : "s"} y tu proveedor tarda ${lead}. Pide ya para no quedarte sin producto.`;
+    case "comprar_pronto":
+      return `Se vende ${ritmo}; te alcanza ${cob} días. Conviene pedir esta semana.`;
+    case "ok":
+      return `Se vende ${ritmo} y tienes para ${cob} días. No hace falta comprar todavía.`;
+    case "nuevo":
+      return p.motivo === "sin_ventas"
+        ? `Lo compraste hace poco y aún no registra ventas. Dale unas semanas antes de juzgarlo.`
+        : `Compra reciente con mucho stock para lo que se vende (${ritmo}). Espera a ver cómo rota.`;
+    case "no_recomprar":
+      if (p.motivo === "sin_ventas") return `Sin ventas en el periodo y con stock en bodega: dinero parado. Considera ofertarlo antes de comprar más.`;
+      if (p.motivo === "exceso") return `Tienes stock para ${cob > 365 ? "más de un año" : cob + " días"} al ritmo actual (${ritmo}). Comprar más solo inmoviliza dinero.`;
+      if (p.motivo === "venta_lenta") return `De tu última compra (${numM(p.ultima_compra_qty)} uds) solo has vendido el ${p.vendido_desde_compra_pct}% y ya pasaron ${Math.round((Date.now() - new Date(p.ultima_compra_fecha + "T12:00:00").getTime()) / 86400000)} días.`;
+      if (p.motivo === "margen_negativo") return `Vendes por debajo de lo que te cuesta. Corrige el precio antes de volver a comprar.`;
+      return "";
+    case "inactivo": return "Sin stock y sin ventas en el periodo.";
+    case "sin_stock": return `Se vende (${ritmo}) pero no hay stock sincronizado desde Odoo, así que no se puede calcular cuánto comprar.`;
+    default: return "";
+  }
+}
+
+function csvCelda(v) { const s = String(v ?? ""); return /[",\n;]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }
+
+function AnalisisStockPanel({ categories = [], ingresoPorCategoria = [], ventasPorArea = [], extra = null }) {
+  const [dias, setDias] = useState(90);
+  const [d, setD] = useState(null);
+  const [cargando, setCargando] = useState(true);
+  const [error, setError] = useState("");
+  const [actualizado, setActualizado] = useState(null);
+  const [vista, setVista] = useState("comprar");
+  const [prov, setProv] = useState("todos");
+  const [q, setQ] = useState("");
+  const [orden, setOrden] = useState("prioridad");
+  const [canal, setCanal] = useState("todos"); // todos | web | tienda
+  const [limite, setLimite] = useState(25);
+  const [tiendaTodo, setTiendaTodo] = useState(false);
+  const peticion = useRef(0);
+
+  const cargar = async (silencioso = false) => {
+    const id = ++peticion.current;
+    if (silencioso !== true) { setCargando(true); setError(""); }
+    try {
+      const r = await rpcConReintento("analisis_compras_stock", { p_dias: dias });
+      if (id !== peticion.current) return;
+      setD(r); setActualizado(new Date()); setError("");
+    } catch (e) {
+      if (id === peticion.current && silencioso !== true) setError(String(e.message || e).slice(0, 220));
+    }
+    if (id === peticion.current) setCargando(false);
+  };
+  useEffect(() => { setLimite(25); cargar(); }, [dias]);
+  useRefrescoPeriodico(() => cargar(true), 300000);
+
+  const r = d && d.resumen;
+  const prods = (d && d.productos) || [];
+  const tienda = (d && d.top_tienda) || [];
+  const lead = (r && r.lead_dias) || 7;
+  const hora = actualizado ? actualizado.toLocaleTimeString("es-PA", { timeZone: "America/Panama", hour: "2-digit", minute: "2-digit" }) : "";
+  const provDe = (p) => p.proveedor || "Sin proveedor";
+  const catDe = (id) => ((categories || []).find(c => c.id === id) || {}).nombre || "";
+
+  const esComprar = (p) => p.accion === "comprar_ya" || p.accion === "comprar_pronto";
+  const porVista = {
+    comprar: prods.filter(esComprar),
+    no_recomprar: prods.filter(p => p.accion === "no_recomprar"),
+    nuevo: prods.filter(p => p.accion === "nuevo"),
+    todo: prods,
+  };
+  const nComprar = porVista.comprar.length, nNo = porVista.no_recomprar.length, nNuevo = porVista.nuevo.length;
+
+  // Proveedores con lo que hay que comprarles (para la lista de compra por proveedor)
+  const porProv = (() => {
+    const m = {};
+    porVista.comprar.filter(p => canal === "todos" || p.origen === canal).forEach(p => {
+      const k = provDe(p);
+      if (!m[k]) m[k] = { nombre: k, inversion: 0, unidades: 0, productos: 0, ya: 0 };
+      m[k].inversion += Number(p.inversion_sugerida || 0); m[k].unidades += Number(p.sugerido || 0); m[k].productos += 1;
+      if (p.accion === "comprar_ya") m[k].ya += 1;
+    });
+    return Object.values(m).sort((a, b) => b.inversion - a.inversion);
+  })();
+
+  const prioridad = (p) => (p.accion === "comprar_ya" ? 0 : 1);
+  const ordenar = (a, b) => {
+    if (orden === "inversion") return Number(b.inversion_sugerida || 0) - Number(a.inversion_sugerida || 0) || Number(b.valor_stock || 0) - Number(a.valor_stock || 0);
+    if (orden === "venta") return Number(b.vel_dia || 0) - Number(a.vel_dia || 0);
+    if (orden === "margen") return Number(b.margen_pct ?? -999) - Number(a.margen_pct ?? -999);
+    if (orden === "capital") return Number(b.valor_stock || 0) - Number(a.valor_stock || 0);
+    // prioridad: lo urgente primero y, dentro de eso, lo que más ganancia diaria deja
+    if (vista === "comprar") return prioridad(a) - prioridad(b) || Number(b.ganancia_dia || 0) - Number(a.ganancia_dia || 0);
+    if (vista === "no_recomprar" || vista === "nuevo") return Number(b.valor_stock || 0) - Number(a.valor_stock || 0);
+    return Number(b.vendido_periodo || 0) - Number(a.vendido_periodo || 0);
+  };
+  const texto = q.trim().toLowerCase();
+  const filas = (porVista[vista] || []).filter(p =>
+    (prov === "todos" || provDe(p) === prov) &&
+    (canal === "todos" || p.origen === canal) &&
+    (!texto || String(p.nombre || "").toLowerCase().includes(texto) || String(p.ref || "").toLowerCase().includes(texto))
+  ).sort(ordenar);
+  const visibles = filas.slice(0, limite);
+
+  const descargarLista = () => {
+    const lista = porVista.comprar.filter(p => (prov === "todos" || provDe(p) === prov) && (canal === "todos" || p.origen === canal))
+      .sort((a, b) => provDe(a).localeCompare(provDe(b)) || prioridad(a) - prioridad(b) || Number(b.ganancia_dia || 0) - Number(a.ganancia_dia || 0));
+    const cab = ["Proveedor", "Referencia", "Producto", "Dónde se vende", "Prioridad", "Stock", "Por llegar", "Se vende por día", "Días que alcanza", "Comprar (uds)", "Costo unitario", "Inversión", "Última compra (uds)", "Margen %"];
+    const cuerpo = lista.map(p => [provDe(p), p.ref, p.nombre, p.origen === "tienda" ? "Solo tienda" : "Catálogo web", p.accion === "comprar_ya" ? "Comprar ya" : "Comprar pronto", p.stock ?? "", p.pendiente ?? 0, p.vel_dia ?? "", p.dias_cobertura ?? "", p.sugerido, p.costo ?? "", p.inversion_sugerida ?? "", p.ultima_compra_qty ?? "", p.margen_pct ?? ""]);
+    const csv = "﻿" + [cab, ...cuerpo].map(f => f.map(csvCelda).join(";")).join("\r\n");
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    a.download = `lista-de-compra-${fechaPanama()}.csv`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  };
+
+  // Cifras de arriba
+  const compradoCat = prods.reduce((s, p) => s + Number(p.comprado_periodo_usd || 0), 0);
+  const vendidoCosto = r ? Number(r.vendido_costo || 0) : 0;
+  const ingresoCC = r ? Number(r.ingreso_con_costo || 0) : 0;
+  const ganancia = ingresoCC - vendidoCosto;
+  const margenReal = ingresoCC > 0 ? (ganancia / ingresoCC) * 100 : null;
+  const diasInventario = r && vendidoCosto > 0 ? Math.round(Number(r.valor_inventario || 0) / (vendidoCosto / dias)) : null;
+  const maxProv = porProv.length ? porProv[0].inversion : 1;
+  const maxTienda = tienda.length ? Number(tienda[0].unidades) : 1;
+  const tiendaVisible = tiendaTodo ? tienda : tienda.slice(0, 10);
+
+  return (
+    <div className="met" style={{ opacity: cargando && d ? 0.72 : 1, transition: "opacity .25s" }} data-testid="analisis-stock">
+      <style>{ESTILO_MET}{ESTILO_STK}</style>
+      {cargando && <div className="met-scan" />}
+
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
+        <div>
+          <h2 className="met-h1">Análisis de stock y compras</h2>
+          <div className="met-sub" style={{ marginTop: 6 }}>
+            Une lo que compraste, lo que te costó, lo que vendes (web y tienda) y lo que tienes en bodega para decirte <b>qué comprar, cuánto y qué no volver a traer</b>. Toca la <b>?</b> de cada tarjeta para ver cómo se calcula.
+          </div>
+        </div>
+        <div className="met-live"><i /> En vivo{hora ? ` · ${hora}` : ""}</div>
+      </div>
+
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", margin: "18px 0 8px" }}>
+        <span style={{ fontSize: 12.5, color: MT.texto2, fontWeight: 600, marginRight: 4 }}>Ventas analizadas:</span>
+        {[[60, "Últimos 60 días"], [90, "Últimos 90 días"], [180, "Últimos 6 meses"]].map(([v, t]) => (
+          <button key={v} className={"met-chip" + (dias === v ? " on" : "")} onClick={() => setDias(v)} aria-pressed={dias === v}>{t}</button>
+        ))}
+      </div>
+
+      {error && <div className="met-aviso" style={{ background: "#FDE8E8", borderColor: "#F5B5B5", color: "#B71C1C" }}>No se pudo calcular el análisis: {error}</div>}
+      {!d && !error && <div style={{ padding: "60px 0", textAlign: "center", color: MT.texto2 }}>Calculando tus compras y tu stock…</div>}
+
+      {d && r && (
+        <>
+          {/* ── Tarjetas principales ── */}
+          <div className="met-grid" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", marginTop: 14 }}>
+            <Kpi acento grande retraso={0} etiqueta="Inversión sugerida ahora"
+              formula={`Suma de (unidades a comprar × costo) de los ${numM(nComprar)} productos en “Comprar ya” y “Comprar pronto”. Cada cantidad cubre ${r.cobertura_dias + lead} días de ventas (${r.cobertura_dias} de venta + ${lead} de espera del proveedor), menos lo que ya tienes y lo que viene en camino.`}
+              pie={<div style={{ fontSize: 12.5, color: MT.texto2 }}>{numM(r.unidades_sugeridas)} unidades en {numM(nComprar)} productos · <b style={{ color: MT.rojo }}>{numM(r.comprar_ya)} urgentes</b>{Number(r.comprar_tienda) > 0 ? <><br />De eso, solo tienda: <b style={{ color: MT.texto }}>{usdM(r.inversion_tienda, 0)}</b> en {numM(r.comprar_tienda)} productos</> : null}</div>}>
+              <Cifra valor={Number(r.inversion_sugerida)} f={(v) => usdM(v, 0)} />
+            </Kpi>
+            <Kpi retraso={70} etiqueta={`Compraste en ${dias} días`}
+              formula={`Compras confirmadas en Odoo de productos con referencia (web y tienda): ${usdM(compradoCat, 0)}. El total de órdenes del periodo es ${usdM(r.comprado_periodo, 0)} en ${numM(r.ordenes_periodo)} órdenes (incluye líneas sin referencia, como fletes o servicios). Lo vendido está a costo, para comparar manzanas con manzanas.`}
+              pie={<div style={{ fontSize: 12.5, color: MT.texto2 }}>Vendiste a costo <b style={{ color: MT.texto }}>{usdM(vendidoCosto, 0)}</b>{compradoCat > 0 ? ` · ${Math.round((vendidoCosto / compradoCat) * 100)}% de lo comprado` : ""}</div>}>
+              <Cifra valor={compradoCat} f={(v) => usdM(v, 0)} />
+            </Kpi>
+            <Kpi retraso={140} etiqueta="Dinero parado en productos a no recomprar"
+              formula={`Stock a costo de los ${numM(nNo)} productos marcados “No recomprar”: sin ventas en el periodo, con stock para más de 120 días, de venta muy lenta o con margen negativo. Es plata en bodega que no está rotando.`}
+              pie={<div style={{ fontSize: 12.5, color: MT.texto2 }}>{numM(nNo)} productos · {Number(r.valor_inventario) > 0 ? Math.round((Number(r.capital_inmovilizado) / Number(r.valor_inventario)) * 100) : 0}% de tu inventario</div>}>
+              <Cifra valor={Number(r.capital_inmovilizado)} f={(v) => usdM(v, 0)} />
+            </Kpi>
+            <Kpi retraso={210} etiqueta="Inventario a costo"
+              formula={`Stock actual de cada producto × su costo (Finanzas / Odoo). Los días de inventario son ese valor ÷ lo que vendes por día a costo (${usdM(vendidoCosto / dias)} diarios en los últimos ${dias} días).`}
+              pie={<div style={{ fontSize: 12.5, color: MT.texto2 }}>{diasInventario !== null ? <>Alcanza para <b style={{ color: MT.texto }}>{numM(diasInventario)} días</b> de ventas</> : "Sin ventas para estimar los días"}</div>}>
+              <Cifra valor={Number(r.valor_inventario)} f={(v) => usdM(v, 0)} />
+            </Kpi>
+            <Kpi retraso={280} etiqueta="Margen real de lo vendido"
+              formula={`(Ingresos − costo) ÷ ingresos de los productos que tienen costo cargado, en los últimos ${dias} días (web + tienda): ${usdM(ingresoCC, 0)} vendidos − ${usdM(vendidoCosto, 0)} de costo = ${usdM(ganancia, 0)} de ganancia bruta.`}
+              pie={<div style={{ fontSize: 12.5, color: MT.texto2 }}>Ganancia bruta <b style={{ color: MT.bueno }}>{usdM(ganancia, 0)}</b></div>}>
+              <Cifra valor={margenReal === null ? null : margenReal} f={(v) => v === null ? "—" : pctM(v, 1)} />
+            </Kpi>
+          </div>
+
+          {Number(r.stock_negativo) > 0 && <div className="met-aviso">{numM(r.stock_negativo)} producto{r.stock_negativo === 1 ? "" : "s"} tienen stock negativo en Odoo (se cuentan como 0). Conviene ajustar el inventario en Odoo para que las sugerencias sean exactas.</div>}
+          {r.tienda && Number(r.tienda.unidades_sin_ref) > 0 && <div className="met-aviso">{numM(r.tienda.unidades_sin_ref)} unidades ({usdM(r.tienda.ingreso_sin_ref, 0)}) vendidas en la tienda no tienen referencia en Odoo, así que solo se ven por nombre y no se les puede calcular stock ni sugerencia. Asígnales una referencia en Odoo para incluirlos.</div>}
+          {Number(r.sin_costo) > 0 && <div className="met-aviso">{numM(r.sin_costo)} producto{r.sin_costo === 1 ? "" : "s"} no tienen costo cargado: se analizan, pero sin margen ni inversión.</div>}
+          {Number(r.sin_stock) > 0 && <div className="met-aviso">{numM(r.sin_stock)} producto{r.sin_stock === 1 ? "" : "s"} se venden pero no tienen stock sincronizado desde Odoo, por eso no tienen sugerencia.</div>}
+
+          {/* ── Qué comprar ── */}
+          <div className="met-sec">Qué comprar, cuánto y qué no volver a traer</div>
+          <div className="met-card met-in" style={{ "--d": "100ms", padding: 0 }}>
+            <div style={{ padding: "16px 18px 12px", display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+              <button className={"met-chip" + (vista === "comprar" ? " on" : "")} onClick={() => { setVista("comprar"); setLimite(25); setOrden("prioridad"); }}>Comprar ({numM(nComprar)})</button>
+              <button className={"met-chip" + (vista === "no_recomprar" ? " on" : "")} onClick={() => { setVista("no_recomprar"); setLimite(25); setOrden("prioridad"); }}>No volver a comprar ({numM(nNo)})</button>
+              <button className={"met-chip" + (vista === "nuevo" ? " on" : "")} onClick={() => { setVista("nuevo"); setLimite(25); setOrden("prioridad"); }}>En observación ({numM(nNuevo)})</button>
+              <button className={"met-chip" + (vista === "todo" ? " on" : "")} onClick={() => { setVista("todo"); setLimite(25); setOrden("prioridad"); }}>Todos ({numM(prods.length)})</button>
+            </div>
+            <div style={{ padding: "0 18px 14px", display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+              <input className="stk-q" type="search" placeholder="Buscar por nombre o referencia" value={q} onChange={e => { setQ(e.target.value); setLimite(25); }} aria-label="Buscar producto" />
+              <select className="stk-sel" value={prov} onChange={e => { setProv(e.target.value); setLimite(25); }} aria-label="Filtrar por proveedor">
+                <option value="todos">Todos los proveedores</option>
+                {[...new Set(prods.map(provDe))].sort((a, b) => a.localeCompare(b)).map(n => <option key={n} value={n}>{n}</option>)}
+              </select>
+              <select className="stk-sel" value={canal} onChange={e => { setCanal(e.target.value); setLimite(25); }} aria-label="Dónde se vende">
+                <option value="todos">Web y tienda física</option>
+                <option value="web">Catálogo web (y tienda)</option>
+                <option value="tienda">Solo tienda física</option>
+              </select>
+              <select className="stk-sel" value={orden} onChange={e => setOrden(e.target.value)} aria-label="Ordenar">
+                <option value="prioridad">Orden: lo más importante primero</option>
+                <option value="inversion">Orden: mayor inversión</option>
+                <option value="venta">Orden: se vende más rápido</option>
+                <option value="margen">Orden: mayor margen</option>
+                <option value="capital">Orden: más dinero en bodega</option>
+              </select>
+              {vista === "comprar" && nComprar > 0 && (
+                <button className="met-chip" onClick={descargarLista} style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 6 }}>
+                  <Download size={14} /> Descargar lista de compra
+                </button>
+              )}
+            </div>
+
+            {vista === "comprar" && porProv.length > 0 && (
+              <div style={{ padding: "4px 18px 16px", borderTop: `1px solid ${MT.rejilla}` }}>
+                <div className="met-lbl" style={{ margin: "14px 0 8px" }}>Cuánto comprarle a cada proveedor <span style={{ fontWeight: 500, color: MT.suave }}>· toca uno para filtrar</span></div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,320px),1fr))", gap: "2px 18px" }}>
+                  {porProv.slice(0, 8).map((p, i) => (
+                    <button key={p.nombre} className={"stk-prov" + (prov === p.nombre ? " on" : "")} onClick={() => { setProv(prov === p.nombre ? "todos" : p.nombre); setLimite(25); }} aria-pressed={prov === p.nombre}>
+                      <BarraH etiqueta={p.nombre} valor={p.inversion} maximo={maxProv} color={MT.rojo} texto={usdM(p.inversion, 0)} sub={`${numM(p.productos)} prod. · ${numM(p.unidades)} uds${p.ya ? ` · ${p.ya} urgente${p.ya === 1 ? "" : "s"}` : ""}`} retraso={i * 70} />
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div style={{ overflowX: "auto", borderTop: `1px solid ${MT.rejilla}` }}>
+              <table className="stk-tabla">
+                <thead><tr>
+                  <th>Producto</th><th>Stock</th><th>Se vende</th><th>Alcanza para</th><th>Última compra</th><th>{vista === "comprar" ? "Comprar" : "Qué hacer"}</th><th>Margen</th>
+                </tr></thead>
+                <tbody>
+                  {visibles.map(p => {
+                    const comprar = esComprar(p);
+                    return (
+                      <tr key={p.ref}>
+                        <td style={{ maxWidth: 340 }}>
+                          <div className="stk-nom">{p.nombre}</div>
+                          <div className="stk-sub">{p.ref}{provDe(p) !== "Sin proveedor" ? ` · ${provDe(p)}` : ""}{catDe(p.categoria_id) ? ` · ${catDe(p.categoria_id)}` : ""}{p.origen === "tienda" ? " · solo tienda física" : ""}</div>
+                          <div className="stk-why">{explicarStock(p, lead)}</div>
+                        </td>
+                        <td>
+                          <div style={{ fontWeight: 800, color: Number(p.stock) > 0 ? MT.texto : MT.rojo }}>{p.stock === undefined || p.stock === null ? "—" : numM(Math.round(p.stock))}</div>
+                          {p.stock_negativo && <div className="stk-sub" style={{ color: MT.malo }}>negativo en Odoo</div>}
+                          {Number(p.pendiente) > 0 && <div className="stk-sub">+{numM(Math.round(p.pendiente))} por llegar</div>}
+                        </td>
+                        <td>
+                          <div style={{ fontWeight: 800 }}>{ritmoTexto(p.vel_dia)}</div>
+                          <div className="stk-sub">{numM(Math.round(p.vendido_periodo || 0))} en {dias} días</div>
+                          {(Number(p.vendido_web) > 0 || Number(p.vendido_tienda) > 0) && <div className="stk-sub">web {numM(Math.round(p.vendido_web || 0))} · tienda {numM(Math.round(p.vendido_tienda || 0))}</div>}
+                          {p.tendencia === "sube" && <div className="stk-sub" style={{ color: MT.bueno, fontWeight: 700 }}>▲ acelerando</div>}
+                          {p.tendencia === "baja" && <div className="stk-sub" style={{ color: MT.malo, fontWeight: 700 }}>▼ frenando</div>}
+                        </td>
+                        <td><PistaStock dias={p.dias_cobertura} lead={lead} /></td>
+                        <td>
+                          {p.ultima_compra_qty ? (
+                            <>
+                              <div style={{ fontWeight: 700 }}>{numM(Math.round(p.ultima_compra_qty))} uds</div>
+                              <div className="stk-sub">{fechaCortaM(p.ultima_compra_fecha)}{p.ultima_compra_costo ? ` · a ${usdM(p.ultima_compra_costo)}` : ""}</div>
+                              {p.vendido_desde_compra_pct !== undefined && <div className="stk-sub" style={{ color: p.vendido_desde_compra_pct >= 80 ? MT.bueno : p.vendido_desde_compra_pct < 35 ? MT.malo : MT.suave, fontWeight: 700 }}>vendido {p.vendido_desde_compra_pct}% desde entonces</div>}
+                            </>
+                          ) : <span className="stk-sub">Sin compras en Odoo</span>}
+                        </td>
+                        <td>
+                          {comprar ? (
+                            <>
+                              <div style={{ fontWeight: 800, fontSize: 15, color: p.accion === "comprar_ya" ? MT.rojo : MT.texto }}>{numM(p.sugerido)} uds</div>
+                              <div className="stk-sub" style={{ color: MT.texto2, fontWeight: 700 }}>{p.costo ? usdM(p.inversion_sugerida, 0) : "sin costo"}</div>
+                              {p.pct_vs_ultima !== undefined && <div className="stk-sub">{p.pct_vs_ultima >= 0 ? "+" : ""}{p.pct_vs_ultima}% vs. última compra</div>}
+                              <div style={{ marginTop: 6 }}><InsigniaStock accion={p.accion} /></div>
+                            </>
+                          ) : <InsigniaStock accion={p.accion} />}
+                          {!comprar && Number(p.valor_stock) > 0 && <div className="stk-sub">{usdM(p.valor_stock, 0)} en bodega</div>}
+                        </td>
+                        <td>
+                          {p.margen_pct === undefined ? <span className="stk-sub">—</span> : (
+                            <>
+                              <div style={{ fontWeight: 800, color: p.margen_pct < 0 ? MT.rojo : p.margen_pct < 15 ? MT.malo : MT.texto }}>{pctM(p.margen_pct, 0)}</div>
+                              <div className="stk-sub">{usdM(p.costo)} → {usdM(p.precio)}</div>
+                              {p.margen_pct > 85 && <div className="stk-sub" style={{ color: MT.malo, fontWeight: 700 }}>¿costo correcto?</div>}
+                            </>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {visibles.length === 0 && (
+                    <tr><td colSpan={7} style={{ textAlign: "center", padding: "36px 12px", color: MT.texto2 }}>
+                      {vista === "comprar" ? "No hay productos por comprar con estos filtros." : "No hay productos en esta lista con estos filtros."}
+                    </td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+            {filas.length > limite && (
+              <div style={{ padding: "12px 18px", borderTop: `1px solid ${MT.rejilla}`, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                <button className="met-chip" onClick={() => setLimite(l => l + 25)}>Ver 25 más</button>
+                <button className="met-chip" onClick={() => setLimite(filas.length)}>Ver todos ({numM(filas.length)})</button>
+                <span style={{ fontSize: 12, color: MT.suave }}>Mostrando {numM(Math.min(limite, filas.length))} de {numM(filas.length)}</span>
+              </div>
+            )}
+          </div>
+
+          {/* ── Tienda física ── */}
+          <div className="met-sec">Lo que más se vende en la tienda</div>
+          <div className="met-sub" style={{ marginBottom: 12 }}>
+            Punto de venta de Odoo, últimos {dias} días: <b>{numM(r.tienda && r.tienda.unidades)} unidades</b> y <b>{usdM(r.tienda && r.tienda.ingreso, 0)}</b> en total. Incluye los productos que solo vendes en la tienda; el stock sale de Odoo y las sugerencias de compra están en la tabla de arriba (filtro “Solo tienda física”).
+          </div>
+          <div className="met-card met-in" style={{ "--d": "100ms", padding: 0 }}>
+            <div style={{ overflowX: "auto" }}>
+              <table className="stk-tabla" style={{ minWidth: 760 }}>
+                <thead><tr><th>Producto</th><th>Unidades vendidas</th><th>Ingreso</th><th>Precio prom.</th><th>Margen</th><th>Ganancia</th><th>Bodega</th></tr></thead>
+                <tbody>
+                  {tiendaVisible.map((t, i) => (
+                    <tr key={(t.ref || t.nombre) + i}>
+                      <td style={{ maxWidth: 340 }}>
+                        <div className="stk-nom"><span style={{ color: MT.suave, fontWeight: 700, marginRight: 8 }}>{i + 1}</span>{t.nombre}</div>
+                        <div className="stk-sub">{t.ref || "sin referencia en Odoo"} · {numM(t.tickets)} ventas · última {t.ultima_venta ? fechaCortaM(t.ultima_venta) : "—"}</div>
+                      </td>
+                      <td style={{ minWidth: 150 }}>
+                        <div style={{ fontWeight: 800 }}>{numM(t.unidades)} <span className="stk-sub" style={{ display: "inline" }}>· {pctM(t.pct_unidades, 1)} de la tienda</span></div>
+                        <div style={{ height: 6, borderRadius: 4, background: "rgba(17,17,17,.07)", marginTop: 6, overflow: "hidden" }}>
+                          <div style={{ height: "100%", width: Math.max(2, (Number(t.unidades) / maxTienda) * 100) + "%", background: MT.rojo, borderRadius: 4, boxShadow: `0 0 8px ${MT.rojo}40` }} />
+                        </div>
+                        <div className="stk-sub">{ritmoTexto(t.vel_dia)}</div>
+                      </td>
+                      <td><div style={{ fontWeight: 800 }}>{usdM(t.ingreso, 0)}</div><div className="stk-sub">{pctM(t.pct_ingreso, 1)} del ingreso</div></td>
+                      <td>{usdM(t.precio_prom)}</td>
+                      <td>{t.margen_pct === undefined ? <span className="stk-sub">sin costo</span> : <b style={{ color: t.margen_pct < 15 ? MT.malo : MT.texto }}>{pctM(t.margen_pct, 0)}</b>}</td>
+                      <td>{t.ganancia === undefined ? <span className="stk-sub">—</span> : <b style={{ color: MT.bueno }}>{usdM(t.ganancia, 0)}</b>}</td>
+                      <td>
+                        {t.accion ? (
+                          <><InsigniaStock accion={t.accion} /><div className="stk-sub">{t.stock !== undefined ? `${numM(Math.round(t.stock))} en stock` : ""}{t.sugerido > 0 ? ` · comprar ${numM(t.sugerido)}` : ""}</div></>
+                        ) : <span className="stk-sub">Sin referencia en Odoo: no se puede calcular</span>}
+                      </td>
+                    </tr>
+                  ))}
+                  {tiendaVisible.length === 0 && <tr><td colSpan={7} style={{ textAlign: "center", padding: "30px 12px", color: MT.texto2 }}>Aún no hay ventas de tienda en este periodo.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+            {tienda.length > 10 && (
+              <div style={{ padding: "12px 18px", borderTop: `1px solid ${MT.rejilla}` }}>
+                <button className="met-chip" onClick={() => setTiendaTodo(v => !v)}>{tiendaTodo ? "Ver solo los 10 primeros" : `Ver los ${tienda.length} más vendidos`}</button>
+              </div>
+            )}
+          </div>
+
+          {/* ── Ventas web por categoría y zona (histórico) ── */}
+          {(ingresoPorCategoria.length > 0 || ventasPorArea.length > 0) && (
+            <>
+              <div className="met-sec">Ventas de la web por categoría y por zona</div>
+              <div className="met-grid" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,340px),1fr))" }}>
+                {ingresoPorCategoria.length > 0 && (
+                  <div className="met-card met-in" style={{ "--d": "100ms" }}>
+                    <div className="met-lbl" style={{ marginBottom: 14 }}>Ingreso por categoría (todas las ventas pagadas de la web)</div>
+                    {ingresoPorCategoria.slice(0, 8).map((c, i) => (
+                      <BarraH key={c.categoria_id} etiqueta={c.categoria} valor={c.ingreso} maximo={ingresoPorCategoria[0].ingreso} color={MT.rojo} texto={usdM(c.ingreso, 0)} sub={`${numM(c.cantidad)} uds`} retraso={i * 60} />
+                    ))}
+                  </div>
+                )}
+                {ventasPorArea.length > 0 && (
+                  <div className="met-card met-in" style={{ "--d": "160ms" }}>
+                    <div className="met-lbl" style={{ marginBottom: 14 }}>Ventas por zona (sucursal de destino o dirección)</div>
+                    {ventasPorArea.slice(0, 8).map((a, i) => (
+                      <BarraH key={a.area} etiqueta={a.area} valor={a.total} maximo={ventasPorArea[0].total} color={MT.tinta} texto={usdM(a.total, 0)} sub={`${numM(a.pedidos)} pedido${a.pedidos === 1 ? "" : "s"}`} retraso={i * 60} />
+                    ))}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+
+          {/* ── Cómo decide ── */}
+          <div className="met-sec">Cómo se decide qué comprar</div>
+          <div className="met-card met-in" style={{ "--d": "100ms" }}>
+            <ul className="stk-reglas">
+              <li><b>Cuánto se vende de verdad.</b> Se suman las ventas de la web y de la tienda. El ritmo diario mezcla los últimos 30 días (60%) con el periodo elegido (40%), para reaccionar a lo reciente sin dejarse engañar por un día raro. Un producto nuevo se mide solo desde que salió a la venta.</li>
+              <li><b>Cuánto te alcanza.</b> Stock actual + lo que ya pediste y no ha llegado, dividido entre el ritmo diario. Es el “alcanza para” de la tabla.</li>
+              <li><b>Comprar ya.</b> Te alcanza menos de {lead} días (lo que tarda en llegar tu mercancía) o ya está agotado. <b>Comprar pronto:</b> te alcanza menos de {lead + 14} días.</li>
+              <li><b>Cuánto comprar.</b> Lo necesario para cubrir {r.cobertura_dias} días de ventas más los {lead} de espera, menos lo que ya tienes y lo que viene en camino. Se redondea a docenas o medias docenas cuando así compras ese producto. El % compara con tu última compra.</li>
+              <li><b>No volver a comprar.</b> Sin ventas en el periodo y con stock; o stock para más de 120 días; o vendiste menos del 35% de tu última compra pasados 60 días; o vendes por debajo del costo.</li>
+              <li><b>En observación.</b> Lo comprado en los últimos 30 días que todavía no ha tenido tiempo de rotar: no se juzga, solo se vigila.</li>
+              <li><b>Costos y margen.</b> El costo sale de Finanzas (Odoo); si falta, se usa el precio de tu última compra. El margen usa el precio real al que vendiste en el periodo, no el precio de lista.</li>
+              <li><b>Tienda física.</b> Los productos que solo vendes en la tienda se analizan igual: sus ventas vienen del punto de venta de Odoo y su stock y costo, de Odoo (se actualizan cada 10 minutos). Si una venta de tienda no tiene referencia en Odoo no se puede seguir su stock.</li>
+              <li><b>Límites.</b> Las ventas web no descuentan retornos de mercancía a nivel de producto, y un producto agotado vende menos de lo que podría, por eso el ritmo de los agotados puede quedarse corto. Es una guía para decidir, no una orden.</li>
+            </ul>
+          </div>
+        </>
+      )}
+      {extra}
+    </div>
+  );
+}
+
+
 // ═══════════ FINANZAS (pestaña "Finanzas") — SOLO PARA EL DUEÑO ═══════════
 // Todos los datos viven en tablas privadas de Supabase (sin acceso público). La página solo habla con
 // funciones del servidor que vuelven a comprobar que quien pregunta es el dueño. Un operador o un visitante
@@ -10166,187 +10648,14 @@ function AdminView() {
         )}
 
         {/* ═══════════ ANÁLISIS DE STOCK ═══════════ */}
-        {tab === "analisis" && esAdminCompleto && (() => {
-          const money = (n) => "$" + Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-          return (
-          <>
-            <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 8, display: "flex", alignItems: "center", gap: 10 }}><TrendingUp size={24} color={RED} /> Análisis de Stock</div>
-            <p style={{ fontSize: 13, color: GRAY3, marginBottom: 24, maxWidth: 600 }}>
-              Basado solo en ventas reales de tu web. Tiempo de reposición de proveedor: <strong>{LEAD_TIME_DIAS} días</strong>.
-            </p>
-
-            {analisisStock.length === 0 ? (
-              <div style={{ background: WHITE, border: `1px dashed ${GRAY2}`, borderRadius: 14, padding: 40, textAlign: "center", color: GRAY3 }}>
-                <TrendingUp size={36} color={GRAY3} strokeWidth={1.4} style={{ marginBottom: 10 }} />
-                <div style={{ fontWeight: 700, marginBottom: 4 }}>Aún no hay suficientes ventas</div>
-                <div style={{ fontSize: 13 }}>El análisis aparecerá cuando tengas pedidos pagados con productos vinculados.</div>
-              </div>
-            ) : (
-              <>
-                <EditorEmailAlertasReposicion showToast={showToast} />
-                {/* ALERTA: REPONER URGENTE */}
-                {urgentesReponer.length > 0 && (
-                  <div style={{ background: "#FFF3CD", border: "2px solid #856404", borderRadius: 14, padding: 18, marginBottom: 24 }}>
-                    <div style={{ fontWeight: 900, fontSize: 15, color: "#856404", marginBottom: 10, display: "flex", alignItems: "center", gap: 8 }}>
-                      ⚠️ Reponer pronto ({urgentesReponer.length})
-                    </div>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                      {urgentesReponer.slice(0, 5).map(f => (
-                        <div key={f.producto_id} style={{ display: "flex", alignItems: "center", gap: 10, background: WHITE, borderRadius: 8, padding: "8px 12px" }}>
-                          {f.prod.imagen_url ? <img src={f.prod.imagen_url} style={{ width: 30, height: 30, borderRadius: 5, objectFit: "cover" }} /> : <div style={{ width: 30, height: 30, borderRadius: 5, background: GRAY }} />}
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ fontWeight: 700, fontSize: 13 }}>{f.prod.nombre}</div>
-                            <div style={{ fontSize: 11, color: GRAY3 }}>{f.prod.referencia || "—"} · Stock: {f.stockActual} uds</div>
-                          </div>
-                          <div style={{ textAlign: "right" }}>
-                            <div style={{ fontWeight: 900, color: f.diasParaReponer === 0 ? RED : "#856404", fontSize: 14 }}>
-                              {f.diasParaReponer === 0 ? "Reponer YA" : `Reponer en ${f.diasParaReponer} día${f.diasParaReponer === 1 ? "" : "s"}`}
-                            </div>
-                            <div style={{ fontSize: 11, color: GRAY3 }}>Comprar ~{f.sugerenciaCompra} uds</div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                    {urgentesReponer.length > 0 && (
-                      <button onClick={() => setRankingModal("reponer")} className="oft-btn-press" style={{ marginTop: 12, background: "none", border: "none", color: "#856404", fontWeight: 800, fontSize: 13, cursor: "pointer", padding: 0, textDecoration: "underline" }}>
-                        Ver todos y filtrar por proveedor →
-                      </button>
-                    )}
-                  </div>
-                )}
-
-                {/* GRID: ROTACIÓN + INGRESO */}
-                <div className="oft-dash-grid-2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 24 }}>
-                  {/* MEJOR ROTACIÓN */}
-                  <div className="oft-widget" style={{ background: WHITE, borderRadius: 14, padding: 20, border: `1px solid ${GRAY2}` }}>
-                    <div style={{ fontWeight: 800, marginBottom: 4, display: "flex", alignItems: "center", gap: 8 }}><RefreshCw size={17} color={RED} /> Mejor rotación</div>
-                    <div style={{ fontSize: 12, color: GRAY3, marginBottom: 14 }}>Unidades vendidas por día (promedio)</div>
-                    {rotacionOrdenado.slice(0, 5).map((f, i) => (
-                      <div key={f.producto_id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: i < 4 ? `1px solid ${GRAY2}` : "none" }}>
-                        <div style={{ fontSize: 14, fontWeight: 900, color: GRAY3, width: 18 }}>{i + 1}</div>
-                        {f.prod.imagen_url ? <img src={f.prod.imagen_url} style={{ width: 32, height: 32, borderRadius: 6, objectFit: "cover" }} /> : <div style={{ width: 32, height: 32, borderRadius: 6, background: GRAY }} />}
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontWeight: 700, fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.prod.nombre}</div>
-                          <div style={{ fontSize: 10, color: GRAY3 }}>{f.cantidad} uds en {f.diasDesdeInicio} días</div>
-                        </div>
-                        <div style={{ fontWeight: 900, fontSize: 13, color: RED }}>{f.velocidadDiaria.toFixed(2)}/día</div>
-                      </div>
-                    ))}
-                    {rotacionOrdenado.length > 5 && (
-                      <button onClick={() => setRankingModal("rotacion")} className="oft-btn-press" style={{ marginTop: 10, background: "none", border: "none", color: RED, fontWeight: 800, fontSize: 12, cursor: "pointer", padding: 0, textDecoration: "underline" }}>
-                        Ver los {Math.min(rotacionOrdenado.length, 50)} productos →
-                      </button>
-                    )}
-                  </div>
-
-                  {/* MÁS CASH */}
-                  <div className="oft-widget" style={{ background: WHITE, borderRadius: 14, padding: 20, border: `1px solid ${GRAY2}` }}>
-                    <div style={{ fontWeight: 800, marginBottom: 4, display: "flex", alignItems: "center", gap: 8 }}><DollarSign size={17} color={RED} /> Más ingreso generado</div>
-                    <div style={{ fontSize: 12, color: GRAY3, marginBottom: 14 }}>Ingreso total por producto</div>
-                    {ingresoOrdenado.slice(0, 5).map((f, i) => (
-                      <div key={f.producto_id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: i < 4 ? `1px solid ${GRAY2}` : "none" }}>
-                        <div style={{ fontSize: 14, fontWeight: 900, color: GRAY3, width: 18 }}>{i + 1}</div>
-                        {f.prod.imagen_url ? <img src={f.prod.imagen_url} style={{ width: 32, height: 32, borderRadius: 6, objectFit: "cover" }} /> : <div style={{ width: 32, height: 32, borderRadius: 6, background: GRAY }} />}
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontWeight: 700, fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.prod.nombre}</div>
-                          <div style={{ fontSize: 10, color: GRAY3 }}>{f.margen !== null ? `Margen: ${money(f.margen)}` : "Margen: sin costo cargado"}</div>
-                        </div>
-                        <div style={{ fontWeight: 900, fontSize: 13, color: RED }}>{money(f.ingreso)}</div>
-                      </div>
-                    ))}
-                    {ingresoOrdenado.length > 5 && (
-                      <button onClick={() => setRankingModal("ingreso")} className="oft-btn-press" style={{ marginTop: 10, background: "none", border: "none", color: RED, fontWeight: 800, fontSize: 12, cursor: "pointer", padding: 0, textDecoration: "underline" }}>
-                        Ver los {Math.min(ingresoOrdenado.length, 50)} productos →
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                {/* INGRESOS POR CATEGORÍA */}
-                {ingresoPorCategoria.length > 0 && (
-                  <div style={{ background: WHITE, borderRadius: 14, padding: 20, border: `1px solid ${GRAY2}`, marginBottom: 24 }}>
-                    <div style={{ fontWeight: 800, marginBottom: 4, display: "flex", alignItems: "center", gap: 8 }}><DollarSign size={17} color={RED} /> Ingresos por categoría</div>
-                    <div style={{ fontSize: 12, color: GRAY3, marginBottom: 14 }}>Qué línea de productos genera más dinero en total (todos los proveedores juntos)</div>
-                    {(() => {
-                      const maxIngreso = ingresoPorCategoria[0]?.ingreso || 1;
-                      return ingresoPorCategoria.map((c, i) => (
-                        <div key={c.categoria_id} style={{ padding: "9px 0", borderBottom: i < ingresoPorCategoria.length - 1 ? `1px solid ${GRAY2}` : "none" }}>
-                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 5 }}>
-                            <span style={{ fontWeight: 700, fontSize: 13 }}>{i + 1}. {c.categoria}</span>
-                            <span style={{ fontWeight: 900, fontSize: 13.5, color: RED }}>{money(c.ingreso)}</span>
-                          </div>
-                          <div style={{ height: 6, borderRadius: 4, background: GRAY, overflow: "hidden" }}>
-                            <div style={{ height: "100%", width: `${Math.max(2, (c.ingreso / maxIngreso) * 100)}%`, background: RED, borderRadius: 4 }} />
-                          </div>
-                          <div style={{ fontSize: 10.5, color: GRAY3, marginTop: 3 }}>{c.productos} producto{c.productos !== 1 ? "s" : ""} · {c.cantidad} unidades vendidas</div>
-                        </div>
-                      ));
-                    })()}
-                  </div>
-                )}
-
-                {/* VENTAS POR ZONA/UBICACIÓN */}
-                <div style={{ background: WHITE, borderRadius: 14, padding: 20, border: `1px solid ${GRAY2}`, marginBottom: 24 }}>
-                  <div style={{ fontWeight: 800, marginBottom: 4, display: "flex", alignItems: "center", gap: 8 }}><MapPin size={17} color={RED} /> Ventas por zona</div>
-                  <div style={{ fontSize: 12, color: GRAY3, marginBottom: 14 }}>Según sucursal de destino, o la dirección del cliente cuando no hay sucursal</div>
-                  {ventasPorArea.length === 0 ? (
-                    <div style={{ fontSize: 13, color: GRAY3, padding: "10px 0" }}>Todavía no hay pedidos suficientes para mostrar zonas.</div>
-                  ) : (
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px 24px" }}>
-                      {ventasPorArea.slice(0, 10).map((f, i) => (
-                        <div key={f.area} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: `1px solid ${GRAY2}` }}>
-                          <div style={{ fontSize: 13, fontWeight: 900, color: GRAY3, width: 18 }}>{i + 1}</div>
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ fontWeight: 700, fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.area}</div>
-                            <div style={{ fontSize: 10, color: GRAY3 }}>{f.pedidos} pedido{f.pedidos === 1 ? "" : "s"}</div>
-                          </div>
-                          <div style={{ fontWeight: 900, fontSize: 13, color: RED }}>{money(f.total)}</div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  {ventasPorArea.length > 10 && (
-                    <button onClick={() => setRankingModal("zona")} className="oft-btn-press" style={{ marginTop: 12, background: "none", border: "none", color: RED, fontWeight: 800, fontSize: 12, cursor: "pointer", padding: 0, textDecoration: "underline" }}>
-                      Ver las {Math.min(ventasPorArea.length, 50)} zonas →
-                    </button>
-                  )}
-                </div>
-
-                {/* TABLA COMPLETA */}
-                <div style={{ background: WHITE, borderRadius: 14, border: `1px solid ${GRAY2}`, overflow: "hidden" }}>
-                  <div style={{ padding: "16px 20px", borderBottom: `1px solid ${GRAY2}`, fontWeight: 800 }}>Detalle completo por producto</div>
-                  <div className="oft-table-wrap" style={{ overflowX: "auto" }}>
-                    <table style={S.table}>
-                      <thead><tr>{["Producto","Vendidos","Vel./día","Ingreso","Margen","Stock","Días p/ agotar","Comprar","Reponer en"].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
-                      <tbody>
-                        {analisisStock.sort((a,b) => b.ingreso - a.ingreso).map(f => (
-                          <tr key={f.producto_id}>
-                            <td style={{ ...S.td, fontWeight: 700 }}>{f.prod.nombre}<div style={{ fontSize: 11, color: GRAY3, fontWeight: 400 }}>{f.prod.referencia || "—"}</div></td>
-                            <td style={S.td}>{f.cantidad}</td>
-                            <td style={S.td}>{f.velocidadDiaria.toFixed(2)}</td>
-                            <td style={{ ...S.td, fontWeight: 700 }}>{money(f.ingreso)}</td>
-                            <td style={S.td}>{f.margen !== null ? money(f.margen) : <span style={{ color: GRAY3 }}>—</span>}</td>
-                            <td style={S.td}>{f.tieneStock ? f.stockActual : <span style={{ color: GRAY3, fontSize: 11 }}>Sin Odoo</span>}</td>
-                            <td style={S.td}>{f.diasHastaAgotar !== null ? `${f.diasHastaAgotar} días` : <span style={{ color: GRAY3 }}>—</span>}</td>
-                            <td style={{ ...S.td, fontWeight: 700, color: RED }}>{f.sugerenciaCompra} uds</td>
-                            <td style={S.td}>
-                              {f.diasParaReponer !== null ? (
-                                <span style={{ fontWeight: 800, color: f.diasParaReponer <= 3 ? RED : "#856404" }}>
-                                  {f.diasParaReponer === 0 ? "Ya" : `${f.diasParaReponer}d`}
-                                </span>
-                              ) : <span style={{ color: GRAY3 }}>—</span>}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              </>
-            )}
-          </>
-          );
-        })()}
+        {tab === "analisis" && esAdminCompleto && (
+          <AnalisisStockPanel
+            categories={categories}
+            ingresoPorCategoria={ingresoPorCategoria}
+            ventasPorArea={ventasPorArea}
+            extra={<div style={{ marginTop: 24 }}><EditorEmailAlertasReposicion showToast={showToast} /></div>}
+          />
+        )}
 
         {/* ═══════════ PROVEEDORES ═══════════ */}
         {tab === "proveedores" && esAdminCompleto && (
