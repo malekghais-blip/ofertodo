@@ -6130,9 +6130,339 @@ function FinControl() {
   );
 }
 
+// ═══════════ EVOLUCIÓN EN EL TIEMPO: flujo de caja y estado de resultados (día / mes / año) — SOLO DUEÑO ═══════════
+// Todo viene de la función fin_evolucion del servidor (vuelve a comprobar que quien pregunta es el dueño). Usa las mismas
+// reglas que "Resumen" (mismas ventas, costos, gastos y compras), solo que repartidas por día, mes o año.
+const EVO_GRANS = [["dia", "Por día"], ["mes", "Por mes"], ["anio", "Por año"]];
+const EVO_VENTANAS = { dia: [[30, "30 días"], [60, "60 días"], [90, "90 días"]], mes: [[6, "6 meses"], [12, "12 meses"], ["todo", "Todo"]], anio: [] };
+const EVO_INICIO = "2024-01-01";
+const evoDesde = (gran, vent, hoy) => {
+  if (gran === "dia") return sumarDiasISO(hoy, -(Number(vent) - 1));
+  if (gran === "mes" && vent !== "todo") { const [y, m] = hoy.split("-").map(Number); const t = y * 12 + (m - 1) - (Number(vent) - 1); return `${Math.floor(t / 12)}-${String(t % 12 + 1).padStart(2, "0")}-01`; }
+  return EVO_INICIO;
+};
+const evoEjeX = (k, gran) => gran === "dia" ? fechaCortaM(k) : gran === "mes" ? `${mesCortoM(k)} ${String(k).slice(2, 4)}` : String(k);
+const evoTabla = (k, gran) => gran === "dia" ? `${fechaCortaM(k)} ${String(k).slice(0, 4)}` : gran === "mes" ? `${mesCortoM(k)} ${String(k).slice(0, 4)}` : String(k);
+const evoSuma = (filas, k) => filas.reduce((a, f) => a + nF(f[k]), 0);
+const fmtEje = (v) => (v < 0 ? "−" : "") + usdCorto(Math.abs(v));
+
+// Barras (verde si suben, naranja si bajan) o línea que SÍ admiten valores negativos
+function GraficaNegativos({ etiquetas, valores, tipo = "barras", color = MT.rojo, formato = (v) => signoUsd(v, 0), formatoEje = fmtEje, nombre, descripcion, etiquetaX, alto = 230, area = false }) {
+  const caja = useRef(null); const ancho = useAncho(caja);
+  const [hov, setHov] = useState(null);
+  const W = ancho || 600, H = alto, M = { l: 54, r: 14, t: 14, b: 26 };
+  const n = etiquetas.length;
+  const vs = valores.map(v => (v === null || v === undefined ? null : Number(v)));
+  const ok = vs.filter(v => v !== null);
+  const mx = Math.max(0, ...ok), mn = Math.min(0, ...ok);
+  const { ticks } = escalaBonita(Math.max(mx, -mn));
+  const paso = ticks.length > 1 ? ticks[1] - ticks[0] : 1;
+  const hi = mx > 0 ? Math.ceil(mx / paso) * paso : 0;
+  const lo = mn < 0 ? -Math.ceil(-mn / paso) * paso : 0;
+  const rango = (hi - lo) || 1;
+  const py = (v) => M.t + (1 - (v - lo) / rango) * (H - M.t - M.b);
+  const marcas = []; for (let v = lo; v <= hi + 1e-9; v += paso) marcas.push(Math.round(v * 1e6) / 1e6);
+  const banda = (W - M.l - M.r) / Math.max(1, n);
+  const px = (i) => tipo === "linea" ? M.l + (n <= 1 ? (W - M.l - M.r) / 2 : (i * (W - M.l - M.r)) / (n - 1)) : M.l + i * banda + banda / 2;
+  const grosor = Math.max(4, Math.min(28, banda * 0.7));
+  const salto = Math.max(1, Math.ceil(n / Math.max(2, Math.floor((W - M.l - M.r) / 64))));
+  const mover = (e) => {
+    const r = caja.current.getBoundingClientRect(); const x = e.clientX - r.left;
+    let mejor = 0, dm = 1e9; for (let i = 0; i < n; i++) { const dd = Math.abs(px(i) - x); if (dd < dm) { dm = dd; mejor = i; } }
+    setHov(mejor);
+  };
+  let trazo = "", abre = false;
+  if (tipo === "linea") vs.forEach((v, i) => { if (v === null) { abre = false; return; } trazo += (abre ? "L" : "M") + px(i).toFixed(1) + " " + py(v).toFixed(1) + " "; abre = true; });
+  const ult = (() => { let u = -1; vs.forEach((v, i) => { if (v !== null) u = i; }); return u; })();
+  return (
+    <div>
+      <div ref={caja} style={{ position: "relative", width: "100%", height: H }} onPointerMove={mover} onPointerLeave={() => setHov(null)}>
+        {ancho > 0 && (
+          <svg width={W} height={H} role="img" aria-label={descripcion} style={{ display: "block", overflow: "visible" }}>
+            {marcas.map(t => <g key={t}><line x1={M.l} x2={W - M.r} y1={py(t)} y2={py(t)} stroke={t === 0 ? MT.eje : MT.rejilla} strokeWidth="1" /><text x={M.l - 8} y={py(t) + 4} textAnchor="end" fontSize="11" fill={MT.suave}>{formatoEje(t)}</text></g>)}
+            {etiquetas.map((e, i) => ((i % salto === 0 && (n - 1 - i >= salto * 0.6 || i === n - 1)) || i === n - 1) && <text key={i} x={px(i)} y={H - 6} textAnchor={tipo === "linea" && i === 0 ? "start" : tipo === "linea" && i === n - 1 ? "end" : "middle"} fontSize="11" fill={hov === i ? MT.texto : MT.suave}>{etiquetaX ? etiquetaX(e) : e}</text>)}
+            {tipo === "barras" && vs.map((v, i) => {
+              if (v === null || v === 0) return null;
+              const y0 = py(0), y1 = py(v);
+              return <rect key={i} x={px(i) - grosor / 2} y={Math.min(y0, y1)} width={grosor} height={Math.max(1, Math.abs(y1 - y0))} rx={Math.min(3, grosor / 2)} fill={v >= 0 ? MT.bueno : MT.malo} opacity={hov === null || hov === i ? 1 : 0.45} />;
+            })}
+            {tipo === "linea" && <>
+              {area && trazo && <path d={`${trazo} L${px(ult).toFixed(1)} ${py(0).toFixed(1)} L${px(vs.findIndex(v => v !== null)).toFixed(1)} ${py(0).toFixed(1)} Z`} fill={color} opacity="0.10" stroke="none" />}
+              <path d={trazo.trim()} fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ filter: `drop-shadow(0 0 4px ${color}55)` }} />
+              {ult >= 0 && hov === null && <circle cx={px(ult)} cy={py(vs[ult])} r="4.5" fill={color} stroke={MT.tarjeta} strokeWidth="2" />}
+              {hov !== null && vs[hov] !== null && <><line x1={px(hov)} x2={px(hov)} y1={M.t} y2={H - M.b} stroke={MT.eje} strokeWidth="1" /><circle cx={px(hov)} cy={py(vs[hov])} r="5" fill={color} stroke={MT.tarjeta} strokeWidth="2" /></>}
+            </>}
+          </svg>
+        )}
+        {hov !== null && <Tooltip x={px(hov)} y={M.t + 6} ancho={W} titulo={etiquetaX ? etiquetaX(etiquetas[hov]) : etiquetas[hov]}
+          filas={[{ color: tipo === "barras" ? (vs[hov] !== null && vs[hov] < 0 ? MT.malo : MT.bueno) : color, nombre: nombre || "", valor: vs[hov] === null ? "—" : formato(vs[hov]) }]} />}
+      </div>
+    </div>
+  );
+}
+
+function descargarCsvEvo(nombre, cab, filas) {
+  const csv = "\uFEFF" + [cab, ...filas].map(f => f.map(csvCelda).join(";")).join("\r\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+  a.download = `${nombre}-${fechaPanama()}.csv`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+}
+
+// Estado de resultados de una fila (periodo) según el canal elegido
+function evoResultados(f, canal) {
+  const v = (k) => (f[k] === null || f[k] === undefined ? null : Number(f[k]));
+  if (canal === "web") {
+    const prod = nF(f.ventas_web_prod), envio = nF(f.envio), reemb = nF(f.web_reembolsos), costo = v("costo_web");
+    const tot = prod + envio, netas = tot - reemb;
+    return { prod, envio, tot, reemb, netas, costo, bruta: costo === null ? null : netas - costo, ads: nF(f.ads), com: nF(f.comisiones_web), gastos: nF(f.op_web), neta: v("neta_web") };
+  }
+  if (canal === "tienda") {
+    const prod = nF(f.ventas_tienda_prod), reemb = nF(f.tienda_reembolsos), costo = v("costo_tienda");
+    const tot = prod, netas = tot - reemb;
+    return { prod, envio: 0, tot, reemb, netas, costo, bruta: costo === null ? null : netas - costo, ads: 0, com: nF(f.comisiones_tienda), gastos: nF(f.op_tienda), neta: v("neta_tienda") };
+  }
+  return { prod: nF(f.ventas_productos), envio: nF(f.envio), tot: nF(f.ventas_totales), reemb: nF(f.reembolsos), netas: nF(f.ventas_netas), costo: v("costo_ventas"), bruta: v("utilidad_bruta"),
+    ads: nF(f.ads), com: nF(f.comisiones), gastos: nF(f.gastos_operativos), neta: v("ganancia_neta") };
+}
+
+function FinEvolucion({ modo, irA }) {
+  const [gran, setGran] = useState("mes");
+  const [vent, setVent] = useState({ dia: 30, mes: 12 });
+  const [canal, setCanal] = useState("total");
+  const hoy = fechaPanama();
+  const desde = evoDesde(gran, vent[gran], hoy);
+  const { datos: d, error, cargando } = useFinDatos("fin_evolucion", { p_desde: desde, p_hasta: hoy, p_gran: gran }, [desde, hoy, gran]);
+
+  const controles = (
+    <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", margin: "14px 0 6px" }}>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        {EVO_GRANS.map(([k, l]) => <button key={k} className={"met-chip" + (gran === k ? " on" : "")} onClick={() => setGran(k)} aria-pressed={gran === k}>{l}</button>)}
+      </div>
+      {EVO_VENTANAS[gran].length > 0 && <><span style={{ width: 1, height: 22, background: MT.borde }} />
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {EVO_VENTANAS[gran].map(([k, l]) => <button key={String(k)} className={"met-chip" + (vent[gran] === k ? " on" : "")} onClick={() => setVent(x => ({ ...x, [gran]: k }))} aria-pressed={vent[gran] === k}>{l}</button>)}
+        </div></>}
+      <span style={{ fontSize: 12, color: MT.suave }}>Esta vista tiene su propio selector de tiempo: no usa el periodo de arriba.</span>
+    </div>
+  );
+
+  if (error) return <>{controles}<AvisoFin malo>No se pudo calcular: {error}</AvisoFin></>;
+  if (!d) return <>{controles}<div style={{ padding: "50px 0", textAlign: "center", color: MT.texto2 }}>Calculando la evolución…</div></>;
+
+  // Se quitan los periodos vacíos del principio (antes de que el negocio tuviera movimiento)
+  let filas = d.filas || [];
+  const ini = filas.findIndex(f => nF(f.entradas) !== 0 || nF(f.salidas) !== 0 || nF(f.ventas_totales) !== 0);
+  filas = ini < 0 ? [] : filas.slice(ini);
+  const enCurso = (f) => (gran === "dia" ? f.k === hoy : f.desde <= hoy && f.hasta >= hoy);
+  const ejeX = filas.map(f => f.k);
+  // En meses: el año solo en el primero y en enero, para que las etiquetas no se amontonen
+  const etqEje = (k) => (gran === "mes" ? (k === ejeX[0] || String(k).endsWith("-01") ? `${mesCortoM(k)} ${String(k).slice(2, 4)}` : mesCortoM(k)) : evoEjeX(k, gran));
+  const cob = d.cobertura || {};
+  const sinDatos = filas.length === 0;
+  const opacidad = { opacity: cargando ? 0.7 : 1, transition: "opacity .25s" };
+  const porPeriodo = gran === "dia" ? "día" : gran === "mes" ? "mes" : "año";
+
+  // ───────── FLUJO DE CAJA ─────────
+  if (modo === "flujo") {
+    const ent = evoSuma(filas, "entradas"), sal = evoSuma(filas, "salidas"), neto = ent - sal;
+    const saldoHoy = (() => { for (let i = filas.length - 1; i >= 0; i--) if (filas[i].saldo_final !== null && filas[i].saldo_final !== undefined) return Number(filas[i].saldo_final); return null; })();
+    const conSaldo = d.fecha_saldo && saldoHoy !== null;
+    let acum = 0; const acumulado = filas.map(f => (acum += nF(f.neto_caja)));
+    const lineaSaldo = conSaldo ? filas.map(f => (f.saldo_final === null || f.saldo_final === undefined ? null : Number(f.saldo_final))) : acumulado;
+    const mejor = filas.reduce((m, f) => (m === null || nF(f.neto_caja) > nF(m.neto_caja) ? f : m), null);
+    const peor = filas.reduce((m, f) => (m === null || nF(f.neto_caja) < nF(m.neto_caja) ? f : m), null);
+    const compEnt = [["Ventas web cobradas", evoSuma(filas, "web_ventas")], ["Ventas de la tienda física", evoSuma(filas, "tienda_ventas")], ["Cobros de cuentas por cobrar", evoSuma(filas, "cobros")]];
+    const compSal = [["Compras de mercancía en Odoo", evoSuma(filas, "compras_odoo")], ["Gastos pagados", evoSuma(filas, "gastos_caja")], ["Publicidad en Meta", evoSuma(filas, "ads")], ["Reembolsos a clientes (web)", evoSuma(filas, "web_reembolsos")], ["Pagos a proveedores (cuentas por pagar)", evoSuma(filas, "pagos_proveedores")]];
+    const maxComp = Math.max(1, ...compEnt.map(x => x[1]), ...compSal.map(x => x[1]));
+    const COLS = [["Ventas web", "web_ventas"], ["Ventas tienda", "tienda_ventas"], ["Cobros", "cobros"], ["Entradas", "entradas"], ["Compras Odoo", "compras_odoo"], ["Gastos", "gastos_caja"], ["Publicidad", "ads"], ["Reembolsos", "web_reembolsos"], ["Pagos prov.", "pagos_proveedores"], ["Salidas", "salidas"], ["Flujo neto", "neto_caja"], ["Saldo estimado", "saldo_final"]];
+    const serEntSal = [{ nombre: "Entra", color: MT.bueno, valores: filas.map(f => nF(f.entradas)), formato: (v) => usdM(v, 0) }, { nombre: "Sale", color: MT.malo, valores: filas.map(f => nF(f.salidas)), formato: (v) => usdM(v, 0) }];
+    const graficaEntSal = gran === "dia"
+      ? <GraficaLineas etiquetas={ejeX} etiquetaX={etqEje} descripcion="Entradas y salidas de caja" alto={230} series={serEntSal} />
+      : <GraficaBarras etiquetas={ejeX} etiquetaX={etqEje} descripcion="Entradas y salidas de caja" alto={230} series={serEntSal} />;
+    const bajar = () => descargarCsvEvo(`flujo-de-caja-${gran}`, ["Periodo", ...COLS.map(c => c[0])], filas.map(f => [evoTabla(f.k, gran), ...COLS.map(c => (f[c[1]] === null || f[c[1]] === undefined ? "" : f[c[1]]))]));
+    return (
+      <div style={opacidad}>
+        {controles}
+        {!d.fecha_saldo && <AvisoFin>Para ver cuánto dinero deberías tener en caja, escribe tu saldo inicial y su fecha en <button className="met-chip" style={{ padding: "2px 10px" }} onClick={() => irA("control")}>Ajustes</button>. Mientras tanto, la línea de abajo muestra lo acumulado desde el primer periodo de la gráfica.</AvisoFin>}
+        {sinDatos ? <div className="met-card" style={{ textAlign: "center", color: MT.texto2, padding: 28 }}>No hay movimientos de caja en este rango.</div> : <>
+          <div className="met-grid" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", marginTop: 12 }}>
+            <Kpi retraso={0} etiqueta="Entró dinero" formula="Ventas web cobradas + ventas de la caja de la tienda (ya restados sus reembolsos) + cobros de cuentas por cobrar."><Cifra valor={ent} f={(v) => usdM(v, 0)} /></Kpi>
+            <Kpi retraso={60} etiqueta="Salió dinero" formula="Compras de Odoo + gastos pagados (sin los que quedaron a crédito) + publicidad de Meta + reembolsos de la web + pagos a proveedores."><Cifra valor={sal} f={(v) => usdM(v, 0)} /></Kpi>
+            <Kpi acento retraso={120} etiqueta="Flujo neto del rango" formula="Lo que entró menos lo que salió en todos los periodos de abajo."
+              pie={<div style={{ fontSize: 12, color: MT.suave }}>{mejor && peor ? `Mejor ${porPeriodo}: ${etqEje(mejor.k)} (${signoUsd(mejor.neto_caja)}) · Peor: ${etqEje(peor.k)} (${signoUsd(peor.neto_caja)})` : ""}</div>}>
+              <span style={{ color: neto >= 0 ? MT.bueno : MT.malo }}><Cifra valor={neto} f={(v) => signoUsd(v)} /></span>
+            </Kpi>
+            <Kpi retraso={180} etiqueta="Saldo de caja estimado" formula={`Saldo inicial ${usdM(d.saldo_inicial, 0)} al ${d.fecha_saldo || "—"} + todo lo que entró − todo lo que salió desde esa fecha. Es una estimación: no se concilia con el banco.`}
+              pie={<div style={{ fontSize: 12, color: MT.suave }}>{conSaldo ? `Desde el saldo inicial del ${d.fecha_saldo}` : "Falta el saldo inicial en Ajustes"}</div>}>
+              {conSaldo ? <span style={{ color: saldoHoy >= 0 ? MT.texto : MT.malo }}><Cifra valor={saldoHoy} f={(v) => signoUsd(v)} /></span> : <span style={{ fontSize: 15, color: MT.suave }}>Sin saldo inicial</span>}
+            </Kpi>
+          </div>
+
+          <div className="met-sec">Cómo evoluciona tu caja</div>
+          <div className="met-grid" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,430px),1fr))" }}>
+            <div className="met-card met-in" style={{ "--d": "80ms" }}>
+              <div className="met-lbl" style={{ marginBottom: 8 }}>Entradas y salidas por {porPeriodo}</div>
+              {graficaEntSal}
+            </div>
+            <div className="met-card met-in" style={{ "--d": "140ms" }}>
+              <div className="met-lbl" style={{ marginBottom: 8 }}>Flujo neto por {porPeriodo} <span style={{ fontWeight: 500, color: MT.suave }}>(verde: sobró · naranja: faltó)</span></div>
+              <GraficaNegativos etiquetas={ejeX} etiquetaX={etqEje} valores={filas.map(f => nF(f.neto_caja))} nombre="flujo neto" descripcion="Flujo neto de caja" />
+            </div>
+          </div>
+          <div className="met-card met-in" style={{ "--d": "100ms", marginTop: 14 }}>
+            <div className="met-lbl" style={{ marginBottom: 8 }}>{conSaldo ? "Saldo de caja estimado al cierre de cada " + porPeriodo : "Flujo acumulado desde el primer " + porPeriodo + " de la gráfica"}</div>
+            <GraficaNegativos tipo="linea" area etiquetas={ejeX} etiquetaX={etqEje} valores={lineaSaldo} color={MT.rojo} nombre={conSaldo ? "saldo estimado" : "acumulado"} descripcion="Saldo o flujo acumulado" />
+          </div>
+
+          <div className="met-sec">De dónde viene y a dónde se va el dinero (todo el rango)</div>
+          <div className="met-grid" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,420px),1fr))" }}>
+            <div className="met-card met-in" style={{ "--d": "80ms" }}>
+              <div className="met-lbl" style={{ marginBottom: 14 }}>Entradas · {usdM(ent, 0)}</div>
+              {compEnt.map(([et, v], i) => <BarraH key={et} etiqueta={et} valor={Math.max(0, v)} maximo={maxComp} color={MT.bueno} texto={usdM(v, 0)} sub={ent > 0 ? pctM((v / ent) * 100, 0) : undefined} retraso={i * 60} />)}
+            </div>
+            <div className="met-card met-in" style={{ "--d": "140ms" }}>
+              <div className="met-lbl" style={{ marginBottom: 14 }}>Salidas · {usdM(sal, 0)}</div>
+              {compSal.map(([et, v], i) => <BarraH key={et} etiqueta={et} valor={Math.max(0, v)} maximo={maxComp} color={MT.malo} texto={usdM(v, 0)} sub={sal > 0 ? pctM((v / sal) * 100, 0) : undefined} retraso={i * 60} />)}
+            </div>
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+            <div className="met-sec" style={{ flex: 1, minWidth: 220 }}>Detalle por {porPeriodo}</div>
+            <button className="met-chip" onClick={bajar}>Descargar tabla (CSV)</button>
+          </div>
+          <div className="met-card met-in" style={{ "--d": "80ms", padding: 0, overflowX: "auto" }}>
+            <table className="met-tabla" style={{ minWidth: 1040 }}>
+              <thead><tr><th>{gran === "dia" ? "Día" : gran === "mes" ? "Mes" : "Año"}</th>{COLS.map(([l]) => <th key={l}>{l}</th>)}</tr></thead>
+              <tbody>
+                <tr style={{ fontWeight: 800, background: "rgba(17,17,17,0.04)" }}>
+                  <td>Total del rango</td>
+                  {COLS.map(([l, k]) => <td key={k}>{k === "saldo_final" ? (conSaldo ? usdM(saldoHoy, 0) : "—") : k === "neto_caja" ? <span style={{ color: neto >= 0 ? MT.bueno : MT.malo }}>{signoUsd(neto)}</span> : usdM(evoSuma(filas, k), 0)}</td>)}
+                </tr>
+                {[...filas].reverse().map(f => (
+                  <tr key={f.k}>
+                    <td style={{ whiteSpace: "nowrap" }}>{evoTabla(f.k, gran)}{enCurso(f) && <span style={{ fontSize: 10.5, color: MT.rojo, fontWeight: 800, marginLeft: 6 }}>{gran === "dia" ? "hoy" : "en curso"}</span>}</td>
+                    {COLS.map(([l, k]) => <td key={k} style={k === "entradas" || k === "salidas" || k === "neto_caja" ? { fontWeight: 800 } : undefined}>
+                      {k === "saldo_final" ? (f.saldo_final === null || f.saldo_final === undefined ? "—" : signoUsd(f.saldo_final))
+                        : k === "neto_caja" ? <span style={{ color: nF(f.neto_caja) >= 0 ? MT.bueno : MT.malo }}>{signoUsd(f.neto_caja)}</span>
+                        : usdM(f[k], 0)}
+                    </td>)}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div style={{ fontSize: 11.5, color: MT.suave, margin: "10px 2px 0", lineHeight: 1.6 }}>
+            Las compras de Odoo cuentan como salida el día de la orden confirmada (es un estimado: Odoo aún no tiene los pagos a proveedores). Los gastos a crédito no salen de caja hasta que los pagas. Las ventas de la tienda ya vienen sin los reembolsos de la caja. Datos desde: tienda {cob.tienda_desde ? fechaCortaM(cob.tienda_desde) + " " + String(cob.tienda_desde).slice(0, 4) : "—"} · web {cob.web_desde ? fechaCortaM(cob.web_desde) + " " + String(cob.web_desde).slice(0, 4) : "—"} · compras {cob.compras_desde ? fechaCortaM(cob.compras_desde) + " " + String(cob.compras_desde).slice(0, 4) : "—"} · gastos registrados {cob.gastos_desde ? fechaCortaM(cob.gastos_desde) + " " + String(cob.gastos_desde).slice(0, 4) : "—"}.
+          </div>
+        </>}
+      </div>
+    );
+  }
+
+  // ───────── ESTADO DE RESULTADOS ─────────
+  const R = filas.map(f => evoResultados(f, canal));
+  const sumaR = (k) => R.reduce((a, r) => a + nF(r[k]), 0);
+  const sumaRN = (k) => (R.some(r => r[k] === null || r[k] === undefined) ? null : sumaR(k));
+  const T = { prod: sumaR("prod"), envio: sumaR("envio"), tot: sumaR("tot"), reemb: sumaR("reemb"), netas: sumaR("netas"), costo: sumaRN("costo"), bruta: sumaRN("bruta"), ads: sumaR("ads"), com: sumaR("com"), gastos: sumaR("gastos"), neta: sumaRN("neta") };
+  const gastosTot = T.ads + T.com + T.gastos;
+  const mBruto = T.bruta !== null && T.tot > 0 ? (T.bruta / T.tot) * 100 : null;
+  const mNeto = T.neta !== null && T.tot > 0 ? (T.neta / T.tot) * 100 : null;
+  const gastosDesde = cob.gastos_desde ? String(cob.gastos_desde).slice(0, 10) : null;
+  const rangoAntesGastos = gastosDesde && filas.length > 0 && filas[0].desde < gastosDesde;
+  const mesFmt = (iso) => `${fechaCortaM(iso)} ${String(iso).slice(0, 4)}`;
+  const FILAS = [
+    ["Ventas de productos", "prod", "ing"], ["Envíos cobrados a clientes", "envio", "ing"], ["Ventas totales", "tot", "sub"], ["(−) Reembolsos a clientes", "reemb", "egr"], ["Ventas netas", "netas", "sub"],
+    ["(−) Costo de la mercancía vendida (estimado)", "costo", "egr"], ["Utilidad bruta", "bruta", "sub"], ["Margen bruto %", "mbruto", "pct"],
+    ["(−) Publicidad en Meta", "ads", "egr"], ["(−) Comisiones de tarjeta y Yappy", "com", "egr"], [canal === "total" ? "(−) Gastos operativos (incluye compartidos)" : "(−) Gastos operativos del canal", "gastos", "egr"],
+    ["Ganancia neta estimada", "neta", "tot"], ["Margen neto %", "mneto", "pct"],
+  ];
+  const valorFila = (r, k) => k === "mbruto" ? (r.bruta !== null && r.tot > 0 ? (r.bruta / r.tot) * 100 : null) : k === "mneto" ? (r.neta !== null && r.tot > 0 ? (r.neta / r.tot) * 100 : null) : r[k];
+  const celda = (v, k, tipo) => v === null || v === undefined ? "—" : tipo === "pct" ? signoPct(v, 1) : tipo === "egr" ? (nF(v) > 0 ? "−" : "") + usdM(Math.abs(nF(v)), 0) : signoUsd(v);
+  const bajar = () => descargarCsvEvo(`estado-de-resultados-${gran}-${canal}`, ["Concepto", ...filas.map(f => evoTabla(f.k, gran)), "Total"],
+    FILAS.map(([et, k, tipo]) => [et, ...R.map(r => { const v = valorFila(r, k); return v === null || v === undefined ? "" : (tipo === "pct" ? Math.round(v * 10) / 10 : Math.round(v * 100) / 100); }), (() => { const v = valorFila(T, k); return v === null || v === undefined ? "" : (tipo === "pct" ? Math.round(v * 10) / 10 : Math.round(v * 100) / 100); })()]));
+  const serVentas = [{ nombre: "Ventas netas", color: MT.tinta, valores: R.map(r => nF(r.netas)), formato: (v) => usdM(v, 0) }, { nombre: "Utilidad bruta", color: MT.rojo, valores: R.map(r => (r.bruta === null ? 0 : Math.max(0, r.bruta))), formato: (v) => usdM(v, 0) }];
+  const colorTipo = (tipo, v) => tipo === "tot" ? (v !== null && v !== undefined && nF(v) < 0 ? MT.malo : MT.bueno) : tipo === "egr" || tipo === "pct" ? MT.texto2 : MT.texto;
+  return (
+    <div style={opacidad}>
+      {controles}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", margin: "8px 0 0" }}>
+        <span style={{ fontSize: 12.5, color: MT.texto2, fontWeight: 600 }}>Ver:</span>
+        {Object.entries(CANAL_TXT).map(([k, l]) => <button key={k} className={"met-chip" + (canal === k ? " on" : "")} onClick={() => setCanal(k)}>{l}</button>)}
+      </div>
+      {canal !== "total" && <div style={{ fontSize: 11.5, color: MT.suave, marginTop: 6 }}>No incluye los gastos compartidos (los que marcaste para web y tienda a la vez); esos se descuentan solo en “Todo el negocio”.</div>}
+      {rangoAntesGastos && <AvisoFin>Tus gastos operativos (alquiler, planilla, servicios…) están registrados solo desde el <b>{mesFmt(gastosDesde)}</b>. Los periodos anteriores muestran la ganancia neta <b>sin esos gastos</b>, por eso se ven mejor de lo real. <button className="met-chip" style={{ padding: "2px 10px" }} onClick={() => irA("gastos")}>Registrar gastos</button></AvisoFin>}
+      {!d.comisiones_configuradas && <AvisoFin>Las comisiones de tarjeta y Yappy no están configuradas, así que no se descuentan. Ponlas en <button className="met-chip" style={{ padding: "2px 10px" }} onClick={() => irA("control")}>Ajustes</button>.</AvisoFin>}
+      {sinDatos ? <div className="met-card" style={{ textAlign: "center", color: MT.texto2, padding: 28 }}>No hay ventas en este rango.</div> : <>
+        <div className="met-grid" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", marginTop: 12 }}>
+          <Kpi retraso={0} etiqueta="Ventas netas" formula="Productos vendidos + envíos cobrados − reembolsos a clientes."><Cifra valor={T.netas} f={(v) => usdM(v, 0)} /></Kpi>
+          <Kpi retraso={60} etiqueta="Utilidad bruta (estimada)" formula="Ventas netas − costo de la mercancía vendida. El costo usa el margen de los productos que tienen costo cargado, igual que en Resumen."
+            pie={<div style={{ fontSize: 12, color: MT.suave }}>{mBruto === null ? "" : `Margen bruto ${pctM(mBruto)}`}</div>}>
+            {T.bruta === null ? <span style={{ fontSize: 15, color: MT.suave }}>Faltan costos</span> : <Cifra valor={T.bruta} f={(v) => signoUsd(v)} />}
+          </Kpi>
+          <Kpi retraso={120} etiqueta="Gastos, anuncios y comisiones" formula={`Publicidad ${usdM(T.ads)} + comisiones ${usdM(T.com)} + gastos operativos ${usdM(T.gastos)}. No incluye compras de mercancía (ya están en el costo de lo vendido).`}><Cifra valor={gastosTot} f={(v) => usdM(v, 0)} /></Kpi>
+          <Kpi acento grande retraso={180} etiqueta="Ganancia neta (estimada)" formula="Utilidad bruta − publicidad − comisiones − gastos operativos."
+            pie={<div style={{ fontSize: 12, color: MT.suave }}>{mNeto === null ? "" : `${pctM(mNeto)} de las ventas`}</div>}>
+            {T.neta === null ? <span style={{ fontSize: 15, color: MT.suave }}>Faltan costos</span> : <span style={{ color: T.neta >= 0 ? MT.bueno : MT.malo }}><Cifra valor={T.neta} f={(v) => signoUsd(v)} /></span>}
+          </Kpi>
+        </div>
+
+        <div className="met-sec">Cómo evolucionan tus resultados</div>
+        <div className="met-grid" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,430px),1fr))" }}>
+          <div className="met-card met-in" style={{ "--d": "80ms" }}>
+            <div className="met-lbl" style={{ marginBottom: 8 }}>Ventas netas y utilidad bruta por {porPeriodo}</div>
+            {gran === "dia"
+              ? <GraficaLineas etiquetas={ejeX} etiquetaX={etqEje} descripcion="Ventas netas y utilidad bruta" alto={230} series={serVentas} />
+              : <GraficaBarras etiquetas={ejeX} etiquetaX={etqEje} descripcion="Ventas netas y utilidad bruta" alto={230} series={serVentas} />}
+          </div>
+          <div className="met-card met-in" style={{ "--d": "140ms" }}>
+            <div className="met-lbl" style={{ marginBottom: 8 }}>Ganancia neta por {porPeriodo} <span style={{ fontWeight: 500, color: MT.suave }}>(verde: ganancia · naranja: pérdida)</span></div>
+            <GraficaNegativos etiquetas={ejeX} etiquetaX={etqEje} valores={R.map(r => r.neta)} nombre="ganancia neta" descripcion="Ganancia neta por periodo" />
+          </div>
+        </div>
+        <div className="met-card met-in" style={{ "--d": "100ms", marginTop: 14 }}>
+          <div className="met-lbl" style={{ marginBottom: 8 }}>Margen neto % por {porPeriodo} <span style={{ fontWeight: 500, color: MT.suave }}>(de cada $100 que vendes, cuánto te queda)</span></div>
+          <GraficaNegativos tipo="linea" etiquetas={ejeX} etiquetaX={etqEje} valores={R.map(r => valorFila(r, "mneto"))} color={MT.rojo} formato={(v) => signoPct(v, 1)} formatoEje={(v) => (v < 0 ? "−" : "") + Math.abs(v) + "%"} nombre="margen neto" descripcion="Margen neto por periodo" />
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <div className="met-sec" style={{ flex: 1, minWidth: 220 }}>Estado de resultados por {porPeriodo}</div>
+          <button className="met-chip" onClick={bajar}>Descargar tabla (CSV)</button>
+        </div>
+        <div className="met-card met-in" style={{ "--d": "80ms", padding: 0, overflowX: "auto" }}>
+          <table className="met-tabla" style={{ minWidth: Math.max(720, 250 + (filas.length + 1) * 92) }}>
+            <thead><tr>
+              <th style={{ position: "sticky", left: 0, background: MT.tarjeta, zIndex: 1, minWidth: 250 }}>Concepto</th>
+              {filas.map(f => <th key={f.k} style={{ whiteSpace: "nowrap" }}>{evoTabla(f.k, gran)}{enCurso(f) && <div style={{ fontSize: 10, color: MT.rojo, fontWeight: 800 }}>{gran === "dia" ? "hoy" : "en curso"}</div>}</th>)}
+              <th style={{ background: "rgba(17,17,17,0.04)" }}>Total</th>
+            </tr></thead>
+            <tbody>
+              {FILAS.map(([et, k, tipo]) => {
+                const fuerte = tipo === "sub" || tipo === "tot";
+                const fondo = tipo === "tot" ? "#FDEEEE" : fuerte ? "#F6F6F7" : MT.tarjeta;
+                return (
+                  <tr key={k} style={{ fontWeight: fuerte ? 800 : 500, background: fondo, fontStyle: tipo === "pct" ? "italic" : "normal" }}>
+                    <td style={{ position: "sticky", left: 0, background: fondo, paddingLeft: tipo === "egr" || tipo === "ing" ? 22 : 12, color: tipo === "egr" || tipo === "pct" ? MT.texto2 : MT.texto, zIndex: 1 }}>{et}</td>
+                    {R.map((r, i) => { const v = valorFila(r, k); return <td key={i} style={{ color: colorTipo(tipo, v), whiteSpace: "nowrap" }}>{celda(v, k, tipo)}</td>; })}
+                    <td style={{ color: colorTipo(tipo, valorFila(T, k)), background: "rgba(17,17,17,0.04)", whiteSpace: "nowrap" }}>{celda(valorFila(T, k), k, tipo)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <div style={{ fontSize: 11.5, color: MT.suave, margin: "10px 2px 0", lineHeight: 1.6 }}>
+          El costo de la mercancía vendida es una estimación: se aplica el margen de los productos con costo cargado al resto de lo vendido (en la web se descuenta lo devuelto al inventario). Las ventas de la tienda van sin ITBMS. Las compras de mercancía no se restan aquí: ya están dentro del costo de lo vendido. Datos desde: tienda {cob.tienda_desde ? mesFmt(String(cob.tienda_desde).slice(0, 10)) : "—"} · web {cob.web_desde ? mesFmt(String(cob.web_desde).slice(0, 10)) : "—"} · publicidad Meta {cob.ads_desde ? mesFmt(String(cob.ads_desde).slice(0, 10)) : "—"} · gastos registrados {gastosDesde ? mesFmt(gastosDesde) : "—"}.
+        </div>
+      </>}
+    </div>
+  );
+}
+
 function FinanzasPanel({ desde, hasta, filtro, productos, onCostosCambio }) {
   const [vista, setVista] = useState("resumen");
-  const VISTAS = [["resumen", "Resumen"], ["gastos", "Gastos"], ["margen", "Márgenes"], ["compras", "Compras (Odoo)"], ["costos", "Costos de productos"], ["cuentas", "Por cobrar y pagar"], ["control", "Ajustes y control"]];
+  const VISTAS = [["resumen", "Resumen"], ["flujo", "Flujo de caja"], ["resultados", "Estado de resultados"], ["gastos", "Gastos"], ["margen", "Márgenes"], ["compras", "Compras (Odoo)"], ["costos", "Costos de productos"], ["cuentas", "Por cobrar y pagar"], ["control", "Ajustes y control"]];
   return (
     <div className="met">
       <style>{ESTILO_MET}</style>
@@ -6148,6 +6478,8 @@ function FinanzasPanel({ desde, hasta, filtro, productos, onCostosCambio }) {
         {VISTAS.map(([k, l]) => <button key={k} className={"met-chip" + (vista === k ? " on" : "")} onClick={() => setVista(k)}>{l}</button>)}
       </div>
       {vista === "resumen" && <FinResumen desde={desde} hasta={hasta} irA={setVista} />}
+      {vista === "flujo" && <FinEvolucion modo="flujo" irA={setVista} />}
+      {vista === "resultados" && <FinEvolucion modo="resultados" irA={setVista} />}
       {vista === "gastos" && <FinGastos desde={desde} hasta={hasta} />}
       {vista === "margen" && <FinMargen desde={desde} hasta={hasta} irA={setVista} />}
       {vista === "compras" && <FinCompras desde={desde} hasta={hasta} />}
