@@ -7214,6 +7214,7 @@ function FinBalance() {
   const [sel, setSel] = useState(null);
   const [incItem, setIncItem] = useState("inventario");
   const { datos: d, error, cargando } = useFinDatos("cont_datos", {}, []);
+  const { datos: invHoy } = useFinDatos("fin_inventario_odoo", {}, []);
   const SUBS = [["resumen", "Resumen"], ["balance", "Balance general"], ["incrementos", "Incrementos"], ["ratios", "Ratios"], ["como", "Cómo se arma"]];
   const cabeza = (
     <div style={{ display: "flex", gap: 8, flexWrap: "wrap", margin: "14px 0 6px", alignItems: "center" }}>
@@ -7270,8 +7271,8 @@ function FinBalance() {
         <div className="met-grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))" }}>
           <Kpi etiqueta="Activo total" acento retraso={0} formula="Todo lo que tiene el negocio: caja, inventario, cuentas por cobrar, equipos y muebles."
             pie={<PieDelta cur={p.activo} prev={prev.activo} />}>{usdM(p.activo, 0)}</Kpi>
-          <Kpi etiqueta="Inventario de mercancía" retraso={60} formula="Compras de mercancía (al contado y pagos a proveedores) menos el costo de lo que vendiste."
-            pie={<PieDelta cur={p.inventario} prev={prev.inventario} />}>{usdM(p.inventario, 0)}</Kpi>
+          <Kpi etiqueta={`Inventario al cierre de ${balEtqL(p)}`} retraso={60} formula="Valor al costo de la mercancía que quedaba al cierre del período, anclado al inventario real de Odoo: compras menos costo de lo vendido, más el ajuste de apertura. El inventario de hoy está más abajo y es otra fecha."
+            pie={<div><PieDelta cur={p.inventario} prev={prev.inventario} />{invHoy && nF(invHoy.valor) > 0 && <div style={{ fontSize: 12, color: MT.texto2, marginTop: 4 }}>Hoy en Odoo: <b>{usdM(invHoy.valor, 0)}</b></div>}</div>}>{usdM(p.inventario, 0)}</Kpi>
           <Kpi etiqueta="Pasivo total" retraso={120} formula="Lo que debes: facturas de proveedores por pagar. Sale de tus libros."
             pie={<PieDelta cur={p.pasivo} prev={prev.pasivo} malSube />}>{usdM(p.pasivo, 0)}</Kpi>
           <Kpi etiqueta="Patrimonio" retraso={180} formula="Activo − Pasivo. Es lo que es tuyo: capital aportado más utilidades acumuladas."
@@ -7287,7 +7288,7 @@ function FinBalance() {
         <div className="met-card"><GraficaLineas etiquetas={etiq} etiquetaX={etqX} descripcion="Activo, pasivo y patrimonio por período" alto={240}
           series={[{ nombre: "Activo", color: MT.rojo, valores: P.map(x => x.activo), formato: (v) => usdM(v, 0), area: true }, { nombre: "Patrimonio", color: MT.bueno, valores: P.map(x => x.patrimonio), formato: (v) => usdM(v, 0) }, { nombre: "Pasivo", color: "#B7791F", valores: P.map(x => x.pasivo), formato: (v) => usdM(v, 0) }]} /></div>
 
-        <SecT sub="Valor al costo de la mercancía que te queda, según compras menos costo de ventas de tus libros.">Inventario de mercancía</SecT>
+        <SecT sub="Valor al costo de la mercancía al cierre de cada período, anclado a Odoo. El inventario de hoy está en la tarjeta de abajo.">Inventario de mercancía</SecT>
         <div className="met-card"><GraficaNegativos tipo="linea" area etiquetas={etiq} etiquetaX={etqX} valores={P.map(x => x.inventario)} color={MT.rojo} nombre="inventario" descripcion="Inventario de mercancía por período" /></div>
         <PuenteInventario desde={sumarDiasISO(ultMes + "-01", diasDelMesB(ultMes))} ultMes={ultMes} invLibros={B.filas[B.filas.length - 1].inventario} />
 
