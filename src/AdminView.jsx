@@ -6632,7 +6632,7 @@ function contPrepara(d, fin) {
   const sis = {}; ((fin && fin.filas) || []).forEach(f => { sis[f.k] = f; });
   const mesesSis = Object.keys(sis).sort();
   const contraSistema = mesesSis.filter(m => m >= (meses[0] || "9999")).map(m => {
-    const hayLibros = !!flujo.real[m] || !!oficial[m]; const f = sis[m]; const fr = flujo.real[m] || {}; const of = oficial[m] || {};
+    const hayLibros = !!flujo.real[m]; const f = sis[m]; const fr = flujo.real[m] || {}; const of = oficial[m] || {};
     return {
       mes: m, hayLibros, enCurso: false,
       ventasL: hayLibros ? (fr["VENTAS"] ?? -(of["Ventas"] || 0)) : null, ventasS: nF(f.entradas),
@@ -6905,7 +6905,7 @@ function ContER({ c }) {
   };
   const filas = ER_ORDEN.filter(([k]) => meses.some(m => val(m, k) !== null));
   const totalK = (k) => { if (k === "margen bruto" || k === "margen neto") { const v = meses.reduce((a, m) => a + (c.er[m]["ventas netas"] || 0), 0); const u = meses.reduce((a, m) => a + (c.er[m][k === "margen bruto" ? "utilidad bruta" : "utilidad neta"] || 0), 0); return v ? (u / v) * 100 : null; } return meses.reduce((a, m) => a + (val(m, k) || 0), 0); };
-  const mesesSin = c.meses.filter(m => !c.er[m]);
+  const mesesSin = c.meses.filter(m => !c.er[m] && Math.abs((c.oficial[m] || {})["Ventas"] || 0) > 0);
   const netas = meses.map(m => val(m, "utilidad neta") ?? 0);
   const baja = () => descargarCsvEvo("estado-de-resultados-libros", ["Concepto", ...meses.map(mesLargoC), "Total"], filas.map(([k, et, tipo]) => [et, ...meses.map(m => { const v = val(m, k); return v === null ? "" : redC(v); }), redC(totalK(k) ?? 0)]));
   return (
@@ -7019,6 +7019,7 @@ function ContExportar({ c, d }) {
 //  · Inventario = compras de mercancía (al contado + pagos a proveedores) − costo de ventas de tu estado de resultados.
 //  · Equipos y muebles se muestran como activo fijo (sin depreciación). Utilidad = ventas − costo de ventas − gastos.
 const BAL_GASTOS = ["Gastos de publicidad", "Gastos de envío", "Comisiones", "Servicios digitales", "Servicios profesionales", "Sueldos", "Material de empaque", "Gastos varios"];
+const BAL_CTA_AJUSTE = "Ajuste de inventario (entradas no registradas como compra)";
 const diasDelMesB = (ym) => { const [y, m] = String(ym).split("-").map(Number); return new Date(Date.UTC(y, m, 0)).getUTCDate(); };
 const balSm = (v, d = 0) => v === null || v === undefined ? "—" : (v > 0.004 ? "+" : v < -0.004 ? "−" : "") + usdM(Math.abs(v), d);
 const balSp = (v) => v === null || v === undefined ? "n/d" : (v > 0.04 ? "+" : v < -0.04 ? "−" : "") + pctM(Math.abs(v), 1);
@@ -7027,15 +7028,21 @@ const balFmt = (v, u) => v === null || v === undefined ? "—" : u === "x" ? `${
 const COL_EST = { bueno: MT.bueno, atencion: "#B7791F", malo: MT.malo };
 
 function balanceLibros(c) {
-  const meses = Object.keys(c.oficial).sort();
-  if (!meses.length) return null;
+  const todos = Object.keys(c.oficial).sort();
   const fr = c.flujo.real || {};
+  const meses = todos.filter(m => fr[m]);
+  if (!meses.length) return null;
+  const pre = todos.filter(m => m < meses[0]);
+  const post = todos.filter(m => m > meses[meses.length - 1]);
   const ini = nF((fr[meses[0]] || {})["SALDO INICIAL"]);
   const conER = meses.filter(m => c.er[m] && c.er[m]["costos de ventas"] !== undefined && nF(c.er[m]["ventas netas"]) > 0).slice(-3);
   const vR = conER.reduce((a, m) => a + nF(c.er[m]["ventas netas"]), 0), kR = conER.reduce((a, m) => a + nF(c.er[m]["costos de ventas"]), 0);
   const ratioCosto = vR > 0 ? kR / vR : null;
   const ac = {};
-  let cogs = 0, util = 0, invPrev = 0;
+  pre.forEach(m => Object.keys(c.oficial[m] || {}).forEach(k => { ac[k] = (ac[k] || 0) + nF(c.oficial[m][k]); }));
+  const invApertura = nF(ac["Mercancía"]) + Math.max(0, nF(ac["Proveedores"]));
+  const ajusteApertura = -nF(ac[BAL_CTA_AJUSTE]);
+  let cogs = 0, util = 0, invPrev = invApertura;
   const filas = meses.map(m => {
     const o = c.oficial[m] || {};
     Object.keys(o).forEach(k => { ac[k] = (ac[k] || 0) + nF(o[k]); });
@@ -7060,9 +7067,10 @@ function balanceLibros(c) {
     const cxp = Math.max(0, -prov);
     const pasivo = cxp;
     const capital = ini - a("Capital social");
-    const patrimonio = capital + util;
+    const ajusteInv = -a(BAL_CTA_AJUSTE);
+    const patrimonio = capital + ajusteInv + util;
     const f = {
-      m, caja, cxc, inventario, ac: acT, muebles, eqOf, eqEl, anc, activo, cxp, pasivo, pasivoLP: 0, capital, utilAcum: util, patrimonio, pp: pasivo + patrimonio,
+      m, caja, cxc, inventario, ac: acT, muebles, eqOf, eqEl, anc, activo, cxp, pasivo, pasivoLP: 0, capital, ajusteInv, utilAcum: util, patrimonio, pp: pasivo + patrimonio,
       cuadre: activo - pasivo - patrimonio,
       ventas, costo, gastos, utilMes, compras: inventario - invPrev + costo, estimado, dias: diasDelMesB(m),
       flujoNeto: fr[m] && fr[m]["SALDO FINAL"] !== undefined ? nF(fr[m]["SALDO FINAL"]) - nF(fr[m]["SALDO INICIAL"]) : null,
@@ -7071,8 +7079,9 @@ function balanceLibros(c) {
     invPrev = inventario;
     return f;
   });
-  const apertura = { caja: ini, cxc: 0, inventario: 0, ac: ini, muebles: 0, eqOf: 0, eqEl: 0, anc: 0, activo: ini, cxp: 0, pasivo: 0, capital: ini, utilAcum: 0, patrimonio: ini, pp: ini };
-  return { filas, apertura, ini, ratioCosto, meses };
+  const apertura = { caja: ini, cxc: 0, inventario: invApertura, ac: ini + invApertura, muebles: 0, eqOf: 0, eqEl: 0, anc: 0, activo: ini + invApertura, cxp: 0, pasivo: 0, capital: ini, ajusteInv: ajusteApertura, utilAcum: 0, patrimonio: ini + ajusteApertura, pp: ini + ajusteApertura };
+  const postCompras = post.reduce((sm, m) => sm + nF((c.oficial[m] || {})["Mercancía"]), 0);
+  return { filas, apertura, ini, ratioCosto, meses, ajuste: ajusteApertura, post, postCompras };
 }
 
 function balPeriodos(B, gran) {
@@ -7154,10 +7163,43 @@ const BAL_FILAS = [
   { k: "cxp", et: "Cuentas por pagar a proveedores", malSube: true },
   { k: "pasivo", et: "TOTAL PASIVO", fuerte: true, malSube: true },
   { t: "h", et: "PATRIMONIO (lo que es tuyo)" },
-  { k: "capital", et: "Capital social" }, { k: "utilAcum", et: "Utilidades acumuladas" },
+  { k: "capital", et: "Capital social" }, { k: "ajusteInv", et: "Ajuste por mercancía no registrada como compra" }, { k: "utilAcum", et: "Utilidades acumuladas" },
   { k: "patrimonio", et: "TOTAL PATRIMONIO", fuerte: true },
   { k: "pp", et: "TOTAL PASIVO + PATRIMONIO", fuerte: true },
 ];
+
+// Puente del inventario: lo que dicen tus libros al cierre + compras de Odoo − costo de lo vendido, contra el inventario real de Odoo hoy
+function PuenteInventario({ desde, ultMes, invLibros }) {
+  const { datos: pu, error } = useFinDatos("fin_puente_inventario", { p_desde: desde }, [desde]);
+  const { datos: iv } = useFinDatos("fin_inventario_odoo", {}, []);
+  if (error || !pu) return null;
+  const esperado = invLibros + nF(pu.compras_recibidas) - nF(pu.costo_total);
+  const dif = nF(pu.odoo_valor) - esperado;
+  const grande = Math.abs(dif) > Math.max(500, nF(pu.odoo_valor) * 0.02);
+  const Fila = ({ t, v, fuerte, color }) => (
+    <div style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "7px 0", borderTop: `1px solid ${MT.rejilla}`, fontWeight: fuerte ? 800 : 500, color: color || MT.texto, fontSize: 13 }}>
+      <span style={{ color: fuerte ? MT.texto : MT.texto2 }}>{t}</span><span style={{ fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{v}</span>
+    </div>
+  );
+  return (
+    <div className="met-card" style={{ marginTop: 12 }}>
+      <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 2 }}>Inventario: tus libros contra Odoo hoy</div>
+      <div style={{ fontSize: 12, color: MT.texto2, marginBottom: 8, lineHeight: 1.5 }}>Odoo es la referencia del inventario real. Así llegas del cierre de {mesLargoC(ultMes)} a hoy ({fechaCortaM(pu.hasta)}).</div>
+      <Fila t={`Inventario de tus libros al cierre de ${mesLargoC(ultMes)} (ya ajustado a Odoo)`} v={usdM(invLibros, 0)} />
+      <Fila t={`+ Compras recibidas en Odoo desde el ${fechaCortaM(pu.desde)} (${pu.n_compras}; ya están en tu libro diario, pagadas o por pagar)`} v={balSm(nF(pu.compras_recibidas), 0)} />
+      <Fila t="− Costo de lo vendido en web y tienda (estimado con los costos cargados)" v={balSm(-nF(pu.costo_total), 0)} />
+      <Fila t="= Inventario esperado hoy" v={usdM(esperado, 0)} fuerte />
+      <Fila t="Inventario real en Odoo hoy" v={usdM(pu.odoo_valor, 0)} fuerte />
+      <Fila t="Diferencia" v={balSm(dif, 0)} color={grande ? MT.malo : MT.bueno} />
+      <div style={{ fontSize: 11.5, color: MT.suave, marginTop: 8, lineHeight: 1.6 }}>
+        {grande ? "La diferencia es grande: entró o salió mercancía en Odoo sin compra o venta registrada desde el ajuste. Revisa los movimientos de inventario. " : "La diferencia es pequeña: lo que entró y salió desde el ajuste cuadra con Odoo. "}
+        {nF(pu.compras_pendientes) > 0 && `Hay ${usdM(pu.compras_pendientes, 0)} en compras de Odoo todavía sin recibir; no se cuentan hasta que lleguen. `}
+        {iv && nF(iv.n_negativos) > 0 && `Odoo tiene ${iv.n_negativos} productos con existencia negativa (${usdM(Math.abs(iv.negativo), 0)} restan del total): conviene corregirlos. `}
+        {iv && nF(iv.sin_costo) > 0 && `${iv.sin_costo} productos con existencia no tienen costo y no suman al valor.`}
+      </div>
+    </div>
+  );
+}
 
 function FinBalance() {
   const [gran, setGran] = useState("mes");
@@ -7166,7 +7208,6 @@ function FinBalance() {
   const [sel, setSel] = useState(null);
   const [incItem, setIncItem] = useState("inventario");
   const { datos: d, error, cargando } = useFinDatos("cont_datos", {}, []);
-  const { datos: invO } = useFinDatos("fin_inventario_odoo", {}, []);
   const SUBS = [["resumen", "Resumen"], ["balance", "Balance general"], ["incrementos", "Incrementos"], ["ratios", "Ratios"], ["como", "Cómo se arma"]];
   const cabeza = (
     <div style={{ display: "flex", gap: 8, flexWrap: "wrap", margin: "14px 0 6px", alignItems: "center" }}>
@@ -7196,6 +7237,7 @@ function FinBalance() {
     <>
       {estMeses.length > 0 && <AvisoFin><b>{estMeses.join(", ")}</b>: tu archivo no trae el costo de ventas, así que lo estimé con el {pctM((B.ratioCosto || 0) * 100, 1)} de las ventas (el promedio de tus últimos tres meses con estado de resultados). Con el costo real, el inventario y la utilidad de esos meses cambian.</AvisoFin>}
       {invNeg.length > 0 && <AvisoFin>El inventario sale negativo en <b>{invNeg.join(", ")}</b>: vendiste mercancía que ya tenías antes de noviembre 2025 y esa existencia inicial no está en los libros. Si me das el valor del inventario al 1-nov-2025, lo agrego como apertura y se corrige todo el balance.</AvisoFin>}
+      {B.ajuste > 0.5 && <AvisoFin>El inventario está <b>anclado a Odoo</b>: incluye un ajuste de <b>{usdM(B.ajuste, 0)}</b> por mercancía que Odoo tiene y que los libros no registraron como compra. Se explica en “Cómo se arma”.</AvisoFin>}
       {(maxCuadre > 0.01 || cajaDif > 0.01) && <AvisoFin malo>El balance no cuadra del todo (diferencia {usdM(maxCuadre, 2)} en el balance, {usdM(cajaDif, 2)} contra el flujo de caja). Revisa la pestaña “Contabilidad (libros) › Conciliación”.</AvisoFin>}
     </>
   );
@@ -7241,12 +7283,7 @@ function FinBalance() {
 
         <SecT sub="Valor al costo de la mercancía que te queda, según compras menos costo de ventas de tus libros.">Inventario de mercancía</SecT>
         <div className="met-card"><GraficaNegativos tipo="linea" area etiquetas={etiq} etiquetaX={etqX} valores={P.map(x => x.inventario)} color={MT.rojo} nombre="inventario" descripcion="Inventario de mercancía por período" /></div>
-        {invO && invO.valor !== undefined && (
-          <div className="met-card" style={{ marginTop: 12, fontSize: 13, lineHeight: 1.65, color: MT.texto2 }}>
-            <b style={{ color: MT.texto }}>Inventario real hoy en Odoo: {usdM(invO.valor, 0)}</b> ({numM(invO.productos)} productos, {numM(invO.unidades)} unidades al costo{invO.sin_costo > 0 ? `; ${invO.sin_costo} sin costo cargado` : ""}). Tus libros llegan hasta {mesLargoC(ultMes)} y dicen {usdM(B.filas[B.filas.length - 1].inventario, 0)}.
-            No se pueden comparar todavía: faltan las compras y ventas de septiembre a hoy. Con esos libros cerramos la diferencia y sabremos si el inventario de los libros es confiable.
-          </div>
-        )}
+        <PuenteInventario desde={sumarDiasISO(ultMes + "-01", diasDelMesB(ultMes))} ultMes={ultMes} invLibros={B.filas[B.filas.length - 1].inventario} />
 
         <SecT sub="Indicadores clave del período seleccionado; la flecha compara con el período anterior.">KPI importantes de finanzas</SecT>
         <div className="met-grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))" }}>
@@ -7394,7 +7431,8 @@ function FinBalance() {
       <SecT sub="Para que sepas de dónde sale cada número y qué supuestos hice.">Cómo se arma este balance</SecT>
       <Par t="Fuente">Tus libros guardados en “Contabilidad (libros)” ({B.meses.length} meses, de {mesLargoC(B.meses[0])} a {mesLargoC(ultMes)}): libro diario, balances, estados de resultados y flujos de caja, con las correcciones del 9-nov-2026. Es solo lectura: no cambia Odoo ni tus libros.</Par>
       <Par t="Caja y bancos">Saldo inicial de caja ({usdM(B.ini, 2)}) más los movimientos de la cuenta Caja y banco. Coincide con el saldo final de tu flujo de caja real en todos los meses.</Par>
-      <Par t="Inventario de mercancía">Tu cuenta Mercancía solo suma compras y nunca resta lo vendido. Por eso el balance calcula: compras al contado + pagos a proveedores (esas facturas no estaban registradas como compra) − costo de ventas de tu estado de resultados. Es un cálculo contable; la existencia real la confirma el conteo físico u Odoo.</Par>
+      <Par t="Inventario de mercancía (anclado a Odoo)">Tu cuenta Mercancía solo suma compras y nunca resta lo vendido. Por eso el balance calcula: compras al contado + pagos a proveedores − costo de ventas de tu estado de resultados. Como Odoo es la referencia del inventario real, ese cálculo se ancló a Odoo con un ajuste de {usdM(B.ajuste, 0)} (cuenta “Ajuste de inventario” dentro del patrimonio, fechada en la apertura de los libros): es mercancía que Odoo tiene y que nunca se registró como compra. No pasa por el estado de resultados, así que no cambia tu utilidad.</Par>
+      <Par t="Compras de Odoo desde septiembre">Agregué a tu libro diario las compras recibidas en Odoo desde septiembre ({usdM(B.postCompras, 0)} en total). Las compras ya pagadas se registraron como pagadas con caja y banco; solo P00137 y P00138 (GP Corporation, $9,662) siguen como por pagar a proveedores. No aparecen como columnas del balance porque aún faltan las ventas, gastos y caja de esos meses; cuando me pases los libros de septiembre en adelante, esas compras se reemplazan por las reales.</Par>
       <Par t="Cuentas por cobrar y por pagar">Tus libros no tienen cuentas por cobrar (vendes al contado) ni facturas por pagar pendientes, así que ambas dan $0. Por eso los ratios de liquidez, tesorería y plazo de pago dicen “sin deudas”. Si debes facturas a proveedores o impuestos, ahí falta cargarlas.</Par>
       <Par t="Activo fijo">Muebles, equipo de oficina y equipo eléctrico a su costo de compra, sin depreciación. En el estado de resultados de tus archivos algunos de esos equipos aparecen como gasto; aquí se tratan como activo, por eso la utilidad de enero, junio y julio aquí es mayor que en tu estado de resultados por el valor del equipo comprado.</Par>
       <Par t="Patrimonio">Capital social (incluye los {usdM(B.ini, 0)} de saldo inicial de caja y los aportes) más las utilidades acumuladas (ventas − costo de ventas − gastos). Activo = Pasivo + Patrimonio se verifica mes a mes.</Par>
@@ -7403,7 +7441,7 @@ function FinBalance() {
         <ol style={{ margin: "0 0 0 18px", padding: 0, fontSize: 12.5, color: MT.texto2, lineHeight: 1.75 }}>
           <li>Libros de <b>septiembre y octubre</b> (y noviembre cuando cierre): hoy el balance se detiene en {mesLargoC(ultMes)}.</li>
           <li><b>Estado de resultados de agosto</b> con su costo de ventas (hoy está estimado).</li>
-          <li><b>Inventario al 1-nov-2025</b> (lo que tenías antes de empezar los libros) y, si puedes, un conteo o valor de inventario a una fecha reciente.</li>
+          <li>La <b>fecha en que pagaste</b> las compras de Odoo desde septiembre (hoy se registran en el mes de la compra).</li>
           <li>Si <b>debes</b> facturas a proveedores, impuestos (ITBMS) o préstamos, y si te deben a ti: monto y fecha de cada uno.</li>
           <li>Si quieres <b>depreciar</b> equipos y muebles: vida útil estimada de cada uno.</li>
         </ol>
