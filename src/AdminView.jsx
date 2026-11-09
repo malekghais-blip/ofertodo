@@ -7012,9 +7012,419 @@ function ContExportar({ c, d }) {
   );
 }
 
+// ═══════════ BALANCE GENERAL (armado con tus libros) — SOLO DUEÑO ═══════════
+// Sale de los mismos libros guardados en "Contabilidad (libros)" (función cont_datos, solo dueño). Nada de aquí cambia Odoo.
+// Reglas del balance (se explican en la pestaña "Cómo se arma"):
+//  · Caja = saldo inicial + movimientos de la cuenta Caja y banco (coincide con tu flujo de caja).
+//  · Inventario = compras de mercancía (al contado + pagos a proveedores) − costo de ventas de tu estado de resultados.
+//  · Equipos y muebles se muestran como activo fijo (sin depreciación). Utilidad = ventas − costo de ventas − gastos.
+const BAL_GASTOS = ["Gastos de publicidad", "Gastos de envío", "Comisiones", "Servicios digitales", "Servicios profesionales", "Sueldos", "Material de empaque", "Gastos varios"];
+const diasDelMesB = (ym) => { const [y, m] = String(ym).split("-").map(Number); return new Date(Date.UTC(y, m, 0)).getUTCDate(); };
+const balSm = (v, d = 0) => v === null || v === undefined ? "—" : (v > 0.004 ? "+" : v < -0.004 ? "−" : "") + usdM(Math.abs(v), d);
+const balSp = (v) => v === null || v === undefined ? "n/d" : (v > 0.04 ? "+" : v < -0.04 ? "−" : "") + pctM(Math.abs(v), 1);
+const balDelta = (cur, prev) => { const dd = nF(cur) - nF(prev); const base = Math.abs(nF(prev)); return { dd, pc: base > 0.005 ? (dd / base) * 100 : null }; };
+const balFmt = (v, u) => v === null || v === undefined ? "—" : u === "x" ? `${v.toFixed(2)}x` : u === "usd" ? signoUsd(v, 0) : u === "pct" ? signoPct(v * 100, 1) : u === "dias" ? `${Math.round(v)} días` : String(v);
+const COL_EST = { bueno: MT.bueno, atencion: "#B7791F", malo: MT.malo };
+
+function balanceLibros(c) {
+  const meses = Object.keys(c.oficial).sort();
+  if (!meses.length) return null;
+  const fr = c.flujo.real || {};
+  const ini = nF((fr[meses[0]] || {})["SALDO INICIAL"]);
+  const conER = meses.filter(m => c.er[m] && c.er[m]["costos de ventas"] !== undefined && nF(c.er[m]["ventas netas"]) > 0).slice(-3);
+  const vR = conER.reduce((a, m) => a + nF(c.er[m]["ventas netas"]), 0), kR = conER.reduce((a, m) => a + nF(c.er[m]["costos de ventas"]), 0);
+  const ratioCosto = vR > 0 ? kR / vR : null;
+  const ac = {};
+  let cogs = 0, util = 0, invPrev = 0;
+  const filas = meses.map(m => {
+    const o = c.oficial[m] || {};
+    Object.keys(o).forEach(k => { ac[k] = (ac[k] || 0) + nF(o[k]); });
+    const a = (k) => ac[k] || 0;
+    const ventas = -nF(o["Ventas"]);
+    const gastos = BAL_GASTOS.reduce((s, k) => s + nF(o[k]), 0);
+    const er = c.er[m];
+    const costoEr = er && er["costos de ventas"] !== undefined ? nF(er["costos de ventas"]) : null;
+    const estimado = costoEr === null;
+    const costo = costoEr !== null ? costoEr : (ratioCosto !== null ? ventas * ratioCosto : 0);
+    cogs += costo;
+    const utilMes = ventas - costo - gastos;
+    util += utilMes;
+    const prov = a("Proveedores");
+    const caja = ini + a("Caja y banco");
+    const inventario = a("Mercancía") + Math.max(0, prov) - cogs;
+    const muebles = a("Muebles y estantería"), eqOf = a("Equipo de oficina"), eqEl = a("Equipo eléctrico");
+    const anc = muebles + eqOf + eqEl;
+    const cxc = 0;
+    const acT = caja + cxc + inventario;
+    const activo = acT + anc;
+    const cxp = Math.max(0, -prov);
+    const pasivo = cxp;
+    const capital = ini - a("Capital social");
+    const patrimonio = capital + util;
+    const f = {
+      m, caja, cxc, inventario, ac: acT, muebles, eqOf, eqEl, anc, activo, cxp, pasivo, pasivoLP: 0, capital, utilAcum: util, patrimonio, pp: pasivo + patrimonio,
+      cuadre: activo - pasivo - patrimonio,
+      ventas, costo, gastos, utilMes, compras: inventario - invPrev + costo, estimado, dias: diasDelMesB(m),
+      flujoNeto: fr[m] && fr[m]["SALDO FINAL"] !== undefined ? nF(fr[m]["SALDO FINAL"]) - nF(fr[m]["SALDO INICIAL"]) : null,
+      cajaFlujo: fr[m] && fr[m]["SALDO FINAL"] !== undefined ? nF(fr[m]["SALDO FINAL"]) : null,
+    };
+    invPrev = inventario;
+    return f;
+  });
+  const apertura = { caja: ini, cxc: 0, inventario: 0, ac: ini, muebles: 0, eqOf: 0, eqEl: 0, anc: 0, activo: ini, cxp: 0, pasivo: 0, capital: ini, utilAcum: 0, patrimonio: ini, pp: ini };
+  return { filas, apertura, ini, ratioCosto, meses };
+}
+
+function balPeriodos(B, gran) {
+  if (gran === "mes") return B.filas.map(f => ({ ...f, k: f.m, nMeses: 1 }));
+  const por = {};
+  B.filas.forEach(f => { const y = f.m.slice(0, 4); (por[y] || (por[y] = [])).push(f); });
+  return Object.keys(por).sort().map(y => {
+    const fs = por[y], u = fs[fs.length - 1];
+    const sum = (k) => fs.reduce((s, f) => s + nF(f[k]), 0);
+    return { ...u, k: y, nMeses: fs.length, ventas: sum("ventas"), costo: sum("costo"), gastos: sum("gastos"), utilMes: sum("utilMes"), compras: sum("compras"), dias: sum("dias"),
+      flujoNeto: fs.some(f => f.flujoNeto !== null) ? fs.reduce((s, f) => s + nF(f.flujoNeto), 0) : null, estimado: fs.some(f => f.estimado) };
+  });
+}
+const balEtq = (p) => p.nMeses === 1 && /^\d{4}-\d{2}$/.test(p.k) ? `${mesCortoM(p.k)} ${p.k.slice(2, 4)}` : String(p.k);
+const balEtqL = (p) => p.nMeses === 1 && /^\d{4}-\d{2}$/.test(p.k) ? mesLargoC(p.k) : String(p.k);
+const balSubEtq = (p) => /^\d{4}-\d{2}$/.test(p.k) ? "" : `${p.nMeses} meses · cierre ${mesCortoM(p.m)}`;
+
+function balRatios(p) {
+  const div = (a, b) => (Math.abs(b) > 0.005 ? a / b : null);
+  return {
+    liquidez: div(p.ac, p.cxp), maniobra: p.ac - p.cxp, tesoreria: div(p.caja + p.cxc, p.cxp), flujo: p.flujoNeto,
+    cobro: p.ventas > 0 ? (p.cxc / p.ventas) * p.dias : null, pago: p.compras > 0 ? (p.cxp / p.compras) * p.dias : null,
+    endeud: div(p.pasivo, p.patrimonio), rentab: div(p.utilMes, p.ventas), solidez: div(p.patrimonio, p.activo),
+    cobertura: div(p.patrimonio + p.pasivoLP, p.anc), rotacion: div(p.ventas, p.activo), roa: div(p.utilMes, p.activo), roe: div(p.utilMes, p.patrimonio),
+    margenBruto: div(p.ventas - p.costo, p.ventas), diasInv: p.costo > 0 && p.inventario > 0 ? (p.inventario / p.costo) * p.dias : null, rotInv: p.inventario > 0 ? div(p.costo, p.inventario) : null,
+  };
+}
+
+// Los 13 ratios de tu lista, con su fórmula, cómo leerlos y un semáforo sencillo
+const BAL_RATIOS = [
+  { k: "liquidez", n: "Liquidez", u: "x", f: "Activo corriente ÷ Pasivo corriente", que: "Si lo que tienes a corto plazo alcanza para pagar lo que debes a corto plazo. Más de 1.5x es sano.", sinDeuda: true,
+    est: (v) => v === null ? "bueno" : v >= 1.5 ? "bueno" : v >= 1 ? "atencion" : "malo",
+    lee: (v) => v === null ? "No tienes deudas a corto plazo registradas." : `Por cada $1 que debes a corto plazo tienes $${v.toFixed(2)} para pagarlo.` },
+  { k: "maniobra", n: "Fondo de maniobra", u: "usd", f: "Activo corriente − Pasivo corriente", que: "El dinero y mercancía que te quedan para operar después de pagar tus deudas de corto plazo.",
+    est: (v) => v > 0 ? "bueno" : "malo", lee: (v) => `Después de pagar lo que debes a corto plazo te quedan ${signoUsd(v, 0)} para operar.` },
+  { k: "tesoreria", n: "Ratio de tesorería", u: "x", f: "(Caja y bancos + Cuentas por cobrar) ÷ Pasivo corriente", que: "Igual que la liquidez pero sin contar la mercancía: solo lo que ya es dinero o se cobra pronto. Cerca de 1x o más es sano.", sinDeuda: true,
+    est: (v) => v === null ? "bueno" : v >= 1 ? "bueno" : v >= 0.7 ? "atencion" : "malo",
+    lee: (v) => v === null ? "No tienes deudas a corto plazo registradas." : `Solo con tu dinero disponible cubres ${v.toFixed(2)} veces tus deudas de corto plazo.` },
+  { k: "flujo", n: "Flujo de caja", u: "usd", f: "Saldo final de caja − saldo inicial de caja del período", que: "Cuánto dinero entró de más (o faltó) en el período, según tu flujo de caja.",
+    est: (v) => v === null ? null : v > 0 ? "bueno" : "malo", lee: (v) => v === null ? "Sin flujo de caja en tus libros para este período." : v >= 0 ? `Tu caja aumentó ${usdM(v, 0)} en el período.` : `Tu caja bajó ${usdM(Math.abs(v), 0)} en el período.` },
+  { k: "cobro", n: "Plazo de cobro", u: "dias", f: "Cuentas por cobrar ÷ Ventas × Días del período", que: "Cuántos días tardas en cobrar lo que vendes. Mientras menos, mejor.",
+    est: (v) => v === null ? null : v <= 15 ? "bueno" : v <= 45 ? "atencion" : "malo", lee: (v) => v === null ? "Sin ventas en el período." : v < 0.5 ? "Cobras al contado: tus ventas se pagan al momento." : `Tardas unos ${Math.round(v)} días en cobrar.` },
+  { k: "pago", n: "Plazo de pago", u: "dias", f: "Cuentas por pagar a proveedores ÷ Compras × Días del período", que: "Cuántos días tardas en pagar a tus proveedores. Más días da más respiro, pero demasiados dañan la relación.",
+    est: () => null, lee: (v) => v === null ? "Sin compras en el período." : v < 0.5 ? "En tus libros no queda ninguna factura de proveedor por pagar." : `Tardas unos ${Math.round(v)} días en pagar a proveedores.` },
+  { k: "endeud", n: "Ratio de endeudamiento", u: "pct", f: "Pasivo total ÷ Patrimonio", que: "Cuántos centavos debes por cada dólar propio. Menos de 100% significa que el negocio se financia más con tu dinero que con deudas.",
+    est: (v) => v === null ? null : v <= 0.5 ? "bueno" : v <= 1 ? "atencion" : "malo", lee: (v) => v === null ? "Sin patrimonio para comparar." : v < 0.005 ? "No tienes deudas registradas: todo lo financias con tu dinero." : `Debes ${Math.round(v * 100)} centavos por cada $1 propio.` },
+  { k: "rentab", n: "Rentabilidad neta", u: "pct", f: "Utilidad neta ÷ Ventas netas", que: "Cuánto te queda limpio de cada $100 que vendes, después de costo y gastos.",
+    est: (v) => v === null ? null : v >= 0.1 ? "bueno" : v >= 0 ? "atencion" : "malo", lee: (v) => v === null ? "Sin ventas en el período." : `De cada $100 vendidos te quedan ${signoUsd(v * 100, 0)} limpios.` },
+  { k: "solidez", n: "Solidez patrimonial", u: "pct", f: "Patrimonio ÷ Activo total", que: "Qué parte de lo que tiene el negocio es realmente tuya. El resto se financia con deudas.",
+    est: (v) => v === null ? null : v >= 0.5 ? "bueno" : v >= 0.3 ? "atencion" : "malo", lee: (v) => v === null ? "Sin activos." : `El ${Math.round(v * 100)}% de lo que tiene el negocio es tuyo.` },
+  { k: "cobertura", n: "Cobertura del inmovilizado", u: "x", f: "(Patrimonio + Pasivo a largo plazo) ÷ Activo no corriente", que: "Si tu dinero propio financia los equipos y muebles. Más de 1x es lo sano.",
+    est: (v) => v === null ? null : v >= 1 ? "bueno" : "malo", lee: (v) => v === null ? "Sin activos fijos." : `Tu dinero propio cubre ${v.toFixed(1)} veces tus equipos y muebles.` },
+  { k: "rotacion", n: "Rotación de activo total", u: "x", f: "Ventas netas del período ÷ Activo total", que: "Cuántas veces el período recupera lo invertido en el negocio vía ventas. Más alto = más rendimiento de cada dólar invertido.",
+    est: () => null, lee: (v) => v === null ? "Sin activos." : `Cada $1 invertido en el negocio generó $${v.toFixed(2)} de ventas en el período.` },
+  { k: "roa", n: "ROA (rentabilidad del activo)", u: "pct", f: "Utilidad neta ÷ Activo total", que: "Cuánto gana el negocio por cada dólar que tiene invertido en activos.",
+    est: (v) => v === null ? null : v > 0 ? "bueno" : "malo", lee: (v) => v === null ? "Sin activos." : `Cada $100 en activos produjeron ${signoUsd(v * 100, 2)} de utilidad en el período.` },
+  { k: "roe", n: "ROE (rentabilidad del patrimonio)", u: "pct", f: "Utilidad neta ÷ Patrimonio", que: "Cuánto gana tu dinero puesto en el negocio. Es el ratio que más importa al dueño.",
+    est: (v) => v === null ? null : v > 0 ? "bueno" : "malo", lee: (v) => v === null ? "Sin patrimonio." : `Cada $100 tuyos en el negocio produjeron ${signoUsd(v * 100, 2)} de utilidad en el período.` },
+];
+
+function PieDelta({ cur, prev, malSube, sufijo = "vs. período anterior" }) {
+  const { dd, pc } = balDelta(cur, prev);
+  const bueno = malSube ? dd <= 0 : dd >= 0;
+  return <div style={{ fontSize: 12, fontWeight: 700, color: Math.abs(dd) < 0.005 ? MT.suave : bueno ? MT.bueno : MT.malo }}>
+    {dd > 0.004 ? "▲" : dd < -0.004 ? "▼" : "•"} {balSm(dd, 0)}{pc !== null ? ` (${balSp(pc)})` : ""} <span style={{ color: MT.suave, fontWeight: 500 }}>{sufijo}</span>
+  </div>;
+}
+
+const BAL_FILAS = [
+  { t: "h", et: "ACTIVO (lo que tienes)" },
+  { t: "h2", et: "Activo corriente" },
+  { k: "caja", et: "Caja y bancos" }, { k: "cxc", et: "Cuentas por cobrar" }, { k: "inventario", et: "Inventario de mercancía" },
+  { k: "ac", et: "Total activo corriente", tot: true },
+  { t: "h2", et: "Activo no corriente (fijo)" },
+  { k: "muebles", et: "Muebles y estantería" }, { k: "eqOf", et: "Equipo de oficina" }, { k: "eqEl", et: "Equipo eléctrico" },
+  { k: "anc", et: "Total activo no corriente", tot: true },
+  { k: "activo", et: "TOTAL ACTIVO", fuerte: true },
+  { t: "h", et: "PASIVO (lo que debes)" },
+  { k: "cxp", et: "Cuentas por pagar a proveedores", malSube: true },
+  { k: "pasivo", et: "TOTAL PASIVO", fuerte: true, malSube: true },
+  { t: "h", et: "PATRIMONIO (lo que es tuyo)" },
+  { k: "capital", et: "Capital social" }, { k: "utilAcum", et: "Utilidades acumuladas" },
+  { k: "patrimonio", et: "TOTAL PATRIMONIO", fuerte: true },
+  { k: "pp", et: "TOTAL PASIVO + PATRIMONIO", fuerte: true },
+];
+
+function FinBalance() {
+  const [gran, setGran] = useState("mes");
+  const [sub, setSub] = useState("resumen");
+  const [modo, setModo] = useState("cifras");
+  const [sel, setSel] = useState(null);
+  const [incItem, setIncItem] = useState("inventario");
+  const { datos: d, error, cargando } = useFinDatos("cont_datos", {}, []);
+  const { datos: invO } = useFinDatos("fin_inventario_odoo", {}, []);
+  const SUBS = [["resumen", "Resumen"], ["balance", "Balance general"], ["incrementos", "Incrementos"], ["ratios", "Ratios"], ["como", "Cómo se arma"]];
+  const cabeza = (
+    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", margin: "14px 0 6px", alignItems: "center" }}>
+      {SUBS.map(([k, l]) => <button key={k} className={"met-chip" + (sub === k ? " on" : "")} onClick={() => setSub(k)} aria-pressed={sub === k}>{l}</button>)}
+      {sub !== "como" && <span style={{ marginLeft: "auto", display: "inline-flex", gap: 6 }}>
+        {[["mes", "Por mes"], ["anio", "Por año"]].map(([k, l]) => <button key={k} className={"met-chip" + (gran === k ? " on" : "")} onClick={() => { setGran(k); setSel(null); }} aria-pressed={gran === k}>{l}</button>)}
+      </span>}
+    </div>
+  );
+  if (error) return <>{cabeza}<AvisoFin malo>No se pudo cargar el balance: {error}</AvisoFin></>;
+  if (!d) return <>{cabeza}<div style={{ padding: "50px 0", textAlign: "center", color: MT.texto2 }}>Armando tu balance…</div></>;
+  const c = contPrepara(d, null);
+  const B = balanceLibros(c);
+  if (!B) return <>{cabeza}<AvisoFin>Todavía no hay libros cargados para armar el balance.</AvisoFin></>;
+  const P = balPeriodos(B, gran);
+  const idx = Math.min(sel === null ? P.length - 1 : sel, P.length - 1);
+  const p = P[idx];
+  const prev = idx > 0 ? P[idx - 1] : B.apertura;
+  const prevR = idx > 0 ? balRatios(P[idx - 1]) : null;
+  const R = balRatios(p);
+  const ultMes = B.meses[B.meses.length - 1];
+  const estMeses = B.filas.filter(f => f.estimado).map(f => mesLargoC(f.m));
+  const invNeg = B.filas.filter(f => f.inventario < 0).map(f => mesLargoC(f.m));
+  const maxCuadre = Math.max(...B.filas.map(f => Math.abs(f.cuadre)));
+  const cajaDif = Math.max(...B.filas.filter(f => f.cajaFlujo !== null).map(f => Math.abs(f.caja - f.cajaFlujo)), 0);
+  const avisos = (
+    <>
+      {estMeses.length > 0 && <AvisoFin><b>{estMeses.join(", ")}</b>: tu archivo no trae el costo de ventas, así que lo estimé con el {pctM((B.ratioCosto || 0) * 100, 1)} de las ventas (el promedio de tus últimos tres meses con estado de resultados). Con el costo real, el inventario y la utilidad de esos meses cambian.</AvisoFin>}
+      {invNeg.length > 0 && <AvisoFin>El inventario sale negativo en <b>{invNeg.join(", ")}</b>: vendiste mercancía que ya tenías antes de noviembre 2025 y esa existencia inicial no está en los libros. Si me das el valor del inventario al 1-nov-2025, lo agrego como apertura y se corrige todo el balance.</AvisoFin>}
+      {(maxCuadre > 0.01 || cajaDif > 0.01) && <AvisoFin malo>El balance no cuadra del todo (diferencia {usdM(maxCuadre, 2)} en el balance, {usdM(cajaDif, 2)} contra el flujo de caja). Revisa la pestaña “Contabilidad (libros) › Conciliación”.</AvisoFin>}
+    </>
+  );
+  const selector = (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", margin: "10px 0 4px", fontSize: 13, color: MT.texto2 }}>
+      <label htmlFor="bal-per" style={{ fontWeight: 700 }}>Ver el cierre de:</label>
+      <select id="bal-per" value={idx} onChange={(e) => setSel(Number(e.target.value))} style={{ border: `1px solid ${MT.borde}`, borderRadius: 10, padding: "7px 10px", fontSize: 13, background: "#fff", color: MT.texto }}>
+        {P.map((x, i) => <option key={x.k} value={i}>{balEtqL(x)}{balSubEtq(x) ? ` (${balSubEtq(x)})` : ""}</option>)}
+      </select>
+      <span style={{ color: MT.suave }}>Cambios contra {idx > 0 ? balEtqL(P[idx - 1]) : "la apertura (1-nov-2025)"}.</span>
+    </div>
+  );
+  const etiq = P.map(x => x.k);
+  const etqX = (k) => balEtq(P.find(x => x.k === k) || { k, nMeses: 1 });
+
+  // ───────── RESUMEN ─────────
+  const resumen = (() => {
+    const crec = (() => { if (idx === 0) return null; const a = P[idx - 1]; const va = a.ventas / a.nMeses, vb = p.ventas / p.nMeses; return va > 0 ? (vb / va - 1) * 100 : null; })();
+    return (
+      <div>
+        {avisos}
+        {selector}
+        <SecT sub={`Foto del negocio al cierre de ${balEtqL(p)}. Toca el “?” de cada tarjeta para ver cómo se calcula.`}>Qué tienes, qué debes y qué es tuyo</SecT>
+        <div className="met-grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))" }}>
+          <Kpi etiqueta="Activo total" acento retraso={0} formula="Todo lo que tiene el negocio: caja, inventario, cuentas por cobrar, equipos y muebles."
+            pie={<PieDelta cur={p.activo} prev={prev.activo} />}>{usdM(p.activo, 0)}</Kpi>
+          <Kpi etiqueta="Inventario de mercancía" retraso={60} formula="Compras de mercancía (al contado y pagos a proveedores) menos el costo de lo que vendiste."
+            pie={<PieDelta cur={p.inventario} prev={prev.inventario} />}>{usdM(p.inventario, 0)}</Kpi>
+          <Kpi etiqueta="Pasivo total" retraso={120} formula="Lo que debes: facturas de proveedores por pagar. Sale de tus libros."
+            pie={<PieDelta cur={p.pasivo} prev={prev.pasivo} malSube />}>{usdM(p.pasivo, 0)}</Kpi>
+          <Kpi etiqueta="Patrimonio" retraso={180} formula="Activo − Pasivo. Es lo que es tuyo: capital aportado más utilidades acumuladas."
+            pie={<PieDelta cur={p.patrimonio} prev={prev.patrimonio} />}>{usdM(p.patrimonio, 0)}</Kpi>
+          <Kpi etiqueta="Caja y bancos" retraso={240} formula="Saldo de tu flujo de caja al cierre del período."
+            pie={<PieDelta cur={p.caja} prev={prev.caja} />}>{usdM(p.caja, 0)}</Kpi>
+          <Kpi etiqueta={gran === "mes" ? "Utilidad del mes" : "Utilidad del año"} retraso={300} formula="Ventas netas − costo de ventas − gastos del período. Los equipos y muebles no se restan: son activo."
+            pie={idx > 0 ? <PieDelta cur={p.utilMes / p.nMeses} prev={P[idx - 1].utilMes / P[idx - 1].nMeses} sufijo={gran === "mes" ? "vs. mes anterior" : "por mes vs. año anterior"} /> : <div style={{ fontSize: 12, color: MT.suave }}>Primer período</div>}>
+            <span style={{ color: p.utilMes < 0 ? MT.malo : MT.bueno }}>{signoUsd(p.utilMes, 0)}</span></Kpi>
+        </div>
+
+        <SecT sub="Cómo crecen lo que tienes, lo que debes y lo que es tuyo.">Activo, pasivo y patrimonio en el tiempo</SecT>
+        <div className="met-card"><GraficaLineas etiquetas={etiq} etiquetaX={etqX} descripcion="Activo, pasivo y patrimonio por período" alto={240}
+          series={[{ nombre: "Activo", color: MT.rojo, valores: P.map(x => x.activo), formato: (v) => usdM(v, 0), area: true }, { nombre: "Patrimonio", color: MT.bueno, valores: P.map(x => x.patrimonio), formato: (v) => usdM(v, 0) }, { nombre: "Pasivo", color: "#B7791F", valores: P.map(x => x.pasivo), formato: (v) => usdM(v, 0) }]} /></div>
+
+        <SecT sub="Valor al costo de la mercancía que te queda, según compras menos costo de ventas de tus libros.">Inventario de mercancía</SecT>
+        <div className="met-card"><GraficaNegativos tipo="linea" area etiquetas={etiq} etiquetaX={etqX} valores={P.map(x => x.inventario)} color={MT.rojo} nombre="inventario" descripcion="Inventario de mercancía por período" /></div>
+        {invO && invO.valor !== undefined && (
+          <div className="met-card" style={{ marginTop: 12, fontSize: 13, lineHeight: 1.65, color: MT.texto2 }}>
+            <b style={{ color: MT.texto }}>Inventario real hoy en Odoo: {usdM(invO.valor, 0)}</b> ({numM(invO.productos)} productos, {numM(invO.unidades)} unidades al costo{invO.sin_costo > 0 ? `; ${invO.sin_costo} sin costo cargado` : ""}). Tus libros llegan hasta {mesLargoC(ultMes)} y dicen {usdM(B.filas[B.filas.length - 1].inventario, 0)}.
+            No se pueden comparar todavía: faltan las compras y ventas de septiembre a hoy. Con esos libros cerramos la diferencia y sabremos si el inventario de los libros es confiable.
+          </div>
+        )}
+
+        <SecT sub="Indicadores clave del período seleccionado; la flecha compara con el período anterior.">KPI importantes de finanzas</SecT>
+        <div className="met-grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))" }}>
+          <Kpi etiqueta="Ventas netas" formula="Ventas del período con los reembolsos ya restados." pie={idx > 0 ? <PieDelta cur={p.ventas / p.nMeses} prev={P[idx - 1].ventas / P[idx - 1].nMeses} sufijo={gran === "mes" ? "vs. mes anterior" : "por mes vs. año anterior"} /> : <div style={{ fontSize: 12, color: MT.suave }}>Primer período</div>}>{usdM(p.ventas, 0)}</Kpi>
+          <Kpi etiqueta="Crecimiento de ventas" formula={gran === "mes" ? "Ventas del mes ÷ ventas del mes anterior − 1." : "Ventas promedio por mes de este año ÷ las del año anterior − 1 (los años no tienen los mismos meses)."}
+            pie={<div style={{ fontSize: 12, color: MT.suave }}>{gran === "mes" ? "contra el mes anterior" : "ventas por mes, contra el año anterior"}</div>}>
+            <span style={{ color: crec === null ? MT.suave : crec >= 0 ? MT.bueno : MT.malo }}>{crec === null ? "—" : balSp(crec)}</span></Kpi>
+          <Kpi etiqueta="Margen bruto" formula="(Ventas − costo de ventas) ÷ Ventas. Lo que queda de cada venta antes de gastos." pie={prevR && prevR.margenBruto !== null ? <div style={{ fontSize: 12, color: MT.suave }}>antes {balFmt(prevR.margenBruto, "pct")}</div> : null}>{balFmt(R.margenBruto, "pct")}</Kpi>
+          <Kpi etiqueta="Rentabilidad neta" formula="Utilidad neta ÷ Ventas netas." pie={prevR && prevR.rentab !== null ? <div style={{ fontSize: 12, color: MT.suave }}>antes {balFmt(prevR.rentab, "pct")}</div> : null}>
+            <span style={{ color: R.rentab !== null && R.rentab < 0 ? MT.malo : MT.bueno }}>{balFmt(R.rentab, "pct")}</span></Kpi>
+          <Kpi etiqueta="Días de inventario" formula="Inventario ÷ Costo de ventas × días del período. Cuántos días de venta tienes en bodega." pie={<div style={{ fontSize: 12, color: MT.suave }}>rotación {R.rotInv === null ? "—" : R.rotInv.toFixed(2) + "x"} en el período</div>}>{balFmt(R.diasInv, "dias")}</Kpi>
+          <Kpi etiqueta="Capital de trabajo" formula="Activo corriente − Pasivo corriente (el fondo de maniobra)." pie={<PieDelta cur={p.ac - p.cxp} prev={prev.ac - prev.cxp} />}>{usdM(p.ac - p.cxp, 0)}</Kpi>
+          <Kpi etiqueta="Flujo de caja del período" formula="Saldo final − saldo inicial de caja en tu flujo de caja." pie={prevR && prevR.flujo !== null ? <div style={{ fontSize: 12, color: MT.suave }}>antes {signoUsd(prevR.flujo, 0)}</div> : null}>
+            <span style={{ color: R.flujo !== null && R.flujo < 0 ? MT.malo : MT.bueno }}>{R.flujo === null ? "—" : signoUsd(R.flujo, 0)}</span></Kpi>
+          <Kpi etiqueta="ROE (rentabilidad de tu dinero)" formula="Utilidad neta ÷ Patrimonio." pie={<div style={{ fontSize: 12, color: MT.suave }}>ROA {balFmt(R.roa, "pct")}</div>}>
+            <span style={{ color: R.roe !== null && R.roe < 0 ? MT.malo : MT.bueno }}>{balFmt(R.roe, "pct")}</span></Kpi>
+        </div>
+      </div>
+    );
+  })();
+
+  // ───────── BALANCE (cifras, vertical, horizontal) ─────────
+  const celda = (f, x, i) => {
+    const v = nF(x[f.k]);
+    if (modo === "cifras") return <span>{signoUsd(v, 2)}</span>;
+    if (modo === "vertical") return <span>{nF(x.activo) > 0 ? signoPct((v / nF(x.activo)) * 100, 1) : "—"}</span>;
+    const q = i > 0 ? P[i - 1] : B.apertura;
+    const { dd, pc } = balDelta(v, q[f.k]);
+    const bueno = f.malSube ? dd <= 0 : dd >= 0;
+    const col = Math.abs(dd) < 0.005 ? MT.suave : bueno ? MT.bueno : MT.malo;
+    return <><div style={{ color: col, fontWeight: 700 }}>{balSm(dd, 0)}</div><div style={{ color: col, fontSize: 11 }}>{balSp(pc)}</div></>;
+  };
+  const baja = () => descargarCsvEvo(`balance-general-${gran === "mes" ? "mensual" : "anual"}`, ["Concepto", ...P.map(balEtqL)],
+    BAL_FILAS.filter(f => f.k).map(f => [f.et, ...P.map(x => redC(nF(x[f.k])))]));
+  const balance = (
+    <div>
+      {avisos}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", margin: "12px 0 6px", alignItems: "center" }}>
+        {[["cifras", "Cifras"], ["vertical", "Análisis vertical (% del activo)"], ["horizontal", "Análisis horizontal (cambio vs. anterior)"]].map(([k, l]) => <button key={k} className={"met-chip" + (modo === k ? " on" : "")} onClick={() => setModo(k)} aria-pressed={modo === k}>{l}</button>)}
+        <button className="met-chip" style={{ marginLeft: "auto" }} onClick={baja}>Descargar tabla (CSV)</button>
+      </div>
+      <div style={{ fontSize: 12.5, color: MT.texto2, margin: "2px 2px 10px", lineHeight: 1.55 }}>
+        {modo === "cifras" && "Saldos al cierre de cada período. Activo = Pasivo + Patrimonio."}
+        {modo === "vertical" && "Cada renglón como % del activo total: muestra de qué está hecho el negocio (cuánto es caja, cuánto inventario, cuánto es tuyo)."}
+        {modo === "horizontal" && "Cuánto cambió cada renglón contra el período anterior, en dólares y en %. Verde = mejora; naranja = empeora (para el pasivo, subir es naranja)."}
+      </div>
+      <div className="met-card" style={{ padding: 0, overflowX: "auto" }}>
+        <table className="met-tabla" style={{ minWidth: Math.max(720, 250 + P.length * (modo === "horizontal" ? 104 : 96)) }}>
+          <thead><tr><th style={{ position: "sticky", left: 0, background: MT.tarjeta, zIndex: 1, minWidth: 240 }}>Concepto</th>
+            {P.map(x => <th key={x.k} style={{ whiteSpace: "nowrap" }}>{balEtqL(x)}{balSubEtq(x) && <div style={{ fontSize: 10.5, fontWeight: 500, color: MT.suave }}>{balSubEtq(x)}</div>}{x.estimado && <div style={{ fontSize: 10.5, fontWeight: 600, color: "#B7791F" }}>costo estimado</div>}</th>)}</tr></thead>
+          <tbody>
+            {BAL_FILAS.map((f, i) => {
+              if (f.t) return <tr key={i} style={{ background: f.t === "h" ? "#F1F1F3" : "#FAFAFB" }}><td colSpan={P.length + 1} style={{ position: "sticky", left: 0, fontWeight: 800, fontSize: f.t === "h" ? 12.5 : 12, color: f.t === "h" ? MT.texto : MT.texto2, paddingLeft: f.t === "h" ? 12 : 18 }}>{f.et}</td></tr>;
+              const fuerte = f.fuerte || f.tot; const fondo = f.fuerte ? "#FDEEEE" : f.tot ? "#F6F6F7" : MT.tarjeta;
+              return <tr key={i} style={{ fontWeight: fuerte ? 800 : 500, background: fondo }}>
+                <td style={{ position: "sticky", left: 0, background: fondo, zIndex: 1, paddingLeft: fuerte ? 12 : 26 }}>{f.et}</td>
+                {P.map((x, j) => <td key={x.k} style={{ whiteSpace: "nowrap", color: modo === "cifras" && nF(x[f.k]) < 0 ? MT.malo : MT.texto }}>{celda(f, x, j)}</td>)}
+              </tr>;
+            })}
+            {modo === "cifras" && <tr style={{ fontSize: 12, color: MT.suave }}><td style={{ position: "sticky", left: 0, background: MT.tarjeta, paddingLeft: 12 }}>Diferencia (debe ser $0.00)</td>{P.map(x => <td key={x.k} style={{ color: Math.abs(x.cuadre) > 0.01 ? MT.malo : MT.bueno }}>{usdM(Math.abs(x.cuadre) < 0.005 ? 0 : x.cuadre, 2)}</td>)}</tr>}
+          </tbody>
+        </table>
+      </div>
+      <div style={{ fontSize: 11.5, color: MT.suave, margin: "8px 2px 0", lineHeight: 1.6 }}>Los libros llegan hasta {mesLargoC(ultMes)}. Los equipos y muebles están a su costo, sin depreciación. {gran === "anio" && "En la vista por año, cada columna es el saldo al cierre del último mes cargado de ese año."}</div>
+    </div>
+  );
+
+  // ───────── INCREMENTOS ─────────
+  const ITEMS = [["inventario", "Mercancía (inventario)", false], ["activo", "Activo total", false], ["pasivo", "Pasivo total", true], ["patrimonio", "Patrimonio", false]];
+  const itemSel = ITEMS.find(x => x[0] === incItem) || ITEMS[0];
+  const dp = (x, i) => balDelta(x[itemSel[0]], (i > 0 ? P[i - 1] : B.apertura)[itemSel[0]]).dd;
+  const incrementos = (
+    <div>
+      {avisos}
+      <SecT sub="Cuánto subió o bajó cada uno en cada período contra el anterior. Elige cuál ver en la gráfica.">Incremento de mercancía, activo, pasivo y patrimonio</SecT>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", margin: "4px 0 10px" }}>
+        {ITEMS.map(([k, l]) => <button key={k} className={"met-chip" + (incItem === k ? " on" : "")} onClick={() => setIncItem(k)} aria-pressed={incItem === k}>{l}</button>)}
+      </div>
+      <div className="met-card"><GraficaNegativos etiquetas={etiq} etiquetaX={etqX} valores={P.map((x, i) => dp(x, i))} nombre={`cambio en ${itemSel[1].toLowerCase()}`} descripcion={`Cambio de ${itemSel[1]} por período`} /></div>
+      <div style={{ fontSize: 11.5, color: MT.suave, margin: "6px 2px 0" }}>Verde = subió; naranja = bajó. {itemSel[2] ? "Para el pasivo, subir significa que debes más." : ""}</div>
+      <SecT sub="Dólares y % de cambio contra el período anterior.">Tabla de incrementos</SecT>
+      <div className="met-card" style={{ padding: 0, overflowX: "auto" }}>
+        <table className="met-tabla" style={{ minWidth: Math.max(720, 230 + P.length * 104) }}>
+          <thead><tr><th style={{ position: "sticky", left: 0, background: MT.tarjeta, zIndex: 1, minWidth: 220 }}>Concepto</th>{P.map(x => <th key={x.k} style={{ whiteSpace: "nowrap" }}>{balEtqL(x)}</th>)}</tr></thead>
+          <tbody>
+            {ITEMS.map(([k, l, malSube]) => (
+              <tr key={k} style={{ fontWeight: 600 }}>
+                <td style={{ position: "sticky", left: 0, background: MT.tarjeta, zIndex: 1 }}>{l}</td>
+                {P.map((x, i) => {
+                  const { dd, pc } = balDelta(x[k], (i > 0 ? P[i - 1] : B.apertura)[k]);
+                  const col = Math.abs(dd) < 0.005 ? MT.suave : (malSube ? dd <= 0 : dd >= 0) ? MT.bueno : MT.malo;
+                  return <td key={x.k} style={{ whiteSpace: "nowrap" }}><div style={{ color: col, fontWeight: 800 }}>{balSm(dd, 0)}</div><div style={{ color: col, fontSize: 11 }}>{balSp(pc)}</div></td>;
+                })}
+              </tr>
+            ))}
+            <tr style={{ background: "#F1F1F3" }}><td colSpan={P.length + 1} style={{ fontWeight: 800, fontSize: 12.5 }}>De dónde sale el cambio</td></tr>
+            <tr><td style={{ position: "sticky", left: 0, background: MT.tarjeta, paddingLeft: 22 }}>Inventario = Compras del período</td>{P.map(x => <td key={x.k} style={{ whiteSpace: "nowrap" }}>{signoUsd(x.compras, 0)}</td>)}</tr>
+            <tr><td style={{ position: "sticky", left: 0, background: MT.tarjeta, paddingLeft: 22 }}>Inventario = (−) Costo de lo vendido</td>{P.map(x => <td key={x.k} style={{ whiteSpace: "nowrap" }}>{signoUsd(-x.costo, 0)}{x.estimado ? " *" : ""}</td>)}</tr>
+            <tr><td style={{ position: "sticky", left: 0, background: MT.tarjeta, paddingLeft: 22 }}>Patrimonio = Utilidad del período</td>{P.map(x => <td key={x.k} style={{ whiteSpace: "nowrap", color: x.utilMes < 0 ? MT.malo : MT.texto }}>{signoUsd(x.utilMes, 0)}</td>)}</tr>
+            <tr><td style={{ position: "sticky", left: 0, background: MT.tarjeta, paddingLeft: 22 }}>Patrimonio = Aportes de capital</td>{P.map((x, i) => <td key={x.k} style={{ whiteSpace: "nowrap" }}>{signoUsd(x.capital - nF((i > 0 ? P[i - 1] : B.apertura).capital), 0)}</td>)}</tr>
+          </tbody>
+        </table>
+      </div>
+      <div style={{ fontSize: 11.5, color: MT.suave, margin: "8px 2px 0", lineHeight: 1.6 }}>El inventario sube cuando compras más de lo que vendes (al costo) y baja cuando vendes más de lo que compras. El patrimonio sube con la utilidad y con el dinero que aportas. {P.some(x => x.estimado) && "* Costo de ventas estimado."}</div>
+    </div>
+  );
+
+  // ───────── RATIOS ─────────
+  const bajaR = () => descargarCsvEvo(`ratios-${gran === "mes" ? "mensual" : "anual"}`, ["Ratio", "Fórmula", ...P.map(balEtqL)],
+    BAL_RATIOS.map(r => [r.n, r.f, ...P.map(x => { const v = balRatios(x)[r.k]; return v === null ? (r.sinDeuda ? "Sin deudas" : "") : r.u === "pct" ? redC(v * 100) + "%" : redC(v); })]));
+  const textoR = (r, v) => v === null && r.sinDeuda ? "Sin deudas" : balFmt(v, r.u);
+  const ratios = (
+    <div>
+      {avisos}
+      {selector}
+      <SecT sub={`Cierre de ${balEtqL(p)}${gran === "anio" && p.nMeses < 12 ? ` (año parcial de ${p.nMeses} meses; los ratios de ventas y utilidad son del período, no anualizados)` : gran === "mes" ? " (ratios de ventas y utilidad del mes, no anualizados)" : ""}. El punto de color es un semáforo sencillo: verde sano, ámbar atención, naranja revisar.`}>Tus 13 ratios</SecT>
+      <div className="met-grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))" }}>
+        {BAL_RATIOS.map((r, i) => {
+          const v = R[r.k]; const e = r.est(v, p); const col = e ? COL_EST[e] : MT.texto;
+          return <Kpi key={r.k} etiqueta={r.n} retraso={Math.min(i * 30, 300)} formula={<><b>{r.f}.</b> {r.que}</>}
+            pie={<div style={{ fontSize: 12, color: MT.texto2, lineHeight: 1.5 }}>{r.lee(v, p)}{prevR && <div style={{ color: MT.suave, marginTop: 4 }}>Antes: {textoR(r, prevR[r.k])}</div>}</div>}>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 10 }}>{e && <i aria-hidden="true" style={{ width: 10, height: 10, borderRadius: "50%", background: col, display: "inline-block" }} />}<span style={{ color: col }}>{textoR(r, v)}</span></span></Kpi>;
+        })}
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <div className="met-sec" style={{ flex: 1, minWidth: 220 }}>Ratios período por período</div>
+        <button className="met-chip" onClick={bajaR}>Descargar tabla (CSV)</button>
+      </div>
+      <div className="met-card" style={{ padding: 0, overflowX: "auto" }}>
+        <table className="met-tabla" style={{ minWidth: Math.max(720, 250 + P.length * 96) }}>
+          <thead><tr><th style={{ position: "sticky", left: 0, background: MT.tarjeta, zIndex: 1, minWidth: 240 }}>Ratio</th>{P.map(x => <th key={x.k} style={{ whiteSpace: "nowrap" }}>{balEtqL(x)}</th>)}</tr></thead>
+          <tbody>{BAL_RATIOS.map(r => (
+            <tr key={r.k}><td style={{ position: "sticky", left: 0, background: MT.tarjeta, zIndex: 1, fontWeight: 600 }}>{r.n}</td>
+              {P.map(x => { const v = balRatios(x)[r.k]; const e = r.est(v, x); return <td key={x.k} style={{ whiteSpace: "nowrap", color: e ? COL_EST[e] : MT.texto, fontWeight: e ? 700 : 500 }}>{textoR(r, v)}</td>; })}</tr>
+          ))}</tbody>
+        </table>
+      </div>
+    </div>
+  );
+
+  // ───────── CÓMO SE ARMA ─────────
+  const Par = ({ t, children }) => <div className="met-card" style={{ marginBottom: 10 }}><div style={{ fontWeight: 800, fontSize: 14 }}>{t}</div><div style={{ fontSize: 12.5, color: MT.texto2, lineHeight: 1.65, marginTop: 4 }}>{children}</div></div>;
+  const como = (
+    <div>
+      <SecT sub="Para que sepas de dónde sale cada número y qué supuestos hice.">Cómo se arma este balance</SecT>
+      <Par t="Fuente">Tus libros guardados en “Contabilidad (libros)” ({B.meses.length} meses, de {mesLargoC(B.meses[0])} a {mesLargoC(ultMes)}): libro diario, balances, estados de resultados y flujos de caja, con las correcciones del 9-nov-2026. Es solo lectura: no cambia Odoo ni tus libros.</Par>
+      <Par t="Caja y bancos">Saldo inicial de caja ({usdM(B.ini, 2)}) más los movimientos de la cuenta Caja y banco. Coincide con el saldo final de tu flujo de caja real en todos los meses.</Par>
+      <Par t="Inventario de mercancía">Tu cuenta Mercancía solo suma compras y nunca resta lo vendido. Por eso el balance calcula: compras al contado + pagos a proveedores (esas facturas no estaban registradas como compra) − costo de ventas de tu estado de resultados. Es un cálculo contable; la existencia real la confirma el conteo físico u Odoo.</Par>
+      <Par t="Cuentas por cobrar y por pagar">Tus libros no tienen cuentas por cobrar (vendes al contado) ni facturas por pagar pendientes, así que ambas dan $0. Por eso los ratios de liquidez, tesorería y plazo de pago dicen “sin deudas”. Si debes facturas a proveedores o impuestos, ahí falta cargarlas.</Par>
+      <Par t="Activo fijo">Muebles, equipo de oficina y equipo eléctrico a su costo de compra, sin depreciación. En el estado de resultados de tus archivos algunos de esos equipos aparecen como gasto; aquí se tratan como activo, por eso la utilidad de enero, junio y julio aquí es mayor que en tu estado de resultados por el valor del equipo comprado.</Par>
+      <Par t="Patrimonio">Capital social (incluye los {usdM(B.ini, 0)} de saldo inicial de caja y los aportes) más las utilidades acumuladas (ventas − costo de ventas − gastos). Activo = Pasivo + Patrimonio se verifica mes a mes.</Par>
+      <div className="met-card" style={{ borderColor: "rgba(227,30,36,.35)" }}>
+        <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 6 }}>Datos que me ayudarían a afinar el balance</div>
+        <ol style={{ margin: "0 0 0 18px", padding: 0, fontSize: 12.5, color: MT.texto2, lineHeight: 1.75 }}>
+          <li>Libros de <b>septiembre y octubre</b> (y noviembre cuando cierre): hoy el balance se detiene en {mesLargoC(ultMes)}.</li>
+          <li><b>Estado de resultados de agosto</b> con su costo de ventas (hoy está estimado).</li>
+          <li><b>Inventario al 1-nov-2025</b> (lo que tenías antes de empezar los libros) y, si puedes, un conteo o valor de inventario a una fecha reciente.</li>
+          <li>Si <b>debes</b> facturas a proveedores, impuestos (ITBMS) o préstamos, y si te deben a ti: monto y fecha de cada uno.</li>
+          <li>Si quieres <b>depreciar</b> equipos y muebles: vida útil estimada de cada uno.</li>
+        </ol>
+      </div>
+    </div>
+  );
+  const cuerpo = sub === "resumen" ? resumen : sub === "balance" ? balance : sub === "incrementos" ? incrementos : sub === "ratios" ? ratios : como;
+  return (
+    <div style={{ opacity: cargando ? 0.7 : 1, transition: "opacity .25s" }}>
+      <div className="met-card" style={{ marginTop: 12, fontSize: 13, color: MT.texto2, lineHeight: 1.6 }}>
+        <b style={{ color: MT.texto }}>Balance general de tus libros.</b> Qué tienes (activo), qué debes (pasivo) y qué es tuyo (patrimonio), con análisis vertical y horizontal, incrementos y ratios. Cifras hasta {mesLargoC(ultMes)}.
+      </div>
+      {cabeza}
+      {cuerpo}
+    </div>
+  );
+}
+
 function FinanzasPanel({ desde, hasta, filtro, productos, onCostosCambio }) {
   const [vista, setVista] = useState("resumen");
-  const VISTAS = [["resumen", "Resumen"], ["flujo", "Flujo de caja"], ["resultados", "Estado de resultados"], ["gastos", "Gastos"], ["margen", "Márgenes"], ["compras", "Compras (Odoo)"], ["costos", "Costos de productos"], ["cuentas", "Por cobrar y pagar"], ["contabilidad", "Contabilidad (libros)"], ["control", "Ajustes y control"]];
+  const VISTAS = [["resumen", "Resumen"], ["flujo", "Flujo de caja"], ["resultados", "Estado de resultados"], ["balance", "Balance general"], ["gastos", "Gastos"], ["margen", "Márgenes"], ["compras", "Compras (Odoo)"], ["costos", "Costos de productos"], ["cuentas", "Por cobrar y pagar"], ["contabilidad", "Contabilidad (libros)"], ["control", "Ajustes y control"]];
   return (
     <div className="met">
       <style>{ESTILO_MET}</style>
@@ -7032,6 +7442,7 @@ function FinanzasPanel({ desde, hasta, filtro, productos, onCostosCambio }) {
       {vista === "resumen" && <FinResumen desde={desde} hasta={hasta} irA={setVista} />}
       {vista === "flujo" && <FinEvolucion modo="flujo" irA={setVista} />}
       {vista === "resultados" && <FinEvolucion modo="resultados" irA={setVista} />}
+      {vista === "balance" && <FinBalance />}
       {vista === "gastos" && <FinGastos desde={desde} hasta={hasta} />}
       {vista === "margen" && <FinMargen desde={desde} hasta={hasta} irA={setVista} />}
       {vista === "compras" && <FinCompras desde={desde} hasta={hasta} />}
