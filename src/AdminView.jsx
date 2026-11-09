@@ -6838,7 +6838,7 @@ function ContER({ c }) {
           })}</tbody>
         </table>
       </div>
-      <div style={{ fontSize: 11.5, color: MT.suave, margin: "8px 2px 0", lineHeight: 1.6 }}>Son tus cifras tal cual están en los archivos. Los sueldos de tus estados de resultados no siempre coinciden con los del flujo de caja (por ejemplo marzo y mayo): son diferencias de tus propios libros.</div>
+      <div style={{ fontSize: 11.5, color: MT.suave, margin: "8px 2px 0", lineHeight: 1.6 }}>Son tus cifras de los archivos con las correcciones del 9-nov-2026 (reembolsos del POS que se sumaban como venta). Tus archivos originales están respaldados en la base de datos.</div>
     </div>
   );
 }
