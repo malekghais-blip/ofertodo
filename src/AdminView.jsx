@@ -4743,6 +4743,19 @@ function explicarStock(p, lead) {
 
 function csvCelda(v) { const s = String(v ?? ""); return /[",\n;]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }
 
+// Foto del producto (las del catálogo de la web, por referencia). Si no hay foto o falla, se muestra un cuadro neutro.
+function FotoProd({ url, size = 52 }) {
+  const [fallo, setFallo] = useState(false);
+  useEffect(() => { setFallo(false); }, [url]);
+  const caja = { width: size, height: size, borderRadius: 10, flexShrink: 0, background: "rgba(17,17,17,.05)", border: `1px solid ${MT.rejilla}`, overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center" };
+  if (!url || fallo) return <div style={caja} title="Sin foto" aria-hidden="true"><Package size={Math.round(size * 0.4)} color={MT.eje} /></div>;
+  return (
+    <a href={url} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} style={{ ...caja, cursor: "zoom-in" }} title="Ver foto">
+      <img src={imagenOptimizada(url, 150)} alt="" loading="lazy" onError={() => setFallo(true)} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+    </a>
+  );
+}
+
 const STK_TIPO_ACC = {
   comprar_mas: { clase: "stk-b-ok", texto: "Comprar más", orden: 0 },
   mantener: { clase: "stk-b-nuevo", texto: "Mantener", orden: 1 },
@@ -4767,7 +4780,7 @@ function motivoTipo(t) {
   }
 }
 
-function TiposTiendaSeccion({ dias, prods }) {
+function TiposTiendaSeccion({ dias, prods, imgs = {} }) {
   const [d, setD] = useState(null);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState("");
@@ -4889,8 +4902,8 @@ function TiposTiendaSeccion({ dias, prods }) {
                                 <>
                                   <div className="met-lbl" style={{ marginBottom: 6 }}>Productos de este grupo que ya conviene comprar ({comprarItems.length})</div>
                                   {comprarItems.slice(0, 8).map(p => (
-                                    <div key={p.ref} style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "5px 0", fontSize: 13, borderBottom: `1px solid ${MT.rejilla}` }}>
-                                      <span><b>{p.nombre}</b> <span className="stk-sub" style={{ display: "inline" }}>· {p.ref}</span></span>
+                                    <div key={p.ref} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, padding: "6px 0", fontSize: 13, borderBottom: `1px solid ${MT.rejilla}` }}>
+                                      <span style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}><FotoProd url={imgs[p.ref]} size={40} /><span><b>{p.nombre}</b> <span className="stk-sub" style={{ display: "inline" }}>· {p.ref}</span></span></span>
                                       <span style={{ whiteSpace: "nowrap", color: MT.texto2 }}>stock {numM(Math.round(p.stock ?? 0))} · comprar <b style={{ color: MT.texto }}>{numM(p.sugerido)}</b></span>
                                     </div>
                                   ))}
@@ -4939,6 +4952,7 @@ function AnalisisStockPanel({ categories = [], ingresoPorCategoria = [], ventasP
   const [canal, setCanal] = useState("todos"); // todos | web | tienda
   const [limite, setLimite] = useState(25);
   const [tiendaTodo, setTiendaTodo] = useState(false);
+  const [imgs, setImgs] = useState({}); // referencia -> url de la foto
   const peticion = useRef(0);
 
   const cargar = async (silencioso = false) => {
@@ -4955,6 +4969,12 @@ function AnalisisStockPanel({ categories = [], ingresoPorCategoria = [], ventasP
   };
   useEffect(() => { setLimite(25); cargar(); }, [dias]);
   useRefrescoPeriodico(() => cargar(true), 300000);
+  // Las fotos se piden aparte: si fallan, la pantalla funciona igual (solo se ve el cuadro neutro)
+  useEffect(() => {
+    let vivo = true;
+    (async () => { try { const m = await rpcConReintento("analisis_imagenes", {}); if (vivo && m && typeof m === "object") setImgs(m); } catch (_e) { /* sin fotos */ } })();
+    return () => { vivo = false; };
+  }, []);
 
   const r = d && d.resumen;
   const prods = (d && d.productos) || [];
@@ -5146,10 +5166,15 @@ function AnalisisStockPanel({ categories = [], ingresoPorCategoria = [], ventasP
                     const comprar = esComprar(p);
                     return (
                       <tr key={p.ref}>
-                        <td style={{ maxWidth: 340 }}>
-                          <div className="stk-nom">{p.nombre}</div>
-                          <div className="stk-sub">{p.ref}{provDe(p) !== "Sin proveedor" ? ` · ${provDe(p)}` : ""}{catDe(p.categoria_id) ? ` · ${catDe(p.categoria_id)}` : ""}{p.origen === "tienda" ? " · solo tienda física" : ""}</div>
-                          <div className="stk-why">{explicarStock(p, lead)}</div>
+                        <td style={{ maxWidth: 400 }}>
+                          <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+                            <FotoProd url={imgs[p.ref]} size={56} />
+                            <div style={{ minWidth: 0 }}>
+                              <div className="stk-nom">{p.nombre}</div>
+                              <div className="stk-sub">{p.ref}{provDe(p) !== "Sin proveedor" ? ` · ${provDe(p)}` : ""}{catDe(p.categoria_id) ? ` · ${catDe(p.categoria_id)}` : ""}{p.origen === "tienda" ? " · solo tienda física" : ""}</div>
+                              <div className="stk-why">{explicarStock(p, lead)}</div>
+                            </div>
+                          </div>
                         </td>
                         <td>
                           <div style={{ fontWeight: 800, color: Number(p.stock) > 0 ? MT.texto : MT.rojo }}>{p.stock === undefined || p.stock === null ? "—" : numM(Math.round(p.stock))}</div>
@@ -5225,9 +5250,14 @@ function AnalisisStockPanel({ categories = [], ingresoPorCategoria = [], ventasP
                 <tbody>
                   {tiendaVisible.map((t, i) => (
                     <tr key={(t.ref || t.nombre) + i}>
-                      <td style={{ maxWidth: 340 }}>
-                        <div className="stk-nom"><span style={{ color: MT.suave, fontWeight: 700, marginRight: 8 }}>{i + 1}</span>{t.nombre}</div>
-                        <div className="stk-sub">{t.ref || "sin referencia en Odoo"} · {numM(t.tickets)} ventas · última {t.ultima_venta ? fechaCortaM(t.ultima_venta) : "—"}</div>
+                      <td style={{ maxWidth: 380 }}>
+                        <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+                          <FotoProd url={t.ref ? imgs[t.ref] : null} size={52} />
+                          <div style={{ minWidth: 0 }}>
+                            <div className="stk-nom"><span style={{ color: MT.suave, fontWeight: 700, marginRight: 8 }}>{i + 1}</span>{t.nombre}</div>
+                            <div className="stk-sub">{t.ref || "sin referencia en Odoo"} · {numM(t.tickets)} ventas · última {t.ultima_venta ? fechaCortaM(t.ultima_venta) : "—"}</div>
+                          </div>
+                        </div>
                       </td>
                       <td style={{ minWidth: 150 }}>
                         <div style={{ fontWeight: 800 }}>{numM(t.unidades)} <span className="stk-sub" style={{ display: "inline" }}>· {pctM(t.pct_unidades, 1)} de la tienda</span></div>
@@ -5259,7 +5289,7 @@ function AnalisisStockPanel({ categories = [], ingresoPorCategoria = [], ventasP
           </div>
 
           {/* ── Qué tipos de producto comprar (tienda) ── */}
-          <TiposTiendaSeccion dias={dias} prods={prods} />
+          <TiposTiendaSeccion dias={dias} prods={prods} imgs={imgs} />
 
           {/* ── Ventas web por categoría y zona (histórico) ── */}
           {(ingresoPorCategoria.length > 0 || ventasPorArea.length > 0) && (
