@@ -7183,8 +7183,14 @@ function PuenteInventario({ desde, ultMes, invLibros }) {
   );
   return (
     <div className="met-card" style={{ marginTop: 12 }}>
-      <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 2 }}>Inventario: tus libros contra Odoo hoy</div>
-      <div style={{ fontSize: 12, color: MT.texto2, marginBottom: 8, lineHeight: 1.5 }}>Odoo es la referencia del inventario real. Así llegas del cierre de {mesLargoC(ultMes)} a hoy ({fechaCortaM(pu.hasta)}).</div>
+      <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 2 }}>Inventario hoy, según Odoo</div>
+      <div style={{ fontSize: 30, fontWeight: 800, letterSpacing: "-0.02em", fontVariantNumeric: "tabular-nums" }}>{usdM(pu.odoo_valor, 0)}</div>
+      <div style={{ fontSize: 12, color: MT.texto2, marginBottom: 12, lineHeight: 1.5 }}>
+        Es el valor al costo de la mercancía que hay en stock hoy ({fechaCortaM(pu.hasta)}), tal como lo ve Odoo en “Existencia”.
+        {iv && nF(iv.sin_referencia_n) > 0 && ` Incluye ${iv.sin_referencia_n} productos sin referencia interna (${usdM(iv.sin_referencia_valor, 0)}).`}
+      </div>
+      <div style={{ fontWeight: 700, fontSize: 12.5, marginBottom: 2 }}>Cómo se conecta con el balance de tus libros</div>
+      <div style={{ fontSize: 11.5, color: MT.suave, marginBottom: 4, lineHeight: 1.5 }}>El balance muestra el inventario al cierre de cada mes, y Odoo solo conoce el de hoy. Por eso se pasa del stock de hoy al cierre de {mesLargoC(ultMes)}: se suma lo que salió por ventas y se resta lo que entró por compras desde entonces. Aquí se comprueba hacia adelante.</div>
       <Fila t={`Inventario de tus libros al cierre de ${mesLargoC(ultMes)} (ya ajustado a Odoo)`} v={usdM(invLibros, 0)} />
       <Fila t={`+ Compras recibidas en Odoo desde el ${fechaCortaM(pu.desde)} (${pu.n_compras}; ya están en tu libro diario, pagadas o por pagar)`} v={balSm(nF(pu.compras_recibidas), 0)} />
       <Fila t="− Costo de lo vendido en web y tienda (estimado con los costos cargados)" v={balSm(-nF(pu.costo_total), 0)} />
