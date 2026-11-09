@@ -6460,9 +6460,468 @@ function FinEvolucion({ modo, irA }) {
   );
 }
 
+// ═══════════ CONTABILIDAD (libros llevados a mano fuera de Odoo) — SOLO DUEÑO ═══════════
+// Aquí vive la copia de tus libros manuales (libro diario, balances de comprobación, estados de resultados y
+// flujos de caja). Se guardan en tablas privadas que solo lee la función cont_datos (solo dueño). Es un respaldo
+// fiel, listo para exportar a Odoo cuando el módulo de contabilidad esté listo. Nada de aquí cambia Odoo.
+const mesLargoC = (ym) => `${mesCortoM(ym)} ${String(ym).slice(0, 4)}`;
+const redC = (x) => Math.round((Number(x) || 0) * 100) / 100;
+const FLUJO_A_CUENTAS = {
+  "VENTAS": ["Ventas"], "CAPITAL SOCIAL": ["Capital social"], "COMPRA DE MERCANCIA AL CONTADO": ["Mercancía"], "GASTOS DE PUBLICIDAD": ["Gastos de publicidad"],
+  "GASTOS VARIOS": ["Gastos varios"], "GASTOS DE ENVIOS": ["Gastos de envío"], "GASTOS DE COMISIONES": ["Comisiones"],
+  "GASTOS DE EQUIPO DE OFICINA": ["Equipo de oficina", "Equipo eléctrico", "Muebles y estantería"], "SUELDOS": ["Sueldos"],
+  "GASTOS DE PRODUCCIÓN DE PUBLICIDAD": ["Material de empaque"], "SERVICIOS DIGITALES": ["Servicios digitales"], "SERVICIOS PROFESIONALES": ["Servicios profesionales"],
+  "PROVEEDORES": ["Proveedores"],
+};
+const FLUJO_INGRESOS = ["VENTAS", "CAPITAL SOCIAL"];
+const ER_ORDEN = [
+  ["ingreso", "Ingreso por ventas", "ing"], ["total de ingresos", "Total de ingresos", "sub"], ["ventas netas", "Ventas netas", "sub"], ["costos de ventas", "(−) Costo de ventas", "egr"],
+  ["utilidad bruta", "Utilidad bruta en ventas", "sub"], ["margen bruto", "Margen bruto %", "pct"],
+  ["gastos de publicidad", "(−) Publicidad", "egr"], ["gastos envios", "(−) Envíos", "egr"], ["gasto comisiones", "(−) Comisiones", "egr"], ["servicios digitales", "(−) Servicios digitales", "egr"],
+  ["gastos varios", "(−) Gastos varios", "egr"], ["equipo de oficina", "(−) Equipo de oficina", "egr"], ["gasto alquiler bodega", "(−) Alquiler de bodega", "egr"], ["gasto alquiler", "(−) Alquiler", "egr"],
+  ["sueldos", "(−) Sueldos", "egr"], ["material de empaque", "(−) Material de empaque", "egr"], ["total de gastos", "Total de gastos operacionales", "sub"],
+  ["utilidad operativa", "Utilidad operativa", "sub"], ["utilidad neta", "Utilidad neta", "tot"], ["margen neto", "Margen neto %", "pct"],
+];
+const erClave = (concepto) => {
+  const c = String(concepto).toLowerCase().replace(/\(.*?\)/g, "").replace(/\s+/g, " ").trim();
+  const orden = ["gasto alquiler bodega", "gasto alquiler", "gastos de publicidad", "gastos envios", "gasto comisiones", "servicios digitales", "gastos varios", "equipo de oficina", "sueldos", "material de empaque",
+    "total de gastos", "utilidad operativa", "utilidad neta", "utilidad bruta", "total de ingresos", "ventas netas", "costos de ventas", "ingreso"];
+  return orden.find(k => c.includes(k)) || c;
+};
+
+const obsSinFecha = (o) => String(o || "").replace(/Fecha corregida:[^.]*\.\s*/g, "").trim();
+function contPrepara(d, fin) {
+  const cuentas = d.cuentas || [];
+  const idANombre = new Map(cuentas.map(c => [c.id, c.nombre]));
+  const asientos = (d.asientos || []).filter(a => !a.anulado).map(a => ({ ...a, obsR: obsSinFecha(a.obs), obsF: /Fecha corregida/.test(a.obs || ""), lineas: (a.l || []).map(([cid, db, hb]) => ({ cuenta: idANombre.get(cid) || "?", debe: Number(db), haber: Number(hb) })) }));
+  const meses = [...new Set(asientos.map(a => a.mes))].sort();
+  const diario = {};
+  asientos.forEach(a => a.lineas.forEach(l => {
+    const m = diario[a.mes] || (diario[a.mes] = {}); const x = m[l.cuenta] || (m[l.cuenta] = { debe: 0, haber: 0 });
+    x.debe += l.debe; x.haber += l.haber;
+  }));
+  const oficial = {};
+  (d.balance || []).forEach(([m, cid, s]) => { (oficial[m] || (oficial[m] = {}))[idANombre.get(cid) || "?"] = Number(s); });
+  const neto = (m, c) => { const x = (diario[m] || {})[c]; return x ? x.debe - x.haber : 0; };
+  // Diferencias del diario contra el balance de comprobación
+  const difBalance = [];
+  Object.keys(oficial).sort().forEach(m => {
+    const ctas = new Set([...Object.keys(oficial[m]), ...Object.keys(diario[m] || {})]);
+    [...ctas].forEach(c => { const o = oficial[m][c] || 0, j = neto(m, c); if (Math.abs(j - o) > 0.005) difBalance.push({ mes: m, cuenta: c, diario: j, oficial: o, dif: redC(j - o) }); });
+  });
+  // Flujo
+  const flujo = { real: {}, proyectado: {} };
+  (d.flujo || []).forEach(([esc, m, o, concepto, monto]) => { ((flujo[esc] || (flujo[esc] = {}))[m] || (flujo[esc][m] = { _orden: [] }))[concepto] = Number(monto); const f = flujo[esc][m]; if (!f._orden.some(x => x[0] === concepto)) f._orden.push([concepto, o]); });
+  // Estado de resultados
+  const er = {};
+  (d.er || []).forEach(([m, o, concepto, monto]) => { (er[m] || (er[m] = {}))[erClave(concepto)] = Number(monto); });
+  // Contabilidad contra flujo (mes a mes y por concepto)
+  const mesesFlujo = Object.keys(flujo.real).sort();
+  const contraFlujo = mesesFlujo.map(m => {
+    const f = flujo.real[m] || {}; const ini = f["SALDO INICIAL"], fin2 = f["SALDO FINAL"];
+    const movFlujo = redC((fin2 ?? 0) - (ini ?? 0));
+    const cajaConta = redC((oficial[m] || {})["Caja y banco"] || 0);
+    const detalle = [];
+    Object.entries(FLUJO_A_CUENTAS).forEach(([conc, ctas]) => {
+      const vf = f[conc] || 0;
+      const vc = ctas.reduce((a, c) => a + ((oficial[m] || {})[c] || 0), 0) * (FLUJO_INGRESOS.includes(conc) ? -1 : 1);
+      if (Math.abs(vf - vc) > 0.005) detalle.push({ concepto: conc, flujo: redC(vf), conta: redC(vc), ing: FLUJO_INGRESOS.includes(conc) });
+    });
+    return { mes: m, ini, fin: fin2, movFlujo, cajaConta, dif: redC(movFlujo - cajaConta), detalle };
+  });
+  // Flujo real contra proyectado
+  const contraProy = Object.keys(flujo.proyectado).sort().map(m => {
+    const p = flujo.proyectado[m], r = flujo.real[m] || {};
+    const egr = (x) => Object.entries(x).filter(([k]) => k !== "_orden" && !["SALDO INICIAL", "SALDO FINAL", "VENTAS", "CAPITAL SOCIAL"].includes(k)).reduce((a, [, v]) => a + v, 0);
+    return { mes: m, ventasP: p["VENTAS"] || 0, ventasR: r["VENTAS"] || 0, egrP: redC(egr(p)), egrR: redC(egr(r)), saldoP: p["SALDO FINAL"], saldoR: r["SALDO FINAL"] };
+  });
+  // Libros contra sistema (web + tienda + Odoo)
+  const sis = {}; ((fin && fin.filas) || []).forEach(f => { sis[f.k] = f; });
+  const mesesSis = Object.keys(sis).sort();
+  const contraSistema = mesesSis.filter(m => m >= (meses[0] || "9999")).map(m => {
+    const hayLibros = !!flujo.real[m] || !!oficial[m]; const f = sis[m]; const fr = flujo.real[m] || {}; const of = oficial[m] || {};
+    return {
+      mes: m, hayLibros, enCurso: false,
+      ventasL: hayLibros ? (fr["VENTAS"] ?? -(of["Ventas"] || 0)) : null, ventasS: nF(f.entradas),
+      mercL: hayLibros ? (of["Mercancía"] || 0) : null, mercS: nF(f.compras_odoo),
+      adsL: hayLibros ? (fr["GASTOS DE PUBLICIDAD"] ?? (of["Gastos de publicidad"] || 0)) : null, adsS: nF(f.ads),
+      netoS: nF(f.neto_caja), movL: hayLibros && flujo.real[m] ? redC((fr["SALDO FINAL"] ?? 0) - (fr["SALDO INICIAL"] ?? 0)) : null,
+    };
+  });
+  const ultimoSaldo = (() => { const ms = mesesFlujo.filter(m => flujo.real[m]["SALDO FINAL"] !== undefined); const m = ms[ms.length - 1]; return m ? { mes: m, saldo: flujo.real[m]["SALDO FINAL"] } : null; })();
+  return { cuentas, idANombre, asientos, meses, diario, oficial, neto, difBalance, flujo, er, contraFlujo, contraProy, contraSistema, ultimoSaldo, mesesFlujo };
+}
+
+function descargarCsvSep(nombre, filas, sep = ",") {
+  const celda = (v) => { const s = String(v ?? ""); return (s.includes(sep) || /["\n\r]/.test(s)) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+  const csv = "\uFEFF" + filas.map(f => f.map(celda).join(sep)).join("\r\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+  a.download = `${nombre}-${fechaPanama()}.csv`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+}
+
+const CONT_SUBS = [["conciliacion", "Conciliación"], ["diario", "Libro diario"], ["mayor", "Mayor y balance"], ["er", "Estado de resultados"], ["flujo", "Flujo de caja"], ["exportar", "Exportar a Odoo"]];
+
+function FinContabilidad({ irA }) {
+  const [sub, setSub] = useState("conciliacion");
+  const hoy = fechaPanama();
+  const { datos: d, error, cargando } = useFinDatos("cont_datos", {}, []);
+  const { datos: fin } = useFinDatos("fin_evolucion", { p_desde: "2025-11-01", p_hasta: hoy, p_gran: "mes" }, [hoy]);
+  const c = d ? contPrepara(d, fin) : null;
+  const nav = (
+    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", margin: "14px 0 6px" }}>
+      {CONT_SUBS.map(([k, l]) => <button key={k} className={"met-chip" + (sub === k ? " on" : "")} onClick={() => setSub(k)} aria-pressed={sub === k}>{l}</button>)}
+    </div>
+  );
+  if (error) return <>{nav}<AvisoFin malo>No se pudo cargar la contabilidad: {error}</AvisoFin></>;
+  if (!c) return <>{nav}<div style={{ padding: "50px 0", textAlign: "center", color: MT.texto2 }}>Cargando tus libros…</div></>;
+  const obs = c.asientos.filter(a => a.obsR).length;
+  const cuerpo = sub === "conciliacion" ? <ContConciliacion c={c} fin={fin} obs={obs} />
+    : sub === "diario" ? <ContDiario c={c} />
+    : sub === "mayor" ? <ContMayor c={c} />
+    : sub === "er" ? <ContER c={c} />
+    : sub === "flujo" ? <ContFlujo c={c} />
+    : <ContExportar c={c} d={d} />;
+  return (
+    <div style={{ opacity: cargando ? 0.7 : 1, transition: "opacity .25s" }}>
+      <div className="met-card" style={{ marginTop: 12, fontSize: 13, color: MT.texto2, lineHeight: 1.6 }}>
+        <b style={{ color: MT.texto }}>Tus libros llevados a mano, guardados aquí.</b> {c.asientos.length} asientos del libro diario de {mesLargoC(c.meses[0])} a {mesLargoC(c.meses[c.meses.length - 1])}, con sus balances de comprobación, estados de resultados y flujos de caja.
+        Es una copia fiel de tus archivos de Excel (no corrige tus números): lo que parece un error se marca para que decidas. No cambia nada en Odoo.
+      </div>
+      {nav}
+      {cuerpo}
+    </div>
+  );
+}
+
+function SecT({ children, sub }) {
+  return <><div className="met-sec">{children}</div>{sub && <div style={{ fontSize: 12.5, color: MT.texto2, margin: "-4px 2px 10px", lineHeight: 1.55 }}>{sub}</div>}</>;
+}
+const colDif = (v) => (Math.abs(v) < 0.005 ? MT.suave : v > 0 ? MT.bueno : MT.malo);
+
+function ContConciliacion({ c, fin, obs }) {
+  const saldo = c.ultimoSaldo;
+  const meses2 = c.contraFlujo;
+  const difAcum = redC(meses2.reduce((a, x) => a + x.dif, 0));
+  const nDif = c.difBalance.length;
+  const utilTotal = Object.values(c.er).reduce((a, e) => a + (e["utilidad neta"] || 0), 0);
+  const mesesSinLibros = c.contraSistema.filter(x => !x.hayLibros);
+  // Estimación de saldo para los meses sin libros: saldo del último cierre + flujo neto del sistema
+  const calib = c.contraSistema.filter(x => x.hayLibros && x.movL !== null && x.mes >= "2026-06");
+  const desvio = calib.length ? calib.reduce((a, x) => a + (x.netoS - x.movL), 0) / calib.length : 0;
+  let acum = saldo ? saldo.saldo : 0, acumP = acum;
+  const est = mesesSinLibros.map((x, i) => { acum += x.netoS; acumP += x.netoS - desvio; return { ...x, acum: redC(acum), acumP: redC(acumP) }; });
+  const hoy = fechaPanama(); const mesHoy = hoy.slice(0, 7);
+  return (
+    <div>
+      <div className="met-grid" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", marginTop: 12 }}>
+        <Kpi etiqueta="Caja al cierre de tus libros" formula="Saldo final del último mes de tu flujo de caja manual."
+          pie={<div style={{ fontSize: 12, color: MT.suave }}>{saldo ? mesLargoC(saldo.mes) : ""}</div>}><Cifra valor={saldo ? saldo.saldo : 0} f={(v) => usdM(v, 2)} /></Kpi>
+        <Kpi retraso={60} etiqueta="Utilidad neta de tus estados de resultados" formula="Suma de la utilidad neta de los meses que tienen estado de resultados (Nov a Jul)."><span style={{ color: utilTotal >= 0 ? MT.bueno : MT.malo }}><Cifra valor={utilTotal} f={(v) => signoUsd(v, 2)} /></span></Kpi>
+        <Kpi retraso={120} etiqueta="Diferencia contabilidad vs flujo" formula="Suma, mes a mes, de (movimiento de caja del flujo manual − caja según el balance de comprobación)."
+          pie={<div style={{ fontSize: 12, color: MT.suave }}>{Math.abs(difAcum) < 0.005 ? "Cuadran" : difAcum > 0 ? "El flujo tiene más caja que la contabilidad" : "La contabilidad tiene más caja que el flujo"}</div>}>
+          <span style={{ color: Math.abs(difAcum) < 0.005 ? MT.bueno : MT.malo }}><Cifra valor={difAcum} f={(v) => signoUsd(v, 2)} /></span></Kpi>
+        <Kpi retraso={180} etiqueta="Diferencias diario vs balance" formula="Cuentas y meses donde el libro diario no coincide con tu balance de comprobación. Aparte se cuentan los asientos con posible error (descuadrados, compras anotadas como ventas, renglones repetidos…)."
+          pie={<div style={{ fontSize: 12, color: MT.suave }}>{obs} asientos con posible error · {c.asientos.filter(a => a.obsF).length} con fecha corregida</div>}><Cifra valor={nDif} f={(v) => String(Math.round(v))} /></Kpi>
+      </div>
+
+      <SecT sub="Cuánto dinero tiene (o le falta) la contabilidad frente a tu flujo de caja. Cada mes compara lo que te quedó en caja según el flujo contra la cuenta Caja y banco de tu balance de comprobación, y dice qué concepto explica la diferencia.">Contabilidad contra flujo de caja, mes a mes</SecT>
+      <div className="met-card" style={{ padding: 0, overflowX: "auto" }}>
+        <table className="met-tabla" style={{ minWidth: 820 }}>
+          <thead><tr><th>Mes</th><th>Caja según balance</th><th>Movimiento del flujo</th><th>Diferencia</th><th style={{ textAlign: "left" }}>Qué la explica (flujo vs contabilidad)</th></tr></thead>
+          <tbody>
+            {meses2.map(x => (
+              <tr key={x.mes}>
+                <td style={{ whiteSpace: "nowrap" }}>{mesLargoC(x.mes)}</td>
+                <td>{signoUsd(x.cajaConta, 2)}</td><td>{signoUsd(x.movFlujo, 2)}</td>
+                <td style={{ fontWeight: 800, whiteSpace: "nowrap", color: Math.abs(x.dif) < 0.005 ? MT.suave : MT.malo }}>{Math.abs(x.dif) < 0.005 ? "Cuadra" : signoUsd(x.dif, 2)}</td>
+                <td style={{ textAlign: "left", fontSize: 12, color: MT.texto2, whiteSpace: "normal", minWidth: 280 }}>
+                  {x.detalle.length === 0 ? "—" : x.detalle.map((e, i) => <div key={i}>{e.concepto.charAt(0) + e.concepto.slice(1).toLowerCase()}: flujo {usdM(e.flujo, 2)} · contabilidad {usdM(e.conta, 2)}</div>)}
+                </td>
+              </tr>
+            ))}
+            <tr style={{ fontWeight: 800, background: "rgba(17,17,17,0.04)" }}>
+              <td>Total</td><td>{signoUsd(redC(meses2.reduce((a, x) => a + x.cajaConta, 0)), 2)}</td><td>{signoUsd(redC(meses2.reduce((a, x) => a + x.movFlujo, 0)), 2)}</td>
+              <td style={{ color: Math.abs(difAcum) < 0.005 ? MT.suave : MT.malo }}>{signoUsd(difAcum, 2)}</td><td />
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div style={{ fontSize: 11.5, color: MT.suave, margin: "8px 2px 0", lineHeight: 1.6 }}>Diferencia positiva: el flujo muestra más caja que la contabilidad. Negativa: la contabilidad muestra más caja de la que tu flujo dice que hay. Los meses que dicen “Cuadra” coinciden al centavo.</div>
+
+      <SecT sub="Compara el diario (asiento por asiento) contra el balance de comprobación que armaste a mano. Solo aparecen las cuentas donde no coinciden: casi siempre son compras anotadas como ventas, sueldos anotados como gastos varios o un renglón repetido.">Libro diario contra balance de comprobación</SecT>
+      {c.difBalance.length === 0 ? <div className="met-card" style={{ textAlign: "center", color: MT.texto2 }}>El libro diario coincide con todos los balances.</div> :
+        <div className="met-card" style={{ padding: 0, overflowX: "auto" }}>
+          <table className="met-tabla" style={{ minWidth: 640 }}>
+            <thead><tr><th>Mes</th><th>Cuenta</th><th>Según el diario</th><th>Según el balance</th><th>Diferencia</th></tr></thead>
+            <tbody>{c.difBalance.map((x, i) => <tr key={i}><td style={{ whiteSpace: "nowrap" }}>{mesLargoC(x.mes)}</td><td>{x.cuenta}</td><td>{signoUsd(x.diario, 2)}</td><td>{signoUsd(x.oficial, 2)}</td><td style={{ fontWeight: 800, color: MT.malo }}>{signoUsd(x.dif, 2)}</td></tr>)}</tbody>
+          </table>
+        </div>}
+      <div style={{ fontSize: 11.5, color: MT.suave, margin: "8px 2px 0", lineHeight: 1.6 }}>Como en un balance: caja, mercancía y gastos son positivos (debe); las ventas son negativas (haber). “Diferencia” = diario − balance.</div>
+
+      <SecT sub="Para los meses que sí tienen proyección en tu archivo. “Egresos” suma compras, proveedores y todos los gastos.">Flujo de caja real contra proyectado</SecT>
+      <div className="met-card" style={{ padding: 0, overflowX: "auto" }}>
+        <table className="met-tabla" style={{ minWidth: 860 }}>
+          <thead><tr><th>Mes</th><th>Ventas proyectadas</th><th>Ventas reales</th><th>Dif.</th><th>Egresos proyectados</th><th>Egresos reales</th><th>Dif.</th><th>Saldo proyectado</th><th>Saldo real</th><th>Dif.</th></tr></thead>
+          <tbody>{c.contraProy.map(x => {
+            const dv = redC(x.ventasR - x.ventasP), de = redC(x.egrR - x.egrP), ds = redC((x.saldoR ?? 0) - (x.saldoP ?? 0));
+            return <tr key={x.mes}><td style={{ whiteSpace: "nowrap" }}>{mesLargoC(x.mes)}</td>
+              <td>{usdM(x.ventasP, 2)}</td><td>{usdM(x.ventasR, 2)}</td><td style={{ color: colDif(dv), fontWeight: 700 }}>{signoUsd(dv, 2)}</td>
+              <td>{usdM(x.egrP, 2)}</td><td>{usdM(x.egrR, 2)}</td><td style={{ color: colDif(-de), fontWeight: 700 }}>{signoUsd(de, 2)}</td>
+              <td>{usdM(x.saldoP, 2)}</td><td>{usdM(x.saldoR, 2)}</td><td style={{ color: colDif(ds), fontWeight: 800 }}>{signoUsd(ds, 2)}</td></tr>;
+          })}</tbody>
+        </table>
+      </div>
+      <div style={{ fontSize: 11.5, color: MT.suave, margin: "8px 2px 0", lineHeight: 1.6 }}>Verde: salió mejor que lo proyectado (más ventas, menos egresos, más caja). Naranja: peor que lo proyectado.</div>
+
+      <SecT sub="Tus libros a mano contra lo que registran la tienda (punto de venta de Odoo), la web y las compras de Odoo. “Entradas del sistema” = ventas web cobradas + ventas de la tienda (ya sin reembolsos).">Tus libros contra el sistema</SecT>
+      {!fin ? <div className="met-card" style={{ textAlign: "center", color: MT.texto2 }}>Calculando datos del sistema…</div> :
+        <div className="met-card" style={{ padding: 0, overflowX: "auto" }}>
+          <table className="met-tabla" style={{ minWidth: 980 }}>
+            <thead><tr><th>Mes</th><th>Ventas (libros)</th><th>Entradas (sistema)</th><th>Dif.</th><th>Mercancía (libros)</th><th>Compras Odoo</th><th>Dif.</th><th>Publicidad (libros)</th><th>Meta (sistema)</th></tr></thead>
+            <tbody>{c.contraSistema.map(x => {
+              const dv = x.ventasL === null ? null : redC(x.ventasS - x.ventasL), dm = x.mercL === null ? null : redC(x.mercS - x.mercL);
+              return <tr key={x.mes} style={x.hayLibros ? undefined : { background: "#FFF7ED" }}>
+                <td style={{ whiteSpace: "nowrap" }}>{mesLargoC(x.mes)}{x.mes === mesHoy && <span style={{ fontSize: 10.5, color: MT.rojo, fontWeight: 800, marginLeft: 6 }}>en curso</span>}{!x.hayLibros && <span style={{ fontSize: 10.5, color: MT.malo, fontWeight: 800, marginLeft: 6 }}>sin libros</span>}</td>
+                <td>{x.ventasL === null ? "—" : usdM(x.ventasL, 2)}</td><td>{usdM(x.ventasS, 2)}</td><td style={{ color: dv === null ? MT.suave : Math.abs(dv) < 0.005 ? MT.suave : MT.malo, fontWeight: 700, whiteSpace: "nowrap" }}>{dv === null ? "—" : signoUsd(dv, 2)}</td>
+                <td>{x.mercL === null ? "—" : usdM(x.mercL, 2)}</td><td>{usdM(x.mercS, 2)}</td><td style={{ color: dm === null ? MT.suave : Math.abs(dm) < 0.005 ? MT.suave : MT.malo, fontWeight: 700, whiteSpace: "nowrap" }}>{dm === null ? "—" : signoUsd(dm, 2)}</td>
+                <td>{x.adsL === null ? "—" : usdM(x.adsL, 2)}</td><td>{usdM(x.adsS, 2)}</td></tr>;
+            })}</tbody>
+          </table>
+        </div>}
+      <div style={{ fontSize: 11.5, color: MT.suave, margin: "8px 2px 0", lineHeight: 1.6 }}>La web está en el sistema desde el 16 de junio de 2026 y Meta desde el 30 de mayo; antes de esas fechas esas columnas del sistema son cero. Las diferencias pequeñas suelen coincidir con reembolsos de la tienda; las grandes, con ventas o compras que están en un lado y no en el otro.</div>
+
+      {est.length > 0 && <>
+        <SecT sub={`Tus libros llegan a ${saldo ? mesLargoC(saldo.mes) : "—"}. Para los meses siguientes, esta estimación suma al último saldo el flujo neto que muestra el sistema (entradas menos compras de Odoo, publicidad, gastos registrados y reembolsos). El sistema todavía no tiene pagos a proveedores, sueldos ni varios gastos, así que tiende a mostrar más caja de la real.`}>Caja estimada en los meses que faltan por registrar</SecT>
+        <div className="met-card" style={{ padding: 0, overflowX: "auto" }}>
+          <table className="met-tabla" style={{ minWidth: 640 }}>
+            <thead><tr><th>Mes</th><th>Flujo neto (sistema)</th><th>Caja estimada</th><th>Caja estimada prudente</th></tr></thead>
+            <tbody>{est.map(x => <tr key={x.mes}><td style={{ whiteSpace: "nowrap" }}>{mesLargoC(x.mes)}{x.mes === mesHoy && <span style={{ fontSize: 10.5, color: MT.rojo, fontWeight: 800, marginLeft: 6 }}>en curso</span>}</td><td style={{ color: x.netoS >= 0 ? MT.bueno : MT.malo }}>{signoUsd(x.netoS, 2)}</td><td style={{ fontWeight: 800 }}>{signoUsd(x.acum, 2)}</td><td>{signoUsd(x.acumP, 2)}</td></tr>)}</tbody>
+          </table>
+        </div>
+        <div style={{ fontSize: 11.5, color: MT.suave, margin: "8px 2px 0", lineHeight: 1.6 }}>“Prudente” resta cada mes el desvío promedio que el sistema tuvo contra tus libros en jun–ago ({signoUsd(desvio, 2)} al mes: el sistema mostró esa cantidad de más). Es solo una referencia: lo exacto sale cuando registremos tus libros de esos meses.</div>
+      </>}
+    </div>
+  );
+}
+
+function ChipsMes({ meses, valor, onChange, todos = true }) {
+  return (
+    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", margin: "12px 0 6px" }}>
+      {todos && <button className={"met-chip" + (valor === "todos" ? " on" : "")} onClick={() => onChange("todos")}>Todos</button>}
+      {meses.map(m => <button key={m} className={"met-chip" + (valor === m ? " on" : "")} onClick={() => onChange(m)}>{mesLargoC(m)}</button>)}
+    </div>
+  );
+}
+
+function ContDiario({ c }) {
+  const [mes, setMes] = useState(c.meses[c.meses.length - 1]);
+  const [soloObs, setSoloObs] = useState(false);
+  const lista = c.asientos.filter(a => (mes === "todos" || a.mes === mes) && (!soloObs || a.obsR));
+  const debe = lista.reduce((a, x) => a + x.lineas.reduce((s, l) => s + l.debe, 0), 0), haber = lista.reduce((a, x) => a + x.lineas.reduce((s, l) => s + l.haber, 0), 0);
+  const fmtF = (iso) => `${String(iso).slice(8, 10)}/${String(iso).slice(5, 7)}/${String(iso).slice(0, 4)}`;
+  return (
+    <div>
+      <ChipsMes meses={c.meses} valor={mes} onChange={setMes} />
+      <label style={{ display: "inline-flex", gap: 8, alignItems: "center", fontSize: 13, color: MT.texto2, cursor: "pointer", margin: "4px 0 10px" }}>
+        <input type="checkbox" checked={soloObs} onChange={e => setSoloObs(e.target.checked)} /> Mostrar solo los asientos con posible error ({c.asientos.filter(a => a.obsR && (mes === "todos" || a.mes === mes)).length})
+      </label>
+      <div className="met-card" style={{ padding: 0, overflowX: "auto" }}>
+        <table className="met-tabla" style={{ minWidth: 640 }}>
+          <thead><tr><th>Fecha</th><th>N°</th><th style={{ textAlign: "left" }}>Cuenta y descripción</th><th>Debe</th><th>Haber</th></tr></thead>
+          <tbody>
+            {lista.length === 0 && <tr><td colSpan={5} style={{ textAlign: "center", color: MT.texto2, padding: 24 }}>No hay asientos con ese filtro.</td></tr>}
+            {lista.map(a => (
+              <Fragment key={a.id}>
+                {a.lineas.map((l, i) => (
+                  <tr key={i} style={{ borderTop: i === 0 ? `2px solid ${MT.rejilla}` : undefined, background: a.obsR ? "#FFF7ED" : undefined }}>
+                    <td style={{ whiteSpace: "nowrap", color: MT.texto2 }}>{i === 0 ? fmtF(a.fecha) : ""}</td>
+                    <td style={{ color: MT.suave }}>{i === 0 ? (a.numero ?? "") : ""}</td>
+                    <td style={{ paddingLeft: l.haber > 0 && l.debe === 0 ? 30 : 12, textAlign: "left" }}>{l.cuenta}</td>
+                    <td>{l.debe ? usdM(l.debe, 2) : ""}</td><td>{l.haber ? usdM(l.haber, 2) : ""}</td>
+                  </tr>
+                ))}
+                <tr style={{ background: a.obsR ? "#FFF7ED" : undefined }}>
+                  <td /><td />
+                  <td colSpan={3} style={{ textAlign: "left", fontSize: 12, color: MT.texto2, paddingTop: 0 }}>{a.glosa}{a.obsR && <div style={{ color: MT.malo, fontWeight: 600, marginTop: 2 }}>⚠ {a.obsR}</div>}{a.obsF && <div style={{ color: MT.suave, marginTop: 2 }}>Fecha corregida: Excel la tenía con día y mes invertidos o con un día que no existe.</div>}<span style={{ color: MT.suave }}> · {String(a.hoja || "").replace("LIBRO DIARIO", "Diario")}, fila {a.fila}</span></td>
+                </tr>
+              </Fragment>
+            ))}
+            {lista.length > 0 && <tr style={{ fontWeight: 800, background: "rgba(17,17,17,0.04)" }}><td colSpan={3}>Total ({lista.length} asientos)</td><td>{usdM(debe, 2)}</td><td>{usdM(haber, 2)}</td></tr>}
+          </tbody>
+        </table>
+      </div>
+      <div style={{ fontSize: 11.5, color: MT.suave, margin: "8px 2px 0", lineHeight: 1.6 }}>Los asientos con fondo naranja tienen un posible error. Cada asiento indica la hoja y la fila de tu Excel donde está, para que lo encuentres rápido.</div>
+    </div>
+  );
+}
+
+function ContMayor({ c }) {
+  const [mes, setMes] = useState(c.meses[c.meses.length - 1]);
+  const [cuenta, setCuenta] = useState(null);
+  const ordenC = new Map(c.cuentas.map(x => [x.nombre, x.orden]));
+  const filas = {};
+  c.asientos.forEach(a => { if (mes !== "todos" && a.mes !== mes) return; a.lineas.forEach(l => { const x = filas[l.cuenta] || (filas[l.cuenta] = { debe: 0, haber: 0 }); x.debe += l.debe; x.haber += l.haber; }); });
+  const ofi = {}; Object.entries(c.oficial).forEach(([m, o]) => { if (mes !== "todos" && m !== mes) return; Object.entries(o).forEach(([k, v]) => { ofi[k] = (ofi[k] || 0) + v; }); });
+  const hayOficial = mes === "todos" ? Object.keys(c.oficial).length > 0 : !!c.oficial[mes];
+  const ctas = [...new Set([...Object.keys(filas), ...Object.keys(ofi)])].sort((a, b) => (ordenC.get(a) ?? 99) - (ordenC.get(b) ?? 99));
+  const tD = ctas.reduce((a, k) => a + (filas[k]?.debe || 0), 0), tH = ctas.reduce((a, k) => a + (filas[k]?.haber || 0), 0);
+  let run = 0;
+  const movs = cuenta ? c.asientos.filter(a => (mes === "todos" || a.mes === mes)).flatMap(a => a.lineas.filter(l => l.cuenta === cuenta).map(l => ({ a, l }))) : [];
+  const fmtF = (iso) => `${String(iso).slice(8, 10)}/${String(iso).slice(5, 7)}/${String(iso).slice(0, 4)}`;
+  return (
+    <div>
+      <ChipsMes meses={c.meses} valor={mes} onChange={(m) => { setMes(m); }} />
+      <div className="met-card" style={{ padding: 0, overflowX: "auto" }}>
+        <table className="met-tabla" style={{ minWidth: 780 }}>
+          <thead><tr><th>Cuenta</th><th>Debe</th><th>Haber</th><th>Saldo (diario)</th><th>Saldo (tu balance)</th><th>Diferencia</th></tr></thead>
+          <tbody>
+            {ctas.map(k => {
+              const x = filas[k] || { debe: 0, haber: 0 }; const s = x.debe - x.haber; const o = ofi[k] || 0; const df = redC(s - o);
+              return <tr key={k} onClick={() => setCuenta(cuenta === k ? null : k)} style={{ cursor: "pointer", background: cuenta === k ? "#FDEEEE" : undefined }} title="Ver los movimientos de esta cuenta">
+                <td style={{ fontWeight: cuenta === k ? 800 : 500 }}>{k}</td><td>{usdM(x.debe, 2)}</td><td>{usdM(x.haber, 2)}</td><td style={{ fontWeight: 700 }}>{signoUsd(s, 2)}</td>
+                <td>{hayOficial ? signoUsd(o, 2) : "—"}</td><td style={{ fontWeight: 700, color: !hayOficial ? MT.suave : Math.abs(df) < 0.005 ? MT.suave : MT.malo }}>{hayOficial ? (Math.abs(df) < 0.005 ? "Cuadra" : signoUsd(df, 2)) : "—"}</td></tr>;
+            })}
+            <tr style={{ fontWeight: 800, background: "rgba(17,17,17,0.04)" }}><td>Totales</td><td>{usdM(tD, 2)}</td><td>{usdM(tH, 2)}</td><td>{signoUsd(redC(tD - tH), 2)}</td><td colSpan={2} style={{ color: Math.abs(tD - tH) < 0.005 ? MT.bueno : MT.malo, textAlign: "right" }}>{Math.abs(tD - tH) < 0.005 ? "Debe = Haber" : "Descuadrado por " + usdM(Math.abs(tD - tH), 2)}</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div style={{ fontSize: 11.5, color: MT.suave, margin: "8px 2px 0", lineHeight: 1.6 }}>Toca una cuenta para ver su libro mayor (todos sus movimientos). Saldo positivo = debe, negativo = haber. “Tu balance” es el balance de comprobación que armaste en Excel.</div>
+      {cuenta && <>
+        <SecT>Libro mayor: {cuenta}</SecT>
+        <div className="met-card" style={{ padding: 0, overflowX: "auto" }}>
+          <table className="met-tabla" style={{ minWidth: 640 }}>
+            <thead><tr><th>Fecha</th><th style={{ textAlign: "left" }}>Descripción</th><th>Debe</th><th>Haber</th><th>Saldo</th></tr></thead>
+            <tbody>{movs.map(({ a, l }, i) => { run += l.debe - l.haber; return <tr key={i}><td style={{ whiteSpace: "nowrap" }}>{fmtF(a.fecha)}</td><td style={{ textAlign: "left", fontSize: 12.5 }}>{a.glosa}</td><td>{l.debe ? usdM(l.debe, 2) : ""}</td><td>{l.haber ? usdM(l.haber, 2) : ""}</td><td style={{ fontWeight: 700 }}>{signoUsd(redC(run), 2)}</td></tr>; })}</tbody>
+          </table>
+        </div>
+      </>}
+    </div>
+  );
+}
+
+function ContER({ c }) {
+  const meses = Object.keys(c.er).sort();
+  const val = (m, k) => {
+    const e = c.er[m] || {};
+    if (k === "margen bruto") return e["ventas netas"] ? (e["utilidad bruta"] / e["ventas netas"]) * 100 : null;
+    if (k === "margen neto") return e["ventas netas"] ? (e["utilidad neta"] / e["ventas netas"]) * 100 : null;
+    return e[k] === undefined ? null : e[k];
+  };
+  const filas = ER_ORDEN.filter(([k]) => meses.some(m => val(m, k) !== null));
+  const totalK = (k) => { if (k === "margen bruto" || k === "margen neto") { const v = meses.reduce((a, m) => a + (c.er[m]["ventas netas"] || 0), 0); const u = meses.reduce((a, m) => a + (c.er[m][k === "margen bruto" ? "utilidad bruta" : "utilidad neta"] || 0), 0); return v ? (u / v) * 100 : null; } return meses.reduce((a, m) => a + (val(m, k) || 0), 0); };
+  const mesesSin = c.meses.filter(m => !c.er[m]);
+  const netas = meses.map(m => val(m, "utilidad neta") ?? 0);
+  const baja = () => descargarCsvEvo("estado-de-resultados-libros", ["Concepto", ...meses.map(mesLargoC), "Total"], filas.map(([k, et, tipo]) => [et, ...meses.map(m => { const v = val(m, k); return v === null ? "" : redC(v); }), redC(totalK(k) ?? 0)]));
+  return (
+    <div>
+      {mesesSin.length > 0 && <AvisoFin>No hay estado de resultados en tus archivos para: <b>{mesesSin.map(mesLargoC).join(", ")}</b>. No se puede armar solo con el libro diario porque el costo de la mercancía vendida no está ahí. Si me pasas el costo de ventas de esos meses, lo calculo.</AvisoFin>}
+      <SecT>Utilidad neta por mes (tus estados de resultados)</SecT>
+      <div className="met-card"><GraficaNegativos etiquetas={meses} etiquetaX={mesLargoC} valores={netas} nombre="utilidad neta" descripcion="Utilidad neta por mes según tus libros" /></div>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <div className="met-sec" style={{ flex: 1, minWidth: 220 }}>Estados de resultados, mes por mes</div>
+        <button className="met-chip" onClick={baja}>Descargar tabla (CSV)</button>
+      </div>
+      <div className="met-card" style={{ padding: 0, overflowX: "auto" }}>
+        <table className="met-tabla" style={{ minWidth: Math.max(720, 230 + (meses.length + 1) * 96) }}>
+          <thead><tr><th style={{ position: "sticky", left: 0, background: MT.tarjeta, zIndex: 1, minWidth: 220 }}>Concepto</th>{meses.map(m => <th key={m} style={{ whiteSpace: "nowrap" }}>{mesLargoC(m)}</th>)}<th style={{ background: "rgba(17,17,17,0.04)" }}>Total</th></tr></thead>
+          <tbody>{filas.map(([k, et, tipo]) => {
+            const fuerte = tipo === "sub" || tipo === "tot"; const fondo = tipo === "tot" ? "#FDEEEE" : fuerte ? "#F6F6F7" : MT.tarjeta;
+            const fmt = (v) => v === null ? "—" : tipo === "pct" ? signoPct(v, 1) : tipo === "egr" ? (v > 0 ? "−" : "") + usdM(Math.abs(v), 2) : signoUsd(v, 2);
+            const col = (v) => tipo === "tot" ? (v !== null && v < 0 ? MT.malo : MT.bueno) : tipo === "egr" || tipo === "pct" ? MT.texto2 : MT.texto;
+            return <tr key={k} style={{ fontWeight: fuerte ? 800 : 500, background: fondo, fontStyle: tipo === "pct" ? "italic" : "normal" }}>
+              <td style={{ position: "sticky", left: 0, background: fondo, zIndex: 1, paddingLeft: tipo === "egr" || tipo === "ing" ? 22 : 12 }}>{et}</td>
+              {meses.map(m => { const v = val(m, k); return <td key={m} style={{ color: col(v), whiteSpace: "nowrap" }}>{fmt(v)}</td>; })}
+              <td style={{ background: "rgba(17,17,17,0.04)", color: col(totalK(k)), whiteSpace: "nowrap" }}>{fmt(totalK(k))}</td></tr>;
+          })}</tbody>
+        </table>
+      </div>
+      <div style={{ fontSize: 11.5, color: MT.suave, margin: "8px 2px 0", lineHeight: 1.6 }}>Son tus cifras tal cual están en los archivos. Los sueldos de tus estados de resultados no siempre coinciden con los del flujo de caja (por ejemplo marzo y mayo): son diferencias de tus propios libros.</div>
+    </div>
+  );
+}
+
+function ContFlujo({ c }) {
+  const [esc, setEsc] = useState("real");
+  const meses = Object.keys(c.flujo[esc] || {}).sort();
+  const orden = {}; meses.forEach(m => c.flujo[esc][m]._orden.forEach(([k, o]) => { if (orden[k] === undefined || o < orden[k]) orden[k] = o; }));
+  const conceptos = Object.keys(orden).sort((a, b) => orden[a] - orden[b]);
+  const val = (m, k) => (c.flujo[esc][m] || {})[k];
+  const fuerte = (k) => k === "SALDO INICIAL" || k === "SALDO FINAL";
+  const etq = (k) => k.charAt(0) + k.slice(1).toLowerCase();
+  const saldos = meses.map(m => val(m, "SALDO FINAL") ?? 0);
+  const baja = () => descargarCsvEvo("flujo-de-caja-libros-" + esc, ["Concepto", ...meses.map(mesLargoC)], conceptos.map(k => [etq(k), ...meses.map(m => val(m, k) ?? "")]));
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 8, margin: "12px 0 6px", flexWrap: "wrap" }}>
+        <button className={"met-chip" + (esc === "real" ? " on" : "")} onClick={() => setEsc("real")}>Real</button>
+        <button className={"met-chip" + (esc === "proyectado" ? " on" : "")} onClick={() => setEsc("proyectado")}>Proyectado</button>
+        <span style={{ fontSize: 12, color: MT.suave, alignSelf: "center" }}>{esc === "real" ? "Tu flujo de caja mensual de Nov a Ago. La segunda columna “Junio” de tu archivo se cargó como Julio." : "Tu flujo proyectado de Nov a Feb."}</span>
+      </div>
+      <SecT>Saldo al cierre de cada mes</SecT>
+      <div className="met-card"><GraficaNegativos tipo="linea" area etiquetas={meses} etiquetaX={mesLargoC} valores={saldos} color={MT.rojo} nombre="saldo final" descripcion="Saldo final de caja por mes" /></div>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <div className="met-sec" style={{ flex: 1, minWidth: 220 }}>Flujo de caja {esc === "real" ? "real" : "proyectado"}</div>
+        <button className="met-chip" onClick={baja}>Descargar tabla (CSV)</button>
+      </div>
+      <div className="met-card" style={{ padding: 0, overflowX: "auto" }}>
+        <table className="met-tabla" style={{ minWidth: Math.max(720, 250 + meses.length * 96) }}>
+          <thead><tr><th style={{ position: "sticky", left: 0, background: MT.tarjeta, zIndex: 1, minWidth: 240 }}>Concepto</th>{meses.map(m => <th key={m} style={{ whiteSpace: "nowrap" }}>{mesLargoC(m)}</th>)}</tr></thead>
+          <tbody>{conceptos.map(k => {
+            const f = fuerte(k), fondo = k === "SALDO FINAL" ? "#FDEEEE" : f ? "#F6F6F7" : MT.tarjeta;
+            return <tr key={k} style={{ fontWeight: f ? 800 : 500, background: fondo }}>
+              <td style={{ position: "sticky", left: 0, background: fondo, zIndex: 1, paddingLeft: f ? 12 : 22 }}>{etq(k)}</td>
+              {meses.map(m => { const v = val(m, k); return <td key={m} style={{ whiteSpace: "nowrap", color: v === undefined ? MT.suave : MT.texto }}>{v === undefined ? "—" : (f || FLUJO_INGRESOS.includes(k) ? usdM(v, 2) : v === 0 ? usdM(0, 2) : "−" + usdM(v, 2))}</td>; })}</tr>;
+          })}</tbody>
+        </table>
+      </div>
+      <div style={{ fontSize: 11.5, color: MT.suave, margin: "8px 2px 0", lineHeight: 1.6 }}>Saldo final = saldo inicial + ventas + capital − compras, gastos y pagos a proveedores. Los egresos se muestran con signo menos.</div>
+    </div>
+  );
+}
+
+function ContExportar({ c, d }) {
+  const sinCuadrar = c.asientos.filter(a => Math.abs(a.lineas.reduce((s, l) => s + l.debe - l.haber, 0)) > 0.005);
+  const odoo = () => {
+    const cab = ["date", "ref", "journal_id", "line_ids/account_id", "line_ids/name", "line_ids/debit", "line_ids/credit"];
+    const filas = [cab];
+    c.asientos.forEach(a => a.lineas.forEach((l, i) => filas.push([i === 0 ? a.fecha : "", i === 0 ? `Libro manual ${String(a.hoja || "").replace("LIBRO DIARIO", "").trim()} #${a.numero ?? ""}`.trim() : "", i === 0 ? "Operaciones varias" : "", l.cuenta, a.glosa || "", l.debe || 0, l.haber || 0])));
+    descargarCsvSep("asientos-para-odoo", filas, ",");
+  };
+  const plano = () => descargarCsvEvo("libro-diario-completo", ["Fecha", "N° en la hoja", "Descripción", "Cuenta", "Debe", "Haber", "Observación", "Hoja de origen", "Fila de origen"],
+    c.asientos.flatMap(a => a.lineas.map(l => [a.fecha, a.numero ?? "", a.glosa || "", l.cuenta, l.debe || "", l.haber || "", a.obs || "", a.hoja || "", a.fila || ""])));
+  const bal = () => descargarCsvEvo("balances-de-comprobacion", ["Mes", "Cuenta", "Saldo (debe − haber)"], Object.keys(c.oficial).sort().flatMap(m => Object.entries(c.oficial[m]).map(([k, v]) => [m, k, v])));
+  const plan = () => descargarCsvEvo("plan-de-cuentas", ["Cuenta", "Tipo", "Código en Odoo"], c.cuentas.map(x => [x.nombre, x.tipo, x.codigo_odoo || ""]));
+  const respaldo = () => {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(d, null, 1)], { type: "application/json" }));
+    a.download = `contabilidad-respaldo-${fechaPanama()}.json`;
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  };
+  const Fila = ({ titulo, texto, accion, boton }) => (
+    <div className="met-card" style={{ display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap", marginBottom: 10 }}>
+      <div style={{ flex: 1, minWidth: 240 }}><div style={{ fontWeight: 800, fontSize: 14 }}>{titulo}</div><div style={{ fontSize: 12.5, color: MT.texto2, lineHeight: 1.55, marginTop: 3 }}>{texto}</div></div>
+      <button className="met-chip on" onClick={accion}>{boton}</button>
+    </div>
+  );
+  return (
+    <div>
+      {sinCuadrar.length > 0 && <AvisoFin>Hay <b>{sinCuadrar.length}</b> asiento(s) descuadrado(s) en tu libro (debe ≠ haber). Odoo no los aceptará hasta corregirlos: {sinCuadrar.map(a => `${mesLargoC(a.mes)} (${a.glosa})`).join("; ")}. Están marcados en el libro diario.</AvisoFin>}
+      <SecT sub="Todo sale de la copia guardada aquí, tal como está en tus libros. Cuando el módulo de contabilidad de Odoo esté listo, estos archivos sirven para cargarlo.">Descargas</SecT>
+      <Fila titulo="Asientos en formato de importación de Odoo" texto="Una fila por línea de asiento con los nombres técnicos de columna de Odoo (fecha, referencia, diario, cuenta, etiqueta, débito, crédito). Las cuentas van por nombre; cuando exista el plan de cuentas de Odoo, se cambian por sus códigos." accion={odoo} boton="Descargar CSV para Odoo" />
+      <Fila titulo="Libro diario completo" texto="Todos los asientos con su descripción, observaciones y la hoja y fila de tu Excel de origen." accion={plano} boton="Descargar libro diario" />
+      <Fila titulo="Balances de comprobación" texto="Los saldos por cuenta y por mes de tus balances." accion={bal} boton="Descargar balances" />
+      <Fila titulo="Plan de cuentas" texto="Las cuentas que usaste, con su tipo y una columna vacía para el código que les asigne Odoo." accion={plan} boton="Descargar plan de cuentas" />
+      <Fila titulo="Respaldo completo (JSON)" texto="Libro diario, balances, estados de resultados y flujos de caja en un solo archivo, para guardarlo o entregárselo a tus desarrolladores." accion={respaldo} boton="Descargar respaldo" />
+    </div>
+  );
+}
+
 function FinanzasPanel({ desde, hasta, filtro, productos, onCostosCambio }) {
   const [vista, setVista] = useState("resumen");
-  const VISTAS = [["resumen", "Resumen"], ["flujo", "Flujo de caja"], ["resultados", "Estado de resultados"], ["gastos", "Gastos"], ["margen", "Márgenes"], ["compras", "Compras (Odoo)"], ["costos", "Costos de productos"], ["cuentas", "Por cobrar y pagar"], ["control", "Ajustes y control"]];
+  const VISTAS = [["resumen", "Resumen"], ["flujo", "Flujo de caja"], ["resultados", "Estado de resultados"], ["gastos", "Gastos"], ["margen", "Márgenes"], ["compras", "Compras (Odoo)"], ["costos", "Costos de productos"], ["cuentas", "Por cobrar y pagar"], ["contabilidad", "Contabilidad (libros)"], ["control", "Ajustes y control"]];
   return (
     <div className="met">
       <style>{ESTILO_MET}</style>
@@ -6485,6 +6944,7 @@ function FinanzasPanel({ desde, hasta, filtro, productos, onCostosCambio }) {
       {vista === "compras" && <FinCompras desde={desde} hasta={hasta} />}
       {vista === "costos" && <FinCostos productos={productos} onGuardado={onCostosCambio} />}
       {vista === "cuentas" && <FinCuentas />}
+      {vista === "contabilidad" && <FinContabilidad irA={setVista} />}
       {vista === "control" && <FinControl />}
     </div>
   );
