@@ -6211,7 +6211,12 @@ function descargarCsvEvo(nombre, cab, filas) {
 }
 
 // Estado de resultados de una fila (periodo) según el canal elegido
-function evoResultados(f, canal) {
+// Estado de resultados de un periodo: si hay libros contables (solo "todo el negocio") se usan; si no, el sistema.
+function evoResultados(f, canal, lb) {
+  if (lb && canal === "total") return { ...lb, libros: true };
+  return { ...evoResultadosSis(f, canal), libros: false };
+}
+function evoResultadosSis(f, canal) {
   const v = (k) => (f[k] === null || f[k] === undefined ? null : Number(f[k]));
   if (canal === "web") {
     const prod = nF(f.ventas_web_prod), envio = nF(f.envio), reemb = nF(f.web_reembolsos), costo = v("costo_web");
@@ -6227,13 +6232,74 @@ function evoResultados(f, canal) {
     ads: nF(f.ads), com: nF(f.comisiones), gastos: nF(f.gastos_operativos), neta: v("ganancia_neta") };
 }
 
+// Libros contables corregidos (cont_datos): flujo de caja real y estado de resultados por mes. Si no se pueden leer, devuelve null y
+// las pestañas siguen mostrando solo los datos del sistema.
+function evoLibros(c) {
+  if (!c || !Array.isArray(c.flujo) || !Array.isArray(c.er)) return null;
+  const fl = {}, er = {};
+  c.flujo.forEach(([esc, m, , concepto, monto]) => { if (esc === "real") (fl[m] || (fl[m] = {}))[concepto] = Number(monto); });
+  c.er.forEach(([m, , concepto, monto]) => { (er[m] || (er[m] = {}))[erClave(concepto)] = Number(monto); });
+  const meses = Object.keys(fl).sort();
+  if (!meses.length) return null;
+  const ult = meses[meses.length - 1];
+  const [uy, um] = ult.split("-").map(Number);
+  const fecha = `${ult}-${String(new Date(Date.UTC(uy, um, 0)).getUTCDate()).padStart(2, "0")}`;
+  const saldoUlt = fl[ult]["SALDO FINAL"];
+  if (saldoUlt === undefined) return null;
+  const GASTOS = ["GASTOS VARIOS", "GASTOS DE ENVIOS", "GASTOS DE COMISIONES", "GASTOS DE EQUIPO DE OFICINA", "GASTOS DE PRODUCCIÓN DE PUBLICIDAD", "ALQUILER", "SERVICIOS DIGITALES", "SERVICIOS PROFESIONALES"];
+  return {
+    ult, ancla: { fecha, saldo: saldoUlt }, mesesEr: Object.keys(er).sort(),
+    flujoMes: (m) => {
+      const f = fl[m]; if (!f) return null;
+      const g = (k) => f[k] || 0;
+      const ventas = g("VENTAS"), otros = g("CAPITAL SOCIAL"), compras = g("COMPRA DE MERCANCIA AL CONTADO"), pagos = g("PROVEEDORES"), ads = g("GASTOS DE PUBLICIDAD"), sueldos = g("SUELDOS");
+      const gastos = GASTOS.reduce((a, k) => a + g(k), 0);
+      const entradas = ventas + otros, salidas = compras + pagos + ads + sueldos + gastos;
+      return { ventas: redC(ventas), otros: redC(otros), compras: redC(compras), pagos: redC(pagos), ads: redC(ads), sueldos: redC(sueldos), gastos: redC(gastos), entradas: redC(entradas), salidas: redC(salidas), neto: redC(entradas - salidas), saldo: f["SALDO FINAL"] === undefined ? null : Number(f["SALDO FINAL"]) };
+    },
+    erMes: (m) => {
+      const e = er[m]; if (!e || e["ingreso"] === undefined) return null;
+      const ventas = e["ingreso"], netas = e["ventas netas"] ?? ventas;
+      const costo = e["costos de ventas"] ?? null, bruta = e["utilidad bruta"] ?? null, neta = e["utilidad neta"] ?? null;
+      const ads = e["gastos de publicidad"] || 0, com = e["gasto comisiones"] || 0;
+      const gastosTot = bruta !== null && neta !== null ? bruta - neta : (e["total de gastos"] ?? 0);
+      return { prod: ventas, envio: 0, tot: ventas, reemb: redC(ventas - netas), netas, costo, bruta, ads, com, gastos: redC(gastosTot - ads - com), neta };
+    },
+  };
+}
+// Fila normalizada del flujo de caja: o viene de los libros (lb) o del sistema (f)
+function evoFlujoFila(f, lb) {
+  if (lb) return { web_ventas: 0, tienda_ventas: 0, ventas_libros: lb.ventas, otros_ing: lb.otros, entradas: lb.entradas, compras: lb.compras, pagos_prov: lb.pagos, ads: lb.ads, sueldos: lb.sueldos, gastos: lb.gastos, salidas: lb.salidas, neto: lb.neto, saldo: lb.saldo, libros: true };
+  return { web_ventas: nF(f.web_ventas), tienda_ventas: nF(f.tienda_ventas), ventas_libros: 0, otros_ing: nF(f.cobros), entradas: nF(f.entradas), compras: nF(f.compras_odoo), pagos_prov: nF(f.pagos_proveedores), ads: nF(f.ads), sueldos: 0,
+    gastos: nF(f.gastos_caja) + nF(f.web_reembolsos), salidas: nF(f.salidas), neto: nF(f.neto_caja), saldo: f.saldo_final === null || f.saldo_final === undefined ? null : Number(f.saldo_final), libros: false };
+}
+// Junta periodos mensuales en años: suma los campos indicados (los "nulos" quedan en null si algún mes no tiene dato) y toma el último valor de "ultimo"
+function evoAnual(filas, items, suma, nulos, ultimo) {
+  const g = new Map();
+  filas.forEach((f, i) => { const y = String(f.k).slice(0, 4); if (!g.has(y)) g.set(y, []); g.get(y).push(i); });
+  const fa = [], ia = [];
+  g.forEach((idx, y) => {
+    fa.push({ k: y, desde: filas[idx[0]].desde, hasta: filas[idx[idx.length - 1]].hasta });
+    const o = { libros: idx.some(i => items[i].libros) };
+    suma.forEach(k => { o[k] = redC(idx.reduce((a, i) => a + nF(items[i][k]), 0)); });
+    nulos.forEach(k => { o[k] = idx.some(i => items[i][k] === null || items[i][k] === undefined) ? null : redC(idx.reduce((a, i) => a + Number(items[i][k]), 0)); });
+    ultimo.forEach(k => { const v = items[idx[idx.length - 1]][k]; o[k] = v === undefined ? null : v; });
+    ia.push(o);
+  });
+  return [fa, ia];
+}
+const FLUJO_SUMAS = ["web_ventas", "tienda_ventas", "ventas_libros", "otros_ing", "entradas", "compras", "pagos_prov", "ads", "sueldos", "gastos", "salidas", "neto"];
+
 function FinEvolucion({ modo, irA }) {
   const [gran, setGran] = useState("mes");
   const [vent, setVent] = useState({ dia: 30, mes: 12 });
   const [canal, setCanal] = useState("total");
   const hoy = fechaPanama();
-  const desde = evoDesde(gran, vent[gran], hoy);
-  const { datos: d, error, cargando } = useFinDatos("fin_evolucion", { p_desde: desde, p_hasta: hoy, p_gran: gran }, [desde, hoy, gran]);
+  // Por mes y por año se pide todo el historial mensual (así se puede mezclar con los libros y calcular el saldo); por día, solo la ventana elegida
+  const reqGran = gran === "dia" ? "dia" : "mes";
+  const reqDesde = gran === "dia" ? evoDesde("dia", vent.dia, hoy) : EVO_INICIO;
+  const { datos: d, error, cargando } = useFinDatos("fin_evolucion", { p_desde: reqDesde, p_hasta: hoy, p_gran: reqGran }, [reqDesde, hoy, reqGran]);
+  const { datos: contD, cargando: contCarga } = useFinDatos("cont_datos", {}, []);
 
   const controles = (
     <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", margin: "14px 0 6px" }}>
@@ -6249,12 +6315,35 @@ function FinEvolucion({ modo, irA }) {
   );
 
   if (error) return <>{controles}<AvisoFin malo>No se pudo calcular: {error}</AvisoFin></>;
-  if (!d) return <>{controles}<div style={{ padding: "50px 0", textAlign: "center", color: MT.texto2 }}>Calculando la evolución…</div></>;
+  if (!d || (contCarga && !contD)) return <>{controles}<div style={{ padding: "50px 0", textAlign: "center", color: MT.texto2 }}>Calculando la evolución…</div></>;
 
+  // Libros contables corregidos (si no se pueden leer, todo sigue funcionando solo con el sistema)
+  const L = evoLibros(contD);
+  const usaLib = gran !== "dia" && !!L;
   // Se quitan los periodos vacíos del principio (antes de que el negocio tuviera movimiento)
-  let filas = d.filas || [];
-  const ini = filas.findIndex(f => nF(f.entradas) !== 0 || nF(f.salidas) !== 0 || nF(f.ventas_totales) !== 0);
-  filas = ini < 0 ? [] : filas.slice(ini);
+  let filasAll = d.filas || [];
+  const ini = filasAll.findIndex(f => nF(f.entradas) !== 0 || nF(f.salidas) !== 0 || nF(f.ventas_totales) !== 0 || (usaLib && !!L.flujoMes(f.k)));
+  filasAll = ini < 0 ? [] : filasAll.slice(ini);
+  const FA = filasAll.map(f => evoFlujoFila(f, usaLib ? L.flujoMes(f.k) : null));
+  // Saldo de caja: los meses de los libros traen el suyo; después de ellos se sigue sumando lo que entra y sale según el sistema
+  if (L) {
+    let acumS = null; const sig = sumarDiasISO(L.ancla.fecha, 1);
+    filasAll.forEach((f, i) => {
+      const it = FA[i]; const dd = String(f.desde).slice(0, 10);
+      if (it.libros || dd <= L.ancla.fecha) return;
+      if (acumS === null && dd === sig) acumS = L.ancla.saldo;
+      if (acumS !== null) { acumS = redC(acumS + it.neto); if (it.saldo === null) it.saldo = acumS; else acumS = it.saldo; }
+    });
+  }
+  const RA = filasAll.map(f => evoResultados(f, canal, usaLib ? L.erMes(f.k) : null));
+  let filas = filasAll, F = FA, R = RA;
+  if (gran === "mes" && vent.mes !== "todo") { const n = Number(vent.mes); filas = filasAll.slice(-n); F = FA.slice(-n); R = RA.slice(-n); }
+  if (gran === "anio") {
+    const [fa, ia] = evoAnual(filasAll, FA, FLUJO_SUMAS, [], ["saldo"]);
+    const [, ra] = evoAnual(filasAll, RA, ["prod", "envio", "tot", "reemb", "netas", "ads", "com", "gastos"], ["costo", "bruta", "neta"], []);
+    filas = fa; F = ia; R = ra;
+  }
+  const hayLib = F.some(x => x.libros);
   const enCurso = (f) => (gran === "dia" ? f.k === hoy : f.desde <= hoy && f.hasta >= hoy);
   const ejeX = filas.map(f => f.k);
   // En meses: el año solo en el primero y en enero, para que las etiquetas no se amontonen
@@ -6266,36 +6355,38 @@ function FinEvolucion({ modo, irA }) {
 
   // ───────── FLUJO DE CAJA ─────────
   if (modo === "flujo") {
-    const ent = evoSuma(filas, "entradas"), sal = evoSuma(filas, "salidas"), neto = ent - sal;
-    const saldoHoy = (() => { for (let i = filas.length - 1; i >= 0; i--) if (filas[i].saldo_final !== null && filas[i].saldo_final !== undefined) return Number(filas[i].saldo_final); return null; })();
-    const conSaldo = d.fecha_saldo && saldoHoy !== null;
-    let acum = 0; const acumulado = filas.map(f => (acum += nF(f.neto_caja)));
-    const lineaSaldo = conSaldo ? filas.map(f => (f.saldo_final === null || f.saldo_final === undefined ? null : Number(f.saldo_final))) : acumulado;
-    const mejor = filas.reduce((m, f) => (m === null || nF(f.neto_caja) > nF(m.neto_caja) ? f : m), null);
-    const peor = filas.reduce((m, f) => (m === null || nF(f.neto_caja) < nF(m.neto_caja) ? f : m), null);
-    const compEnt = [["Ventas web cobradas", evoSuma(filas, "web_ventas")], ["Ventas de la tienda física", evoSuma(filas, "tienda_ventas")], ["Cobros de cuentas por cobrar", evoSuma(filas, "cobros")]];
-    const compSal = [["Compras de mercancía en Odoo", evoSuma(filas, "compras_odoo")], ["Gastos pagados", evoSuma(filas, "gastos_caja")], ["Publicidad en Meta", evoSuma(filas, "ads")], ["Reembolsos a clientes (web)", evoSuma(filas, "web_reembolsos")], ["Pagos a proveedores (cuentas por pagar)", evoSuma(filas, "pagos_proveedores")]];
+    const sumF = (k) => F.reduce((a, x) => a + nF(x[k]), 0);
+    const ent = sumF("entradas"), sal = sumF("salidas"), neto = ent - sal;
+    const saldoHoy = (() => { for (let i = F.length - 1; i >= 0; i--) if (F[i].saldo !== null && F[i].saldo !== undefined) return Number(F[i].saldo); return null; })();
+    const conSaldo = saldoHoy !== null;
+    let acum = 0; const acumulado = F.map(x => (acum += nF(x.neto)));
+    const lineaSaldo = conSaldo ? F.map(x => (x.saldo === null || x.saldo === undefined ? null : Number(x.saldo))) : acumulado;
+    const iMejor = F.reduce((m, x, i) => (m < 0 || nF(x.neto) > nF(F[m].neto) ? i : m), -1);
+    const iPeor = F.reduce((m, x, i) => (m < 0 || nF(x.neto) < nF(F[m].neto) ? i : m), -1);
+    const compEnt = [["Ventas web cobradas", sumF("web_ventas")], ["Ventas de la tienda física", sumF("tienda_ventas")], ...(hayLib ? [["Ventas según tus libros (web + tienda sin separar)", sumF("ventas_libros")]] : []), ["Cobros y otros ingresos (capital, cuentas por cobrar)", sumF("otros_ing")]];
+    const compSal = [["Compras de mercancía", sumF("compras")], ["Pagos a proveedores", sumF("pagos_prov")], ...(hayLib ? [["Sueldos (libros)", sumF("sueldos")]] : []), ["Publicidad en Meta", sumF("ads")], ["Gastos pagados y reembolsos", sumF("gastos")]];
     const maxComp = Math.max(1, ...compEnt.map(x => x[1]), ...compSal.map(x => x[1]));
-    const COLS = [["Ventas web", "web_ventas"], ["Ventas tienda", "tienda_ventas"], ["Cobros", "cobros"], ["Entradas", "entradas"], ["Compras Odoo", "compras_odoo"], ["Gastos", "gastos_caja"], ["Publicidad", "ads"], ["Reembolsos", "web_reembolsos"], ["Pagos prov.", "pagos_proveedores"], ["Salidas", "salidas"], ["Flujo neto", "neto_caja"], ["Saldo estimado", "saldo_final"]];
-    const serEntSal = [{ nombre: "Entra", color: MT.bueno, valores: filas.map(f => nF(f.entradas)), formato: (v) => usdM(v, 0) }, { nombre: "Sale", color: MT.malo, valores: filas.map(f => nF(f.salidas)), formato: (v) => usdM(v, 0) }];
+    const COLS = [["Ventas web", "web_ventas"], ["Ventas tienda", "tienda_ventas"], ...(hayLib ? [["Ventas (libros)", "ventas_libros"]] : []), ["Otros ingresos", "otros_ing"], ["Entradas", "entradas"], ["Compras", "compras"], ["Pagos prov.", "pagos_prov"], ["Publicidad", "ads"], ...(hayLib ? [["Sueldos", "sueldos"]] : []), ["Gastos", "gastos"], ["Salidas", "salidas"], ["Flujo neto", "neto"], ["Saldo estimado", "saldo"]];
+    const serEntSal = [{ nombre: "Entra", color: MT.bueno, valores: F.map(x => nF(x.entradas)), formato: (v) => usdM(v, 0) }, { nombre: "Sale", color: MT.malo, valores: F.map(x => nF(x.salidas)), formato: (v) => usdM(v, 0) }];
     const graficaEntSal = gran === "dia"
       ? <GraficaLineas etiquetas={ejeX} etiquetaX={etqEje} descripcion="Entradas y salidas de caja" alto={230} series={serEntSal} />
       : <GraficaBarras etiquetas={ejeX} etiquetaX={etqEje} descripcion="Entradas y salidas de caja" alto={230} series={serEntSal} />;
-    const bajar = () => descargarCsvEvo(`flujo-de-caja-${gran}`, ["Periodo", ...COLS.map(c => c[0])], filas.map(f => [evoTabla(f.k, gran), ...COLS.map(c => (f[c[1]] === null || f[c[1]] === undefined ? "" : f[c[1]]))]));
+    const bajar = () => descargarCsvEvo(`flujo-de-caja-${gran}`, ["Periodo", "Fuente", ...COLS.map(c => c[0])], filas.map((f, i) => [evoTabla(f.k, gran), F[i].libros ? "libros" : "sistema", ...COLS.map(c => (F[i][c[1]] === null || F[i][c[1]] === undefined ? "" : F[i][c[1]]))]));
     return (
       <div style={opacidad}>
         {controles}
-        {!d.fecha_saldo && <AvisoFin>Para ver cuánto dinero deberías tener en caja, escribe tu saldo inicial y su fecha en <button className="met-chip" style={{ padding: "2px 10px" }} onClick={() => irA("control")}>Ajustes</button>. Mientras tanto, la línea de abajo muestra lo acumulado desde el primer periodo de la gráfica.</AvisoFin>}
+        {!d.fecha_saldo && !L && <AvisoFin>Para ver cuánto dinero deberías tener en caja, escribe tu saldo inicial y su fecha en <button className="met-chip" style={{ padding: "2px 10px" }} onClick={() => irA("control")}>Ajustes</button>. Mientras tanto, la línea de abajo muestra lo acumulado desde el primer periodo de la gráfica.</AvisoFin>}
+        {hayLib && <AvisoFin>Los periodos marcados <b>libros</b> (hasta {mesLargoC(L.ult)}) salen de tus libros contables corregidos el 9-nov-2026: el diario, el balance y el flujo cuadran entre sí. Lo que va después es un estimado del sistema (ventas, compras de Odoo, publicidad y los gastos que registres); no incluye sueldos ni pagos a proveedores hasta que los registres.</AvisoFin>}
         {sinDatos ? <div className="met-card" style={{ textAlign: "center", color: MT.texto2, padding: 28 }}>No hay movimientos de caja en este rango.</div> : <>
           <div className="met-grid" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", marginTop: 12 }}>
             <Kpi retraso={0} etiqueta="Entró dinero" formula="Ventas web cobradas + ventas de la caja de la tienda (ya restados sus reembolsos) + cobros de cuentas por cobrar."><Cifra valor={ent} f={(v) => usdM(v, 0)} /></Kpi>
             <Kpi retraso={60} etiqueta="Salió dinero" formula="Compras de Odoo + gastos pagados (sin los que quedaron a crédito) + publicidad de Meta + reembolsos de la web + pagos a proveedores."><Cifra valor={sal} f={(v) => usdM(v, 0)} /></Kpi>
             <Kpi acento retraso={120} etiqueta="Flujo neto del rango" formula="Lo que entró menos lo que salió en todos los periodos de abajo."
-              pie={<div style={{ fontSize: 12, color: MT.suave }}>{mejor && peor ? `Mejor ${porPeriodo}: ${etqEje(mejor.k)} (${signoUsd(mejor.neto_caja)}) · Peor: ${etqEje(peor.k)} (${signoUsd(peor.neto_caja)})` : ""}</div>}>
+              pie={<div style={{ fontSize: 12, color: MT.suave }}>{iMejor >= 0 && iPeor >= 0 ? `Mejor ${porPeriodo}: ${etqEje(filas[iMejor].k)} (${signoUsd(F[iMejor].neto)}) · Peor: ${etqEje(filas[iPeor].k)} (${signoUsd(F[iPeor].neto)})` : ""}</div>}>
               <span style={{ color: neto >= 0 ? MT.bueno : MT.malo }}><Cifra valor={neto} f={(v) => signoUsd(v)} /></span>
             </Kpi>
-            <Kpi retraso={180} etiqueta="Saldo de caja estimado" formula={`Saldo inicial ${usdM(d.saldo_inicial, 0)} al ${d.fecha_saldo || "—"} + todo lo que entró − todo lo que salió desde esa fecha. Es una estimación: no se concilia con el banco.`}
-              pie={<div style={{ fontSize: 12, color: MT.suave }}>{conSaldo ? `Desde el saldo inicial del ${d.fecha_saldo}` : "Falta el saldo inicial en Ajustes"}</div>}>
+            <Kpi retraso={180} etiqueta="Saldo de caja estimado" formula={L ? `Saldo de tus libros al cierre de ${mesLargoC(L.ult)} (${usdM(L.ancla.saldo, 0)}) + lo que entra − lo que sale después, según el sistema. Es una estimación: no se concilia con el banco.` : `Saldo inicial ${usdM(d.saldo_inicial, 0)} al ${d.fecha_saldo || "—"} + todo lo que entró − todo lo que salió desde esa fecha. Es una estimación: no se concilia con el banco.`}
+              pie={<div style={{ fontSize: 12, color: MT.suave }}>{conSaldo ? (L ? `Desde tus libros (${mesLargoC(L.ult)})` : `Desde el saldo inicial del ${d.fecha_saldo}`) : "Falta el saldo inicial en Ajustes"}</div>}>
               {conSaldo ? <span style={{ color: saldoHoy >= 0 ? MT.texto : MT.malo }}><Cifra valor={saldoHoy} f={(v) => signoUsd(v)} /></span> : <span style={{ fontSize: 15, color: MT.suave }}>Sin saldo inicial</span>}
             </Kpi>
           </div>
@@ -6308,7 +6399,7 @@ function FinEvolucion({ modo, irA }) {
             </div>
             <div className="met-card met-in" style={{ "--d": "140ms" }}>
               <div className="met-lbl" style={{ marginBottom: 8 }}>Flujo neto por {porPeriodo} <span style={{ fontWeight: 500, color: MT.suave }}>(verde: sobró · naranja: faltó)</span></div>
-              <GraficaNegativos etiquetas={ejeX} etiquetaX={etqEje} valores={filas.map(f => nF(f.neto_caja))} nombre="flujo neto" descripcion="Flujo neto de caja" />
+              <GraficaNegativos etiquetas={ejeX} etiquetaX={etqEje} valores={F.map(x => nF(x.neto))} nombre="flujo neto" descripcion="Flujo neto de caja" />
             </div>
           </div>
           <div className="met-card met-in" style={{ "--d": "100ms", marginTop: 14 }}>
@@ -6338,15 +6429,15 @@ function FinEvolucion({ modo, irA }) {
               <tbody>
                 <tr style={{ fontWeight: 800, background: "rgba(17,17,17,0.04)" }}>
                   <td>Total del rango</td>
-                  {COLS.map(([l, k]) => <td key={k}>{k === "saldo_final" ? (conSaldo ? usdM(saldoHoy, 0) : "—") : k === "neto_caja" ? <span style={{ color: neto >= 0 ? MT.bueno : MT.malo }}>{signoUsd(neto)}</span> : usdM(evoSuma(filas, k), 0)}</td>)}
+                  {COLS.map(([l, k]) => <td key={k}>{k === "saldo" ? (conSaldo ? usdM(saldoHoy, 0) : "—") : k === "neto" ? <span style={{ color: neto >= 0 ? MT.bueno : MT.malo }}>{signoUsd(neto)}</span> : usdM(sumF(k), 0)}</td>)}
                 </tr>
-                {[...filas].reverse().map(f => (
+                {filas.map((f, i) => ({ f, x: F[i] })).reverse().map(({ f, x }) => (
                   <tr key={f.k}>
-                    <td style={{ whiteSpace: "nowrap" }}>{evoTabla(f.k, gran)}{enCurso(f) && <span style={{ fontSize: 10.5, color: MT.rojo, fontWeight: 800, marginLeft: 6 }}>{gran === "dia" ? "hoy" : "en curso"}</span>}</td>
-                    {COLS.map(([l, k]) => <td key={k} style={k === "entradas" || k === "salidas" || k === "neto_caja" ? { fontWeight: 800 } : undefined}>
-                      {k === "saldo_final" ? (f.saldo_final === null || f.saldo_final === undefined ? "—" : signoUsd(f.saldo_final))
-                        : k === "neto_caja" ? <span style={{ color: nF(f.neto_caja) >= 0 ? MT.bueno : MT.malo }}>{signoUsd(f.neto_caja)}</span>
-                        : usdM(f[k], 0)}
+                    <td style={{ whiteSpace: "nowrap" }}>{evoTabla(f.k, gran)}{enCurso(f) && <span style={{ fontSize: 10.5, color: MT.rojo, fontWeight: 800, marginLeft: 6 }}>{gran === "dia" ? "hoy" : "en curso"}</span>}{x.libros && <span style={{ fontSize: 10.5, color: MT.suave, fontWeight: 700, marginLeft: 6 }}>libros</span>}</td>
+                    {COLS.map(([l, k]) => <td key={k} style={k === "entradas" || k === "salidas" || k === "neto" ? { fontWeight: 800, whiteSpace: "nowrap" } : { whiteSpace: "nowrap" }}>
+                      {k === "saldo" ? (x.saldo === null || x.saldo === undefined ? "—" : signoUsd(x.saldo))
+                        : k === "neto" ? <span style={{ color: nF(x.neto) >= 0 ? MT.bueno : MT.malo }}>{signoUsd(x.neto)}</span>
+                        : usdM(x[k], 0)}
                     </td>)}
                   </tr>
                 ))}
@@ -6354,7 +6445,7 @@ function FinEvolucion({ modo, irA }) {
             </table>
           </div>
           <div style={{ fontSize: 11.5, color: MT.suave, margin: "10px 2px 0", lineHeight: 1.6 }}>
-            Las compras de Odoo cuentan como salida el día de la orden confirmada (es un estimado: Odoo aún no tiene los pagos a proveedores). Los gastos a crédito no salen de caja hasta que los pagas. Las ventas de la tienda ya vienen sin los reembolsos de la caja. Datos desde: tienda {cob.tienda_desde ? fechaCortaM(cob.tienda_desde) + " " + String(cob.tienda_desde).slice(0, 4) : "—"} · web {cob.web_desde ? fechaCortaM(cob.web_desde) + " " + String(cob.web_desde).slice(0, 4) : "—"} · compras {cob.compras_desde ? fechaCortaM(cob.compras_desde) + " " + String(cob.compras_desde).slice(0, 4) : "—"} · gastos registrados {cob.gastos_desde ? fechaCortaM(cob.gastos_desde) + " " + String(cob.gastos_desde).slice(0, 4) : "—"}.
+            En los periodos “libros”, “Gastos” suma gastos varios, envíos, comisiones, servicios, equipo y empaque; en los del sistema, los gastos pagados y los reembolsos de la web. Las compras de Odoo cuentan como salida el día de la orden confirmada (es un estimado: Odoo aún no tiene los pagos a proveedores). Los gastos a crédito no salen de caja hasta que los pagas. Las ventas de la tienda ya vienen sin los reembolsos de la caja. Datos desde: tienda {cob.tienda_desde ? fechaCortaM(cob.tienda_desde) + " " + String(cob.tienda_desde).slice(0, 4) : "—"} · web {cob.web_desde ? fechaCortaM(cob.web_desde) + " " + String(cob.web_desde).slice(0, 4) : "—"} · compras {cob.compras_desde ? fechaCortaM(cob.compras_desde) + " " + String(cob.compras_desde).slice(0, 4) : "—"} · gastos registrados {cob.gastos_desde ? fechaCortaM(cob.gastos_desde) + " " + String(cob.gastos_desde).slice(0, 4) : "—"}.
           </div>
         </>}
       </div>
@@ -6362,7 +6453,7 @@ function FinEvolucion({ modo, irA }) {
   }
 
   // ───────── ESTADO DE RESULTADOS ─────────
-  const R = filas.map(f => evoResultados(f, canal));
+  const hayLibER = R.some(r => r.libros);
   const sumaR = (k) => R.reduce((a, r) => a + nF(r[k]), 0);
   const sumaRN = (k) => (R.some(r => r[k] === null || r[k] === undefined) ? null : sumaR(k));
   const T = { prod: sumaR("prod"), envio: sumaR("envio"), tot: sumaR("tot"), reemb: sumaR("reemb"), netas: sumaR("netas"), costo: sumaRN("costo"), bruta: sumaRN("bruta"), ads: sumaR("ads"), com: sumaR("com"), gastos: sumaR("gastos"), neta: sumaRN("neta") };
@@ -6370,7 +6461,7 @@ function FinEvolucion({ modo, irA }) {
   const mBruto = T.bruta !== null && T.tot > 0 ? (T.bruta / T.tot) * 100 : null;
   const mNeto = T.neta !== null && T.tot > 0 ? (T.neta / T.tot) * 100 : null;
   const gastosDesde = cob.gastos_desde ? String(cob.gastos_desde).slice(0, 10) : null;
-  const rangoAntesGastos = gastosDesde && filas.length > 0 && filas[0].desde < gastosDesde;
+  const rangoAntesGastos = gastosDesde && filas.some((f, i) => !R[i].libros && String(f.desde).slice(0, 10) < gastosDesde);
   const mesFmt = (iso) => `${fechaCortaM(iso)} ${String(iso).slice(0, 4)}`;
   const FILAS = [
     ["Ventas de productos", "prod", "ing"], ["Envíos cobrados a clientes", "envio", "ing"], ["Ventas totales", "tot", "sub"], ["(−) Reembolsos a clientes", "reemb", "egr"], ["Ventas netas", "netas", "sub"],
@@ -6380,7 +6471,7 @@ function FinEvolucion({ modo, irA }) {
   ];
   const valorFila = (r, k) => k === "mbruto" ? (r.bruta !== null && r.tot > 0 ? (r.bruta / r.tot) * 100 : null) : k === "mneto" ? (r.neta !== null && r.tot > 0 ? (r.neta / r.tot) * 100 : null) : r[k];
   const celda = (v, k, tipo) => v === null || v === undefined ? "—" : tipo === "pct" ? signoPct(v, 1) : tipo === "egr" ? (nF(v) > 0 ? "−" : "") + usdM(Math.abs(nF(v)), 0) : signoUsd(v);
-  const bajar = () => descargarCsvEvo(`estado-de-resultados-${gran}-${canal}`, ["Concepto", ...filas.map(f => evoTabla(f.k, gran)), "Total"],
+  const bajar = () => descargarCsvEvo(`estado-de-resultados-${gran}-${canal}`, ["Concepto", ...filas.map((f, i) => evoTabla(f.k, gran) + (R[i].libros ? " (libros)" : "")), "Total"],
     FILAS.map(([et, k, tipo]) => [et, ...R.map(r => { const v = valorFila(r, k); return v === null || v === undefined ? "" : (tipo === "pct" ? Math.round(v * 10) / 10 : Math.round(v * 100) / 100); }), (() => { const v = valorFila(T, k); return v === null || v === undefined ? "" : (tipo === "pct" ? Math.round(v * 10) / 10 : Math.round(v * 100) / 100); })()]));
   const serVentas = [{ nombre: "Ventas netas", color: MT.tinta, valores: R.map(r => nF(r.netas)), formato: (v) => usdM(v, 0) }, { nombre: "Utilidad bruta", color: MT.rojo, valores: R.map(r => (r.bruta === null ? 0 : Math.max(0, r.bruta))), formato: (v) => usdM(v, 0) }];
   const colorTipo = (tipo, v) => tipo === "tot" ? (v !== null && v !== undefined && nF(v) < 0 ? MT.malo : MT.bueno) : tipo === "egr" || tipo === "pct" ? MT.texto2 : MT.texto;
@@ -6392,7 +6483,9 @@ function FinEvolucion({ modo, irA }) {
         {Object.entries(CANAL_TXT).map(([k, l]) => <button key={k} className={"met-chip" + (canal === k ? " on" : "")} onClick={() => setCanal(k)}>{l}</button>)}
       </div>
       {canal !== "total" && <div style={{ fontSize: 11.5, color: MT.suave, marginTop: 6 }}>No incluye los gastos compartidos (los que marcaste para web y tienda a la vez); esos se descuentan solo en “Todo el negocio”.</div>}
-      {rangoAntesGastos && <AvisoFin>Tus gastos operativos (alquiler, planilla, servicios…) están registrados solo desde el <b>{mesFmt(gastosDesde)}</b>. Los periodos anteriores muestran la ganancia neta <b>sin esos gastos</b>, por eso se ven mejor de lo real. <button className="met-chip" style={{ padding: "2px 10px" }} onClick={() => irA("gastos")}>Registrar gastos</button></AvisoFin>}
+      {hayLibER && <AvisoFin>Los periodos marcados <b>libros</b> (hasta {mesLargoC(L.mesesEr[L.mesesEr.length - 1])}) salen de tu estado de resultados de los libros contables, ya con las ventas corregidas (el POS no restaba los reembolsos). Incluyen todos tus gastos: sueldos, servicios, equipo, etc. Los demás periodos son un estimado del sistema.</AvisoFin>}
+      {canal !== "total" && hayLibER === false && L && gran !== "dia" && <AvisoFin>Tus libros no separan web y tienda, por eso en “Solo web” y “Solo tienda física” se usan los datos del sistema.</AvisoFin>}
+      {rangoAntesGastos && <AvisoFin>Tus gastos operativos (alquiler, planilla, servicios…) están registrados en el sistema solo desde el <b>{mesFmt(gastosDesde)}</b>. Los periodos que no vienen de los libros y son anteriores muestran la ganancia neta <b>sin esos gastos</b>, por eso se ven mejor de lo real. <button className="met-chip" style={{ padding: "2px 10px" }} onClick={() => irA("gastos")}>Registrar gastos</button></AvisoFin>}
       {!d.comisiones_configuradas && <AvisoFin>Las comisiones de tarjeta y Yappy no están configuradas, así que no se descuentan. Ponlas en <button className="met-chip" style={{ padding: "2px 10px" }} onClick={() => irA("control")}>Ajustes</button>.</AvisoFin>}
       {sinDatos ? <div className="met-card" style={{ textAlign: "center", color: MT.texto2, padding: 28 }}>No hay ventas en este rango.</div> : <>
         <div className="met-grid" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", marginTop: 12 }}>
@@ -6434,7 +6527,7 @@ function FinEvolucion({ modo, irA }) {
           <table className="met-tabla" style={{ minWidth: Math.max(720, 250 + (filas.length + 1) * 92) }}>
             <thead><tr>
               <th style={{ position: "sticky", left: 0, background: MT.tarjeta, zIndex: 1, minWidth: 250 }}>Concepto</th>
-              {filas.map(f => <th key={f.k} style={{ whiteSpace: "nowrap" }}>{evoTabla(f.k, gran)}{enCurso(f) && <div style={{ fontSize: 10, color: MT.rojo, fontWeight: 800 }}>{gran === "dia" ? "hoy" : "en curso"}</div>}</th>)}
+              {filas.map((f, i) => <th key={f.k} style={{ whiteSpace: "nowrap" }}>{evoTabla(f.k, gran)}{enCurso(f) && <div style={{ fontSize: 10, color: MT.rojo, fontWeight: 800 }}>{gran === "dia" ? "hoy" : "en curso"}</div>}{R[i].libros && <div style={{ fontSize: 10, color: MT.suave, fontWeight: 700 }}>libros</div>}</th>)}
               <th style={{ background: "rgba(17,17,17,0.04)" }}>Total</th>
             </tr></thead>
             <tbody>
@@ -6453,7 +6546,7 @@ function FinEvolucion({ modo, irA }) {
           </table>
         </div>
         <div style={{ fontSize: 11.5, color: MT.suave, margin: "10px 2px 0", lineHeight: 1.6 }}>
-          El costo de la mercancía vendida es una estimación: se aplica el margen de los productos con costo cargado al resto de lo vendido (en la web se descuenta lo devuelto al inventario). Las ventas de la tienda van sin ITBMS. Las compras de mercancía no se restan aquí: ya están dentro del costo de lo vendido. Datos desde: tienda {cob.tienda_desde ? mesFmt(String(cob.tienda_desde).slice(0, 10)) : "—"} · web {cob.web_desde ? mesFmt(String(cob.web_desde).slice(0, 10)) : "—"} · publicidad Meta {cob.ads_desde ? mesFmt(String(cob.ads_desde).slice(0, 10)) : "—"} · gastos registrados {gastosDesde ? mesFmt(gastosDesde) : "—"}.
+          En los periodos “libros” las cifras son las de tu estado de resultados contable (el costo de ventas es el que calculaste); en los demás, el costo de la mercancía vendida es una estimación: se aplica el margen de los productos con costo cargado al resto de lo vendido (en la web se descuenta lo devuelto al inventario). Las ventas de la tienda van sin ITBMS. Las compras de mercancía no se restan aquí: ya están dentro del costo de lo vendido. Datos desde: tienda {cob.tienda_desde ? mesFmt(String(cob.tienda_desde).slice(0, 10)) : "—"} · web {cob.web_desde ? mesFmt(String(cob.web_desde).slice(0, 10)) : "—"} · publicidad Meta {cob.ads_desde ? mesFmt(String(cob.ads_desde).slice(0, 10)) : "—"} · gastos registrados {gastosDesde ? mesFmt(gastosDesde) : "—"}.
         </div>
       </>}
     </div>
