@@ -7027,6 +7027,32 @@ const balDelta = (cur, prev) => { const dd = nF(cur) - nF(prev); const base = Ma
 const balFmt = (v, u) => v === null || v === undefined ? "—" : u === "x" ? `${v.toFixed(2)}x` : u === "usd" ? signoUsd(v, 0) : u === "pct" ? signoPct(v * 100, 1) : u === "dias" ? `${Math.round(v)} días` : String(v);
 const COL_EST = { bueno: MT.bueno, atencion: "#B7791F", malo: MT.malo };
 
+// Rangos de referencia para un negocio de comercio de ropa y calzado en crecimiento (pequeña empresa, ventas al contado y por mayor).
+// Son guías generales de análisis financiero, no una norma: sirven para comparar mes contra mes y detectar qué revisar.
+const BAL_RANGOS = [
+  { n: "Liquidez", ver: "1.5x a 3.5x", amb: "1.0x a 1.5x, o más de 3.5x", rev: "Menos de 1.0x", por: "Menos de 1x no alcanza para pagar a corto plazo. Mucho más de 3.5x es dinero o mercancía parada que no está trabajando para crecer." },
+  { n: "Ratio de tesorería", ver: "0.8x o más", amb: "0.4x a 0.8x", rev: "Menos de 0.4x", por: "Sin contar la mercancía. En comercio es normal que sea menor que 1x porque gran parte del activo es inventario." },
+  { n: "Fondo de maniobra", ver: "Positivo", amb: "—", rev: "Cero o negativo", por: "Después de pagar lo de corto plazo tiene que quedar con qué operar." },
+  { n: "Flujo de caja del período", ver: "Positivo", amb: "Negativo por invertir en inventario", rev: "—", por: "Quien crece suele gastar caja en mercancía; lo importante es que sea una decisión y no una fuga." },
+  { n: "Plazo de cobro", ver: "30 días o menos", amb: "30 a 60 días", rev: "Más de 60 días", por: "Al contado es 0. Si vendes a crédito por mayor, 30 días es lo normal." },
+  { n: "Plazo de pago", ver: "20 a 60 días", amb: "60 a 90 días", rev: "Más de 90 días", por: "El crédito de proveedores financia el crecimiento; pasarse de 90 días daña la relación." },
+  { n: "Endeudamiento (pasivo ÷ patrimonio)", ver: "Hasta 100%", amb: "100% a 150%", rev: "Más de 150%", por: "Sin deuda es seguro, pero también significa que no usas crédito de proveedores para crecer más rápido." },
+  { n: "Solidez patrimonial", ver: "40% o más", amb: "25% a 40%", rev: "Menos de 25%", por: "Qué parte del negocio es tuya. Más de 70% indica poco apalancamiento." },
+  { n: "Cobertura del inmovilizado", ver: "1x o más", amb: "—", rev: "Menos de 1x", por: "Los equipos y la obra se deben pagar con dinero propio o deuda de largo plazo, no con deuda de corto plazo." },
+  { n: "Crecimiento de ventas (mes contra mes)", ver: "+2% o más", amb: "−5% a +2%", rev: "Menos de −5%", por: "Una empresa en crecimiento necesita que sus ventas suban; la ropa tiene temporadas, así que mira también el promedio de 3 meses." },
+  { n: "Margen bruto", ver: "35% o más", amb: "25% a 35%", rev: "Menos de 25%", por: "Ropa y calzado al detal suele estar en 45% a 55%, y al por mayor en 25% a 35%. Tu mezcla de ambos cae entre las dos." },
+  { n: "Rentabilidad neta", ver: "8% o más", amb: "3% a 8%", rev: "Menos de 3%", por: "En comercio de ropa lo común es 3% a 8%; arriba de 10% es excelente. Ojo: tus libros aún no incluyen impuestos, depreciación ni un sueldo para el dueño." },
+  { n: "Días de inventario", ver: "120 días o menos", amb: "120 a 180 días", rev: "Más de 180 días", por: "Entre 90 y 120 días (3 a 4 vueltas al año) es lo sano en ropa. Más de 180 días es mercancía que se queda vieja." },
+  { n: "Rotación del activo total (al año)", ver: "2x o más", amb: "1x a 2x", rev: "Menos de 1x", por: "Cuántas veces al año las ventas igualan lo que tienes invertido." },
+  { n: "ROA (al año)", ver: "10% o más", amb: "5% a 10%", rev: "Menos de 5%", por: "Lo que rinde cada dólar invertido en el negocio. Debe superar lo que daría el dinero en un banco o en un plazo fijo, que ronda 4% a 5%." },
+  { n: "ROE (al año)", ver: "15% o más", amb: "8% a 15%", rev: "Menos de 8%", por: "Lo que rinde tu dinero. Un negocio en crecimiento tiene que rendir bastante más que un plazo fijo, por el riesgo y el trabajo que implica." },
+];
+const estMargen = (v) => v === null ? null : v >= 0.35 ? "bueno" : v >= 0.25 ? "atencion" : "malo";
+const estDiasInv = (v) => v === null ? null : v <= 120 ? "bueno" : v <= 180 ? "atencion" : "malo";
+const estCrec = (v) => v === null ? null : v >= 2 ? "bueno" : v >= -5 ? "atencion" : "malo";
+const estRentab = (v) => v === null ? null : v >= 0.08 ? "bueno" : v >= 0.03 ? "atencion" : "malo";
+const anualizar = (v, dias) => (v === null || !(dias > 0) ? null : v * (365 / dias));
+
 function balanceLibros(c) {
   const todos = Object.keys(c.oficial).sort();
   const fr = c.flujo.real || {};
@@ -7115,41 +7141,42 @@ function balRatios(p) {
     liquidez: div(p.ac, p.cxp), maniobra: p.ac - p.cxp, tesoreria: div(p.caja + p.cxc, p.cxp), flujo: p.flujoNeto,
     cobro: p.ventas > 0 ? (p.cxc / p.ventas) * p.dias : null, pago: p.compras > 0 ? (p.cxp / p.compras) * p.dias : null,
     endeud: div(p.pasivo, p.patrimonio), rentab: div(p.utilMes, p.ventas), solidez: div(p.patrimonio, p.activo),
-    cobertura: div(p.patrimonio + p.pasivoLP, p.anc), rotacion: div(p.ventas, p.activo), roa: div(p.utilMes, p.activo), roe: div(p.utilMes, p.patrimonio),
-    margenBruto: div(p.ventas - p.costo, p.ventas), diasInv: p.costo > 0 && p.inventario > 0 ? (p.inventario / p.costo) * p.dias : null, rotInv: p.inventario > 0 ? div(p.costo, p.inventario) : null,
+    cobertura: div(p.patrimonio + p.pasivoLP, p.anc), rotacion: anualizar(div(p.ventas, p.activo), p.dias), roa: anualizar(div(p.utilMes, p.activo), p.dias), roe: anualizar(div(p.utilMes, p.patrimonio), p.dias),
+    roaP: div(p.utilMes, p.activo), roeP: div(p.utilMes, p.patrimonio),
+    margenBruto: div(p.ventas - p.costo, p.ventas), diasInv: p.costo > 0 && p.inventario > 0 ? (p.inventario / p.costo) * p.dias : null, rotInv: p.inventario > 0 ? anualizar(div(p.costo, p.inventario), p.dias) : null,
   };
 }
 
 // Los 13 ratios de tu lista, con su fórmula, cómo leerlos y un semáforo sencillo
 const BAL_RATIOS = [
-  { k: "liquidez", n: "Liquidez", u: "x", f: "Activo corriente ÷ Pasivo corriente", que: "Si lo que tienes a corto plazo alcanza para pagar lo que debes a corto plazo. Más de 1.5x es sano.", sinDeuda: true,
-    est: (v) => v === null ? "bueno" : v >= 1.5 ? "bueno" : v >= 1 ? "atencion" : "malo",
-    lee: (v) => v === null ? "No tienes deudas a corto plazo registradas." : `Por cada $1 que debes a corto plazo tienes $${v.toFixed(2)} para pagarlo.` },
+  { k: "liquidez", n: "Liquidez", u: "x", f: "Activo corriente ÷ Pasivo corriente", que: "Si lo que tienes a corto plazo alcanza para pagar lo que debes a corto plazo. Entre 1.5x y 3.5x es sano.", sinDeuda: true,
+    est: (v) => v === null ? "bueno" : v > 3.5 ? "atencion" : v >= 1.5 ? "bueno" : v >= 1 ? "atencion" : "malo",
+    lee: (v) => v === null ? "No tienes deudas a corto plazo registradas." : `Por cada $1 que debes a corto plazo tienes $${v.toFixed(2)} para pagarlo.${v > 3.5 ? " Es mucho: hay dinero o mercancía parada." : ""}` },
   { k: "maniobra", n: "Fondo de maniobra", u: "usd", f: "Activo corriente − Pasivo corriente", que: "El dinero y mercancía que te quedan para operar después de pagar tus deudas de corto plazo.",
     est: (v) => v > 0 ? "bueno" : "malo", lee: (v) => `Después de pagar lo que debes a corto plazo te quedan ${signoUsd(v, 0)} para operar.` },
-  { k: "tesoreria", n: "Ratio de tesorería", u: "x", f: "(Caja y bancos + Cuentas por cobrar) ÷ Pasivo corriente", que: "Igual que la liquidez pero sin contar la mercancía: solo lo que ya es dinero o se cobra pronto. Cerca de 1x o más es sano.", sinDeuda: true,
-    est: (v) => v === null ? "bueno" : v >= 1 ? "bueno" : v >= 0.7 ? "atencion" : "malo",
+  { k: "tesoreria", n: "Ratio de tesorería", u: "x", f: "(Caja y bancos + Cuentas por cobrar) ÷ Pasivo corriente", que: "Igual que la liquidez pero sin contar la mercancía: solo lo que ya es dinero o se cobra pronto. En comercio, 0.8x o más es sano.", sinDeuda: true,
+    est: (v) => v === null ? "bueno" : v >= 0.8 ? "bueno" : v >= 0.4 ? "atencion" : "malo",
     lee: (v) => v === null ? "No tienes deudas a corto plazo registradas." : `Solo con tu dinero disponible cubres ${v.toFixed(2)} veces tus deudas de corto plazo.` },
   { k: "flujo", n: "Flujo de caja", u: "usd", f: "Saldo final de caja − saldo inicial de caja del período", que: "Cuánto dinero entró de más (o faltó) en el período, según tu flujo de caja.",
-    est: (v) => v === null ? null : v > 0 ? "bueno" : "malo", lee: (v) => v === null ? "Sin flujo de caja en tus libros para este período." : v >= 0 ? `Tu caja aumentó ${usdM(v, 0)} en el período.` : `Tu caja bajó ${usdM(Math.abs(v), 0)} en el período.` },
+    est: (v) => v === null ? null : v > 0 ? "bueno" : "atencion", lee: (v) => v === null ? "Sin flujo de caja en tus libros para este período." : v >= 0 ? `Tu caja aumentó ${usdM(v, 0)} en el período.` : `Tu caja bajó ${usdM(Math.abs(v), 0)} en el período.` },
   { k: "cobro", n: "Plazo de cobro", u: "dias", f: "Cuentas por cobrar ÷ Ventas × Días del período", que: "Cuántos días tardas en cobrar lo que vendes. Mientras menos, mejor.",
-    est: (v) => v === null ? null : v <= 15 ? "bueno" : v <= 45 ? "atencion" : "malo", lee: (v) => v === null ? "Sin ventas en el período." : v < 0.5 ? "Cobras al contado: tus ventas se pagan al momento." : `Tardas unos ${Math.round(v)} días en cobrar.` },
-  { k: "pago", n: "Plazo de pago", u: "dias", f: "Cuentas por pagar a proveedores ÷ Compras × Días del período", que: "Cuántos días tardas en pagar a tus proveedores. Más días da más respiro, pero demasiados dañan la relación.",
-    est: () => null, lee: (v) => v === null ? "Sin compras en el período." : v < 0.5 ? "En tus libros no queda ninguna factura de proveedor por pagar." : `Tardas unos ${Math.round(v)} días en pagar a proveedores.` },
-  { k: "endeud", n: "Ratio de endeudamiento", u: "pct", f: "Pasivo total ÷ Patrimonio", que: "Cuántos centavos debes por cada dólar propio. Menos de 100% significa que el negocio se financia más con tu dinero que con deudas.",
-    est: (v) => v === null ? null : v <= 0.5 ? "bueno" : v <= 1 ? "atencion" : "malo", lee: (v) => v === null ? "Sin patrimonio para comparar." : v < 0.005 ? "No tienes deudas registradas: todo lo financias con tu dinero." : `Debes ${Math.round(v * 100)} centavos por cada $1 propio.` },
-  { k: "rentab", n: "Rentabilidad neta", u: "pct", f: "Utilidad neta ÷ Ventas netas", que: "Cuánto te queda limpio de cada $100 que vendes, después de costo y gastos.",
-    est: (v) => v === null ? null : v >= 0.1 ? "bueno" : v >= 0 ? "atencion" : "malo", lee: (v) => v === null ? "Sin ventas en el período." : `De cada $100 vendidos te quedan ${signoUsd(v * 100, 0)} limpios.` },
+    est: (v) => v === null ? null : v <= 30 ? "bueno" : v <= 60 ? "atencion" : "malo", lee: (v) => v === null ? "Sin ventas en el período." : v < 0.5 ? "Cobras al contado: tus ventas se pagan al momento." : `Tardas unos ${Math.round(v)} días en cobrar.` },
+  { k: "pago", n: "Plazo de pago", u: "dias", f: "Cuentas por pagar a proveedores ÷ Compras × Días del período", que: "Cuántos días tardas en pagar a tus proveedores. Entre 20 y 60 días es sano; más de 90 daña la relación.",
+    est: (v) => v === null || v < 0.5 ? null : v <= 60 ? "bueno" : v <= 90 ? "atencion" : "malo", lee: (v) => v === null ? "Sin compras en el período." : v < 0.5 ? "En tus libros no queda ninguna factura de proveedor por pagar." : `Tardas unos ${Math.round(v)} días en pagar a proveedores.` },
+  { k: "endeud", n: "Ratio de endeudamiento", u: "pct", f: "Pasivo total ÷ Patrimonio", que: "Cuántos centavos debes por cada dólar propio. Hasta 100% es sano en un negocio que crece: se financia más con tu dinero que con deudas.",
+    est: (v) => v === null ? null : v <= 1 ? "bueno" : v <= 1.5 ? "atencion" : "malo", lee: (v) => v === null ? "Sin patrimonio para comparar." : v < 0.005 ? "No tienes deudas registradas: todo lo financias con tu dinero. Es seguro, pero no usas el crédito de proveedores para crecer más rápido." : `Debes ${Math.round(v * 100)} centavos por cada $1 propio.` },
+  { k: "rentab", n: "Rentabilidad neta", u: "pct", f: "Utilidad neta ÷ Ventas netas", que: "Cuánto te queda de cada $100 que vendes, después de costo y gastos de tus libros. En comercio de ropa, 8% o más es sano.",
+    est: estRentab, lee: (v) => v === null ? "Sin ventas en el período." : `De cada $100 vendidos te quedan ${signoUsd(v * 100, 0)} antes de impuestos, depreciación y sueldo del dueño.` },
   { k: "solidez", n: "Solidez patrimonial", u: "pct", f: "Patrimonio ÷ Activo total", que: "Qué parte de lo que tiene el negocio es realmente tuya. El resto se financia con deudas.",
-    est: (v) => v === null ? null : v >= 0.5 ? "bueno" : v >= 0.3 ? "atencion" : "malo", lee: (v) => v === null ? "Sin activos." : `El ${Math.round(v * 100)}% de lo que tiene el negocio es tuyo.` },
+    est: (v) => v === null ? null : v >= 0.4 ? "bueno" : v >= 0.25 ? "atencion" : "malo", lee: (v) => v === null ? "Sin activos." : `El ${Math.round(v * 100)}% de lo que tiene el negocio es tuyo.` },
   { k: "cobertura", n: "Cobertura del inmovilizado", u: "x", f: "(Patrimonio + Pasivo a largo plazo) ÷ Activo no corriente", que: "Si tu dinero propio financia los equipos y muebles. Más de 1x es lo sano.",
     est: (v) => v === null ? null : v >= 1 ? "bueno" : "malo", lee: (v) => v === null ? "Sin activos fijos." : `Tu dinero propio cubre ${v.toFixed(1)} veces tus equipos y muebles.` },
-  { k: "rotacion", n: "Rotación de activo total", u: "x", f: "Ventas netas del período ÷ Activo total", que: "Cuántas veces el período recupera lo invertido en el negocio vía ventas. Más alto = más rendimiento de cada dólar invertido.",
-    est: () => null, lee: (v) => v === null ? "Sin activos." : `Cada $1 invertido en el negocio generó $${v.toFixed(2)} de ventas en el período.` },
-  { k: "roa", n: "ROA (rentabilidad del activo)", u: "pct", f: "Utilidad neta ÷ Activo total", que: "Cuánto gana el negocio por cada dólar que tiene invertido en activos.",
-    est: (v) => v === null ? null : v > 0 ? "bueno" : "malo", lee: (v) => v === null ? "Sin activos." : `Cada $100 en activos produjeron ${signoUsd(v * 100, 2)} de utilidad en el período.` },
-  { k: "roe", n: "ROE (rentabilidad del patrimonio)", u: "pct", f: "Utilidad neta ÷ Patrimonio", que: "Cuánto gana tu dinero puesto en el negocio. Es el ratio que más importa al dueño.",
-    est: (v) => v === null ? null : v > 0 ? "bueno" : "malo", lee: (v) => v === null ? "Sin patrimonio." : `Cada $100 tuyos en el negocio produjeron ${signoUsd(v * 100, 2)} de utilidad en el período.` },
+  { k: "rotacion", n: "Rotación de activo total", u: "x", f: "Ventas netas ÷ Activo total, llevado a un año", que: "Cuántas veces al año las ventas igualan lo invertido en el negocio. Más alto = más rendimiento de cada dólar invertido. 2x o más es sano.",
+    est: (v) => v === null ? null : v >= 2 ? "bueno" : v >= 1 ? "atencion" : "malo", lee: (v) => v === null ? "Sin activos." : `A este ritmo, cada $1 invertido en el negocio genera $${v.toFixed(2)} de ventas al año.` },
+  { k: "roa", n: "ROA (rentabilidad del activo, al año)", u: "pct", f: "Utilidad neta ÷ Activo total, llevado a un año", que: "Cuánto gana el negocio al año por cada dólar que tiene invertido en activos. 10% o más es sano; menos de 5% rinde lo mismo que un banco.",
+    est: (v) => v === null ? null : v >= 0.1 ? "bueno" : v >= 0.05 ? "atencion" : "malo", lee: (v, p) => v === null ? "Sin activos." : `En el período cada $100 en activos produjeron ${signoUsd(v * (p.dias / 365) * 100, 2)}; a ese ritmo serían ${signoUsd(v * 100, 0)} al año.` },
+  { k: "roe", n: "ROE (rentabilidad del patrimonio, al año)", u: "pct", f: "Utilidad neta ÷ Patrimonio, llevado a un año", que: "Cuánto gana tu dinero puesto en el negocio al año. Es el ratio que más importa al dueño. 15% o más es sano para un negocio en crecimiento.",
+    est: (v) => v === null ? null : v >= 0.15 ? "bueno" : v >= 0.08 ? "atencion" : "malo", lee: (v, p) => v === null ? "Sin patrimonio." : `En el período cada $100 tuyos produjeron ${signoUsd(v * (p.dias / 365) * 100, 2)}; a ese ritmo serían ${signoUsd(v * 100, 0)} al año.` },
 ];
 
 function PieDelta({ cur, prev, malSube, sufijo = "vs. período anterior" }) {
@@ -7306,17 +7333,20 @@ function FinBalance() {
         <div className="met-grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))" }}>
           <Kpi etiqueta="Ventas netas" formula="Ventas del período con los reembolsos ya restados." pie={idx > 0 ? <PieDelta cur={p.ventas / p.nMeses} prev={P[idx - 1].ventas / P[idx - 1].nMeses} sufijo={gran === "mes" ? "vs. mes anterior" : "por mes vs. año anterior"} /> : <div style={{ fontSize: 12, color: MT.suave }}>Primer período</div>}>{usdM(p.ventas, 0)}</Kpi>
           <Kpi etiqueta="Crecimiento de ventas" formula={gran === "mes" ? "Ventas del mes ÷ ventas del mes anterior − 1." : "Ventas promedio por mes de este año ÷ las del año anterior − 1 (los años no tienen los mismos meses)."}
-            pie={<div style={{ fontSize: 12, color: MT.suave }}>{gran === "mes" ? "contra el mes anterior" : "ventas por mes, contra el año anterior"}</div>}>
-            <span style={{ color: crec === null ? MT.suave : crec >= 0 ? MT.bueno : MT.malo }}>{crec === null ? "—" : balSp(crec)}</span></Kpi>
-          <Kpi etiqueta="Margen bruto" formula="(Ventas − costo de ventas) ÷ Ventas. Lo que queda de cada venta antes de gastos." pie={prevR && prevR.margenBruto !== null ? <div style={{ fontSize: 12, color: MT.suave }}>antes {balFmt(prevR.margenBruto, "pct")}</div> : null}>{balFmt(R.margenBruto, "pct")}</Kpi>
-          <Kpi etiqueta="Rentabilidad neta" formula="Utilidad neta ÷ Ventas netas." pie={prevR && prevR.rentab !== null ? <div style={{ fontSize: 12, color: MT.suave }}>antes {balFmt(prevR.rentab, "pct")}</div> : null}>
-            <span style={{ color: R.rentab !== null && R.rentab < 0 ? MT.malo : MT.bueno }}>{balFmt(R.rentab, "pct")}</span></Kpi>
-          <Kpi etiqueta="Días de inventario" formula="Inventario ÷ Costo de ventas × días del período. Cuántos días de venta tienes en bodega." pie={<div style={{ fontSize: 12, color: MT.suave }}>rotación {R.rotInv === null ? "—" : R.rotInv.toFixed(2) + "x"} en el período</div>}>{balFmt(R.diasInv, "dias")}</Kpi>
+            pie={<div style={{ fontSize: 12, color: MT.suave }}>{gran === "mes" ? "contra el mes anterior" : "ventas por mes, contra el año anterior"} · sano: +2% o más</div>}>
+            <span style={{ color: COL_EST[estCrec(crec)] || MT.suave }}>{crec === null ? "—" : balSp(crec)}</span></Kpi>
+          <Kpi etiqueta="Margen bruto" formula="(Ventas − costo de ventas) ÷ Ventas. Lo que queda de cada venta antes de gastos." pie={prevR && prevR.margenBruto !== null ? <div style={{ fontSize: 12, color: MT.suave }}>antes {balFmt(prevR.margenBruto, "pct")} · sano: 35% o más</div> : <div style={{ fontSize: 12, color: MT.suave }}>sano: 35% o más</div>}>
+            <span style={{ color: COL_EST[estMargen(R.margenBruto)] || MT.texto }}>{balFmt(R.margenBruto, "pct")}</span></Kpi>
+          <Kpi etiqueta="Rentabilidad neta" formula="Utilidad neta ÷ Ventas netas." pie={<div style={{ fontSize: 12, color: MT.suave }}>{prevR && prevR.rentab !== null ? `antes ${balFmt(prevR.rentab, "pct")} · ` : ""}sano: 8% o más</div>}>
+            <span style={{ color: COL_EST[estRentab(R.rentab)] || MT.texto }}>{balFmt(R.rentab, "pct")}</span></Kpi>
+          <Kpi etiqueta="Días de inventario" formula="Inventario ÷ Costo de ventas × días del período. Cuántos días de venta tienes en bodega." pie={<div style={{ fontSize: 12, color: MT.suave }}>rotación {R.rotInv === null ? "—" : R.rotInv.toFixed(1) + "x"} al año · sano: 120 días o menos</div>}>
+            <span style={{ color: COL_EST[estDiasInv(R.diasInv)] || MT.texto }}>{balFmt(R.diasInv, "dias")}</span></Kpi>
           <Kpi etiqueta="Capital de trabajo" formula="Activo corriente − Pasivo corriente (el fondo de maniobra)." pie={<PieDelta cur={p.ac - p.cxp} prev={prev.ac - prev.cxp} />}>{usdM(p.ac - p.cxp, 0)}</Kpi>
           <Kpi etiqueta="Flujo de caja del período" formula="Saldo final − saldo inicial de caja en tu flujo de caja." pie={prevR && prevR.flujo !== null ? <div style={{ fontSize: 12, color: MT.suave }}>antes {signoUsd(prevR.flujo, 0)}</div> : null}>
             <span style={{ color: R.flujo !== null && R.flujo < 0 ? MT.malo : MT.bueno }}>{R.flujo === null ? "—" : signoUsd(R.flujo, 0)}</span></Kpi>
-          <Kpi etiqueta="ROE (rentabilidad de tu dinero)" formula="Utilidad neta ÷ Patrimonio." pie={<div style={{ fontSize: 12, color: MT.suave }}>ROA {balFmt(R.roa, "pct")}</div>}>
-            <span style={{ color: R.roe !== null && R.roe < 0 ? MT.malo : MT.bueno }}>{balFmt(R.roe, "pct")}</span></Kpi>
+          <Kpi etiqueta="ROE al año (rentabilidad de tu dinero)" formula="Utilidad neta ÷ Patrimonio, llevado a un año (un mes se multiplica por 365 ÷ días del mes). Un ROE de 4% en un mes equivale a cerca de 48% al año. Sano para un negocio en crecimiento: 15% o más."
+            pie={<div style={{ fontSize: 12, color: MT.suave }}>en el período: {balFmt(R.roeP, "pct")} · ROA al año {balFmt(R.roa, "pct")}</div>}>
+            <span style={{ color: COL_EST[BAL_RATIOS.find(r => r.k === "roe").est(R.roe)] || MT.texto }}>{balFmt(R.roe, "pct")}</span></Kpi>
         </div>
       </div>
     );
@@ -7416,7 +7446,7 @@ function FinBalance() {
     <div>
       {avisos}
       {selector}
-      <SecT sub={`Cierre de ${balEtqL(p)}${gran === "anio" && p.nMeses < 12 ? ` (año parcial de ${p.nMeses} meses; los ratios de ventas y utilidad son del período, no anualizados)` : gran === "mes" ? " (ratios de ventas y utilidad del mes, no anualizados)" : ""}. El punto de color es un semáforo sencillo: verde sano, ámbar atención, naranja revisar.`}>Tus 13 ratios</SecT>
+      <SecT sub={`Cierre de ${balEtqL(p)}${gran === "anio" && p.nMeses < 12 ? ` (año parcial de ${p.nMeses} meses)` : ""}. Los ratios de rentabilidad y rotación están llevados a un año para poder compararlos con los rangos sanos. El punto de color es un semáforo sencillo: verde sano, ámbar atención, naranja revisar.`}>Tus 13 ratios</SecT>
       <div className="met-grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))" }}>
         {BAL_RATIOS.map((r, i) => {
           const v = R[r.k]; const e = r.est(v, p); const col = e ? COL_EST[e] : MT.texto;
@@ -7435,6 +7465,15 @@ function FinBalance() {
           <tbody>{BAL_RATIOS.map(r => (
             <tr key={r.k}><td style={{ position: "sticky", left: 0, background: MT.tarjeta, zIndex: 1, fontWeight: 600 }}>{r.n}</td>
               {P.map(x => { const v = balRatios(x)[r.k]; const e = r.est(v, x); return <td key={x.k} style={{ whiteSpace: "nowrap", color: e ? COL_EST[e] : MT.texto, fontWeight: e ? 700 : 500 }}>{textoR(r, v)}</td>; })}</tr>
+          ))}</tbody>
+        </table>
+      </div>
+      <SecT sub="Referencia para un negocio de ropa y calzado en crecimiento. Son guías generales de análisis financiero, no una norma: úsalas para comparar mes contra mes y ver qué revisar.">Rangos sanos de cada indicador</SecT>
+      <div className="met-card" style={{ padding: 0, overflowX: "auto" }}>
+        <table className="met-tabla" style={{ minWidth: 760 }}>
+          <thead><tr><th style={{ minWidth: 200 }}>Indicador</th><th style={{ color: COL_EST.bueno }}>Sano</th><th style={{ color: COL_EST.atencion }}>Atención</th><th style={{ color: COL_EST.malo }}>Revisar</th><th style={{ minWidth: 280 }}>Por qué</th></tr></thead>
+          <tbody>{BAL_RANGOS.map(r => (
+            <tr key={r.n}><td style={{ fontWeight: 600 }}>{r.n}</td><td style={{ color: COL_EST.bueno, fontWeight: 700 }}>{r.ver}</td><td style={{ color: COL_EST.atencion, fontWeight: 700 }}>{r.amb}</td><td style={{ color: COL_EST.malo, fontWeight: 700 }}>{r.rev}</td><td style={{ fontSize: 12, color: MT.texto2, whiteSpace: "normal", lineHeight: 1.5 }}>{r.por}</td></tr>
           ))}</tbody>
         </table>
       </div>
