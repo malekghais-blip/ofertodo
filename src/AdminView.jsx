@@ -7042,6 +7042,16 @@ function balanceLibros(c) {
   pre.forEach(m => Object.keys(c.oficial[m] || {}).forEach(k => { ac[k] = (ac[k] || 0) + nF(c.oficial[m][k]); }));
   const invApertura = nF(ac["Mercancía"]) + Math.max(0, nF(ac["Proveedores"]));
   const ajusteApertura = -nF(ac[BAL_CTA_AJUSTE]);
+  // Apertura = saldos de los meses anteriores al primer mes con flujo (inversión inicial, mercancía inicial, deuda a proveedores...)
+  const a0 = (k) => ac[k] || 0;
+  const prov0 = a0("Proveedores");
+  const sumin0 = a0("Bolsas de compra");
+  const anc0 = a0("Muebles y estantería") + a0("Equipo de oficina") + a0("Equipo eléctrico") + a0("Obra del local");
+  const cxp0 = Math.max(0, -prov0);
+  const capital0 = ini - a0("Capital social");
+  const ac0 = ini + invApertura + sumin0;
+  const apertura = { caja: ini, cxc: 0, inventario: invApertura, sumin: sumin0, ac: ac0, muebles: a0("Muebles y estantería"), eqOf: a0("Equipo de oficina"), eqEl: a0("Equipo eléctrico"), obra: a0("Obra del local"), anc: anc0,
+    activo: ac0 + anc0, cxp: cxp0, pasivo: cxp0, capital: capital0, ajusteInv: ajusteApertura, utilAcum: 0, patrimonio: capital0 + ajusteApertura, pp: cxp0 + capital0 + ajusteApertura };
   let cogs = 0, util = 0, invPrev = invApertura;
   const filas = meses.map(m => {
     const o = c.oficial[m] || {};
@@ -7059,10 +7069,11 @@ function balanceLibros(c) {
     const prov = a("Proveedores");
     const caja = ini + a("Caja y banco");
     const inventario = a("Mercancía") + Math.max(0, prov) - cogs;
-    const muebles = a("Muebles y estantería"), eqOf = a("Equipo de oficina"), eqEl = a("Equipo eléctrico");
-    const anc = muebles + eqOf + eqEl;
+    const muebles = a("Muebles y estantería"), eqOf = a("Equipo de oficina"), eqEl = a("Equipo eléctrico"), obra = a("Obra del local");
+    const anc = muebles + eqOf + eqEl + obra;
+    const sumin = a("Bolsas de compra");
     const cxc = 0;
-    const acT = caja + cxc + inventario;
+    const acT = caja + cxc + inventario + sumin;
     const activo = acT + anc;
     const cxp = Math.max(0, -prov);
     const pasivo = cxp;
@@ -7070,7 +7081,7 @@ function balanceLibros(c) {
     const ajusteInv = -a(BAL_CTA_AJUSTE);
     const patrimonio = capital + ajusteInv + util;
     const f = {
-      m, caja, cxc, inventario, ac: acT, muebles, eqOf, eqEl, anc, activo, cxp, pasivo, pasivoLP: 0, capital, ajusteInv, utilAcum: util, patrimonio, pp: pasivo + patrimonio,
+      m, caja, cxc, inventario, sumin, ac: acT, muebles, eqOf, eqEl, obra, anc, activo, cxp, pasivo, pasivoLP: 0, capital, ajusteInv, utilAcum: util, patrimonio, pp: pasivo + patrimonio,
       cuadre: activo - pasivo - patrimonio,
       ventas, costo, gastos, utilMes, compras: inventario - invPrev + costo, estimado, dias: diasDelMesB(m),
       flujoNeto: fr[m] && fr[m]["SALDO FINAL"] !== undefined ? nF(fr[m]["SALDO FINAL"]) - nF(fr[m]["SALDO INICIAL"]) : null,
@@ -7079,9 +7090,8 @@ function balanceLibros(c) {
     invPrev = inventario;
     return f;
   });
-  const apertura = { caja: ini, cxc: 0, inventario: invApertura, ac: ini + invApertura, muebles: 0, eqOf: 0, eqEl: 0, anc: 0, activo: ini + invApertura, cxp: 0, pasivo: 0, capital: ini, ajusteInv: ajusteApertura, utilAcum: 0, patrimonio: ini + ajusteApertura, pp: ini + ajusteApertura };
   const postCompras = post.reduce((sm, m) => sm + nF((c.oficial[m] || {})["Mercancía"]), 0);
-  return { filas, apertura, ini, ratioCosto, meses, ajuste: ajusteApertura, post, postCompras };
+  return { filas, apertura, ini, ratioCosto, meses, ajuste: filas.length ? filas[filas.length - 1].ajusteInv : ajusteApertura, post, postCompras };
 }
 
 function balPeriodos(B, gran) {
@@ -7153,10 +7163,10 @@ function PieDelta({ cur, prev, malSube, sufijo = "vs. período anterior" }) {
 const BAL_FILAS = [
   { t: "h", et: "ACTIVO (lo que tienes)" },
   { t: "h2", et: "Activo corriente" },
-  { k: "caja", et: "Caja y bancos" }, { k: "cxc", et: "Cuentas por cobrar" }, { k: "inventario", et: "Inventario de mercancía" },
+  { k: "caja", et: "Caja y bancos" }, { k: "cxc", et: "Cuentas por cobrar" }, { k: "inventario", et: "Inventario de mercancía" }, { k: "sumin", et: "Bolsas de compra" },
   { k: "ac", et: "Total activo corriente", tot: true },
   { t: "h2", et: "Activo no corriente (fijo)" },
-  { k: "muebles", et: "Muebles y estantería" }, { k: "eqOf", et: "Equipo de oficina" }, { k: "eqEl", et: "Equipo eléctrico" },
+  { k: "obra", et: "Obra del local" }, { k: "muebles", et: "Muebles y estantería" }, { k: "eqOf", et: "Equipo de oficina (incluye equipos POS)" }, { k: "eqEl", et: "Equipo eléctrico (aire acondicionado)" },
   { k: "anc", et: "Total activo no corriente", tot: true },
   { k: "activo", et: "TOTAL ACTIVO", fuerte: true },
   { t: "h", et: "PASIVO (lo que debes)" },
@@ -7269,7 +7279,7 @@ function FinBalance() {
         {selector}
         <SecT sub={`Foto del negocio al cierre de ${balEtqL(p)}. Toca el “?” de cada tarjeta para ver cómo se calcula.`}>Qué tienes, qué debes y qué es tuyo</SecT>
         <div className="met-grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))" }}>
-          <Kpi etiqueta="Activo total" acento retraso={0} formula="Todo lo que tiene el negocio: caja, inventario, cuentas por cobrar, equipos y muebles."
+          <Kpi etiqueta="Activo total" acento retraso={0} formula="Todo lo que tiene el negocio: caja, inventario, cuentas por cobrar, obra del local, equipos y muebles."
             pie={<PieDelta cur={p.activo} prev={prev.activo} />}>{usdM(p.activo, 0)}</Kpi>
           <Kpi etiqueta={`Inventario al cierre de ${balEtqL(p)}`} retraso={60} formula="Valor al costo de la mercancía que quedaba al cierre del período, anclado al inventario real de Odoo: compras menos costo de lo vendido, más el ajuste de apertura. El inventario de hoy está más abajo y es otra fecha."
             pie={<div><PieDelta cur={p.inventario} prev={prev.inventario} />{invHoy && nF(invHoy.valor) > 0 && <div style={{ fontSize: 12, color: MT.texto2, marginTop: 4 }}>Hoy en Odoo: <b>{usdM(invHoy.valor, 0)}</b></div>}</div>}>{usdM(p.inventario, 0)}</Kpi>
@@ -7354,7 +7364,7 @@ function FinBalance() {
           </tbody>
         </table>
       </div>
-      <div style={{ fontSize: 11.5, color: MT.suave, margin: "8px 2px 0", lineHeight: 1.6 }}>Los libros llegan hasta {mesLargoC(ultMes)}. Los equipos y muebles están a su costo, sin depreciación. {gran === "anio" && "En la vista por año, cada columna es el saldo al cierre del último mes cargado de ese año."}</div>
+      <div style={{ fontSize: 11.5, color: MT.suave, margin: "8px 2px 0", lineHeight: 1.6 }}>Los libros llegan hasta {mesLargoC(ultMes)}. La obra, los equipos y los muebles están a su costo, sin depreciación. {gran === "anio" && "En la vista por año, cada columna es el saldo al cierre del último mes cargado de ese año."}</div>
     </div>
   );
 
@@ -7438,11 +7448,11 @@ function FinBalance() {
       <SecT sub="Para que sepas de dónde sale cada número y qué supuestos hice.">Cómo se arma este balance</SecT>
       <Par t="Fuente">Tus libros guardados en “Contabilidad (libros)” ({B.meses.length} meses, de {mesLargoC(B.meses[0])} a {mesLargoC(ultMes)}): libro diario, balances, estados de resultados y flujos de caja, con las correcciones del 9-nov-2026. Es solo lectura: no cambia Odoo ni tus libros.</Par>
       <Par t="Caja y bancos">Saldo inicial de caja ({usdM(B.ini, 2)}) más los movimientos de la cuenta Caja y banco. Coincide con el saldo final de tu flujo de caja real en todos los meses.</Par>
-      <Par t="Inventario de mercancía (anclado a Odoo)">Tu cuenta Mercancía solo suma compras y nunca resta lo vendido. Por eso el balance calcula: compras al contado + pagos a proveedores − costo de ventas de tu estado de resultados. Como Odoo es la referencia del inventario real, ese cálculo se ancló a Odoo con un ajuste de {usdM(B.ajuste, 0)} (cuenta “Ajuste de inventario” dentro del patrimonio, fechada en la apertura de los libros): es mercancía que Odoo tiene y que nunca se registró como compra. No pasa por el estado de resultados, así que no cambia tu utilidad.</Par>
+      <Par t="Inventario de mercancía (anclado a Odoo)">Tu cuenta Mercancía solo suma compras y nunca resta lo vendido. Por eso el balance calcula: mercancía inicial + compras al contado + pagos a proveedores que superan la deuda inicial (esas facturas no estaban registradas como compra) − costo de ventas de tu estado de resultados. La mercancía inicial de tu archivo ({usdM(B.apertura.inventario, 0)}) es el punto de partida. Como Odoo es la referencia del inventario real, el cálculo se ancló a Odoo con un ajuste de {usdM(B.ajuste, 0)} en total (cuenta “Ajuste de inventario” dentro del patrimonio, repartido en partes iguales de nov-2025 a ago-2026 porque no se sabe cuándo entró): es mercancía que Odoo tiene y que nunca se registró como compra. No pasa por el estado de resultados, así que no cambia tu utilidad.</Par>
       <Par t="Compras de Odoo desde septiembre">Agregué a tu libro diario las compras recibidas en Odoo desde septiembre ({usdM(B.postCompras, 0)} en total). Las compras ya pagadas se registraron como pagadas con caja y banco; solo P00137 y P00138 (GP Corporation, $9,662) siguen como por pagar a proveedores. No aparecen como columnas del balance porque aún faltan las ventas, gastos y caja de esos meses; cuando me pases los libros de septiembre en adelante, esas compras se reemplazan por las reales.</Par>
-      <Par t="Cuentas por cobrar y por pagar">Tus libros no tienen cuentas por cobrar (vendes al contado) ni facturas por pagar pendientes, así que ambas dan $0. Por eso los ratios de liquidez, tesorería y plazo de pago dicen “sin deudas”. Si debes facturas a proveedores o impuestos, ahí falta cargarlas.</Par>
-      <Par t="Activo fijo">Muebles, equipo de oficina y equipo eléctrico a su costo de compra, sin depreciación. En el estado de resultados de tus archivos algunos de esos equipos aparecen como gasto; aquí se tratan como activo, por eso la utilidad de enero, junio y julio aquí es mayor que en tu estado de resultados por el valor del equipo comprado.</Par>
-      <Par t="Patrimonio">Capital social (incluye los {usdM(B.ini, 0)} de saldo inicial de caja y los aportes) más las utilidades acumuladas (ventas − costo de ventas − gastos). Activo = Pasivo + Patrimonio se verifica mes a mes.</Par>
+      <Par t="Cuentas por cobrar y por pagar">Vendes al contado, así que no hay cuentas por cobrar. Lo que debes a proveedores sale de la inversión inicial: se compró a crédito {usdM(B.apertura.cxp, 0)} en mercancía (GP Corporation y La Paz International) y esa deuda baja con cada pago a proveedores de tus libros. Cuando ya está pagada, el pasivo queda en $0 y los ratios dicen “sin deudas”. Si debes impuestos u otras facturas, ahí falta cargarlas.</Par>
+      <Par t="Inversión inicial y activo fijo">La inversión inicial de tu archivo ({usdM(B.apertura.activo - B.apertura.caja, 0)} entre mercancía, obra del local, mobiliario, equipos y bolsas) está en la apertura: lo pagado en efectivo y la mercancía de TIM ARD, que fue un aporte en especie, se registraron como capital social; lo comprado a crédito (GP Corporation y La Paz International) como deuda con proveedores. Muebles, equipos y obra del local van a su costo de compra, sin depreciación. En el estado de resultados de tus archivos algunos de esos equipos aparecen como gasto; aquí se tratan como activo, por eso la utilidad de enero, junio y julio aquí es mayor que en tu estado de resultados por el valor del equipo comprado.</Par>
+      <Par t="Patrimonio">Capital social (incluye los {usdM(B.ini, 0)} de saldo inicial de caja, lo pagado en efectivo de la inversión inicial y los aportes posteriores) más las utilidades acumuladas (ventas − costo de ventas − gastos). Activo = Pasivo + Patrimonio se verifica mes a mes.</Par>
       <div className="met-card" style={{ borderColor: "rgba(227,30,36,.35)" }}>
         <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 6 }}>Datos que me ayudarían a afinar el balance</div>
         <ol style={{ margin: "0 0 0 18px", padding: 0, fontSize: 12.5, color: MT.texto2, lineHeight: 1.75 }}>
