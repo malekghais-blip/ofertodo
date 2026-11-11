@@ -5992,12 +5992,7 @@ function FinComisiones({ desde, hasta }) {
       {revisar.length > 0 && <AvisoFin>Hay {revisar.length} entrada(s) de efectivo con texto de comisión que no corresponden a ninguna salida igual: {revisar.slice(0, 5).map(p => `${p.fecha} ${usdM(p.monto)} “${p.motivo}”`).join("; ")}. Revísalas en el POS. <button className="met-chip" style={{ padding: "2px 10px" }} onClick={() => revisar.forEach(ignorarLinea)}>Ignorar</button></AvisoFin>}
       {cerrados.length > 0 && <AvisoFin malo>{cerrados.length} salida(s) no se pudieron registrar porque su mes está cerrado en Finanzas. Abre el mes en “Ajustes y control” y se registran solas en la próxima lectura.</AvisoFin>}
 
-      <div className="met-card" style={{ marginTop: 18 }}>
-        <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 6 }}>Y la contabilidad de Odoo</div>
-        <div style={{ fontSize: 12.5, color: MT.texto2, lineHeight: 1.7 }}>
-          Cada salida de la caja del POS <b>ya queda registrada en la contabilidad de Odoo</b> (diario Efectivo): sale de “113.001 Efectivo” y entra a la cuenta transitoria “111.002 Bank Suspense Account”, porque Odoo todavía no sabe que es una comisión. Lo que falta para que Odoo la muestre como gasto es elegir una cuenta de gasto para las comisiones y reclasificarlas allí; la web no escribe nada en Odoo hasta que lo apruebes. Las comisiones que registres aquí a mano aparecen como “pendiente en Odoo”: no pasaron por la caja del POS.
-        </div>
-      </div>
+      <ComisionesOdooAsientos />
 
       <details style={{ marginTop: 18 }} open={verLibros} onToggle={e => setVerLibros(e.currentTarget.open)}>
         <summary style={{ cursor: "pointer", fontSize: 13, fontWeight: 700, color: MT.texto2 }}>Cotejo mes a mes: tus libros contra lo que sacó el POS</summary>
@@ -6011,6 +6006,83 @@ function FinComisiones({ desde, hasta }) {
         </div>
         <div style={{ fontSize: 11.5, color: MT.suave, margin: "8px 2px 0", lineHeight: 1.6 }}>Sirve para ver si los libros a mano coinciden con lo que realmente salió de la caja. Una diferencia no siempre es un error: en tus libros algunos meses las comisiones se anotaron junto con los envíos o en otra fecha.</div>
       </details>
+    </div>
+  );
+}
+
+// ── Asientos de reclasificación en Odoo (botón) ──
+// Cada salida de caja del POS queda en Odoo contra la cuenta transitoria 111.002. Al cerrar el mes se manda un asiento por concepto:
+// débito a la cuenta de gasto (6500100 comisiones a guías / 6500200 envíos netos) y crédito a 111.002. Solo meses cerrados.
+function ComisionesOdooAsientos() {
+  const { showToast } = useApp();
+  const [d, setD] = useState(null);
+  const [err, setErr] = useState("");
+  const [ocupado, setOcupado] = useState(false);
+  const llamar = async (modo, extra = {}) => {
+    await sb.ensureFreshToken();
+    const r = await fetch(`${SUPABASE_URL}/functions/v1/odoo-ajuste-caja`, { method: "POST", headers: sb.functionHeaders(), body: JSON.stringify({ modo, ...extra }) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.detalle || j.error || "Error");
+    return j;
+  };
+  const cargar = async () => { try { setD(await llamar("estado")); setErr(""); } catch (e) { setErr(String(e.message || e).slice(0, 200)); } };
+  useEffect(() => { cargar(); }, []);
+  const filas = ((d && d.filas) || []).slice().sort((x, y) => (y.mes + y.concepto).localeCompare(x.mes + x.concepto));
+  const pend = filas.filter(f => f.estado === "pendiente" || f.estado === "cambio");
+  const nBorr = (d && d.borradores) || 0;
+  const accion = async (modo, extra, ok) => {
+    setOcupado(true);
+    try {
+      const j = await llamar(modo, extra);
+      const fallos = [...(j.creados || []), ...(j.publicados || [])].filter(x => x && x.error);
+      if (!j.ok || fallos.length) throw new Error((fallos[0] && fallos[0].error) || j.detalle || j.error || "No se pudo completar");
+      showToast(ok);
+    } catch (e) { showToast("Odoo: " + String(e.message || e).slice(0, 160)); }
+    await cargar(); setOcupado(false);
+  };
+  const enviar = (publicar) => {
+    const t = pend.reduce((s, f) => s + f.falta, 0);
+    const txt = `Se ${publicar ? "crearán y publicarán" : "crearán en borrador"} ${pend.length} asiento(s) en Odoo por ${usdM(t)} (débito a la cuenta de gasto, crédito a 111.002 Bank Suspense). ¿Continuar?`;
+    if (!window.confirm(txt)) return;
+    accion("crear", { publicar }, publicar ? "Asientos creados y publicados en Odoo" : "Asientos creados en borrador en Odoo");
+  };
+  const ETQ = { al_dia: ["En Odoo", MT.bueno], pendiente: ["Falta enviar", "#8A5A00"], cambio: ["Cambió: falta ajustar", "#8A5A00"], borrador: ["Borrador en Odoo", "#8A5A00"], en_curso: ["Mes en curso: se envía al cerrar", MT.suave] };
+  return (
+    <div className="met-card" style={{ marginTop: 18 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "flex-start" }}>
+        <div style={{ flex: 1, minWidth: 260 }}>
+          <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 6 }}>Y la contabilidad de Odoo</div>
+          <div style={{ fontSize: 12.5, color: MT.texto2, lineHeight: 1.7 }}>
+            Cada salida de caja del POS queda en Odoo contra la cuenta transitoria <b>111.002 Bank Suspense</b>. Al cerrar cada mes, este botón manda un asiento por concepto: <b>débito</b> a <b>6500100 Comisiones a guías turísticos</b> o <b>6500200 Gastos de envío a clientes</b> y <b>crédito</b> a 111.002. Solo se envían meses cerrados; si un mes ya enviado cambia (una comisión anulada o corregida), se manda solo la diferencia como un asiento de ajuste. Las comisiones que registres a mano no pasan por la caja del POS y no entran aquí.
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button className="met-chip on" disabled={ocupado || pend.length === 0} style={{ opacity: ocupado || pend.length === 0 ? 0.5 : 1 }} onClick={() => enviar(true)}>{ocupado ? "Trabajando…" : `Enviar a Odoo${pend.length ? ` (${pend.length})` : ""}`}</button>
+          <button className="met-chip" disabled={ocupado || pend.length === 0} style={{ opacity: ocupado || pend.length === 0 ? 0.5 : 1 }} onClick={() => enviar(false)}>Solo crear borrador</button>
+          {nBorr > 0 && <button className="met-chip" disabled={ocupado} onClick={() => { if (window.confirm(`Se publicarán ${nBorr} borrador(es) en Odoo. ¿Continuar?`)) accion("publicar", {}, "Borradores publicados en Odoo"); }}>Publicar {nBorr} borrador(es)</button>}
+        </div>
+      </div>
+      {err && <AvisoFin malo>{err}</AvisoFin>}
+      {!d && !err && <div style={{ fontSize: 12.5, color: MT.texto2, marginTop: 10 }}>Revisando qué falta enviar…</div>}
+      {d && (
+        <div style={{ overflowX: "auto", marginTop: 12 }}>
+          <table className="met-tabla com-t">
+            <thead><tr>{["Mes", "Concepto", "En la web", "Ya en Odoo", "Falta", "Estado"].map(h => <th key={h}>{h}</th>)}</tr></thead>
+            <tbody>
+              {filas.length === 0 && <tr><td colSpan={6} style={{ color: MT.texto2, padding: 14 }}>Aún no hay salidas de caja para enviar.</td></tr>}
+              {filas.map(f => { const e = ETQ[f.estado] || [f.estado, MT.suave]; return (
+                <tr key={f.mes + f.concepto}>
+                  <td style={{ whiteSpace: "nowrap" }}>{f.mes}</td>
+                  <td>{f.titulo} <span style={{ color: MT.suave }}>· {f.cuenta}</span></td>
+                  <td>{usdM(f.calculado)}</td><td>{usdM(f.en_odoo)}</td>
+                  <td>{Math.abs(f.falta) < 0.01 ? <span style={{ color: MT.suave }}>—</span> : <b>{signoUsd(f.falta, 2)}</b>}</td>
+                  <td style={{ whiteSpace: "nowrap", fontWeight: 700, color: e[1] }}>{e[0]}</td>
+                </tr>); })}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <div style={{ fontSize: 11.5, color: MT.suave, marginTop: 8, lineHeight: 1.55 }}>“Enviar a Odoo” crea y publica los asientos; “Solo crear borrador” los deja para revisarlos en Odoo (Contabilidad → Asientos, diario Miscellaneous Operations) y publicarlos después. Nada se borra ni se modifica en Odoo: solo se agregan asientos.</div>
     </div>
   );
 }
