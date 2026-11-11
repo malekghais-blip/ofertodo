@@ -5793,12 +5793,224 @@ function FinGastos({ desde, hasta }) {
                 <td>{(CANALES_GASTO.find(c => c[0] === g.canal) || [0, "Compartido"])[1].replace(/ \(.*\)/, "")}</td>
                 <td>{(METODOS_FIN.find(m => m[0] === g.metodo) || [0, g.metodo])[1]}</td>
                 <td><b>{usdM(g.monto)}</b></td>
-                <td style={{ whiteSpace: "nowrap" }}>{!g.anulado && <><button className="met-chip" style={{ padding: "3px 10px", fontSize: 12 }} onClick={() => editar(g)}>Editar</button> <button className="met-chip" style={{ padding: "3px 10px", fontSize: 12 }} onClick={() => anular(g)}>Anular</button></>}</td>
+                <td style={{ whiteSpace: "nowrap" }}>{!g.anulado && <>{g.origen === "odoo_pos" ? <span style={{ fontSize: 11.5, color: MT.suave, marginRight: 6 }}>desde el POS</span> : <><button className="met-chip" style={{ padding: "3px 10px", fontSize: 12 }} onClick={() => editar(g)}>Editar</button> </>}<button className="met-chip" style={{ padding: "3px 10px", fontSize: 12 }} onClick={() => anular(g)}>Anular</button></>}</td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+// ── Comisiones de guías (salidas de caja del POS de Odoo + registro manual) — SOLO DUEÑO ──
+// Las salidas de efectivo del POS de Odoo cuyo motivo dice comisión / guía (o variantes) se leen solas (solo lectura, cada 10 min)
+// y desde septiembre entran a Gastos como "Comisiones a guías". Antes de septiembre ya están en tus libros: aquí solo se muestran.
+function FinComisiones({ desde, hasta }) {
+  const { showToast } = useApp();
+  const { datos: d, error, cargando, recargar } = useFinDatos("fin_comisiones_datos", { p_desde: desde, p_hasta: hasta }, [desde, hasta]);
+  const vacio = { fecha: fechaPanama(), guia: "", monto: "", base_venta: "", pct: "10", orden_pos: "", metodo: "efectivo", nota: "" };
+  const [f, setF] = useState(vacio);
+  const [editId, setEditId] = useState(null);
+  const [editPos, setEditPos] = useState(false);
+  const [guardando, setGuardando] = useState(false);
+  const [sincro, setSincro] = useState(false);
+  const [dest, setDest] = useState({});      // motivo_norm -> destino elegido
+  const [aplicar, setAplicar] = useState({}); // motivo_norm -> false si solo esa línea
+  const [verLibros, setVerLibros] = useState(false);
+  const [filtroGuia, setFiltroGuia] = useState("");
+
+  const items = (d && d.items) || [];
+  const vivos = items.filter(x => !x.anulado);
+  const total = vivos.reduce((s, x) => s + Number(x.monto), 0);
+  const guias = (d && d.por_guia) || [];
+  const nombresGuia = Array.from(new Set(items.map(x => x.guia).filter(Boolean)));
+  const pend = (d && d.pendientes) || [];
+  const grupos = {};
+  pend.filter(p => p.estado === "por_clasificar").forEach(p => {
+    const k = (p.motivo || "").trim().toLowerCase();
+    const g = grupos[k] || (grupos[k] = { k, motivo: p.motivo, n: 0, total: 0, primero: p.bsl_id, ultima: p.fecha });
+    g.n += 1; g.total += Number(p.monto); if (p.fecha > g.ultima) g.ultima = p.fecha;
+  });
+  const listaGrupos = Object.values(grupos).sort((a, b) => b.total - a.total);
+  const revisar = pend.filter(p => p.estado === "revisar");
+  const cerrados = pend.filter(p => p.estado === "periodo_cerrado");
+  const sync = (d && d.sync) || {};
+  const res = sync.resumen || {};
+  const sinGuia = vivos.filter(x => !x.guia).length;
+
+  const base = Number(f.base_venta), pct = Number(f.pct), monto = Number(f.monto);
+  const sugerido = base > 0 && pct >= 0 ? Math.round(base * pct) / 100 : null;
+  const difSug = sugerido !== null && monto > 0 ? Math.round((monto - sugerido) * 100) / 100 : null;
+
+  const sincronizar = async () => {
+    setSincro(true);
+    try {
+      await sb.ensureFreshToken();
+      const r = await fetch(`${SUPABASE_URL}/functions/v1/sync-odoo-caja`, { method: "POST", headers: sb.functionHeaders(), body: "{}" });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.detalle || j.error || "Error");
+      showToast(`Odoo: ${(j.resumen && j.resumen.nuevos) || 0} salidas nuevas leídas`);
+      recargar();
+    } catch (e) { showToast("No se pudo leer Odoo: " + String(e.message || e).slice(0, 140)); }
+    setSincro(false);
+  };
+  const guardar = async () => {
+    setGuardando(true);
+    try {
+      await finRpc("fin_comision_guardar", { p: { ...f, id: editId || undefined } });
+      showToast(editId ? "Comisión actualizada" : "Comisión registrada");
+      setF({ ...vacio, fecha: f.fecha }); setEditId(null); setEditPos(false); recargar();
+    } catch (e) { showToast("No se pudo guardar: " + String(e.message || e).slice(0, 140)); }
+    setGuardando(false);
+  };
+  const editar = (x) => {
+    setEditId(x.id); setEditPos(x.origen === "odoo_pos");
+    setF({ fecha: x.fecha, guia: x.guia || "", monto: String(x.monto), base_venta: x.base_venta ? String(x.base_venta) : "", pct: String(x.pct ?? 10), orden_pos: x.orden_pos || "", metodo: "efectivo", nota: x.origen === "odoo_pos" && (x.nota || "").startsWith("Motivo en el POS") ? "" : (x.nota || "") });
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+  const anular = async (x) => {
+    const motivo = prompt(`¿Anular la comisión de ${usdM(x.monto)}${x.guia ? " de " + x.guia : ""}? Escribe el motivo:`);
+    if (motivo === null) return;
+    try { await finRpc("fin_comision_anular", { p_id: x.id, p_motivo: motivo }); showToast("Comisión anulada"); recargar(); }
+    catch (e) { showToast("No se pudo anular: " + String(e.message || e).slice(0, 140)); }
+  };
+  const clasificar = async (g) => {
+    const destino = dest[g.k];
+    if (!destino) return;
+    try {
+      await finRpc("fin_salida_clasificar", { p_bsl: g.primero, p_destino: destino, p_aplicar: aplicar[g.k] !== false });
+      showToast("Listo: " + (destino === "comision" ? "se registró como comisión de guía" : destino === "ignorar" ? "no se contará como gasto" : "se registró como gasto"));
+      recargar();
+    } catch (e) { showToast("No se pudo clasificar: " + String(e.message || e).slice(0, 140)); }
+  };
+  const ignorarLinea = async (p) => {
+    try { await finRpc("fin_salida_clasificar", { p_bsl: p.bsl_id, p_destino: "ignorar", p_aplicar: false }); showToast("Línea ignorada"); recargar(); }
+    catch (e) { showToast("No se pudo: " + String(e.message || e).slice(0, 140)); }
+  };
+
+  if (error && !d) return <AvisoFin malo>{error}</AvisoFin>;
+  if (!d) return <div style={{ padding: "50px 0", textAlign: "center", color: MT.texto2 }}>Cargando comisiones…</div>;
+  const mostrados = filtroGuia ? items.filter(x => (x.guia || "Sin asignar") === filtroGuia) : items;
+  const puedeGuardar = !guardando && (editPos || (Number(f.monto) > 0 && f.fecha));
+
+  return (
+    <div style={{ opacity: cargando ? 0.7 : 1, transition: "opacity .25s" }}>
+      <style>{".com-t th,.com-t td{text-align:left !important}"}</style>
+      <div className="met-card" style={{ marginTop: 14, display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+        <div style={{ fontSize: 13, color: MT.texto2, lineHeight: 1.6, flex: 1, minWidth: 260 }}>
+          <b style={{ color: MT.texto }}>Se leen solas desde la caja del POS de Odoo.</b> Toda salida de efectivo cuyo motivo diga “comisión”, “guía” o una variante (comision guia, COMISION, pago guia…) se registra como gasto <b>Comisiones a guías</b> en la tienda física, desde el {sync.desde || "1-sep-2026"}. Los meses anteriores ya están en tus libros, por eso aquí solo se muestran. {sync.ultima ? <>Última lectura: <b>{haceCuanto(sync.ultima)}</b>.</> : "Aún no se ha leído Odoo."}
+        </div>
+        <button className="met-chip on" onClick={sincronizar} disabled={sincro} style={{ opacity: sincro ? 0.6 : 1 }}>{sincro ? "Leyendo Odoo…" : "Leer Odoo ahora"}</button>
+      </div>
+
+      <div className="met-grid" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", marginTop: 14 }}>
+        <Kpi etiqueta="Comisiones del periodo" grande acento formula="Suma de las comisiones pagadas a guías en las fechas elegidas (las anuladas no cuentan). Incluye las leídas del POS de Odoo y las que registres a mano."
+          pie={<div style={{ fontSize: 12, color: MT.suave }}>{vivos.length} pago(s) · promedio {usdM(vivos.length ? total / vivos.length : 0)}</div>}>{usdM(total)}</Kpi>
+        <Kpi retraso={60} etiqueta="Guías con pagos" formula="Cantidad de guías distintos con comisión en el periodo. Los pagos del POS vienen sin nombre; asígnalo con “Editar”."
+          pie={<div style={{ fontSize: 12, color: sinGuia ? "#8A5A00" : MT.suave }}>{sinGuia ? `${sinGuia} pago(s) sin guía asignado` : "Todos con guía asignado"}</div>}>{guias.filter(g => g.guia !== "Sin asignar").length}</Kpi>
+        <Kpi retraso={120} etiqueta="Otras salidas por clasificar" formula="Salidas de caja del POS que no dicen comisión (envíos, gasolina, insumos…). Dime a qué categoría van y se registran como gasto; mientras tanto no cuentan."
+          pie={<div style={{ fontSize: 12, color: MT.suave }}>{listaGrupos.length} motivo(s) distintos</div>}>{usdM(listaGrupos.reduce((s, g) => s + g.total, 0), 0)}</Kpi>
+      </div>
+
+      <div className="met-card" style={{ marginTop: 14 }}>
+        <div className="met-lbl" style={{ marginBottom: 10 }}>{editId ? (editPos ? "Completar comisión leída del POS" : "Editar comisión") : "Registrar una comisión"} <span style={{ color: MT.suave, fontWeight: 500 }}>· para las que no pasaron por la caja del POS (transferencia, Yappy, efectivo aparte)</span></div>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
+          <div><label style={lblF}>Fecha</label><input type="date" style={inpF} value={f.fecha} max={fechaPanama()} disabled={editPos} onChange={e => setF({ ...f, fecha: e.target.value })} /></div>
+          <div><label style={lblF}>Guía</label><input style={{ ...inpF, width: 140 }} list="lista-guias" placeholder="Nombre" value={f.guia} onChange={e => setF({ ...f, guia: e.target.value })} /><datalist id="lista-guias">{nombresGuia.map(n => <option key={n} value={n} />)}</datalist></div>
+          <div><label style={lblF}>Venta base ($)</label><input style={{ ...inpF, width: 100 }} inputMode="decimal" placeholder="opcional" value={f.base_venta} onChange={e => setF({ ...f, base_venta: e.target.value.replace(",", ".") })} /></div>
+          <div><label style={lblF}>% acordado</label><input style={{ ...inpF, width: 70 }} inputMode="decimal" value={f.pct} onChange={e => setF({ ...f, pct: e.target.value.replace(",", ".") })} /></div>
+          <div><label style={lblF}>Monto pagado ($)</label><input style={{ ...inpF, width: 100 }} inputMode="decimal" placeholder="0.00" value={f.monto} disabled={editPos} onChange={e => setF({ ...f, monto: e.target.value.replace(",", ".") })} /></div>
+          {!editPos && <div><label style={lblF}>Cómo se pagó</label><select style={inpF} value={f.metodo} onChange={e => setF({ ...f, metodo: e.target.value })}>{METODOS_FIN.filter(([k]) => k !== "credito").map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></div>}
+          <div><label style={lblF}>Orden del POS</label><input style={{ ...inpF, width: 110 }} placeholder="opcional" value={f.orden_pos} onChange={e => setF({ ...f, orden_pos: e.target.value })} /></div>
+          <div style={{ flex: 1, minWidth: 160 }}><label style={lblF}>Nota</label><input style={{ ...inpF, width: "100%", boxSizing: "border-box" }} placeholder="ej. venta grande, se descontó lo acumulado" value={f.nota} onChange={e => setF({ ...f, nota: e.target.value })} /></div>
+          <button className="met-chip on" disabled={!puedeGuardar} onClick={guardar} style={{ opacity: puedeGuardar ? 1 : 0.5 }}>{editId ? "Guardar cambios" : "Registrar comisión"}</button>
+          {editId && <button className="met-chip" onClick={() => { setEditId(null); setEditPos(false); setF(vacio); }}>Cancelar</button>}
+        </div>
+        <div style={{ fontSize: 11.5, color: MT.suave, marginTop: 8, lineHeight: 1.55 }}>
+          {sugerido !== null && <><b style={{ color: MT.texto2 }}>{pct}% de {usdM(base)} = {usdM(sugerido)}.</b> {difSug !== null && Math.abs(difSug) >= 0.01 ? <>Pagaste {usdM(Math.abs(difSug))} {difSug < 0 ? "menos" : "más"} (descuento o acumulado ajustado). </> : null}{!(monto > 0) && <button className="met-chip" style={{ padding: "1px 8px", fontSize: 11.5 }} onClick={() => setF({ ...f, monto: String(sugerido) })}>Usar {usdM(sugerido)}</button>} </>}
+          {editPos ? "Esta comisión viene del POS: el monto y la fecha son los de Odoo y no se cambian aquí; completa el guía, la venta base y las notas." : "El monto es lo que realmente pagaste: puede ser menos del porcentaje si vendiste con descuento, o un monto justo cuando la venta fue muy grande y se restó lo acumulado. Las comisiones que registres aquí entran a Gastos (tienda física) y quedan marcadas “pendiente en Odoo” (ver abajo)."}
+        </div>
+      </div>
+
+      {guias.length > 0 && <>
+        <SecT sub="Toca un guía para filtrar la lista de abajo. “% real” solo se calcula con los pagos que tienen venta base.">Por guía en este periodo</SecT>
+        <div className="met-card" style={{ padding: 0, overflowX: "auto" }}>
+          <table className="met-tabla com-t">
+            <thead><tr>{["Guía", "Pagos", "Comisión", "Venta base", "% real"].map(h => <th key={h}>{h}</th>)}</tr></thead>
+            <tbody>{guias.map(g => (
+              <tr key={g.guia} onClick={() => setFiltroGuia(filtroGuia === g.guia ? "" : g.guia)} style={{ cursor: "pointer", background: filtroGuia === g.guia ? "rgba(227,30,36,.06)" : undefined }}>
+                <td><b style={{ color: g.guia === "Sin asignar" ? "#8A5A00" : undefined }}>{g.guia}</b></td><td>{g.n}</td><td><b>{usdM(g.total)}</b></td>
+                <td>{g.base ? usdM(g.base, 0) : <span style={{ color: MT.suave }}>—</span>}</td><td>{g.pct_real === null || g.pct_real === undefined ? <span style={{ color: MT.suave }}>—</span> : `${g.pct_real}%`}</td>
+              </tr>))}</tbody>
+          </table>
+        </div>
+      </>}
+
+      <SecT sub={filtroGuia ? `Mostrando solo: ${filtroGuia}. Toca el guía otra vez para quitar el filtro.` : "Más recientes primero. Las de antes de septiembre salen como “en tus libros”: ya están contadas en tu contabilidad y no se vuelven a sumar a Gastos."}>Comisiones del periodo · {usdM(total)} en {vivos.length} pago(s)</SecT>
+      <div className="met-card" style={{ padding: 0, overflowX: "auto" }}>
+        <table className="met-tabla com-t">
+          <thead><tr>{["Fecha", "Guía", "Detalle", "Venta base", "Origen", "Monto", ""].map(h => <th key={h}>{h}</th>)}</tr></thead>
+          <tbody>
+            {mostrados.length === 0 && <tr><td colSpan={7} style={{ color: MT.texto2, padding: 18 }}>No hay comisiones en este periodo. Cambia las fechas de arriba o registra la primera.</td></tr>}
+            {mostrados.map(x => (
+              <tr key={x.id} style={{ opacity: x.anulado ? 0.45 : 1, textDecoration: x.anulado ? "line-through" : "none" }}>
+                <td style={{ whiteSpace: "nowrap" }}>{x.fecha}</td>
+                <td>{x.guia || <span style={{ color: "#8A5A00" }}>sin asignar</span>}</td>
+                <td>{x.origen === "odoo_pos" ? <span style={{ color: MT.texto2 }}>POS: “{x.motivo}”</span> : <span style={{ color: MT.texto2 }}>Registrada en la web</span>}{x.nota && !String(x.nota).startsWith("Motivo en el POS") ? <span style={{ color: MT.suave }}> · {x.nota}</span> : null}{x.orden_pos ? <span style={{ color: MT.suave }}> · {x.orden_pos}</span> : null}{x.anulado && x.anulado_motivo ? <span style={{ color: MT.suave }}> · {x.anulado_motivo}</span> : null}</td>
+                <td>{x.base_venta ? <>{usdM(x.base_venta, 0)} <span style={{ color: MT.suave }}>({Math.round(1000 * Number(x.monto) / Number(x.base_venta)) / 10}%)</span></> : <span style={{ color: MT.suave }}>—</span>}</td>
+                <td style={{ whiteSpace: "nowrap", fontSize: 12 }}>{x.origen === "odoo_pos" ? (x.en_libros ? <span style={{ color: MT.suave }}>POS · en tus libros</span> : <span style={{ color: MT.bueno, fontWeight: 700 }}>POS · en Gastos</span>) : <span style={{ color: "#8A5A00", fontWeight: 700 }}>Web · pendiente en Odoo</span>}</td>
+                <td><b>{usdM(x.monto)}</b></td>
+                <td style={{ whiteSpace: "nowrap" }}>{!x.anulado && <><button className="met-chip" style={{ padding: "3px 10px", fontSize: 12 }} onClick={() => editar(x)}>{x.origen === "odoo_pos" ? "Completar" : "Editar"}</button> <button className="met-chip" style={{ padding: "3px 10px", fontSize: 12 }} onClick={() => anular(x)}>Anular</button></>}</td>
+              </tr>))}
+          </tbody>
+        </table>
+      </div>
+      {items.length >= 1500 && <div style={{ fontSize: 12, color: MT.suave, marginTop: 8 }}>Se muestran las primeras 1,500; acorta el rango de fechas para ver el resto.</div>}
+
+      <SecT sub="Salidas de la caja del POS (desde septiembre) cuyo motivo no dice comisión ni guía. Elige a dónde van y se registran solas, también las futuras con el mismo motivo. Las entradas de efectivo (cambio, vuelto, reposición) no se cuentan como gasto.">Otras salidas de caja por clasificar</SecT>
+      {listaGrupos.length === 0 ? <div className="met-card" style={{ color: MT.texto2, fontSize: 13 }}>No hay salidas pendientes de clasificar.</div> : (
+        <div className="met-card" style={{ padding: 0, overflowX: "auto" }}>
+          <table className="met-tabla com-t">
+            <thead><tr>{["Motivo en el POS", "Veces", "Total", "Registrar como", "Solo esta", ""].map(h => <th key={h}>{h}</th>)}</tr></thead>
+            <tbody>{listaGrupos.map(g => (
+              <tr key={g.k}>
+                <td><b>{g.motivo}</b><div style={{ fontSize: 11.5, color: MT.suave }}>última: {g.ultima}</div></td>
+                <td>{g.n}</td><td><b>{usdM(g.total)}</b></td>
+                <td><select style={{ ...inpF, minWidth: 180 }} value={dest[g.k] || ""} onChange={e => setDest({ ...dest, [g.k]: e.target.value })}>
+                  <option value="">Elegir…</option>
+                  <option value="comision">Comisión de guía</option>
+                  {((d && d.categorias) || []).filter(c => c.nombre !== "Comisiones a guías").map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                  <option value="ignorar">No es gasto (ignorar)</option>
+                </select></td>
+                <td><label style={{ fontSize: 12, color: MT.texto2, whiteSpace: "nowrap" }}><input type="checkbox" checked={aplicar[g.k] === false} onChange={e => setAplicar({ ...aplicar, [g.k]: e.target.checked ? false : true })} /> solo la más reciente</label></td>
+                <td><button className="met-chip on" style={{ padding: "3px 12px", fontSize: 12, opacity: dest[g.k] ? 1 : 0.5 }} disabled={!dest[g.k]} onClick={() => clasificar(g)}>Guardar</button></td>
+              </tr>))}</tbody>
+          </table>
+        </div>
+      )}
+      {revisar.length > 0 && <AvisoFin>Hay {revisar.length} entrada(s) de efectivo con texto de comisión que no corresponden a ninguna salida igual: {revisar.slice(0, 5).map(p => `${p.fecha} ${usdM(p.monto)} “${p.motivo}”`).join("; ")}. Revísalas en el POS. <button className="met-chip" style={{ padding: "2px 10px" }} onClick={() => revisar.forEach(ignorarLinea)}>Ignorar</button></AvisoFin>}
+      {cerrados.length > 0 && <AvisoFin malo>{cerrados.length} salida(s) no se pudieron registrar porque su mes está cerrado en Finanzas. Abre el mes en “Ajustes y control” y se registran solas en la próxima lectura.</AvisoFin>}
+
+      <div className="met-card" style={{ marginTop: 18 }}>
+        <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 6 }}>Y la contabilidad de Odoo</div>
+        <div style={{ fontSize: 12.5, color: MT.texto2, lineHeight: 1.7 }}>
+          Cada salida de la caja del POS <b>ya queda registrada en la contabilidad de Odoo</b> (diario Efectivo): sale de “113.001 Efectivo” y entra a la cuenta transitoria “111.002 Bank Suspense Account”, porque Odoo todavía no sabe que es una comisión. Lo que falta para que Odoo la muestre como gasto es elegir una cuenta de gasto para las comisiones y reclasificarlas allí; la web no escribe nada en Odoo hasta que lo apruebes. Las comisiones que registres aquí a mano aparecen como “pendiente en Odoo”: no pasaron por la caja del POS.
+        </div>
+      </div>
+
+      <details style={{ marginTop: 18 }} open={verLibros} onToggle={e => setVerLibros(e.currentTarget.open)}>
+        <summary style={{ cursor: "pointer", fontSize: 13, fontWeight: 700, color: MT.texto2 }}>Cotejo mes a mes: tus libros contra lo que sacó el POS</summary>
+        <div className="met-card" style={{ marginTop: 10, overflowX: "auto", padding: 0 }}>
+          <table className="met-tabla com-t">
+            <thead><tr>{["Mes", "Comisiones en tus libros", "Salidas del POS con comisión/guía", "Diferencia", "Pagos POS"].map(h => <th key={h}>{h}</th>)}</tr></thead>
+            <tbody>{(d.cotejo || []).map(c => { const dif = Math.round((Number(c.odoo) - Number(c.libros)) * 100) / 100; return (
+              <tr key={c.mes}><td>{c.mes}</td><td>{Number(c.libros) ? usdM(c.libros) : <span style={{ color: MT.suave }}>—</span>}</td><td>{usdM(c.odoo)}</td>
+                <td style={{ color: Number(c.libros) && Math.abs(dif) >= 1 ? "#8A5A00" : MT.suave }}>{Number(c.libros) ? signoUsd(dif, 2) : "—"}</td><td>{c.n_odoo}</td></tr>); })}</tbody>
+          </table>
+        </div>
+        <div style={{ fontSize: 11.5, color: MT.suave, margin: "8px 2px 0", lineHeight: 1.6 }}>Sirve para ver si los libros a mano coinciden con lo que realmente salió de la caja. Una diferencia no siempre es un error: en tus libros algunos meses las comisiones se anotaron junto con los envíos o en otra fecha.</div>
+      </details>
     </div>
   );
 }
@@ -6054,7 +6266,7 @@ function FinCuentas() {
 }
 
 // ── Ajustes, cierre de meses y bitácora ──
-const TABLA_BIT = { fin_gastos: "Gasto", fin_costos_producto: "Costo de producto", fin_documentos: "Cuenta por cobrar/pagar", fin_abonos: "Cobro o pago", fin_config: "Ajustes", fin_periodos_cerrados: "Cierre de mes", fin_categorias_gasto: "Categoría de gasto" };
+const TABLA_BIT = { fin_gastos: "Gasto", fin_costos_producto: "Costo de producto", fin_documentos: "Cuenta por cobrar/pagar", fin_abonos: "Cobro o pago", fin_config: "Ajustes", fin_periodos_cerrados: "Cierre de mes", fin_categorias_gasto: "Categoría de gasto", fin_comisiones_guia: "Comisión de guía" };
 const ACCION_BIT = { INSERT: "Creó", UPDATE: "Cambió", DELETE: "Borró" };
 function resumenBit(b) {
   const d = b.despues || b.antes || {}; const p = [];
@@ -7518,7 +7730,7 @@ function FinBalance() {
 
 function FinanzasPanel({ desde, hasta, filtro, productos, onCostosCambio }) {
   const [vista, setVista] = useState("resumen");
-  const VISTAS = [["resumen", "Resumen"], ["flujo", "Flujo de caja"], ["resultados", "Estado de resultados"], ["balance", "Balance general"], ["gastos", "Gastos"], ["margen", "Márgenes"], ["compras", "Compras (Odoo)"], ["costos", "Costos de productos"], ["cuentas", "Por cobrar y pagar"], ["contabilidad", "Contabilidad (libros)"], ["control", "Ajustes y control"]];
+  const VISTAS = [["resumen", "Resumen"], ["flujo", "Flujo de caja"], ["resultados", "Estado de resultados"], ["balance", "Balance general"], ["gastos", "Gastos"], ["comisiones", "Comisiones de guías"], ["margen", "Márgenes"], ["compras", "Compras (Odoo)"], ["costos", "Costos de productos"], ["cuentas", "Por cobrar y pagar"], ["contabilidad", "Contabilidad (libros)"], ["control", "Ajustes y control"]];
   return (
     <div className="met">
       <style>{ESTILO_MET}</style>
@@ -7538,6 +7750,7 @@ function FinanzasPanel({ desde, hasta, filtro, productos, onCostosCambio }) {
       {vista === "resultados" && <FinEvolucion modo="resultados" irA={setVista} />}
       {vista === "balance" && <FinBalance />}
       {vista === "gastos" && <FinGastos desde={desde} hasta={hasta} />}
+      {vista === "comisiones" && <FinComisiones desde={desde} hasta={hasta} />}
       {vista === "margen" && <FinMargen desde={desde} hasta={hasta} irA={setVista} />}
       {vista === "compras" && <FinCompras desde={desde} hasta={hasta} />}
       {vista === "costos" && <FinCostos productos={productos} onGuardado={onCostosCambio} />}
