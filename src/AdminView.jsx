@@ -5561,6 +5561,15 @@ function FinResumen({ desde, hasta, irA }) {
     ["Comisiones de tarjeta y Yappy (estimadas)", E.comisiones, MT.malo, "−"],
     ["Gastos operativos que registraste", E.gastos, MT.malo, "−"],
   ];
+  // Desglose de los gastos operativos por categoría (viene del servidor: categoría x canal)
+  const detLista = (r.gastos_detalle || []).map(x => ({ n: x.categoria, w: nF(x.web), t: nF(x.tienda), tot: nF(x.web) + nF(x.tienda) + nF(x.compartido) }))
+    .map(x => ({ ...x, v: canal === "web" ? x.w : canal === "tienda" ? x.t : x.tot })).filter(x => x.tot > 0.004);
+  const detCanal = detLista.filter(x => x.v > 0.004).sort((a, b) => b.v - a.v);
+  const detResto = E.gastos - detCanal.reduce((a, x) => a + x.v, 0);
+  if (detCanal.length) {
+    const i = pasos.findIndex(p => p[0] === "Gastos operativos que registraste");
+    pasos.splice(i, 1, ...detCanal.map(x => [`Gasto: ${x.n}`, x.v, MT.malo, "−"]), ...(detResto > 0.5 ? [["Gasto: otros sin categoría", detResto, MT.malo, "−"]] : []));
+  }
   const maxPaso = Math.max(E.ventasProd, 1);
   const cat = (r.gastos_por_categoria || []);
   const maxCat = Math.max(1, ...cat.map(c => Number(c.total)));
@@ -5575,12 +5584,17 @@ function FinResumen({ desde, hasta, irA }) {
     ["Utilidad bruta", EST.web.utilidadBruta, EST.tienda.utilidadBruta, EST.total.utilidadBruta, "sub"],
     ["(−) Publicidad en Meta", EST.web.ads, EST.tienda.ads, EST.total.ads, "egr"],
     ["(−) Comisiones de tarjeta y Yappy", EST.web.comisiones, EST.tienda.comisiones, EST.total.comisiones, "egr"],
-    ["(−) Gastos operativos del canal", EST.web.gastosCanal, EST.tienda.gastosCanal, EST.total.gastosCanal, "egr"],
-    ["(−) Gastos compartidos (sin canal)", null, null, EST.compartido, "egr"],
+    ...(detLista.length ? [
+      ["(−) Gastos operativos", EST.web.gastosCanal, EST.tienda.gastosCanal, EST.total.gastos, "egr"],
+      ...detLista.map(x => [x.n, x.w, x.t, x.tot, "det"]),
+    ] : [
+      ["(−) Gastos operativos del canal", EST.web.gastosCanal, EST.tienda.gastosCanal, EST.total.gastosCanal, "egr"],
+      ["(−) Gastos compartidos (sin canal)", null, null, EST.compartido, "egr"],
+    ]),
     ["Ganancia neta estimada", EST.web.neta, EST.tienda.neta, EST.total.neta, "tot"],
   ];
   const baseW = EST.web.ventasTotales, baseT = EST.tienda.ventasTotales, baseTot = EST.total.ventasTotales;
-  const celdaUsd = (v, tipo) => v === null || v === undefined ? "—" : (tipo === "egr" && Number(v) > 0 ? "−" : (Number(v) < 0 ? "−" : "")) + usdM(Math.abs(Number(v)), 0);
+  const celdaUsd = (v, tipo) => v === null || v === undefined || (tipo === "det" && Math.abs(Number(v)) < 0.005) ? "—" : ((tipo === "egr" || tipo === "det") && Number(v) > 0 ? "−" : (Number(v) < 0 ? "−" : "")) + usdM(Math.abs(Number(v)), 0);
   const celdaPct = (v, b) => { const p = pctDe(v, b); return p === null ? "—" : pctM(Math.abs(p), 1); };
   const T = EST.total;
   const por100 = (x) => x === null || !(baseTot > 0) ? null : (x / baseTot) * 100;
@@ -5661,14 +5675,15 @@ function FinResumen({ desde, hasta, irA }) {
             <tbody>
               {filasV.map(([et, w, t, tot, tipo]) => {
                 const fuerte = tipo === "sub" || tipo === "tot";
-                const estilo = { fontWeight: fuerte ? 800 : 500, background: tipo === "tot" ? "rgba(227,30,36,0.06)" : fuerte ? "rgba(17,17,17,0.03)" : "transparent" };
-                const color = tipo === "tot" ? (tot !== null && tot < 0 ? MT.malo : MT.bueno) : tipo === "egr" ? MT.texto2 : MT.texto;
+                const estilo = { fontWeight: fuerte ? 800 : tipo === "det" ? 400 : 500, fontSize: tipo === "det" ? 12.5 : undefined, background: tipo === "tot" ? "rgba(227,30,36,0.06)" : fuerte ? "rgba(17,17,17,0.03)" : "transparent" };
+                const color = tipo === "tot" ? (tot !== null && tot < 0 ? MT.malo : MT.bueno) : tipo === "egr" || tipo === "det" ? MT.texto2 : MT.texto;
+                const det = tipo === "det";
                 const pTot = pctDe(tot, baseTot);
                 return (
                   <tr key={et} style={estilo}>
-                    <td style={{ color: tipo === "egr" ? MT.texto2 : MT.texto, paddingLeft: tipo === "egr" || tipo === "ing" ? 22 : 12 }}>{et}{et.includes("compartidos") ? <div style={{ fontSize: 11, color: MT.suave, fontWeight: 400 }}>solo se descuentan en el total</div> : null}</td>
+                    <td style={{ color: tipo === "egr" || tipo === "det" ? MT.texto2 : MT.texto, paddingLeft: det ? 40 : tipo === "egr" || tipo === "ing" ? 22 : 12 }}>{det ? "· " : ""}{et}{et.includes("compartidos") ? <div style={{ fontSize: 11, color: MT.suave, fontWeight: 400 }}>solo se descuentan en el total</div> : null}</td>
                     <td style={{ color }}>{celdaUsd(tot, tipo)}</td>
-                    <td style={{ color, minWidth: 96 }}>{celdaPct(tot, baseTot)}{pTot !== null && Math.abs(pTot) <= 100 && tipo !== "tot" && <div style={{ height: 4, borderRadius: 3, background: "rgba(17,17,17,0.07)", marginTop: 3 }}><div style={{ height: "100%", width: Math.min(100, Math.abs(pTot)) + "%", borderRadius: 3, background: tipo === "egr" ? MT.suave : MT.tinta }} /></div>}</td>
+                    <td style={{ color, minWidth: 96 }}>{celdaPct(tot, baseTot)}{pTot !== null && Math.abs(pTot) <= 100 && tipo !== "tot" && <div style={{ height: 4, borderRadius: 3, background: "rgba(17,17,17,0.07)", marginTop: 3 }}><div style={{ height: "100%", width: Math.min(100, Math.abs(pTot)) + "%", borderRadius: 3, background: tipo === "egr" || tipo === "det" ? MT.suave : MT.tinta }} /></div>}</td>
                     <td style={{ color }}>{celdaUsd(w, tipo)}</td><td style={{ color }}>{celdaPct(w, baseW)}</td>
                     <td style={{ color }}>{celdaUsd(t, tipo)}</td><td style={{ color }}>{celdaPct(t, baseT)}</td>
                   </tr>
@@ -5680,7 +5695,7 @@ function FinResumen({ desde, hasta, irA }) {
             {T.neta === null || !(baseTot > 0)
               ? "Carga los costos de tus productos para ver cuánto te queda de cada dólar."
               : <>Por cada <b style={{ color: MT.texto }}>$100</b> que vende el negocio: <b>{usdM(por100(T.costo), 2)}</b> se van en costo de la mercancía, <b>{usdM(por100(T.reembolsos), 2)}</b> en reembolsos, <b>{usdM(por100(T.ads), 2)}</b> en publicidad, <b>{usdM(por100(T.comisiones), 2)}</b> en comisiones y <b>{usdM(por100(T.gastos), 2)}</b> en gastos. Te {T.neta >= 0 ? "quedan" : "faltan"} <b style={{ color: T.neta >= 0 ? MT.bueno : MT.malo }}>{usdM(Math.abs(por100(T.neta)), 2)}</b>.</>}
-            <div style={{ fontSize: 11.5, color: MT.suave, marginTop: 6 }}>Las columnas Web y Tienda no incluyen los gastos compartidos, por eso su ganancia neta es “antes de gastos compartidos”. Para repartirlos, marca el canal de cada gasto en Gastos.</div>
+            <div style={{ fontSize: 11.5, color: MT.suave, marginTop: 6 }}>{detLista.length ? "Cada gasto operativo aparece desglosado por categoría. " : ""}Las columnas Web y Tienda no incluyen los gastos compartidos (solo están en Total), por eso su ganancia neta es “antes de gastos compartidos”. Para repartirlos, marca el canal de cada gasto en Gastos.</div>
           </div>
         </div>
       )}
@@ -6500,22 +6515,32 @@ function evoResultados(f, canal, lb) {
   if (lb && canal === "total") return { ...lb, libros: true };
   return { ...evoResultadosSis(f, canal), libros: false };
 }
+// Gastos operativos por categoría de un periodo, según el canal (web, tienda o todo el negocio con los compartidos)
+function evoDetSis(f, canal) {
+  const det = {};
+  (f.gastos_cat || []).forEach(x => { const v = canal === "web" ? nF(x.web) : canal === "tienda" ? nF(x.tienda) : nF(x.web) + nF(x.tienda) + nF(x.comp); if (v > 0.004) det[x.c] = Math.round(v * 100) / 100; });
+  return det;
+}
 function evoResultadosSis(f, canal) {
   const v = (k) => (f[k] === null || f[k] === undefined ? null : Number(f[k]));
+  const det = evoDetSis(f, canal);
   if (canal === "web") {
     const prod = nF(f.ventas_web_prod), envio = nF(f.envio), reemb = nF(f.web_reembolsos), costo = v("costo_web");
     const tot = prod + envio, netas = tot - reemb;
-    return { prod, envio, tot, reemb, netas, costo, bruta: costo === null ? null : netas - costo, ads: nF(f.ads), com: nF(f.comisiones_web), gastos: nF(f.op_web), neta: v("neta_web") };
+    return { prod, envio, tot, reemb, netas, costo, bruta: costo === null ? null : netas - costo, ads: nF(f.ads), com: nF(f.comisiones_web), gastos: nF(f.op_web), neta: v("neta_web"), det };
   }
   if (canal === "tienda") {
     const prod = nF(f.ventas_tienda_prod), reemb = nF(f.tienda_reembolsos), costo = v("costo_tienda");
     const tot = prod, netas = tot - reemb;
-    return { prod, envio: 0, tot, reemb, netas, costo, bruta: costo === null ? null : netas - costo, ads: 0, com: nF(f.comisiones_tienda), gastos: nF(f.op_tienda), neta: v("neta_tienda") };
+    return { prod, envio: 0, tot, reemb, netas, costo, bruta: costo === null ? null : netas - costo, ads: 0, com: nF(f.comisiones_tienda), gastos: nF(f.op_tienda), neta: v("neta_tienda"), det };
   }
   return { prod: nF(f.ventas_productos), envio: nF(f.envio), tot: nF(f.ventas_totales), reemb: nF(f.reembolsos), netas: nF(f.ventas_netas), costo: v("costo_ventas"), bruta: v("utilidad_bruta"),
-    ads: nF(f.ads), com: nF(f.comisiones), gastos: nF(f.gastos_operativos), neta: v("ganancia_neta") };
+    ads: nF(f.ads), com: nF(f.comisiones), gastos: nF(f.gastos_operativos), neta: v("ganancia_neta"), det };
 }
 
+// Líneas de gasto de los libros con el nombre de la categoría equivalente en el sistema (para verlas juntas en el estado de resultados)
+const GASTO_LIBRO_A_CAT = { "gastos envios": "Envíos a clientes", "sueldos": "Planilla y salarios", "gasto alquiler": "Alquiler", "gasto alquiler bodega": "Alquiler",
+  "servicios digitales": "Herramientas y software", "material de empaque": "Empaques y materiales", "equipo de oficina": "Equipo de oficina", "gastos varios": "Otros" };
 // Libros contables corregidos (cont_datos): flujo de caja real y estado de resultados por mes. Si no se pueden leer, devuelve null y
 // las pestañas siguen mostrando solo los datos del sistema.
 function evoLibros(c) {
@@ -6547,7 +6572,11 @@ function evoLibros(c) {
       const costo = e["costos de ventas"] ?? null, bruta = e["utilidad bruta"] ?? null, neta = e["utilidad neta"] ?? null;
       const ads = e["gastos de publicidad"] || 0, com = e["gasto comisiones"] || 0;
       const gastosTot = bruta !== null && neta !== null ? bruta - neta : (e["total de gastos"] ?? 0);
-      return { prod: ventas, envio: 0, tot: ventas, reemb: redC(ventas - netas), netas, costo, bruta, ads, com, gastos: redC(gastosTot - ads - com), neta };
+      const det = {};
+      Object.entries(GASTO_LIBRO_A_CAT).forEach(([k, n]) => { if (e[k]) det[n] = redC((det[n] || 0) + e[k]); });
+      const resto = redC(gastosTot - ads - com - Object.values(det).reduce((a, x) => a + x, 0));
+      if (Math.abs(resto) > 0.005) det["Otros"] = redC((det["Otros"] || 0) + resto);
+      return { prod: ventas, envio: 0, tot: ventas, reemb: redC(ventas - netas), netas, costo, bruta, ads, com, gastos: redC(gastosTot - ads - com), neta, det };
     },
   };
 }
@@ -6558,7 +6587,7 @@ function evoFlujoFila(f, lb) {
     gastos: nF(f.gastos_caja) + nF(f.web_reembolsos), salidas: nF(f.salidas), neto: nF(f.neto_caja), saldo: f.saldo_final === null || f.saldo_final === undefined ? null : Number(f.saldo_final), libros: false };
 }
 // Junta periodos mensuales en años: suma los campos indicados (los "nulos" quedan en null si algún mes no tiene dato) y toma el último valor de "ultimo"
-function evoAnual(filas, items, suma, nulos, ultimo) {
+function evoAnual(filas, items, suma, nulos, ultimo, mapas = []) {
   const g = new Map();
   filas.forEach((f, i) => { const y = String(f.k).slice(0, 4); if (!g.has(y)) g.set(y, []); g.get(y).push(i); });
   const fa = [], ia = [];
@@ -6568,6 +6597,7 @@ function evoAnual(filas, items, suma, nulos, ultimo) {
     suma.forEach(k => { o[k] = redC(idx.reduce((a, i) => a + nF(items[i][k]), 0)); });
     nulos.forEach(k => { o[k] = idx.some(i => items[i][k] === null || items[i][k] === undefined) ? null : redC(idx.reduce((a, i) => a + Number(items[i][k]), 0)); });
     ultimo.forEach(k => { const v = items[idx[idx.length - 1]][k]; o[k] = v === undefined ? null : v; });
+    mapas.forEach(k => { const o2 = {}; idx.forEach(i => Object.entries(items[i][k] || {}).forEach(([n, v]) => { o2[n] = redC((o2[n] || 0) + nF(v)); })); o[k] = o2; });
     ia.push(o);
   });
   return [fa, ia];
@@ -6624,7 +6654,7 @@ function FinEvolucion({ modo, irA }) {
   if (gran === "mes" && vent.mes !== "todo") { const n = Number(vent.mes); filas = filasAll.slice(-n); F = FA.slice(-n); R = RA.slice(-n); }
   if (gran === "anio") {
     const [fa, ia] = evoAnual(filasAll, FA, FLUJO_SUMAS, [], ["saldo"]);
-    const [, ra] = evoAnual(filasAll, RA, ["prod", "envio", "tot", "reemb", "netas", "ads", "com", "gastos"], ["costo", "bruta", "neta"], []);
+    const [, ra] = evoAnual(filasAll, RA, ["prod", "envio", "tot", "reemb", "netas", "ads", "com", "gastos"], ["costo", "bruta", "neta"], [], ["det"]);
     filas = fa; F = ia; R = ra;
   }
   const hayLib = F.some(x => x.libros);
@@ -6741,6 +6771,9 @@ function FinEvolucion({ modo, irA }) {
   const sumaR = (k) => R.reduce((a, r) => a + nF(r[k]), 0);
   const sumaRN = (k) => (R.some(r => r[k] === null || r[k] === undefined) ? null : sumaR(k));
   const T = { prod: sumaR("prod"), envio: sumaR("envio"), tot: sumaR("tot"), reemb: sumaR("reemb"), netas: sumaR("netas"), costo: sumaRN("costo"), bruta: sumaRN("bruta"), ads: sumaR("ads"), com: sumaR("com"), gastos: sumaR("gastos"), neta: sumaRN("neta") };
+  // Desglose de gastos por categoría (las más pesadas primero)
+  T.det = {}; R.forEach(r => Object.entries(r.det || {}).forEach(([n, v]) => { T.det[n] = redC((T.det[n] || 0) + nF(v)); }));
+  const catsGasto = Object.keys(T.det).filter(n => T.det[n] > 0.004).sort((a, b) => T.det[b] - T.det[a]);
   const gastosTot = T.ads + T.com + T.gastos;
   const mBruto = T.bruta !== null && T.tot > 0 ? (T.bruta / T.tot) * 100 : null;
   const mNeto = T.neta !== null && T.tot > 0 ? (T.neta / T.tot) * 100 : null;
@@ -6751,14 +6784,15 @@ function FinEvolucion({ modo, irA }) {
     ["Ventas de productos", "prod", "ing"], ["Envíos cobrados a clientes", "envio", "ing"], ["Ventas totales", "tot", "sub"], ["(−) Reembolsos a clientes", "reemb", "egr"], ["Ventas netas", "netas", "sub"],
     ["(−) Costo de la mercancía vendida (estimado)", "costo", "egr"], ["Utilidad bruta", "bruta", "sub"], ["Margen bruto %", "mbruto", "pct"],
     ["(−) Publicidad en Meta", "ads", "egr"], ["(−) Comisiones de tarjeta y Yappy", "com", "egr"], [canal === "total" ? "(−) Gastos operativos (incluye compartidos)" : "(−) Gastos operativos del canal", "gastos", "egr"],
+    ...catsGasto.map(n => [`· ${n}`, "det:" + n, "det"]),
     ["Ganancia neta estimada", "neta", "tot"], ["Margen neto %", "mneto", "pct"],
   ];
-  const valorFila = (r, k) => k === "mbruto" ? (r.bruta !== null && r.tot > 0 ? (r.bruta / r.tot) * 100 : null) : k === "mneto" ? (r.neta !== null && r.tot > 0 ? (r.neta / r.tot) * 100 : null) : r[k];
-  const celda = (v, k, tipo) => v === null || v === undefined ? "—" : tipo === "pct" ? signoPct(v, 1) : tipo === "egr" ? (nF(v) > 0 ? "−" : "") + usdM(Math.abs(nF(v)), 0) : signoUsd(v);
+  const valorFila = (r, k) => k.startsWith("det:") ? nF((r.det || {})[k.slice(4)]) : k === "mbruto" ? (r.bruta !== null && r.tot > 0 ? (r.bruta / r.tot) * 100 : null) : k === "mneto" ? (r.neta !== null && r.tot > 0 ? (r.neta / r.tot) * 100 : null) : r[k];
+  const celda = (v, k, tipo) => v === null || v === undefined || (tipo === "det" && Math.abs(nF(v)) < 0.005) ? "—" : tipo === "pct" ? signoPct(v, 1) : tipo === "egr" || tipo === "det" ? (nF(v) > 0 ? "−" : "") + usdM(Math.abs(nF(v)), 0) : signoUsd(v);
   const bajar = () => descargarCsvEvo(`estado-de-resultados-${gran}-${canal}`, ["Concepto", ...filas.map((f, i) => evoTabla(f.k, gran) + (R[i].libros ? " (libros)" : "")), "Total"],
     FILAS.map(([et, k, tipo]) => [et, ...R.map(r => { const v = valorFila(r, k); return v === null || v === undefined ? "" : (tipo === "pct" ? Math.round(v * 10) / 10 : Math.round(v * 100) / 100); }), (() => { const v = valorFila(T, k); return v === null || v === undefined ? "" : (tipo === "pct" ? Math.round(v * 10) / 10 : Math.round(v * 100) / 100); })()]));
   const serVentas = [{ nombre: "Ventas netas", color: MT.tinta, valores: R.map(r => nF(r.netas)), formato: (v) => usdM(v, 0) }, { nombre: "Utilidad bruta", color: MT.rojo, valores: R.map(r => (r.bruta === null ? 0 : Math.max(0, r.bruta))), formato: (v) => usdM(v, 0) }];
-  const colorTipo = (tipo, v) => tipo === "tot" ? (v !== null && v !== undefined && nF(v) < 0 ? MT.malo : MT.bueno) : tipo === "egr" || tipo === "pct" ? MT.texto2 : MT.texto;
+  const colorTipo = (tipo, v) => tipo === "tot" ? (v !== null && v !== undefined && nF(v) < 0 ? MT.malo : MT.bueno) : tipo === "egr" || tipo === "pct" || tipo === "det" ? MT.texto2 : MT.texto;
   return (
     <div style={opacidad}>
       {controles}
@@ -6819,8 +6853,8 @@ function FinEvolucion({ modo, irA }) {
                 const fuerte = tipo === "sub" || tipo === "tot";
                 const fondo = tipo === "tot" ? "#FDEEEE" : fuerte ? "#F6F6F7" : MT.tarjeta;
                 return (
-                  <tr key={k} style={{ fontWeight: fuerte ? 800 : 500, background: fondo, fontStyle: tipo === "pct" ? "italic" : "normal" }}>
-                    <td style={{ position: "sticky", left: 0, background: fondo, paddingLeft: tipo === "egr" || tipo === "ing" ? 22 : 12, color: tipo === "egr" || tipo === "pct" ? MT.texto2 : MT.texto, zIndex: 1 }}>{et}</td>
+                  <tr key={k} style={{ fontWeight: fuerte ? 800 : tipo === "det" ? 400 : 500, fontSize: tipo === "det" ? 12.5 : undefined, background: fondo, fontStyle: tipo === "pct" ? "italic" : "normal" }}>
+                    <td style={{ position: "sticky", left: 0, background: fondo, paddingLeft: tipo === "det" ? 40 : tipo === "egr" || tipo === "ing" ? 22 : 12, color: tipo === "egr" || tipo === "pct" || tipo === "det" ? MT.texto2 : MT.texto, zIndex: 1 }}>{et}</td>
                     {R.map((r, i) => { const v = valorFila(r, k); return <td key={i} style={{ color: colorTipo(tipo, v), whiteSpace: "nowrap" }}>{celda(v, k, tipo)}</td>; })}
                     <td style={{ color: colorTipo(tipo, valorFila(T, k)), background: "rgba(17,17,17,0.04)", whiteSpace: "nowrap" }}>{celda(valorFila(T, k), k, tipo)}</td>
                   </tr>
@@ -6830,7 +6864,7 @@ function FinEvolucion({ modo, irA }) {
           </table>
         </div>
         <div style={{ fontSize: 11.5, color: MT.suave, margin: "10px 2px 0", lineHeight: 1.6 }}>
-          En los periodos “libros” las cifras son las de tu estado de resultados contable (el costo de ventas es el que calculaste); en los demás, el costo de la mercancía vendida es una estimación: se aplica el margen de los productos con costo cargado al resto de lo vendido (en la web se descuenta lo devuelto al inventario). Las ventas de la tienda van sin ITBMS. Las compras de mercancía no se restan aquí: ya están dentro del costo de lo vendido. Datos desde: tienda {cob.tienda_desde ? mesFmt(String(cob.tienda_desde).slice(0, 10)) : "—"} · web {cob.web_desde ? mesFmt(String(cob.web_desde).slice(0, 10)) : "—"} · publicidad Meta {cob.ads_desde ? mesFmt(String(cob.ads_desde).slice(0, 10)) : "—"} · gastos registrados {gastosDesde ? mesFmt(gastosDesde) : "—"}.
+          {catsGasto.length > 0 && <>Debajo de los gastos operativos ves en qué se gastó, por categoría. En los periodos “libros” las categorías salen de las líneas de tu estado de resultados (envíos, sueldos, alquiler, etc.) y cualquier diferencia queda en “Otros”. </>}En los periodos “libros” las cifras son las de tu estado de resultados contable (el costo de ventas es el que calculaste); en los demás, el costo de la mercancía vendida es una estimación: se aplica el margen de los productos con costo cargado al resto de lo vendido (en la web se descuenta lo devuelto al inventario). Las ventas de la tienda van sin ITBMS. Las compras de mercancía no se restan aquí: ya están dentro del costo de lo vendido. Datos desde: tienda {cob.tienda_desde ? mesFmt(String(cob.tienda_desde).slice(0, 10)) : "—"} · web {cob.web_desde ? mesFmt(String(cob.web_desde).slice(0, 10)) : "—"} · publicidad Meta {cob.ads_desde ? mesFmt(String(cob.ads_desde).slice(0, 10)) : "—"} · gastos registrados {gastosDesde ? mesFmt(gastosDesde) : "—"}.
         </div>
       </>}
     </div>
