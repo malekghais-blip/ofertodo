@@ -6265,6 +6265,74 @@ function FinCostos({ productos, onGuardado }) {
 }
 
 // ── Por cobrar y por pagar ──
+// ── Facturas de proveedores que vienen de Odoo (solo lectura) y cuánto tiempo queda para pagarlas ──
+// La función facturas-proveedor lee las facturas confirmadas en Odoo cada 15 minutos. Cuando una vence manda un correo, y otro cada mes mientras siga sin pagarse.
+function FacturasProveedorOdoo() {
+  const { showToast } = useApp();
+  const { datos: d, error, cargando, recargar } = useFinDatos("fin_facturas_prov", {}, []);
+  const [ocupado, setOcupado] = useState("");
+  const llamar = async (accion) => {
+    await sb.ensureFreshToken();
+    const r = await fetch(`${SUPABASE_URL}/functions/v1/facturas-proveedor`, { method: "POST", headers: sb.functionHeaders(), body: JSON.stringify({ accion }) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || j.ok === false) throw new Error(j.motivo || j.detalle || j.error || "Error");
+    return j;
+  };
+  const actualizar = async () => { setOcupado("sync"); try { await llamar("sync"); showToast("Facturas actualizadas desde Odoo"); recargar(); } catch (e) { showToast("Odoo: " + String(e.message || e).slice(0, 140)); } setOcupado(""); };
+  const prueba = async () => { setOcupado("prueba"); try { await llamar("prueba"); showToast("Correo de prueba enviado"); } catch (e) { showToast("No se pudo enviar: " + String(e.message || e).slice(0, 140)); } setOcupado(""); };
+  const lista = (d && d.facturas) || [];
+  const total = lista.reduce((s, f) => s + nF(f.saldo), 0);
+  const vencido = lista.filter(f => f.dias !== null && f.dias < 0).reduce((s, f) => s + nF(f.saldo), 0);
+  const estado = (f) => {
+    if (f.dias === null || f.dias === undefined) return ["Sin fecha de vencimiento", MT.suave];
+    if (f.dias < 0) return [`Vencida hace ${-f.dias} día${f.dias === -1 ? "" : "s"}`, MT.malo];
+    if (f.dias === 0) return ["Vence hoy", MT.malo];
+    if (f.dias <= 15) return [`Quedan ${f.dias} día${f.dias === 1 ? "" : "s"}`, "#8A5A00"];
+    return [`Quedan ${f.dias} días`, MT.bueno];
+  };
+  const fmtF = (iso) => iso ? `${String(iso).slice(8, 10)}/${String(iso).slice(5, 7)}/${String(iso).slice(0, 4)}` : "—";
+  return (
+    <div className="met-card" style={{ marginTop: 14 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "flex-start" }}>
+        <div style={{ flex: 1, minWidth: 240 }}>
+          <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 4 }}>Facturas de proveedores en Odoo</div>
+          <div style={{ fontSize: 12.5, color: MT.texto2, lineHeight: 1.6 }}>
+            Son las facturas de compra confirmadas en Odoo que aún no has pagado. Se actualizan solas cada 15 minutos{d && d.ultima_sync ? ` (última: ${haceCuanto(d.ultima_sync)})` : ""}. Te llega un correo el día que vence una factura y otro cada mes mientras siga sin pagarse. Cuando la pagues en Odoo (Registrar pago), desaparece de aquí y dejan de llegar avisos.
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button className="met-chip on" disabled={!!ocupado} style={{ opacity: ocupado ? 0.5 : 1 }} onClick={actualizar}>{ocupado === "sync" ? "Leyendo Odoo…" : "Actualizar desde Odoo"}</button>
+          <button className="met-chip" disabled={!!ocupado} style={{ opacity: ocupado ? 0.5 : 1 }} onClick={prueba} title="Te manda un correo con tus facturas sin pagar para ver cómo se ve el recordatorio">{ocupado === "prueba" ? "Enviando…" : "Enviarme un correo de prueba"}</button>
+        </div>
+      </div>
+      {error && <AvisoFin malo>{error}</AvisoFin>}
+      {!d && !error && <div style={{ fontSize: 12.5, color: MT.texto2, marginTop: 10 }}>Cargando facturas…</div>}
+      {d && lista.length === 0 && <div style={{ fontSize: 13, color: MT.texto2, marginTop: 12 }}>{d.hay_datos ? "No tienes facturas de proveedor pendientes de pago en Odoo." : "Todavía no hay facturas de proveedor en Odoo. Cuando confirmes una (Compras → orden → Crear factura → Confirmar), aparece aquí en unos minutos."}</div>}
+      {lista.length > 0 && <>
+        <div className="met-grid" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", marginTop: 12 }}>
+          <Kpi etiqueta="Debes en facturas de Odoo"><Cifra valor={total} f={(v) => usdM(v, 2)} /></Kpi>
+          <Kpi etiqueta="De eso, ya vencido"><span style={{ color: vencido > 0 ? MT.malo : MT.texto }}><Cifra valor={vencido} f={(v) => usdM(v, 2)} /></span></Kpi>
+        </div>
+        <div style={{ overflowX: "auto", marginTop: 12, opacity: cargando ? 0.7 : 1 }}>
+          <table className="met-tabla" style={{ minWidth: 640 }}>
+            <thead><tr><th style={{ textAlign: "left" }}>Proveedor</th><th style={{ textAlign: "left" }}>Factura</th><th>Vence</th><th>Debes</th><th style={{ textAlign: "left" }}>Tiempo para pagar</th></tr></thead>
+            <tbody>
+              {lista.map(f => { const [txt, col] = estado(f); return (
+                <tr key={f.id}>
+                  <td style={{ textAlign: "left", fontWeight: 700 }}>{f.proveedor}</td>
+                  <td style={{ textAlign: "left", fontSize: 12.5 }}>{f.nombre}{f.origen ? <span style={{ color: MT.suave }}> · orden {f.origen}</span> : null}</td>
+                  <td style={{ whiteSpace: "nowrap" }}>{fmtF(f.vence)}</td>
+                  <td style={{ fontWeight: 800 }}>{usdM(f.saldo, 2)}{nF(f.saldo) < nF(f.total) - 0.005 ? <div style={{ fontSize: 11, color: MT.suave, fontWeight: 400 }}>de {usdM(f.total, 2)}</div> : null}</td>
+                  <td style={{ textAlign: "left", whiteSpace: "nowrap", fontWeight: 700, color: col }}>{txt}{f.avisos > 0 ? <div style={{ fontSize: 11, color: MT.suave, fontWeight: 400 }}>{f.avisos} aviso{f.avisos === 1 ? "" : "s"} enviado{f.avisos === 1 ? "" : "s"} por correo</div> : null}</td>
+                </tr>); })}
+            </tbody>
+          </table>
+        </div>
+      </>}
+    </div>
+  );
+}
+
 function FinCuentas() {
   const { showToast } = useApp();
   const [tipo, setTipo] = useState("cobrar");
@@ -6302,6 +6370,7 @@ function FinCuentas() {
         <Kpi etiqueta={esCobrar ? "Total que te deben" : "Total que debes"} grande acento><Cifra valor={pendiente} f={(v) => usdM(v, 0)} /></Kpi>
         <Kpi etiqueta="De eso, ya vencido"><span style={{ color: venc > 0 ? MT.malo : MT.texto }}><Cifra valor={venc} f={(v) => usdM(v, 0)} /></span></Kpi>
       </div>
+      {!esCobrar && <FacturasProveedorOdoo />}
       <div className="met-card" style={{ marginTop: 14 }}>
         <div className="met-lbl" style={{ marginBottom: 10 }}>{esCobrar ? "Anotar una venta a crédito" : "Anotar una deuda con un proveedor"}</div>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
