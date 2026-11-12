@@ -5497,7 +5497,7 @@ function FlujoCaja({ fl, irA }) {
       {vista === "unificado" && (
         <div className="met-grid" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,420px),1fr))" }}>
           <Tarjeta titulo="Flujo de caja unificado: web + tienda física + compras" ent={uniEnt} sal={uniSal} neto={netoUni}
-            notaPie="Las compras de Odoo se cuentan como salida de caja el día de la orden de compra confirmada (es un estimado: Odoo aún no tiene los pagos a proveedores)." />
+            notaPie="Las compras de Odoo sin factura de proveedor se cuentan como salida de caja el día de la orden confirmada (estimado). Si la compra ya tiene factura en Odoo (compra a crédito), sale de caja el día que registras el pago, y mientras tanto aparece como deuda en “Por pagar”." />
           <div className="met-card met-in" style={{ "--d": "160ms" }}>
             <div className="met-lbl">Qué aporta cada parte al flujo</div>
             <div style={{ marginTop: 10 }}>
@@ -5658,7 +5658,7 @@ function FinResumen({ desde, hasta, irA }) {
             </button>
             <button className="met-card" style={{ flex: 1, minWidth: 140, textAlign: "left", cursor: "pointer", padding: 12 }} onClick={() => irA("cuentas")}>
               <div className="met-lbl">Debes</div><div style={{ fontSize: 22, fontWeight: 800 }}>{usdM(r.por_pagar.total, 0)}</div>
-              <div style={{ fontSize: 11.5, color: Number(r.por_pagar.vencido) > 0 ? MT.malo : MT.suave }}>{Number(r.por_pagar.vencido) > 0 ? `${usdM(r.por_pagar.vencido, 0)} vencido` : `${r.por_pagar.documentos} documento(s)`}</div>
+              <div style={{ fontSize: 11.5, color: Number(r.por_pagar.vencido) > 0 ? MT.malo : MT.suave }}>{Number(r.por_pagar.vencido) > 0 ? `${usdM(r.por_pagar.vencido, 0)} vencido` : `${r.por_pagar.documentos} documento(s) · incluye facturas de Odoo`}</div>
             </button>
           </div>
         </div>
@@ -6267,9 +6267,9 @@ function FinCostos({ productos, onGuardado }) {
 // ── Por cobrar y por pagar ──
 // ── Facturas de proveedores que vienen de Odoo (solo lectura) y cuánto tiempo queda para pagarlas ──
 // La función facturas-proveedor lee las facturas confirmadas en Odoo cada 15 minutos. Cuando una vence manda un correo, y otro cada mes mientras siga sin pagarse.
-function FacturasProveedorOdoo() {
+function FacturasProveedorOdoo({ fp }) {
   const { showToast } = useApp();
-  const { datos: d, error, cargando, recargar } = useFinDatos("fin_facturas_prov", {}, []);
+  const { datos: d, error, cargando, recargar } = fp;
   const [ocupado, setOcupado] = useState("");
   const llamar = async (accion) => {
     await sb.ensureFreshToken();
@@ -6309,11 +6309,8 @@ function FacturasProveedorOdoo() {
       {!d && !error && <div style={{ fontSize: 12.5, color: MT.texto2, marginTop: 10 }}>Cargando facturas…</div>}
       {d && lista.length === 0 && <div style={{ fontSize: 13, color: MT.texto2, marginTop: 12 }}>{d.hay_datos ? "No tienes facturas de proveedor pendientes de pago en Odoo." : "Todavía no hay facturas de proveedor en Odoo. Cuando confirmes una (Compras → orden → Crear factura → Confirmar), aparece aquí en unos minutos."}</div>}
       {lista.length > 0 && <>
-        <div className="met-grid" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", marginTop: 12 }}>
-          <Kpi etiqueta="Debes en facturas de Odoo"><Cifra valor={total} f={(v) => usdM(v, 2)} /></Kpi>
-          <Kpi etiqueta="De eso, ya vencido"><span style={{ color: vencido > 0 ? MT.malo : MT.texto }}><Cifra valor={vencido} f={(v) => usdM(v, 2)} /></span></Kpi>
-        </div>
-        <div style={{ overflowX: "auto", marginTop: 12, opacity: cargando ? 0.7 : 1 }}>
+        <div style={{ fontSize: 13, color: MT.texto2, marginTop: 12 }}>Total en facturas de Odoo: <b style={{ color: MT.texto }}>{usdM(total, 2)}</b>{vencido > 0 ? <> · <b style={{ color: MT.malo }}>{usdM(vencido, 2)} vencido</b></> : null}. Ya está sumado en “Total que debes”, en Resumen y en el flujo de caja.</div>
+        <div style={{ overflowX: "auto", marginTop: 10, opacity: cargando ? 0.7 : 1 }}>
           <table className="met-tabla" style={{ minWidth: 640 }}>
             <thead><tr><th style={{ textAlign: "left" }}>Proveedor</th><th style={{ textAlign: "left" }}>Factura</th><th>Vence</th><th>Debes</th><th style={{ textAlign: "left" }}>Tiempo para pagar</th></tr></thead>
             <tbody>
@@ -6337,6 +6334,7 @@ function FinCuentas() {
   const { showToast } = useApp();
   const [tipo, setTipo] = useState("cobrar");
   const { datos: docs, error, cargando, recargar } = useFinDatos("fin_docs_listar", { p_tipo: tipo }, [tipo]);
+  const fp = useFinDatos("fin_facturas_prov", {}, []);
   const [provs, setProvs] = useState([]);
   const vacio = { contraparte: "", monto: "", fecha: fechaPanama(), vence: "", descripcion: "", proveedor_id: "" };
   const [f, setF] = useState(vacio);
@@ -6357,9 +6355,13 @@ function FinCuentas() {
     catch (e) { showToast("No se pudo anular: " + String(e.message || e).slice(0, 140)); }
   };
   const vivos = (docs || []).filter(d => !d.anulado);
-  const pendiente = vivos.reduce((s, d) => s + Math.max(0, Number(d.saldo)), 0);
-  const venc = vivos.filter(d => d.estado === "vencido").reduce((s, d) => s + Number(d.saldo), 0);
   const esCobrar = tipo === "cobrar";
+  // Lo que debes incluye las facturas de proveedor confirmadas en Odoo
+  const odooF = (!esCobrar && fp.datos && fp.datos.facturas) || [];
+  const odooTotal = odooF.reduce((s, f) => s + nF(f.saldo), 0);
+  const odooVenc = odooF.filter(f => f.dias !== null && f.dias < 0).reduce((s, f) => s + nF(f.saldo), 0);
+  const pendiente = vivos.reduce((s, d) => s + Math.max(0, Number(d.saldo)), 0) + odooTotal;
+  const venc = vivos.filter(d => d.estado === "vencido").reduce((s, d) => s + Number(d.saldo), 0) + odooVenc;
   return (
     <div>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", margin: "14px 0" }}>
@@ -6367,10 +6369,10 @@ function FinCuentas() {
         <button className={"met-chip" + (!esCobrar ? " on" : "")} onClick={() => setTipo("pagar")}>Por pagar (debes)</button>
       </div>
       <div className="met-grid" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))" }}>
-        <Kpi etiqueta={esCobrar ? "Total que te deben" : "Total que debes"} grande acento><Cifra valor={pendiente} f={(v) => usdM(v, 0)} /></Kpi>
+        <Kpi etiqueta={esCobrar ? "Total que te deben" : "Total que debes"} grande acento pie={!esCobrar && odooTotal > 0 ? <div style={{ fontSize: 12, color: MT.suave }}>{usdM(odooTotal, 2)} son facturas de Odoo</div> : undefined}><Cifra valor={pendiente} f={(v) => usdM(v, 0)} /></Kpi>
         <Kpi etiqueta="De eso, ya vencido"><span style={{ color: venc > 0 ? MT.malo : MT.texto }}><Cifra valor={venc} f={(v) => usdM(v, 0)} /></span></Kpi>
       </div>
-      {!esCobrar && <FacturasProveedorOdoo />}
+      {!esCobrar && <FacturasProveedorOdoo fp={fp} />}
       <div className="met-card" style={{ marginTop: 14 }}>
         <div className="met-lbl" style={{ marginBottom: 10 }}>{esCobrar ? "Anotar una venta a crédito" : "Anotar una deuda con un proveedor"}</div>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
@@ -6828,7 +6830,7 @@ function FinEvolucion({ modo, irA }) {
             </table>
           </div>
           <div style={{ fontSize: 11.5, color: MT.suave, margin: "10px 2px 0", lineHeight: 1.6 }}>
-            En los periodos “libros”, “Gastos” suma gastos varios, envíos, comisiones, servicios, equipo y empaque; en los del sistema, los gastos pagados y los reembolsos de la web. Las compras de Odoo cuentan como salida el día de la orden confirmada (es un estimado: Odoo aún no tiene los pagos a proveedores). Los gastos a crédito no salen de caja hasta que los pagas. Las ventas de la tienda ya vienen sin los reembolsos de la caja. Datos desde: tienda {cob.tienda_desde ? fechaCortaM(cob.tienda_desde) + " " + String(cob.tienda_desde).slice(0, 4) : "—"} · web {cob.web_desde ? fechaCortaM(cob.web_desde) + " " + String(cob.web_desde).slice(0, 4) : "—"} · compras {cob.compras_desde ? fechaCortaM(cob.compras_desde) + " " + String(cob.compras_desde).slice(0, 4) : "—"} · gastos registrados {cob.gastos_desde ? fechaCortaM(cob.gastos_desde) + " " + String(cob.gastos_desde).slice(0, 4) : "—"}.
+            En los periodos “libros”, “Gastos” suma gastos varios, envíos, comisiones, servicios, equipo y empaque; en los del sistema, los gastos pagados y los reembolsos de la web. Las compras de Odoo sin factura cuentan como salida el día de la orden confirmada (estimado); las que ya tienen factura de proveedor en Odoo salen de caja el día del pago (columna “Pagos prov.”) y mientras tanto son deuda. Los gastos a crédito no salen de caja hasta que los pagas. Las ventas de la tienda ya vienen sin los reembolsos de la caja. Datos desde: tienda {cob.tienda_desde ? fechaCortaM(cob.tienda_desde) + " " + String(cob.tienda_desde).slice(0, 4) : "—"} · web {cob.web_desde ? fechaCortaM(cob.web_desde) + " " + String(cob.web_desde).slice(0, 4) : "—"} · compras {cob.compras_desde ? fechaCortaM(cob.compras_desde) + " " + String(cob.compras_desde).slice(0, 4) : "—"} · gastos registrados {cob.gastos_desde ? fechaCortaM(cob.gastos_desde) + " " + String(cob.gastos_desde).slice(0, 4) : "—"}.
           </div>
         </>}
       </div>
@@ -8175,7 +8177,7 @@ function FinCompras({ desde, hasta }) {
         </table>
       </div>
       {Number(r.n) > lista.length && <div style={{ fontSize: 11.5, color: MT.suave, marginTop: 6 }}>Se muestran las {lista.length} más recientes de {r.n}.</div>}
-      <div style={{ fontSize: 12, color: MT.suave, lineHeight: 1.55, marginTop: 14 }}>Las compras se leen de Odoo sin modificar nada. Cuentan en el flujo de caja el día de la orden confirmada. Para evitar contarlas dos veces, no registres también esa misma compra como gasto de “Compra de mercancía”.</div>
+      <div style={{ fontSize: 12, color: MT.suave, lineHeight: 1.55, marginTop: 14 }}>Las compras se leen de Odoo sin modificar nada. Cuentan en el flujo de caja el día de la orden confirmada, salvo las que ya tienen factura de proveedor en Odoo (a crédito): esas cuentan el día que pagas la factura. Para evitar contarlas dos veces, no registres también esa misma compra como gasto de “Compra de mercancía”.</div>
     </div>
   );
 }
