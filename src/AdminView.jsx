@@ -9482,20 +9482,29 @@ function AdminView() {
   const abrirNuevoDescuento = () => setDescForm({
     id: null, codigo: "", tipo_aplicacion: "tienda", porcentaje: "10",
     productos_ids: [], activo: true,
+    tipo_valor: "porcentaje", monto: "", un_solo_uso: false, nota: "", // tipo_valor: "porcentaje" | "monto" ($ fijo, ej. nota de crédito)
   });
   const guardarDescuento = async () => {
     const f = descForm;
     if (!f.codigo.trim()) { showToast("Escribe un código (ej: VERANO10)"); return; }
+    const esMonto = f.tipo_valor === "monto";
     const pct = Number(f.porcentaje);
-    if (!pct || pct <= 0 || pct > 100) { showToast("El porcentaje debe ser entre 1 y 100"); return; }
-    if (f.tipo_aplicacion === "productos" && (!f.productos_ids || f.productos_ids.length === 0)) { showToast("Elige al menos un producto"); return; }
+    const monto = Math.round(Number(f.monto) * 100) / 100;
+    if (esMonto) {
+      if (!monto || monto <= 0) { showToast("Escribe el monto en dólares (ej: 25)"); return; }
+    } else if (!pct || pct <= 0 || pct > 100) { showToast("El porcentaje debe ser entre 1 y 100"); return; }
+    if (!esMonto && f.tipo_aplicacion === "productos" && (!f.productos_ids || f.productos_ids.length === 0)) { showToast("Elige al menos un producto"); return; }
     setGuardandoDesc(true);
     try {
       const datos = {
         codigo: f.codigo.trim().toUpperCase(),
-        tipo_aplicacion: f.tipo_aplicacion, // "tienda" | "productos"
-        porcentaje: pct,
-        productos_ids: f.tipo_aplicacion === "productos" ? f.productos_ids : [],
+        // Un código por monto siempre aplica al total del pedido (no a productos sueltos)
+        tipo_aplicacion: esMonto ? "tienda" : f.tipo_aplicacion, // "tienda" | "productos"
+        porcentaje: esMonto ? null : pct,
+        monto: esMonto ? monto : null,
+        productos_ids: (!esMonto && f.tipo_aplicacion === "productos") ? f.productos_ids : [],
+        usos_max: f.un_solo_uso ? 1 : null,
+        nota: (f.nota || "").trim() || null,
         activo: f.activo,
       };
       if (f.id) {
@@ -9520,6 +9529,15 @@ function AdminView() {
       setDescuentos(prev => prev.filter(x => x.id !== d.id));
       showToast("Descuento eliminado");
     } catch(e) { showToast("Error al eliminar"); }
+  };
+  // Vuelve a dejar disponible un código de un solo uso (ej. el pedido se canceló o nunca se pagó)
+  const reiniciarUsosDescuento = async (d) => {
+    if (!confirm(`¿Volver a habilitar el código ${d.codigo}? El contador de usos vuelve a 0 y el cliente podrá usarlo otra vez.`)) return;
+    try {
+      await sb.patch("descuentos", d.id, { usos: 0 });
+      setDescuentos(prev => prev.map(x => x.id === d.id ? { ...x, usos: 0 } : x));
+      showToast("Código habilitado de nuevo");
+    } catch(e) { showToast("Error al reiniciar el código"); }
   };
   const toggleDescuento = async (d) => {
     try {
@@ -12393,7 +12411,7 @@ function AdminView() {
             </div>
 
             <p style={{ fontSize: 13, color: GRAY3, marginBottom: 20, maxWidth: 560 }}>
-              Crea códigos de descuento que tus clientes pueden usar al pagar. Pueden aplicar a <strong>toda la tienda</strong> o a <strong>productos seleccionados</strong>.
+              Crea códigos de descuento que tus clientes pueden usar al pagar. Pueden ser un <strong>porcentaje</strong> (a toda la tienda o a productos seleccionados) o un <strong>monto en dólares</strong>, útil para notas de crédito de un cliente.
             </p>
 
             {/* LISTA DE DESCUENTOS */}
@@ -12413,23 +12431,34 @@ function AdminView() {
                           {d.codigo}
                           <button onClick={() => { navigator.clipboard?.writeText(d.codigo); showToast("Código copiado"); }} title="Copiar" style={{ background: "none", border: "none", cursor: "pointer", color: GRAY3, display: "flex" }}><FileText size={14} /></button>
                         </div>
-                        <div style={{ fontSize: 24, fontWeight: 900, marginTop: 2 }}>{d.porcentaje}% OFF</div>
+                        <div style={{ fontSize: 24, fontWeight: 900, marginTop: 2 }}>{d.monto != null ? `$${Number(d.monto).toFixed(2)} de crédito` : `${d.porcentaje}% OFF`}</div>
+                        {d.nota && <div style={{ fontSize: 12, color: GRAY3, marginTop: 2 }}>{d.nota}</div>}
                       </div>
                       <span style={{ fontSize: 10, fontWeight: 800, padding: "3px 8px", borderRadius: 8, background: d.activo ? "#D4EDDA" : GRAY2, color: d.activo ? "#155724" : GRAY3 }}>
                         {d.activo ? "ACTIVO" : "PAUSADO"}
                       </span>
                     </div>
-                    <div style={{ fontSize: 12, color: GRAY3, marginBottom: 14, display: "flex", alignItems: "center", gap: 5 }}>
-                      {d.tipo_aplicacion === "tienda"
+                    <div style={{ fontSize: 12, color: GRAY3, marginBottom: 6, display: "flex", alignItems: "center", gap: 5 }}>
+                      {d.monto != null
+                        ? <><ShoppingBag size={13} /> Se descuenta del total del pedido</>
+                        : d.tipo_aplicacion === "tienda"
                         ? <><ShoppingBag size={13} /> Toda la tienda</>
                         : <><Tag size={13} /> {(d.productos_ids || []).length} producto(s) seleccionado(s)</>
                       }
+                    </div>
+                    <div style={{ fontSize: 12, marginBottom: 14, color: (d.usos_max != null && (d.usos || 0) >= d.usos_max) ? RED : GRAY3, fontWeight: (d.usos_max != null && (d.usos || 0) >= d.usos_max) ? 700 : 400 }}>
+                      {d.usos_max != null
+                        ? ((d.usos || 0) >= d.usos_max ? "Ya se usó (un solo uso)" : "Un solo uso · disponible")
+                        : `Sin límite de usos · usado ${d.usos || 0} ${(d.usos || 0) === 1 ? "vez" : "veces"}`}
+                      {(d.usos || 0) > 0 && d.usos_max != null && (
+                        <button onClick={() => reiniciarUsosDescuento(d)} style={{ marginLeft: 8, background: "none", border: "none", color: BLACK, textDecoration: "underline", cursor: "pointer", fontSize: 12, padding: 0 }}>Volver a habilitar</button>
+                      )}
                     </div>
                     <div style={{ display: "flex", gap: 8 }}>
                       <button onClick={() => toggleDescuento(d)} className="oft-btn-press" style={{ flex: 1, justifyContent: "center", background: WHITE, color: BLACK, border: `1.5px solid ${GRAY2}`, borderRadius: 8, padding: "8px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
                         {d.activo ? "Pausar" : "Activar"}
                       </button>
-                      <button onClick={() => setDescForm({ id: d.id, codigo: d.codigo, tipo_aplicacion: d.tipo_aplicacion, porcentaje: String(d.porcentaje), productos_ids: d.productos_ids || [], activo: d.activo })} className="oft-btn-press" style={{ justifyContent: "center", background: "none", color: BLACK, border: `1.5px solid ${BLACK}`, borderRadius: 8, padding: "8px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                      <button onClick={() => setDescForm({ id: d.id, codigo: d.codigo, tipo_aplicacion: d.tipo_aplicacion, porcentaje: d.porcentaje != null ? String(d.porcentaje) : "10", productos_ids: d.productos_ids || [], activo: d.activo, tipo_valor: d.monto != null ? "monto" : "porcentaje", monto: d.monto != null ? String(d.monto) : "", un_solo_uso: d.usos_max != null, nota: d.nota || "" })} className="oft-btn-press" style={{ justifyContent: "center", background: "none", color: BLACK, border: `1.5px solid ${BLACK}`, borderRadius: 8, padding: "8px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}>
                         <PencilIcon size={13} />
                       </button>
                       <button onClick={() => eliminarDescuento(d)} className="oft-btn-press" style={{ justifyContent: "center", background: "none", color: RED, border: `1.5px solid ${RED}`, borderRadius: 8, padding: "8px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center" }}>
@@ -12451,11 +12480,46 @@ function AdminView() {
                   </div>
 
                   <label style={S.label}>Código del descuento *</label>
-                  <input style={{ ...S.input, textTransform: "uppercase", fontWeight: 800, letterSpacing: 1 }} placeholder="Ej: VERANO10" value={descForm.codigo} onChange={e => setDescForm({ ...descForm, codigo: e.target.value.toUpperCase() })} />
+                  <input style={{ ...S.input, textTransform: "uppercase", fontWeight: 800, letterSpacing: 1 }} placeholder={descForm.tipo_valor === "monto" ? "Ej: NC-7K3QX9" : "Ej: VERANO10"} value={descForm.codigo} onChange={e => setDescForm({ ...descForm, codigo: e.target.value.toUpperCase() })} />
+                  {descForm.tipo_valor === "monto" && !descForm.id && (
+                    <div style={{ margin: "-6px 0 12px", fontSize: 11.5, color: GRAY3 }}>
+                      Un crédito vale dinero: usa un código difícil de adivinar.{" "}
+                      <button type="button" onClick={() => { const L = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; let c = "NC-"; for (let i = 0; i < 6; i++) c += L[Math.floor(Math.random() * L.length)]; setDescForm({ ...descForm, codigo: c }); }} style={{ background: "none", border: "none", color: BLACK, textDecoration: "underline", cursor: "pointer", fontSize: 11.5, padding: 0, fontWeight: 700 }}>Generar un código seguro</button>
+                    </div>
+                  )}
 
-                  <label style={S.label}>Porcentaje de descuento (%) *</label>
-                  <input type="number" min="1" max="100" style={S.input} placeholder="Ej: 10" value={descForm.porcentaje} onChange={e => setDescForm({ ...descForm, porcentaje: e.target.value })} />
+                  <label style={S.label}>¿Cómo se descuenta?</label>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
+                    {[["porcentaje", "Porcentaje (%)", "Ej: 10% de descuento"], ["monto", "Monto en $", "Ej: nota de crédito de $25"]].map(([k, t, sub]) => (
+                      <div key={k} onClick={() => setDescForm({ ...descForm, tipo_valor: k, tipo_aplicacion: k === "monto" ? "tienda" : descForm.tipo_aplicacion, un_solo_uso: k === "monto" && !descForm.id ? true : descForm.un_solo_uso })}
+                        style={{ border: `2px solid ${descForm.tipo_valor === k ? RED : GRAY2}`, background: descForm.tipo_valor === k ? "#FFF5F5" : WHITE, borderRadius: 10, padding: "10px 12px", cursor: "pointer", textAlign: "center" }}>
+                        <div style={{ fontWeight: 800, fontSize: 13 }}>{t}</div>
+                        <div style={{ fontSize: 11, color: GRAY3, marginTop: 2 }}>{sub}</div>
+                      </div>
+                    ))}
+                  </div>
 
+                  {descForm.tipo_valor === "monto" ? (
+                    <>
+                      <label style={S.label}>Monto del descuento (US$) *</label>
+                      <input type="number" min="0.01" step="0.01" style={S.input} placeholder="Ej: 25" value={descForm.monto} onChange={e => setDescForm({ ...descForm, monto: e.target.value })} />
+                      <div style={{ fontSize: 11.5, color: GRAY3, margin: "-6px 0 12px" }}>Se resta del total de los productos. Si el pedido es menor que el monto, solo se descuenta lo que cubra el pedido (el resto no se guarda para después).</div>
+                      <label style={S.label}>Nota interna (opcional)</label>
+                      <input style={S.input} placeholder="Ej: Nota de crédito de Juan Pérez, factura 123" value={descForm.nota} onChange={e => setDescForm({ ...descForm, nota: e.target.value })} />
+                    </>
+                  ) : (
+                    <>
+                      <label style={S.label}>Porcentaje de descuento (%) *</label>
+                      <input type="number" min="1" max="100" style={S.input} placeholder="Ej: 10" value={descForm.porcentaje} onChange={e => setDescForm({ ...descForm, porcentaje: e.target.value })} />
+                    </>
+                  )}
+
+                  <label style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 13, margin: "4px 0 14px", cursor: "pointer" }}>
+                    <input type="checkbox" checked={!!descForm.un_solo_uso} onChange={e => setDescForm({ ...descForm, un_solo_uso: e.target.checked })} style={{ marginTop: 3 }} />
+                    <span><strong>Un solo uso</strong> — el código deja de servir después de la primera compra{descForm.tipo_valor === "monto" ? " (recomendado para notas de crédito)" : ""}.</span>
+                  </label>
+
+                  {descForm.tipo_valor !== "monto" && (<>
                   <label style={S.label}>¿A qué aplica?</label>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
                     <div onClick={() => setDescForm({ ...descForm, tipo_aplicacion: "tienda" })}
@@ -12469,9 +12533,10 @@ function AdminView() {
                       <div style={{ fontWeight: 800, fontSize: 13, marginTop: 6 }}>Productos elegidos</div>
                     </div>
                   </div>
+                  </>)}
 
                   {/* SELECTOR DE PRODUCTOS */}
-                  {descForm.tipo_aplicacion === "productos" && (
+                  {descForm.tipo_valor !== "monto" && descForm.tipo_aplicacion === "productos" && (
                     <div style={{ marginBottom: 12 }}>
                       <label style={S.label}>Elige los productos ({descForm.productos_ids.length} seleccionados)</label>
                       <div style={{ border: `1px solid ${GRAY2}`, borderRadius: 10, maxHeight: 220, overflowY: "auto" }}>
