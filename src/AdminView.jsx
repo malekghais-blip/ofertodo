@@ -1667,6 +1667,243 @@ function EditorComision({ valorActual, onGuardado, showToast }) {
   );
 }
 
+// ── Tarjeta descargable del código de descuento / nota de crédito (imagen PNG y PDF) ──
+// Se dibuja con canvas (sin librerías externas) en tamaño carta (1224×1584 = 612×792 pt ×2).
+function trazoRedondo(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+function lineasDeTexto(ctx, texto, maxW) {
+  const palabras = String(texto || "").split(/\s+/).filter(Boolean);
+  const lineas = [];
+  let actual = "";
+  for (const p of palabras) {
+    const prueba = actual ? actual + " " + p : p;
+    if (ctx.measureText(prueba).width <= maxW || !actual) actual = prueba;
+    else { lineas.push(actual); actual = p; }
+  }
+  if (actual) lineas.push(actual);
+  return lineas;
+}
+function dibujarTarjetaCodigo(canvas, d, { cliente, mensaje }) {
+  const W = 1224, H = 1584, M = 96;
+  canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext("2d");
+  const SANS = '"Helvetica Neue", Helvetica, Arial, sans-serif';
+  const MONO = '"SFMono-Regular", Menlo, Consolas, "Courier New", monospace';
+  const esMonto = d.monto != null;
+  const unico = d.usos_max === 1;
+
+  ctx.fillStyle = "#FFFFFF"; ctx.fillRect(0, 0, W, H);
+  ctx.textBaseline = "alphabetic";
+
+  // Logo Ofertodo: "Ofer" rojo + "todo" en pastilla roja
+  ctx.font = `900 76px ${SANS}`;
+  const wOfer = ctx.measureText("Ofer").width;
+  const wTodo = ctx.measureText("todo").width;
+  ctx.fillStyle = "#E31E24"; ctx.fillText("Ofer", M, 178);
+  trazoRedondo(ctx, M + wOfer + 6, 112, wTodo + 36, 88, 14); ctx.fill();
+  ctx.fillStyle = "#FFFFFF"; ctx.fillText("todo", M + wOfer + 24, 178);
+
+  // Etiqueta del tipo de documento (derecha)
+  const etiqueta = esMonto ? "Nota de crédito" : "Código de descuento";
+  ctx.font = `700 34px ${SANS}`;
+  const wEt = ctx.measureText(etiqueta).width + 56;
+  ctx.fillStyle = "#111111"; trazoRedondo(ctx, W - M - wEt, 120, wEt, 68, 34); ctx.fill();
+  ctx.fillStyle = "#FFFFFF"; ctx.fillText(etiqueta, W - M - wEt + 28, 166);
+
+  // Para quién
+  let y = 290;
+  const nombre = (cliente || "").trim();
+  if (nombre) {
+    ctx.fillStyle = "#8A8A8A"; ctx.font = `500 34px ${SANS}`; ctx.fillText("Para", M, y);
+    ctx.fillStyle = "#111111"; ctx.font = `800 60px ${SANS}`;
+    let nm = nombre; while (ctx.measureText(nm).width > W - 2 * M && nm.length > 4) nm = nm.slice(0, -2);
+    if (nm !== nombre) nm = nm.trimEnd() + "…";
+    ctx.fillText(nm, M, y + 70);
+    y += 128;
+  } else {
+    y += 30;
+  }
+
+  // Valor grande
+  const valor = esMonto
+    ? "$" + (Number(d.monto) % 1 === 0 ? String(Number(d.monto)) : Number(d.monto).toFixed(2))
+    : `${Number(d.porcentaje)}%`;
+  const msg0 = (mensaje || "").trim();
+  let tam = 300 - (nombre ? 45 : 0) - (msg0 ? 45 : 0);
+  ctx.font = `900 ${tam}px ${SANS}`;
+  while (ctx.measureText(valor).width > W - 2 * M && tam > 120) { tam -= 10; ctx.font = `900 ${tam}px ${SANS}`; }
+  ctx.fillStyle = "#111111";
+  y += tam * 0.74;
+  ctx.fillText(valor, M - 6, y);
+  // barra roja corta bajo el valor
+  ctx.fillStyle = "#E31E24"; trazoRedondo(ctx, M, y + 30, 120, 14, 7); ctx.fill();
+  y += 98;
+  ctx.fillStyle = "#444444"; ctx.font = `500 42px ${SANS}`;
+  const sub = esMonto
+    ? "de crédito para tu próxima compra"
+    : (d.tipo_aplicacion === "tienda" ? "de descuento en toda la tienda" : "de descuento en productos seleccionados");
+  ctx.fillText(sub, M, y);
+
+  // Mensaje personalizado (opcional)
+  const msg = (mensaje || "").trim();
+  if (msg) {
+    ctx.font = `500 36px ${SANS}`; ctx.fillStyle = "#555555";
+    const ls = lineasDeTexto(ctx, msg, W - 2 * M).slice(0, 3);
+    ls.forEach((l, i) => ctx.fillText(l, M, y + 70 + i * 46));
+    y += 70 + (ls.length - 1) * 46;
+  }
+
+  // Cupón con muescas
+  const th = 290, ty = Math.max(y + 64, 780), tx = M, tw = W - 2 * M, div = ty + 112, rr = 40;
+  ctx.fillStyle = "#111111"; trazoRedondo(ctx, tx, ty, tw, th, 36); ctx.fill();
+  ctx.fillStyle = "#FFFFFF";
+  ctx.beginPath(); ctx.arc(tx, div, rr, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(tx + tw, div, rr, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = "rgba(255,255,255,0.35)"; ctx.lineWidth = 3; ctx.setLineDash([14, 12]);
+  ctx.beginPath(); ctx.moveTo(tx + rr + 18, div); ctx.lineTo(tx + tw - rr - 18, div); ctx.stroke(); ctx.setLineDash([]);
+  ctx.fillStyle = "rgba(255,255,255,0.65)"; ctx.font = `600 32px ${SANS}`;
+  ctx.fillText("Tu código personal", tx + 52, ty + 76);
+  if (unico) {
+    ctx.font = `800 28px ${SANS}`;
+    const t = "Un solo uso"; const wt = ctx.measureText(t).width + 44;
+    ctx.fillStyle = "#E31E24"; trazoRedondo(ctx, tx + tw - 52 - wt, ty + 36, wt, 56, 28); ctx.fill();
+    ctx.fillStyle = "#FFFFFF"; ctx.fillText(t, tx + tw - 52 - wt + 22, ty + 74);
+  }
+  const codigo = String(d.codigo || "").toUpperCase();
+  let cs = 124; ctx.font = `800 ${cs}px ${MONO}`;
+  const sp = (s) => { ctx.letterSpacing = "6px"; const w = ctx.measureText(s).width; return w; };
+  while (sp(codigo) > tw - 104 && cs > 50) { cs -= 6; ctx.font = `800 ${cs}px ${MONO}`; }
+  ctx.fillStyle = "#FFFFFF"; ctx.textAlign = "center";
+  ctx.fillText(codigo, tx + tw / 2 + 3, div + (th - 112) / 2 + cs * 0.36);
+  ctx.textAlign = "left"; ctx.letterSpacing = "0px";
+
+  // Aviso importante
+  const ay = ty + th + 48;
+  const avisos = [];
+  if (unico) avisos.push("Se puede utilizar una sola vez. Después de usarlo deja de funcionar.");
+  avisos.push("Si alguien más lo utiliza, queda bajo la discreción y responsabilidad del cliente.");
+  ctx.font = `500 30px ${SANS}`;
+  const lineasAv = avisos.map(a => lineasDeTexto(ctx, a, W - 2 * M - 110));
+  const nLin = lineasAv.reduce((s, l) => s + l.length, 0);
+  const ah = 100 + nLin * 42 + (avisos.length - 1) * 12 + 26;
+  ctx.fillStyle = "#FFF1F1"; trazoRedondo(ctx, M, ay, W - 2 * M, ah, 24); ctx.fill();
+  ctx.fillStyle = "#E31E24"; trazoRedondo(ctx, M, ay + 24, 12, ah - 48, 6); ctx.fill();
+  ctx.fillStyle = "#B01519"; ctx.font = `800 40px ${SANS}`;
+  ctx.fillText("No compartas este código con nadie", M + 50, ay + 70);
+  ctx.fillStyle = "#333333"; ctx.font = `500 30px ${SANS}`;
+  let ly = ay + 70 + 52;
+  lineasAv.forEach((ls) => { ls.forEach((l) => { ctx.fillText(l, M + 50, ly); ly += 42; }); ly += 12; });
+
+  // Pie
+  ctx.fillStyle = "#8A8A8A"; ctx.font = `500 27px ${SANS}`;
+  const fecha = new Date().toLocaleDateString("es-PA", { timeZone: "America/Panama", day: "numeric", month: "long", year: "numeric" });
+  ctx.fillText(`Ofertodo · Distribuidora · Panamá · Emitido el ${fecha}`, M, H - 84);
+  ctx.fillText("WhatsApp +507 6720-0474", M, H - 46);
+}
+function crearPdfDeJpeg(jpeg, imgW, imgH, pw, ph) {
+  const enc = new TextEncoder(); const partes = []; const off = []; let len = 0;
+  const add = (x) => { const b = typeof x === "string" ? enc.encode(x) : x; partes.push(b); len += b.length; };
+  add("%PDF-1.4\n");
+  const obj = (n, cuerpo) => { off[n] = len; add(`${n} 0 obj\n`); add(cuerpo); add("\nendobj\n"); };
+  obj(1, "<< /Type /Catalog /Pages 2 0 R >>");
+  obj(2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>");
+  obj(3, `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pw} ${ph}] /Resources << /XObject << /Im0 5 0 R >> >> /Contents 4 0 R >>`);
+  const cs = `q ${pw} 0 0 ${ph} 0 0 cm /Im0 Do Q`;
+  obj(4, `<< /Length ${cs.length} >>\nstream\n${cs}\nendstream`);
+  off[5] = len;
+  add(`5 0 obj\n<< /Type /XObject /Subtype /Image /Width ${imgW} /Height ${imgH} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jpeg.length} >>\nstream\n`);
+  add(jpeg); add("\nendstream\nendobj\n");
+  const xref = len;
+  let x = "xref\n0 6\n0000000000 65535 f \n";
+  for (let n = 1; n <= 5; n++) x += String(off[n]).padStart(10, "0") + " 00000 n \n";
+  add(x + `trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`);
+  return new Blob(partes, { type: "application/pdf" });
+}
+
+function TarjetaCodigoModal({ d, onClose }) {
+  const { showToast } = useApp();
+  const canvasRef = useRef(null);
+  const [cliente, setCliente] = useState("");
+  const [mensaje, setMensaje] = useState("");
+  const [busy, setBusy] = useState(false);
+  const esMonto = d.monto != null;
+  const baseNombre = (esMonto ? "NotaCredito-" : "Descuento-") + String(d.codigo || "").replace(/[^A-Za-z0-9_-]/g, "");
+
+  useEffect(() => {
+    const c = canvasRef.current;
+    if (c) { try { dibujarTarjetaCodigo(c, d, { cliente, mensaje }); } catch (e) { /* no rompe la pantalla */ } }
+  }, [d, cliente, mensaje]);
+
+  const guardarBlob = (blob, nombre) => {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob); a.download = nombre;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  };
+  const aBlob = (tipo, q) => new Promise((res) => canvasRef.current.toBlob(res, tipo, q));
+
+  const bajarPNG = async () => {
+    setBusy(true);
+    try {
+      const blob = await aBlob("image/png");
+      const file = new File([blob], baseNombre + ".png", { type: "image/png" });
+      const movil = typeof window !== "undefined" && window.innerWidth <= 768;
+      if (movil && navigator.canShare && navigator.canShare({ files: [file] })) {
+        try { await navigator.share({ files: [file], title: d.codigo }); setBusy(false); return; }
+        catch (e) { if (e.name === "AbortError") { setBusy(false); return; } }
+      }
+      guardarBlob(blob, baseNombre + ".png");
+    } catch (e) { showToast("No se pudo generar la imagen"); }
+    setBusy(false);
+  };
+  const bajarPDF = async () => {
+    setBusy(true);
+    try {
+      const jpg = await aBlob("image/jpeg", 0.95);
+      const bytes = new Uint8Array(await jpg.arrayBuffer());
+      guardarBlob(crearPdfDeJpeg(bytes, 1224, 1584, 612, 792), baseNombre + ".pdf");
+    } catch (e) { showToast("No se pudo generar el PDF"); }
+    setBusy(false);
+  };
+
+  return createPortal(
+    <div className="oft-overlay oft-overlay-doc" style={{ ...S.overlay, alignItems: "flex-start", overflowY: "auto", padding: "20px 16px", WebkitOverflowScrolling: "touch", overscrollBehavior: "contain" }} onClick={onClose}>
+      <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 16, maxWidth: 760, width: "94%", margin: "0 auto", padding: 22 }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+          <div style={{ fontWeight: 800, fontSize: 18, display: "flex", alignItems: "center", gap: 8 }}><Download size={18} color={RED} /> {esMonto ? "Nota de crédito" : "Código de descuento"} para el cliente</div>
+          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}><X size={22} /></button>
+        </div>
+        <div style={{ display: "flex", gap: 20, flexWrap: "wrap", alignItems: "flex-start" }}>
+          <div style={{ flex: "1 1 260px", minWidth: 0 }}>
+            <label style={S.label}>Nombre del cliente (opcional)</label>
+            <input style={S.input} maxLength={40} placeholder="Ej: Juan Pérez" value={cliente} onChange={e => setCliente(e.target.value)} />
+            <label style={S.label}>Mensaje corto (opcional)</label>
+            <textarea style={{ ...S.input, minHeight: 78, resize: "vertical", fontFamily: "inherit" }} maxLength={120} placeholder="Ej: Gracias por tu paciencia con el cambio de tu pedido." value={mensaje} onChange={e => setMensaje(e.target.value)} />
+            <div style={{ fontSize: 11.5, color: GRAY3, margin: "-6px 0 14px" }}>La imagen ya incluye el aviso de no compartir el código{d.usos_max === 1 ? " y que es de un solo uso" : ""}.</div>
+            <button onClick={bajarPNG} disabled={busy} className="oft-btn-press" style={{ ...S.btnRed, width: "100%", justifyContent: "center", marginBottom: 10, opacity: busy ? 0.7 : 1 }}>
+              <ImageIcon size={16} /> Descargar imagen (PNG)
+            </button>
+            <button onClick={bajarPDF} disabled={busy} className="oft-btn-press" style={{ ...S.btnOutline, width: "100%", justifyContent: "center", opacity: busy ? 0.7 : 1 }}>
+              <FileText size={16} /> Descargar PDF
+            </button>
+          </div>
+          <div style={{ flex: "1 1 260px", minWidth: 0, maxWidth: 340, margin: "0 auto" }}>
+            <canvas ref={canvasRef} style={{ width: "100%", height: "auto", border: `1px solid ${GRAY2}`, borderRadius: 10, display: "block", boxShadow: "0 6px 24px rgba(0,0,0,0.10)" }} />
+          </div>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
 // ── Categoría más vendida: ventas reales (web + tienda física) por tipo de producto ──
 // Se usa en el Dashboard y en Analítica Web. Recibe el rango como fechas "AAAA-MM-DD".
 // Va con su propia carga: si falla, solo esta tarjeta avisa y el resto de la pantalla sigue igual.
@@ -8617,6 +8854,28 @@ function AdminView() {
   const [descuentos, setDescuentos] = useState([]); // lista de códigos de descuento
   const [descForm, setDescForm] = useState(null); // formulario crear/editar descuento o null
   const [guardandoDesc, setGuardandoDesc] = useState(false);
+  const [tarjetaCodigo, setTarjetaCodigo] = useState(null); // descuento para el que se arma la imagen/PDF
+  const [sugCodigos, setSugCodigos] = useState([]); // códigos sugeridos que aún no existen
+  const [semillaSug, setSemillaSug] = useState(0);
+  // Sugiere códigos que NO existen todavía (sin importar mayúsculas), para no duplicar
+  useEffect(() => {
+    if (!descForm || descForm.id) { setSugCodigos([]); return; }
+    const usados = new Set(descuentos.map(x => String(x.codigo || "").toUpperCase()));
+    const L = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    const rnd = (n) => Array.from({ length: n }, () => L[Math.floor(Math.random() * L.length)]).join("");
+    const mes = ["ENE", "FEB", "MAR", "ABR", "MAY", "JUN", "JUL", "AGO", "SEP", "OCT", "NOV", "DIC"][new Date().getMonth()];
+    const out = [];
+    const add = (c) => { c = c.toUpperCase(); if (!usados.has(c) && !out.includes(c)) out.push(c); };
+    if (descForm.tipo_valor === "monto") {
+      for (let i = 0; i < 30 && out.length < 4; i++) add("NC-" + rnd(6));
+    } else {
+      const pc = Math.round(Number(descForm.porcentaje) || 0);
+      if (pc > 0) { add("OFERTODO" + pc); add(mes + pc); add("PROMO" + pc); }
+      for (let i = 0; i < 30 && out.length < 4; i++) add("OFT" + (pc > 0 ? pc : "") + "-" + rnd(4));
+    }
+    setSugCodigos(out.slice(0, 4));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [descForm && !descForm.id, descForm && descForm.tipo_valor, descForm && descForm.porcentaje, descuentos.length, semillaSug]);
   const [descProductosOpen, setDescProductosOpen] = useState(false); // selector de productos en el form
   const [busquedaCotizacion, setBusquedaCotizacion] = useState(""); // buscar cotización por nombre de cliente
   // ── RETORNOS ──
@@ -9487,6 +9746,7 @@ function AdminView() {
   const guardarDescuento = async () => {
     const f = descForm;
     if (!f.codigo.trim()) { showToast("Escribe un código (ej: VERANO10)"); return; }
+    if (descuentos.some(x => x.id !== f.id && String(x.codigo || "").toUpperCase() === f.codigo.trim().toUpperCase())) { showToast("Ya existe un descuento con ese código. Elige otro o usa una sugerencia."); return; }
     const esMonto = f.tipo_valor === "monto";
     const pct = Number(f.porcentaje);
     const monto = Math.round(Number(f.monto) * 100) / 100;
@@ -9512,7 +9772,10 @@ function AdminView() {
         setDescuentos(prev => prev.map(d => d.id === f.id ? { ...d, ...datos } : d));
       } else {
         const fila = await sb.post("descuentos", datos);
-        if (Array.isArray(fila) && fila[0]) setDescuentos(prev => [fila[0], ...prev]);
+        if (Array.isArray(fila) && fila[0]) {
+          setDescuentos(prev => [fila[0], ...prev]);
+          if (esMonto) setTarjetaCodigo(fila[0]); // nota de crédito: ofrece bajar la imagen/PDF al instante
+        }
       }
       showToast("Descuento guardado");
       setDescForm(null);
@@ -9534,8 +9797,9 @@ function AdminView() {
   const reiniciarUsosDescuento = async (d) => {
     if (!confirm(`¿Volver a habilitar el código ${d.codigo}? El contador de usos vuelve a 0 y el cliente podrá usarlo otra vez.`)) return;
     try {
-      await sb.patch("descuentos", d.id, { usos: 0 });
-      setDescuentos(prev => prev.map(x => x.id === d.id ? { ...x, usos: 0 } : x));
+      const ahora = new Date().toISOString();
+      await sb.patch("descuentos", d.id, { usos: 0, reiniciado_at: ahora });
+      setDescuentos(prev => prev.map(x => x.id === d.id ? { ...x, usos: 0, reiniciado_at: ahora } : x));
       showToast("Código habilitado de nuevo");
     } catch(e) { showToast("Error al reiniciar el código"); }
   };
@@ -12454,6 +12718,14 @@ function AdminView() {
                         <button onClick={() => reiniciarUsosDescuento(d)} style={{ marginLeft: 8, background: "none", border: "none", color: BLACK, textDecoration: "underline", cursor: "pointer", fontSize: 12, padding: 0 }}>Volver a habilitar</button>
                       )}
                     </div>
+                    {d.usos_max != null && (d.usos || 0) > d.usos_max && (
+                      <div style={{ background: "#FFF1F1", border: `1px solid ${RED}`, borderRadius: 8, padding: "7px 10px", fontSize: 12, color: "#B01519", fontWeight: 700, marginBottom: 10 }}>
+                        Atención: se usó {d.usos} veces y solo se permitía {d.usos_max}. Revisa los pedidos que traen este código.
+                      </div>
+                    )}
+                    <button onClick={() => setTarjetaCodigo(d)} className="oft-btn-press" style={{ width: "100%", justifyContent: "center", background: BLACK, color: WHITE, border: "none", borderRadius: 8, padding: "9px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+                      <Download size={14} /> Imagen / PDF para el cliente
+                    </button>
                     <div style={{ display: "flex", gap: 8 }}>
                       <button onClick={() => toggleDescuento(d)} className="oft-btn-press" style={{ flex: 1, justifyContent: "center", background: WHITE, color: BLACK, border: `1.5px solid ${GRAY2}`, borderRadius: 8, padding: "8px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
                         {d.activo ? "Pausar" : "Activar"}
@@ -12470,8 +12742,10 @@ function AdminView() {
               </div>
             )}
 
+            {tarjetaCodigo && <TarjetaCodigoModal d={tarjetaCodigo} onClose={() => setTarjetaCodigo(null)} />}
+
             {/* MODAL CREAR / EDITAR DESCUENTO */}
-            {descForm && (
+            {descForm && createPortal(
               <div className="oft-overlay oft-overlay-doc" style={{ ...S.overlay, alignItems: "flex-start", overflowY: "auto", padding: "20px 16px", WebkitOverflowScrolling: "touch", overscrollBehavior: "contain" }} onClick={() => !guardandoDesc && setDescForm(null)}>
                 <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 16, maxWidth: 460, width: "92%", margin: "0 auto", padding: 24 }} onClick={e => e.stopPropagation()}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
@@ -12481,12 +12755,26 @@ function AdminView() {
 
                   <label style={S.label}>Código del descuento *</label>
                   <input style={{ ...S.input, textTransform: "uppercase", fontWeight: 800, letterSpacing: 1 }} placeholder={descForm.tipo_valor === "monto" ? "Ej: NC-7K3QX9" : "Ej: VERANO10"} value={descForm.codigo} onChange={e => setDescForm({ ...descForm, codigo: e.target.value.toUpperCase() })} />
-                  {descForm.tipo_valor === "monto" && !descForm.id && (
-                    <div style={{ margin: "-6px 0 12px", fontSize: 11.5, color: GRAY3 }}>
-                      Un crédito vale dinero: usa un código difícil de adivinar.{" "}
-                      <button type="button" onClick={() => { const L = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; let c = "NC-"; for (let i = 0; i < 6; i++) c += L[Math.floor(Math.random() * L.length)]; setDescForm({ ...descForm, codigo: c }); }} style={{ background: "none", border: "none", color: BLACK, textDecoration: "underline", cursor: "pointer", fontSize: 11.5, padding: 0, fontWeight: 700 }}>Generar un código seguro</button>
-                    </div>
-                  )}
+                  {(() => {
+                    const cod = (descForm.codigo || "").trim().toUpperCase();
+                    const dup = !!cod && descuentos.some(x => x.id !== descForm.id && String(x.codigo || "").toUpperCase() === cod);
+                    return (
+                      <div style={{ margin: "-6px 0 12px", fontSize: 11.5, color: GRAY3 }}>
+                        {dup && <div style={{ color: RED, fontWeight: 800, fontSize: 12.5, marginBottom: 4 }}>Ese código ya existe. Elige otro o usa una sugerencia.</div>}
+                        {descForm.tipo_valor === "monto" && !descForm.id && <div style={{ marginBottom: 4 }}>Un crédito vale dinero: usa un código difícil de adivinar.</div>}
+                        {!descForm.id && sugCodigos.length > 0 && (
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
+                            <span>Sugerencias libres:</span>
+                            {sugCodigos.map(c => (
+                              <button key={c} type="button" onClick={() => setDescForm({ ...descForm, codigo: c })}
+                                style={{ background: descForm.codigo.toUpperCase() === c ? "#FFF5F5" : WHITE, border: `1.5px solid ${descForm.codigo.toUpperCase() === c ? RED : GRAY2}`, borderRadius: 8, padding: "4px 9px", fontSize: 12, fontWeight: 800, letterSpacing: 0.5, cursor: "pointer", fontFamily: "monospace", color: BLACK }}>{c}</button>
+                            ))}
+                            <button type="button" onClick={() => setSemillaSug(n => n + 1)} style={{ background: "none", border: "none", color: BLACK, textDecoration: "underline", cursor: "pointer", fontSize: 12, padding: 0 }}>Otras ideas</button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
 
                   <label style={S.label}>¿Cómo se descuenta?</label>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
@@ -12569,7 +12857,8 @@ function AdminView() {
                     </button>
                   </div>
                 </div>
-              </div>
+              </div>,
+              document.body
             )}
           </>
         )}
@@ -12693,7 +12982,7 @@ function AdminView() {
             })()}
 
             {/* MODAL CREAR / EDITAR RETORNO */}
-            {retornoForm && (
+            {retornoForm && createPortal(
               <div className="oft-overlay oft-overlay-doc" style={{ ...S.overlay, alignItems: "flex-start", overflowY: "auto", padding: "20px 16px", WebkitOverflowScrolling: "touch", overscrollBehavior: "contain" }} onClick={() => !guardandoRetorno && setRetornoForm(null)}>
                 <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 16, maxWidth: 480, width: "92%", margin: "0 auto", padding: 24 }} onClick={e => e.stopPropagation()}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
@@ -12805,7 +13094,8 @@ function AdminView() {
                     </button>
                   </div>
                 </div>
-              </div>
+              </div>,
+              document.body
             )}
           </>
         )}
