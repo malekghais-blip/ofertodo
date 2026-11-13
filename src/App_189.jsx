@@ -1,0 +1,5445 @@
+import { useState, useEffect, useLayoutEffect, useRef, lazy, Suspense } from "react";
+import { createPortal } from "react-dom";
+import {
+  ShoppingCart, Search, Trash2, MessageCircle, X, Package, CheckCircle2,
+  MapPin, CreditCard, LayoutGrid, FolderOpen, Tag, Truck, Headphones,
+  Plus, Pencil, Upload, RefreshCw, ChevronDown, ChevronUp, LogOut, User, Home,
+  Shirt, Footprints, Watch, Sparkles, ClipboardList, Image as ImageIcon,
+  FileSpreadsheet, FolderPlus, Zap, Lock, Users, BarChart3, DollarSign,
+  TrendingUp, Wallet, ShoppingBag, Pencil as PencilIcon, Save,
+  Building2, MapPin as MapPinIcon, Send, FilePlus, Download, FileText, Receipt,
+  Calendar as CalendarIcon, Eye, EyeOff, Share2, AlertTriangle, AlertCircle, ChevronRight, ArrowLeft, Boxes
+} from "lucide-react";
+
+import {
+  AppCtx, BLACK, CategoryIcon, GRAY, GRAY2,
+  GRAY3, Logo, ORDER_STATUS_ENVIO, ORDER_STATUS_RETIRO, RED,
+  RED_D, S, STATUS_ICONS_ENVIO, STATUS_ICONS_RETIRO, SUPABASE_KEY,
+  SUPABASE_URL, Spinner, StatusBadge, WHITE, colorToHex, nombreColorLimpio,
+  idVisitante, registrarEvento, obtenerTokenRecaptcha, notaFragancia,
+  cargarMetaPixel, cargarGooglePixel, trackVerProducto, trackAgregarCarrito, trackIniciarCheckout, trackCompra,
+  imagenOptimizada, mediaDocenaDesdeDistribucion, parseDistribucion, presLabelPlural, presToPiezas,
+  presUnitPrice, sb, useApp, useLockBodyScroll, supabaseRealtime,
+  ofertaInfo, ofertaALineaCarrito, prorratearLinea, tiempoRestante,
+  envioPerfumesAplica, useEnvioPerfumes, stockWeb,
+} from "./shared.jsx";
+
+// El panel de administrador vive en su propio archivo y solo se descarga cuando
+// alguien entra de verdad a /admin — así un cliente normal nunca tiene que bajar
+// ese código de más (es casi el 40% de todo el sitio).
+const AdminView = lazy(() => import("./AdminView.jsx"));
+const CrmView = lazy(() => import("./CrmView.jsx"));
+
+// ════════════════════════════════════════════════════════════════
+//  🔧 CONFIGURACIÓN SUPABASE — Pega tus datos aquí
+//  1. Ve a supabase.com → tu proyecto → Settings → API
+//  2. Copia "Project URL" y "anon public key"
+// ════════════════════════════════════════════════════════════════
+const WA_NUMBER   = "50767200474";                        // ← Tu número WhatsApp
+const FLEXPACK_ICON_URL = "https://esezhctdiucwovbvxmou.supabase.co/storage/v1/object/public/brand/flex-pack/flex-pack-icon.png";
+const YAPPY_DIRECTORIO = "@ofertodopanama";               // ← Tu usuario en el Directorio de Yappy, para que el cliente te pague
+const YAPPY_FN_CREAR = SUPABASE_URL + "/functions/v1/crear-orden-yappy"; // Edge Function que crea la orden de pago en Yappy
+
+// ─── Supabase client minimalista (sin instalar paquetes) ────────
+
+// ─── BRAND TOKENS ───────────────────────────────────────────────
+
+// ─── CONTEXT ────────────────────────────────────────────────────
+
+// Bloquea el scroll del fondo mientras un modal está abierto (versión simple y segura:
+// solo pausa el scroll, sin tocar position/top/left del body, para no interferir con
+// barras fijas ni con el layout del resto de la app).
+
+// ─── HOOK RESPONSIVE ────────────────────────────────────────────
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(typeof window !== "undefined" ? window.innerWidth <= 768 : false);
+  useEffect(() => {
+    const onResize = () => setIsMobile(window.innerWidth <= 768);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+  return isMobile;
+}
+
+// ─── ORDEN ESTADOS ──────────────────────────────────────────────
+// Dos flujos distintos según cómo se entrega el pedido: envío a domicilio, o retiro en el local.
+// Se mantiene ORDER_STATUS como alias del flujo de envío, por compatibilidad con lo que ya existía.
+const ORDER_STATUS = ORDER_STATUS_ENVIO;
+const STATUS_ICONS = STATUS_ICONS_ENVIO;
+
+// ─── ICONOS DE CATEGORÍA (imagen subida o icono futurista) ──────
+
+// ═══════════════════════════════════════════════════════════════
+//  SELECTOR DE CATEGORÍA — un solo botón que abre un panel limpio
+//  con todas las categorías, en vez de mostrarlas todas de golpe.
+// ═══════════════════════════════════════════════════════════════
+function CategoriaTrigger({ categorias, gruposCategorias, seleccionadaId, onClick }) {
+  const cat = categorias.find(c => c.id === seleccionadaId);
+  const grupo = cat?.grupo_id ? gruposCategorias.find(g => g.id === cat.grupo_id) : null;
+  return (
+    <button onClick={onClick} className="oft-btn-press oft-cat-trigger" style={{
+      display: "inline-flex", alignItems: "center", gap: 10, background: WHITE, border: `1.5px solid ${GRAY2}`,
+      borderRadius: 14, padding: "10px 16px", cursor: "pointer", fontFamily: "inherit", width: "100%", maxWidth: 320,
+    }}>
+      <div style={{ width: 30, height: 30, borderRadius: 9, background: cat ? "#FFF5F5" : GRAY, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+        {cat ? <CategoryIcon cat={cat} size={17} color={RED} /> : <LayoutGrid size={17} color={GRAY3} strokeWidth={1.8} />}
+      </div>
+      <div style={{ textAlign: "left", flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 10, color: GRAY3, fontWeight: 700, letterSpacing: 0.3 }}>CATEGORÍA</div>
+        <div style={{ fontSize: 14, fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {cat ? (grupo ? `${grupo.nombre} › ${cat.nombre}` : cat.nombre) : "Todas las categorías"}
+        </div>
+      </div>
+      <ChevronDown size={18} color={GRAY3} strokeWidth={2.2} />
+    </button>
+  );
+}
+
+function CategoriaSheet({ onClose, categorias, gruposCategorias, seleccionadaId, resaltadaId, onSeleccionar, grupoInicial }) {
+  useLockBodyScroll();
+  const isMobile = useIsMobile();
+  // Nivel de navegación dentro del panel: null = vista inicial (grupos), o el grupo
+  // activo (viendo sus categorías específicas, ej. dentro de "Ropa de Dama").
+  // Si se abre desde una tarjeta de grupo en el inicio, entra directo a ese nivel.
+  const [grupoActivo, setGrupoActivo] = useState(grupoInicial || null);
+
+  const gruposConCategorias = gruposCategorias.filter(g => categorias.some(c => c.grupo_id === g.id));
+  const sinGrupo = categorias.filter(c => !c.grupo_id);
+  const categoriasDelGrupo = grupoActivo ? categorias.filter(c => c.grupo_id === grupoActivo.id) : [];
+
+  const elegirCategoria = (id) => { onSeleccionar(id); setGrupoActivo(null); };
+
+  return createPortal(
+    <div className="oft-overlay" style={{ ...S.overlay, alignItems: isMobile ? "flex-end" : "center", justifyContent: "center", padding: isMobile ? 0 : 20 }} onClick={onClose}>
+      <div
+        className={isMobile ? "oft-sheet-slide" : "oft-qv-pop"}
+        style={{
+          background: WHITE, borderRadius: isMobile ? "22px 22px 0 0" : 22, width: "100%",
+          maxWidth: isMobile ? 480 : (grupoActivo ? 720 : 620), maxHeight: isMobile ? "80vh" : "min(680px, 85vh)",
+          display: "flex", flexDirection: "column", overflow: "hidden",
+        }}
+        onClick={e => e.stopPropagation()}
+      >
+        {isMobile && (
+          <div style={{ display: "flex", justifyContent: "center", padding: "10px 0 2px", flexShrink: 0 }}>
+            <div style={{ width: 40, height: 4, borderRadius: 4, background: GRAY2 }} />
+          </div>
+        )}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: isMobile ? "10px 20px 14px" : "22px 26px 16px", flexShrink: 0 }}>
+          {grupoActivo ? (
+            <button onClick={() => setGrupoActivo(null)} className="oft-btn-press" style={{ background: "none", border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 6, padding: 0, fontWeight: 900, fontSize: isMobile ? 18 : 21 }}>
+              <ChevronDown size={isMobile ? 20 : 22} style={{ transform: "rotate(90deg)" }} /> {grupoActivo.nombre}
+            </button>
+          ) : (
+            <div style={{ fontWeight: 900, fontSize: isMobile ? 18 : 21 }}>Elige una categoría</div>
+          )}
+          <button onClick={onClose} className="oft-btn-press" style={{ background: GRAY, border: "none", borderRadius: "50%", width: isMobile ? 30 : 34, height: isMobile ? 30 : 34, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}><X size={isMobile ? 15 : 17} /></button>
+        </div>
+        <div style={{ overflowY: "auto", padding: isMobile ? "0 20px 28px" : "0 26px 30px" }}>
+          {!grupoActivo ? (
+            // ── NIVEL 1: grupos generales + categorías sueltas (sin grupo) ──
+            <div key="nivel-grupos" style={{ display: "grid", gridTemplateColumns: `repeat(auto-fill, minmax(${isMobile ? 90 : 130}px, 1fr))`, gap: isMobile ? 10 : 14 }}>
+              <div onClick={() => elegirCategoria(0)} className="oft-btn-press oft-cat-sheet-chip" style={{ animationDelay: "0s", border: `2px solid ${(seleccionadaId === 0) ? RED : GRAY2}`, borderRadius: 12, padding: isMobile ? "14px 6px" : "18px 8px", textAlign: "center", cursor: "pointer", background: (seleccionadaId === 0) ? "#FFF5F5" : WHITE }}>
+                <div style={{ display: "flex", justifyContent: "center", marginBottom: 5 }}><LayoutGrid size={isMobile ? 22 : 26} color={(seleccionadaId === 0) ? RED : BLACK} strokeWidth={1.8} /></div>
+                <div style={{ fontSize: isMobile ? 12 : 13, fontWeight: 700 }}>Todo</div>
+              </div>
+
+              {gruposConCategorias.map((g, i) => {
+                const primeraCatDelGrupo = categorias.find(c => c.grupo_id === g.id);
+                const iconoParaMostrar = g.icono_url ? { icono_url: g.icono_url, nombre: g.nombre } : primeraCatDelGrupo;
+                const tieneActivaAdentro = categorias.some(c => c.grupo_id === g.id && (c.id === seleccionadaId || c.id === resaltadaId));
+                return (
+                  <div key={"grupo-" + g.id} onClick={() => setGrupoActivo(g)} className="oft-btn-press oft-cat-sheet-chip" style={{ animationDelay: `${Math.min((i + 1) * 0.025, 0.3)}s`, border: `2px solid ${tieneActivaAdentro ? RED : GRAY2}`, borderRadius: 12, padding: isMobile ? "14px 6px" : "18px 8px", textAlign: "center", cursor: "pointer", background: tieneActivaAdentro ? "#FFF5F5" : WHITE, position: "relative" }}>
+                    <div style={{ display: "flex", justifyContent: "center", marginBottom: 5 }}><CategoryIcon cat={iconoParaMostrar} size={isMobile ? 22 : 26} color={tieneActivaAdentro ? RED : BLACK} /></div>
+                    <div style={{ fontSize: isMobile ? 12 : 13, fontWeight: 700 }}>{g.nombre}</div>
+                    <ChevronRight size={13} color={GRAY3} style={{ position: "absolute", top: 6, right: 6 }} />
+                  </div>
+                );
+              })}
+
+              {sinGrupo.map((c, i) => {
+                const activa = seleccionadaId === c.id || resaltadaId === c.id;
+                return (
+                  <div key={c.id} onClick={() => elegirCategoria(c.id)} className="oft-btn-press oft-cat-sheet-chip" style={{ animationDelay: `${Math.min((i + 1 + gruposConCategorias.length) * 0.025, 0.3)}s`, border: `2px solid ${activa ? RED : GRAY2}`, borderRadius: 12, padding: isMobile ? "14px 6px" : "18px 8px", textAlign: "center", cursor: "pointer", background: activa ? "#FFF5F5" : WHITE }}>
+                    <div style={{ display: "flex", justifyContent: "center", marginBottom: 5 }}><CategoryIcon cat={c} size={isMobile ? 22 : 26} color={activa ? RED : BLACK} /></div>
+                    <div style={{ fontSize: isMobile ? 12 : 13, fontWeight: 700 }}>{c.nombre}</div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            // ── NIVEL 2: categorías específicas dentro del grupo elegido (más grandes) ──
+            <div key={"nivel-" + grupoActivo.id} style={{ display: "grid", gridTemplateColumns: `repeat(auto-fill, minmax(${isMobile ? 130 : 160}px, 1fr))`, gap: isMobile ? 14 : 16 }}>
+              {categoriasDelGrupo.map((c, i) => {
+                const activa = seleccionadaId === c.id || resaltadaId === c.id;
+                return (
+                  <div key={c.id} onClick={() => elegirCategoria(c.id)} className="oft-btn-press oft-cat-sheet-chip" style={{ animationDelay: `${Math.min(i * 0.03, 0.3)}s`, border: `2px solid ${activa ? RED : GRAY2}`, borderRadius: 14, padding: isMobile ? "22px 10px" : "26px 12px", textAlign: "center", cursor: "pointer", background: activa ? "#FFF5F5" : WHITE }}>
+                    <div style={{ display: "flex", justifyContent: "center", marginBottom: 8 }}><CategoryIcon cat={c} size={isMobile ? 34 : 38} color={activa ? RED : BLACK} /></div>
+                    <div style={{ fontSize: isMobile ? 14 : 15, fontWeight: 800 }}>{c.nombre}</div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  , document.body);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  STYLES
+// ═══════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════
+//  HELPERS
+// ═══════════════════════════════════════════════════════════════
+
+
+function Toast({ msg }) {
+  if (!msg) return null;
+  return <div className="oft-toast-in" style={{ ...S.toast, display: "flex", alignItems: "center", gap: 8 }}><CheckCircle2 size={16} style={{ flexShrink: 0 }} /> {msg}</div>;
+}
+
+
+
+function calcPrice(product, qty) {
+  const p1  = Number(product.precio_pieza);
+  const p6  = Number(product.precio_media_docena); // precio fijo del paquete de 6
+  const p12 = Number(product.precio_docena);       // precio fijo del paquete de 12
+
+  if (qty <= 0) return 0;
+
+  if (qty < 6) {
+    // 1–5: precio por pieza × cantidad
+    return p1 * qty;
+  }
+
+  if (qty === 6) {
+    // exactamente media docena: precio fijo del paquete
+    return p6;
+  }
+
+  if (qty < 12) {
+    // 7–11: una media docena + excedente a precio por pieza
+    // precio pieza unitario de la media docena = p6 / 6
+    const excedente = qty - 6;
+    return p6 + (p1 * excedente);
+  }
+
+  // 12 o más: docenas completas + excedente
+  const docenas   = Math.floor(qty / 12);
+  const resto     = qty % 12;
+  let total       = docenas * p12;
+
+  if (resto === 0) return total;
+  if (resto === 6) return total + p6;                 // media docena exacta de sobra
+  if (resto < 6)  return total + (p1 * resto);        // 1–5 piezas de sobra
+  // 7–11 piezas de sobra: media docena + excedente
+  return total + p6 + (p1 * (resto - 6));
+}
+
+// Helper: devuelve el desglose en texto para mostrar al usuario
+function priceBreakdown(product, qty) {
+  const p1  = Number(product.precio_pieza);
+  const p6  = Number(product.precio_media_docena);
+  const p12 = Number(product.precio_docena);
+
+  if (qty < 6)   return `${qty} × $${p1.toFixed(2)}`;
+  if (qty === 6) return `1 media docena`;
+  if (qty < 12)  return `1 media docena + ${qty - 6} × $${p1.toFixed(2)}`;
+
+  const docenas = Math.floor(qty / 12);
+  const resto   = qty % 12;
+  let desc = `${docenas} docena${docenas > 1 ? "s" : ""}`;
+  if (resto === 6)       desc += ` + 1 media docena`;
+  else if (resto > 6)    desc += ` + 1 media docena + ${resto - 6} × $${p1.toFixed(2)}`;
+  else if (resto > 0)    desc += ` + ${resto} × $${p1.toFixed(2)}`;
+  return desc;
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  PRESENTACIONES (pieza / media docena / docena)
+// ═══════════════════════════════════════════════════════════════
+// pres: "pieza" | "media" | "docena"  ·  count: cuántos de esa presentación
+
+function presLabel(pres) {
+  return pres === "pieza" ? "pieza" : pres === "media" ? "½ docena" : "docena";
+}
+// Precio unitario de cada presentación
+// Total de piezas según presentación y cantidad de paquetes
+// Comparte el link directo de un producto (usa el share nativo del celular si existe,
+// o copia el link al portapapeles como respaldo en computadora).
+// Comprime/redimensiona una foto ANTES de subirla — así las fotos de celular (que suelen
+// pesar 2-3 MB) quedan livianas para la web (normalmente 80-200 KB), sin que se note
+// diferencia de calidad a simple vista. Si algo falla, sube la foto original tal cual,
+// para nunca bloquear al usuario por esto.
+// Pide una versión más chica y liviana de una foto YA guardada en Supabase Storage,
+// usando la transformación de imágenes que Supabase hace al vuelo (sin tocar ni
+// modificar el archivo original para nada). Esto beneficia también a las fotos que se
+// subieron antes de que empezáramos a comprimir al subir. Si la URL no es de Supabase
+// Storage (o viene vacía), la deja tal cual.
+// IMPORTANTE: hay que pedir ancho Y alto juntos con resize=contain -- si se pide solo
+// uno de los dos, Supabase recorta la foto en vez de solo achicarla completa.
+
+
+async function compartirProducto(product, showToast) {
+  const url = `${window.location.origin}/producto/${product.id}`;
+  const textoCompartir = `Mira este producto en Ofertodo: ${product.nombre}`;
+  if (navigator.share) {
+    try {
+      await navigator.share({ title: product.nombre, text: textoCompartir, url });
+      return;
+    } catch (e) {
+      // El usuario cerró la ventana de compartir sin elegir nada — no es un error real, no hacemos nada más
+      if (e?.name === "AbortError") return;
+    }
+  }
+  try {
+    await navigator.clipboard.writeText(url);
+    showToast("Link copiado — ¡ya lo puedes compartir!");
+  } catch (e) {
+    showToast("No se pudo copiar el link, intenta de nuevo");
+  }
+}
+
+// Precio total = precio unitario de la presentación × cantidad de paquetes
+// Reordena una lista de productos para que los del MISMO grupo Flex Pack
+// queden uno al lado del otro (en vez de aparecer sueltos, según el orden en
+// que se subieron) -- así el cliente ve junta toda la línea (ej. los perfumes
+// de un mismo grupo) sin tener que buscarlos por separado. Los productos sin
+// grupo mantienen su posición de siempre; el orden general no se altera, solo
+// se "jala" a los compañeros de grupo hacia donde aparece el primero de ellos.
+// Actualiza de una vez todas las etiquetas que le importan a Google y a las
+// vistas previas al compartir un link (título, meta descripción, Open Graph,
+// Twitter Card, y -- cuando se le pasa un producto -- los datos estructurados
+// de Producto en formato Schema.org, que es justo lo que le permite a Google
+// mostrar precio y disponibilidad directo en el buscador). Devuelve una
+// función para restaurar el título al cerrar/salir de la página.
+function actualizarSEO({ title, description, image, url, productoParaSchema }) {
+  const tituloAnterior = document.title;
+
+  const fijarMeta = (attr, valor, contenido) => {
+    let el = document.querySelector(`meta[${attr}="${valor}"]`);
+    if (!el) {
+      el = document.createElement("meta");
+      el.setAttribute(attr, valor);
+      document.head.appendChild(el);
+    }
+    el.setAttribute("content", contenido);
+  };
+
+  if (title) document.title = title;
+  if (description) {
+    fijarMeta("name", "description", description);
+    fijarMeta("property", "og:description", description);
+    fijarMeta("name", "twitter:description", description);
+  }
+  if (title) {
+    fijarMeta("property", "og:title", title);
+    fijarMeta("name", "twitter:title", title);
+  }
+  if (image) {
+    fijarMeta("property", "og:image", image);
+    fijarMeta("name", "twitter:image", image);
+  }
+  fijarMeta("name", "twitter:card", "summary_large_image");
+  fijarMeta("property", "og:type", productoParaSchema ? "product" : "website");
+
+  if (url) {
+    fijarMeta("property", "og:url", url);
+    let canon = document.querySelector('link[rel="canonical"]');
+    if (!canon) { canon = document.createElement("link"); canon.setAttribute("rel", "canonical"); document.head.appendChild(canon); }
+    canon.setAttribute("href", url);
+  }
+
+  // Datos estructurados de Producto -- el precio se guarda SIEMPRE como el de
+  // "pieza" (el más bajo, de entrada) ya que Schema.org solo acepta UN precio
+  // por producto, no los 3 niveles de Ofertodo.
+  let script = document.getElementById("oft-schema-producto");
+  if (productoParaSchema) {
+    const p = productoParaSchema;
+    const datos = {
+      "@context": "https://schema.org/",
+      "@type": "Product",
+      name: p.nombre,
+      description: description || p.nombre,
+      ...(p.imagen_url ? { image: p.imagen_url } : {}),
+      ...(p.referencia ? { sku: p.referencia } : {}),
+      brand: { "@type": "Brand", name: "Ofertodo" },
+      offers: {
+        "@type": "Offer",
+        priceCurrency: "USD",
+        price: Number(p.precio_pieza || 0).toFixed(2),
+        availability: (p.stock_actualizado_at && stockWeb(p) <= 0) ? "https://schema.org/OutOfStock" : "https://schema.org/InStock",
+        ...(url ? { url } : {}),
+      },
+    };
+    if (!script) {
+      script = document.createElement("script");
+      script.type = "application/ld+json";
+      script.id = "oft-schema-producto";
+      document.head.appendChild(script);
+    }
+    script.textContent = JSON.stringify(datos);
+  } else if (script) {
+    script.remove();
+  }
+
+  return () => { document.title = tituloAnterior; };
+}
+
+function agruparPorFlexPack(productos) {
+  const yaColocados = new Set();
+  const resultado = [];
+  for (const p of productos) {
+    if (yaColocados.has(p.id)) continue;
+    resultado.push(p);
+    yaColocados.add(p.id);
+    if (p.flexpack_grupo_id) {
+      for (const compañero of productos) {
+        if (compañero.flexpack_grupo_id === p.flexpack_grupo_id && !yaColocados.has(compañero.id)) {
+          resultado.push(compañero);
+          yaColocados.add(compañero.id);
+        }
+      }
+    }
+  }
+  return resultado;
+}
+
+function presTotal(product, pres, count) {
+  return presUnitPrice(product, pres) * count;
+}
+// Texto descriptivo del desglose (incluye precio por pieza)
+function presBreakdown(pres, count, product) {
+  const piezas = presToPiezas(pres, count, product);
+  let porPieza = "";
+  if (product) {
+    const piezasPorUnidad = presToPiezas(pres, 1, product);
+    const unit = presUnitPrice(product, pres) / piezasPorUnidad;
+    porPieza = ` · $${unit.toFixed(2)} por pieza`;
+  }
+  return `${count} ${presLabelPlural(pres, count, product)} = ${piezas} pieza${piezas > 1 ? "s" : ""}${porPieza}`;
+}
+
+// Precio total de un item del carrito (soporta presentación o cantidad libre)
+function cartItemTotal(item) {
+  if (item.esOferta) return Math.round(Number(item.precioUnidad) * item.unidades * 100) / 100;
+  if (item.esFlexPack) return Number(item.precioTotal) || 0;
+  if (item.pres) return presTotal(item.product, item.pres, item.count || 1);
+  return calcPrice(item.product, item.qty); // compatibilidad con items viejos
+}
+function cartItemLabel(item) {
+  if (item.esOferta) return `${item.unidades} ${item.tipo === "combo" ? (item.unidades === 1 ? "combo" : "combos") : (item.unidades === 1 ? "oferta" : "ofertas")} · ${item.qty} pzs`;
+  if (item.esFlexPack) return `Flex Pack · ${item.totalPiezas} piezas`;
+  if (item.pres) return `${item.count} ${presLabelPlural(item.pres, item.count, item.product)} · ${item.qty} pzs`;
+  return `${item.qty} pzs`;
+}
+
+// Lista de productos del carrito para los píxeles de marketing (Flex Pack no se cuenta; una oferta cuenta como un artículo)
+function itemsTrackDeCarrito(cart) {
+  return cart.filter(i => !i.esFlexPack).map(i => i.esOferta
+    ? { id: `oferta-${i.ofertaId}`, nombre: i.titulo, precio: i.precioUnidad, cantidad: i.unidades }
+    : { id: i.product.id, nombre: i.product.nombre, precio: i.product.precio_pieza, cantidad: i.qty });
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  DISTRIBUCIÓN DE TALLA/COLOR POR DOCENA
+// ═══════════════════════════════════════════════════════════════
+// El admin define cuántas piezas de cada talla (o color) trae 1 docena completa (12 pzs),
+// por ejemplo: { "30": 2, "32": 4, "34": 3, "36": 2, "38": 1 }.
+// La distribución de la MEDIA DOCENA se calcula siempre en automático a partir de esta:
+//  1) cada variante presente recibe la mitad (redondeado hacia abajo) de su cantidad en la docena,
+//     con un mínimo de 1 para que la media docena incluya todas las tallas/colores;
+//  2) las piezas que sobren para llegar a 6 se reparten empezando por la variante con
+//     más unidades en la docena (la que más se repite).
+function totalDistribucion(dist) {
+  return Object.values(dist || {}).reduce((s, v) => s + (Number(v) || 0), 0);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  ÁREA/UBICACIÓN DE UNA VENTA
+// ═══════════════════════════════════════════════════════════════
+// Lista de provincias y ciudades/distritos principales de Panamá, usada para
+// reconocer la zona dentro de una dirección de texto libre cuando el pedido
+// no tiene una sucursal de destino asignada. El orden importa: los nombres
+// más específicos van primero para no confundirlos con la provincia genérica
+// (ej. "La Chorrera" antes que "Panamá Oeste", "Panamá Oeste" antes que "Panamá").
+
+
+function NavBar() {
+  const { view, setView, cart, cartPulse, user, setUser, setShowLogin, setShowCart, campanaActiva } = useApp();
+  const cartCount = cart.reduce((s, i) => s + i.qty, 0);
+  const [bounce, setBounce] = useState(false);
+
+  // Marca el body cuando hay campaña activa: en celular el menú tiene dos filas y las barras fijas bajan un poco
+  useEffect(() => {
+    document.body.classList.toggle("oft-has-campaign", !!campanaActiva);
+    return () => document.body.classList.remove("oft-has-campaign");
+  }, [campanaActiva]);
+
+  useEffect(() => {
+    if (cartPulse > 0) {
+      setBounce(true);
+      const t = setTimeout(() => setBounce(false), 500);
+      return () => clearTimeout(t);
+    }
+  }, [cartPulse]);
+
+  return (
+    <nav className={"oft-nav" + (campanaActiva ? " oft-nav-conofertas" : "")} style={S.nav}>
+      <Logo onClick={() => setView("home")} height={28} />
+      <div className="oft-nav-links" style={{ display: "flex", gap: 28, alignItems: "center" }}>
+        {[["home", "Inicio"], ["catalogo", "Catálogo"], ...(campanaActiva ? [["ofertas", "Ofertas"]] : [])].map(([v, txt]) => (
+          <span key={v} onClick={() => setView(v)} className={"oft-nav-link" + (view === v ? " on" : "")}>{txt}</span>
+        ))}
+        {user && <span onClick={() => setView("dashboard")} className={"oft-nav-link" + (view === "dashboard" ? " on" : "")}>Mi Cuenta</span>}
+        {user?.es_admin && <span onClick={() => setView("admin")} className={"oft-nav-link" + (view === "admin" ? " on" : "")}>Admin</span>}
+        {(user?.es_admin || user?.rol === "operador") && <span onClick={() => setView("crm")} className={"oft-nav-link" + (view === "crm" ? " on" : "")}>CRM</span>}
+      </div>
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <button className={bounce ? "oft-cart-bounce oft-btn-press" : "oft-btn-press"} style={{ ...S.btnOutline, position: "relative", display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 12px" }} onClick={() => setShowCart(true)}>
+          <ShoppingCart size={16} strokeWidth={2.2} /> <span className="oft-btn-text-hide">Pedido</span> {cartCount > 0 && <span style={{ background: RED, color: WHITE, borderRadius: "50%", fontSize: 10, fontWeight: 800, width: 18, height: 18, display: "inline-flex", alignItems: "center", justifyContent: "center" }}>{cartCount}</span>}
+        </button>
+        {user
+          ? <button style={{ ...S.btnBlack, display: "inline-flex", alignItems: "center", gap: 6, padding: "10px 12px" }} onClick={() => { setUser(null); setView("home"); }}><LogOut size={15} strokeWidth={2.2} /> <span className="oft-btn-text-hide">Salir</span></button>
+          : <button style={{ ...S.btnRed, display: "inline-flex", alignItems: "center", gap: 6, padding: "10px 12px" }} onClick={() => setShowLogin(true)}><User size={15} strokeWidth={2.2} /> <span className="oft-btn-text-hide">Entrar</span></button>
+        }
+      </div>
+    </nav>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  HOME
+// ═══════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════
+//  PÁGINAS LEGALES: Términos, Devoluciones, Privacidad
+// ═══════════════════════════════════════════════════════════════
+function LegalPageView() {
+  const { view, setView } = useApp();
+
+  const Seccion = ({ titulo, children }) => (
+    <div style={{ marginBottom: 28 }}>
+      <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 10 }}>{titulo}</div>
+      <div style={{ fontSize: 14, color: "#333", lineHeight: 1.7 }}>{children}</div>
+    </div>
+  );
+
+  const contenidos = {
+    terminos: {
+      titulo: "Términos y Condiciones",
+      body: (
+        <>
+          <Seccion titulo="1. Sobre Ofertodo">
+            Ofertodo (ofertodo.com.pa) es una distribuidora de ropa, calzado y accesorios con sede en Colón, Panamá,
+            dedicada a la venta al por mayor a comerciantes y revendedores en todo el país. Al usar este sitio, aceptas
+            los presentes términos y condiciones en su totalidad.
+          </Seccion>
+          <Seccion titulo="2. Modalidades de venta">
+            Los productos se ofrecen por pieza, media docena y docena, con precios distintos según la cantidad
+            comprada. Los precios mostrados en el sitio están sujetos a cambio sin previo aviso y no incluyen costos
+            de envío, los cuales se calculan aparte según la empresa transportista y el destino elegido.
+          </Seccion>
+          <Seccion titulo="3. Cuentas de usuario">
+            Para realizar una compra es necesario crear una cuenta con datos de contacto válidos (nombre, teléfono,
+            correo). Eres responsable de mantener la confidencialidad de tu acceso y de la exactitud de la
+            información que proporciones.
+          </Seccion>
+          <Seccion titulo="4. Pedidos y confirmación">
+            Un pedido se considera confirmado una vez que el pago haya sido procesado exitosamente. Ofertodo se
+            reserva el derecho de cancelar o ajustar un pedido en caso de error en el precio, falta de disponibilidad
+            de inventario, o sospecha de fraude, notificando al cliente por WhatsApp o correo.
+          </Seccion>
+          <Seccion titulo="5. Métodos de pago">
+            Actualmente aceptamos pagos a través de Yappy. Próximamente estará disponible el pago con tarjeta de
+            crédito/débito a través de una pasarela de pago autorizada. Toda la información de pago se procesa
+            directamente por el proveedor de pagos correspondiente; Ofertodo no almacena datos de tarjetas.
+          </Seccion>
+          <Seccion titulo="6. Envíos">
+            Los envíos se realizan a través de empresas transportistas independientes (Servientrega, Transportes
+            Ferguson, Uno Express, entre otras). Los tiempos de entrega dependen de la empresa transportista y el
+            destino, y no son garantizados por Ofertodo.
+          </Seccion>
+          <Seccion titulo="7. Propiedad intelectual">
+            El contenido de este sitio (marca "Ofertodo", el concepto FlexPack, imágenes, textos y diseño) es
+            propiedad de Ofertodo y no puede reproducirse sin autorización.
+          </Seccion>
+          <Seccion titulo="8. Limitación de responsabilidad">
+            Ofertodo no se hace responsable por retrasos, daños o pérdidas ocasionados por terceros (empresas de
+            envío, pasarelas de pago) fuera de su control directo.
+          </Seccion>
+          <Seccion titulo="9. Cambios a estos términos">
+            Estos términos pueden actualizarse en cualquier momento. La versión vigente siempre estará disponible en
+            esta misma página.
+          </Seccion>
+          <Seccion titulo="10. Ley aplicable">
+            Estos términos se rigen por las leyes de la República de Panamá.
+          </Seccion>
+        </>
+      ),
+    },
+    devoluciones: {
+      titulo: "Política de Devoluciones y Cancelaciones",
+      body: (
+        <>
+          <Seccion titulo="1. Plazo para reportar un problema">
+            Si tu pedido llega incompleto, dañado, o con un producto distinto al solicitado, debes reportarlo dentro
+            de las 48 horas siguientes a la recepción, escribiendo a nuestro WhatsApp o correo con tu número de
+            pedido y fotos del producto/empaque.
+          </Seccion>
+          <Seccion titulo="2. Condiciones para una devolución">
+            El producto debe estar sin usar, en su empaque original, y con las etiquetas puestas. No se aceptan
+            devoluciones de productos usados, lavados, o dañados por mal uso del cliente.
+          </Seccion>
+          <Seccion titulo="3. Productos no elegibles para devolución">
+            Por tratarse de venta al por mayor, los pedidos ya despachados no pueden cancelarse una vez el paquete
+            salió de nuestras instalaciones, salvo en los casos de error de nuestra parte (producto equivocado o
+            defectuoso) descritos en el punto 1.
+          </Seccion>
+          <Seccion titulo="4. Proceso">
+            Una vez recibido tu reporte con evidencia fotográfica, evaluamos el caso en un plazo de 1 a 3 días
+            hábiles. Si procede, coordinamos según el caso: reposición del producto, nota de crédito para tu próxima
+            compra, o reembolso por el mismo medio de pago utilizado.
+          </Seccion>
+          <Seccion titulo="5. Costos de envío en devoluciones">
+            Si el error fue nuestro (producto equivocado, defecto de fábrica), Ofertodo cubre el costo de envío de la
+            devolución/reposición. Si la devolución es por cambio de opinión del cliente (no aplica a pedidos ya
+            despachados, ver punto 3), el costo de envío corre por cuenta del cliente.
+          </Seccion>
+          <Seccion titulo="6. Daños ocurridos durante el transporte">
+            Si el paquete llega visiblemente dañado, te recomendamos documentarlo con fotos antes de abrirlo. Estos
+            casos se gestionan junto con la empresa transportista correspondiente.
+          </Seccion>
+          <Seccion titulo="7. Contacto">
+            Para iniciar cualquier reclamo, escríbenos por WhatsApp al +507 6720-0474 o al correo soporte@ofertodo.com.pa,
+            indicando tu código de pedido.
+          </Seccion>
+        </>
+      ),
+    },
+    privacidad: {
+      titulo: "Política de Privacidad",
+      body: (
+        <>
+          <Seccion titulo="1. Datos que recopilamos">
+            Cuando creas una cuenta o realizas un pedido, recopilamos: nombre, número de teléfono, dirección de envío
+            y correo electrónico. Si compras por Yappy, el procesamiento del pago lo realiza Yappy directamente;
+            Ofertodo no almacena datos de tarjetas ni claves de acceso a billeteras digitales.
+          </Seccion>
+          <Seccion titulo="2. Para qué usamos tus datos">
+            Usamos tu información para: procesar y despachar tus pedidos, contactarte por WhatsApp o correo sobre el
+            estado de tu compra, coordinar el envío con la empresa transportista elegida, y brindarte soporte al
+            cliente.
+          </Seccion>
+          <Seccion titulo="3. Con quién se comparte tu información">
+            Compartimos únicamente los datos necesarios para completar tu pedido con: la empresa transportista que
+            elegiste (nombre, teléfono, dirección), y el procesador de pagos correspondiente (Yappy, y
+            próximamente una pasarela de tarjetas autorizada). No vendemos ni alquilamos tu información a terceros
+            con fines publicitarios.
+          </Seccion>
+          <Seccion titulo="4. Dónde se almacenan tus datos">
+            Tu información se almacena en servidores de Supabase con medidas de seguridad técnicas (acceso
+            restringido y cifrado en tránsito).
+          </Seccion>
+          <Seccion titulo="5. Tus derechos">
+            De acuerdo con la Ley 81 de 2019 sobre Protección de Datos Personales de Panamá, puedes solicitar en
+            cualquier momento acceder, corregir, o solicitar la eliminación de tus datos personales, escribiéndonos a
+            soporte@ofertodo.com.pa.
+          </Seccion>
+          <Seccion titulo="6. Retención de datos">
+            Conservamos tu información mientras mantengas una cuenta activa con nosotros, o según lo requiera la ley
+            para fines contables/fiscales.
+          </Seccion>
+          <Seccion titulo="7. Cambios a esta política">
+            Podemos actualizar esta política ocasionalmente. Cualquier cambio se reflejará en esta misma página con
+            su fecha de actualización.
+          </Seccion>
+          <Seccion titulo="8. Contacto">
+            Para cualquier consulta sobre el uso de tus datos, escríbenos a soporte@ofertodo.com.pa o al WhatsApp
+            +507 6720-0474.
+          </Seccion>
+        </>
+      ),
+    },
+  };
+
+  const data = contenidos[view] || contenidos.terminos;
+
+  return (
+    <div style={{ ...S.section, maxWidth: 760 }}>
+      <div onClick={() => setView("home")} style={{ display: "inline-flex", alignItems: "center", gap: 6, color: GRAY3, fontSize: 13, fontWeight: 700, cursor: "pointer", marginBottom: 20 }}>
+        <ChevronDown size={14} style={{ transform: "rotate(90deg)" }} /> Volver al inicio
+      </div>
+      <div style={{ fontSize: 26, fontWeight: 900, marginBottom: 8 }}>{data.titulo}</div>
+      <div style={{ fontSize: 12, color: GRAY3, marginBottom: 32 }}>Última actualización: julio 2026</div>
+      {data.body}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  RESULTADO DEL PAGO CON TARJETA (al volver de Powertranz)
+// ═══════════════════════════════════════════════════════════════
+// Botones al terminar una compra: con sesión, ver el pedido; sin sesión (compra de invitado), invitar a
+// crear la cuenta con los mismos datos -- si usa el mismo correo, su ficha de cliente se une sola a la cuenta.
+function FinPedidoAcciones({ email, nombre, telefono }) {
+  const { user, setView, setShowRegister, setRegisterPrefill } = useApp();
+  if (user) {
+    return <button style={{ ...S.btnRed, justifyContent: "center", margin: "0 auto" }} onClick={() => setView("dashboard")}>Ver estado de mi pedido</button>;
+  }
+  return (
+    <div>
+      {email && <p style={{ fontSize: 13, color: GRAY3, marginBottom: 14 }}>Te enviamos la confirmación a <strong>{email}</strong>.</p>}
+      <div style={{ background: "#FFF5F5", border: `1.5px solid ${RED}`, borderRadius: 12, padding: 16, textAlign: "left", marginBottom: 14 }}>
+        <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 4 }}>¿Quieres seguir tus pedidos?</div>
+        <div style={{ fontSize: 13, color: GRAY3, marginBottom: 12, lineHeight: 1.45 }}>
+          Crea tu cuenta con este mismo correo y verás aquí este pedido y los siguientes, y comprarás más rápido la próxima vez.
+        </div>
+        <button className="oft-btn-press" style={{ ...S.btnRed, width: "100%", justifyContent: "center", padding: 12 }}
+          onClick={() => { setRegisterPrefill({ nombre, email, telefono }); setShowRegister(true); }}>
+          Crear mi cuenta
+        </button>
+      </div>
+      <button style={{ background: "none", border: "none", color: GRAY3, fontSize: 13, textDecoration: "underline", cursor: "pointer" }} onClick={() => setView("home")}>
+        Seguir comprando
+      </button>
+    </div>
+  );
+}
+
+function PagoResultadoView() {
+  const { pagoResultado, setView, user } = useApp();
+  const money = (n) => "$" + Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  if (!pagoResultado) {
+    return (
+      <div style={{ ...S.section, maxWidth: 500, textAlign: "center" }}>
+        <p style={{ color: GRAY3 }}>No encontramos información de ese pago.</p>
+        <button style={{ ...S.btnRed, justifyContent: "center", margin: "20px auto 0" }} onClick={() => setView("home")}>Ir al inicio</button>
+      </div>
+    );
+  }
+
+  const { tipo, codigo, pedido } = pagoResultado;
+
+  if (tipo === "exito") {
+    return (
+      <div className="oft-section" style={{ ...S.section, textAlign: "center", maxWidth: 500 }}>
+        <div style={{ display: "flex", justifyContent: "center", marginBottom: 12 }}><CheckCircle2 size={64} color="#22c55e" strokeWidth={1.5} /></div>
+        <h2 style={{ fontSize: 24, fontWeight: 900 }}>¡Pago exitoso!</h2>
+        <p style={{ color: GRAY3 }}>{user ? 'Tu pedido está confirmado. Sigue su estado desde "Mi Cuenta".' : "Tu pedido está confirmado. Te avisaremos por WhatsApp y por correo."}</p>
+        <div style={{ background: GRAY, borderRadius: 12, padding: 20, margin: "20px 0", textAlign: "left" }}>
+          <div style={{ fontWeight: 800, marginBottom: 8 }}>Número: <span style={{ color: RED }}>{codigo}</span></div>
+          <div style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "#D4EDDA", color: "#155724", padding: "4px 12px", borderRadius: 20, fontWeight: 700, fontSize: 13, marginBottom: 4 }}>
+            <CreditCard size={14} /> Pagado con tarjeta
+          </div>
+          {pedido && (
+            <>
+              <div style={{ marginTop: 10, fontWeight: 700, fontSize: 15 }}>Total: {money(pedido.total)}</div>
+              {pedido.retiro_local
+                ? <div style={{ marginTop: 6, fontSize: 13, color: "#856404", display: "flex", alignItems: "center", gap: 6, fontWeight: 700 }}><Home size={14} /> Retiro en el local{pedido.local_retiro_nombre ? `: ${pedido.local_retiro_nombre}` : ""}</div>
+                : pedido.empresa_envio_nombre && <div style={{ marginTop: 6, fontSize: 13, color: GRAY3, display: "flex", alignItems: "center", gap: 6 }}><Truck size={14} /> {pedido.empresa_envio_nombre}{pedido.sucursal_nombre ? ` · ${pedido.sucursal_nombre}` : ""}</div>}
+              {pedido.items?.length > 0 && (
+                <div style={{ marginTop: 14, paddingTop: 14, borderTop: `1px solid ${GRAY2}` }}>
+                  {pedido.items.map((it, i) => (
+                    <div key={i} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, padding: "4px 0" }}>
+                      <span>{it.nombre_producto} <span style={{ color: GRAY3 }}>x{it.cantidad}</span></span>
+                      <span style={{ fontWeight: 700 }}>{money(it.subtotal)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+        <FinPedidoAcciones email={pagoResultado.email || ""} nombre={pagoResultado.nombre || ""} telefono={pagoResultado.telefono || ""} />
+      </div>
+    );
+  }
+
+  if (tipo === "rechazado") {
+    return (
+      <div className="oft-section" style={{ ...S.section, textAlign: "center", maxWidth: 500 }}>
+        <div style={{ display: "flex", justifyContent: "center", marginBottom: 12 }}><X size={64} color={RED} strokeWidth={1.5} /></div>
+        <h2 style={{ fontSize: 24, fontWeight: 900 }}>El banco rechazó el pago</h2>
+        <p style={{ color: GRAY3, marginBottom: 20 }}>
+          No se realizó ningún cargo a tu tarjeta{codigo ? <> — el pedido <strong>{codigo}</strong> quedó sin pagar</> : ""}. Puedes intentar de nuevo con la misma tarjeta u otra distinta.
+        </p>
+        <button style={{ ...S.btnRed, justifyContent: "center", margin: "0 auto" }} onClick={() => setView("catalogo")}>Volver a intentar</button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="oft-section" style={{ ...S.section, textAlign: "center", maxWidth: 500 }}>
+      <div style={{ display: "flex", justifyContent: "center", marginBottom: 12 }}><Headphones size={64} color="#856404" strokeWidth={1.5} /></div>
+      <h2 style={{ fontSize: 24, fontWeight: 900 }}>Hubo un problema confirmando tu pago</h2>
+      <p style={{ color: GRAY3, marginBottom: 20 }}>
+        Si el cargo sí aparece en tu banco, escríbenos por WhatsApp{codigo ? <> con tu número de pedido <strong>{codigo}</strong></> : ""} y lo confirmamos manualmente.
+      </p>
+      <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
+        <button style={{ ...S.btnWA, justifyContent: "center" }} onClick={() => { registrarEvento("consulta_whatsapp", null, "Problema con el pago"); window.open(`https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(`Hola, tuve un problema confirmando el pago de mi pedido ${codigo || ""}`)}`, "_blank"); }}>
+          <MessageCircle size={16} /> Escribir por WhatsApp
+        </button>
+        <button style={{ ...S.btnOutline, justifyContent: "center" }} onClick={() => setView("home")}>Ir al inicio</button>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  CARRUSEL DE BANNERS PROMOCIONALES — avanza solo, se puede deslizar
+//  con el dedo, y cada uno lleva a donde el admin configuró (producto,
+//  categoría, catálogo completo, o un link externo).
+// ═══════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════
+//  POP-UP PROMOCIONAL — descuentos, eventos o anuncios que aparecen
+//  solos al entrar (una vez por visita, para no ser molesto), con
+//  imagen opcional y un botón que puede llevar a donde el admin
+//  configuró (igual que los banners: producto, categoría, catálogo o link).
+// ═══════════════════════════════════════════════════════════════
+function PopupPromocional() {
+  const { popups, products, categories, setCatalogCat, setView, setQuickView } = useApp();
+  const [popupActivo, setPopupActivo] = useState(null);
+  const [mostrar, setMostrar] = useState(false);
+
+  useEffect(() => {
+    const activos = [...popups].filter(p => p.activo).sort((a, b) => (a.orden || 0) - (b.orden || 0));
+    if (activos.length === 0) return;
+    const elegido = activos[0];
+    let yaVisto = false;
+    try { yaVisto = sessionStorage.getItem(`oft_popup_${elegido.id}`) === "1"; } catch (e) { /* si el navegador bloquea sessionStorage, simplemente lo muestra */ }
+    if (yaVisto) return;
+    const t = setTimeout(() => { setPopupActivo(elegido); setMostrar(true); }, 4000);
+    return () => clearTimeout(t);
+  }, [popups]);
+
+  const cerrar = () => {
+    setMostrar(false);
+    if (popupActivo) { try { sessionStorage.setItem(`oft_popup_${popupActivo.id}`, "1"); } catch (e) {} }
+  };
+
+  useEffect(() => {
+    if (!mostrar) return;
+    const onKey = (e) => { if (e.key === "Escape") cerrar(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [mostrar]);
+
+  if (!mostrar || !popupActivo) return null;
+
+  const irAlDestino = () => {
+    const p = popupActivo;
+    cerrar();
+    if (p.destino_tipo === "producto") {
+      const prod = products.find(pr => String(pr.id) === String(p.destino_valor));
+      if (prod) setQuickView(prod);
+    } else if (p.destino_tipo === "categoria") {
+      const catId = Number(p.destino_valor) || 0;
+      setCatalogCat(catId);
+      setView("catalogo");
+      if (catId) registrarEvento("click_categoria", catId, categories.find(c => c.id === catId)?.nombre);
+    } else if (p.destino_tipo === "catalogo") {
+      setCatalogCat(0);
+      setView("catalogo");
+    } else if (p.destino_tipo === "ofertas") {
+      setView("ofertas");
+    } else if (p.destino_tipo === "url" && p.destino_valor) {
+      window.open(p.destino_valor, "_blank");
+    }
+  };
+
+  return createPortal(
+    <div className="oft-overlay" style={S.overlay} onClick={cerrar}>
+      <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 18, maxWidth: 400, width: "90%", overflow: "hidden", position: "relative" }} onClick={e => e.stopPropagation()}>
+        <button onClick={cerrar} className="oft-btn-press" aria-label="Cerrar" style={{ position: "absolute", top: 12, right: 12, zIndex: 2, background: "rgba(0,0,0,0.45)", border: "none", borderRadius: "50%", width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+          <X size={16} color={WHITE} />
+        </button>
+        {popupActivo.imagen_url && (
+          <img src={imagenOptimizada(popupActivo.imagen_url, 800)} alt={popupActivo.titulo} style={{ width: "100%", display: "block", maxHeight: 260, objectFit: "cover" }} />
+        )}
+        <div style={{ padding: "24px 24px 28px", textAlign: "center" }}>
+          <div style={{ fontWeight: 900, fontSize: 20, marginBottom: popupActivo.mensaje ? 8 : 20 }}>{popupActivo.titulo}</div>
+          {popupActivo.mensaje && <p style={{ color: GRAY3, fontSize: 14, marginBottom: 20, lineHeight: 1.5 }}>{popupActivo.mensaje}</p>}
+          {popupActivo.destino_tipo && (
+            <button onClick={irAlDestino} className="oft-btn-press" style={{ ...S.btnRed, width: "100%", justifyContent: "center", padding: 13 }}>
+              {popupActivo.texto_boton || "Ver más"}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  , document.body);
+}
+
+function PromoCarousel({ banners }) {
+  const { setView, setCatalogCat, setQuickView, products, categories } = useApp();
+  const [indice, setIndice] = useState(0);
+  const [pausado, setPausado] = useState(false);
+  const touchStartX = useRef(null);
+
+  const activos = [...banners].filter(b => b.activo).sort((a, b) => (a.orden || 0) - (b.orden || 0));
+  const total = activos.length;
+
+  useEffect(() => {
+    if (indice >= total) setIndice(0);
+  }, [total]);
+
+  useEffect(() => {
+    if (total <= 1 || pausado) return;
+    const t = setInterval(() => setIndice(i => (i + 1) % total), 5000);
+    return () => clearInterval(t);
+  }, [total, pausado]);
+
+  if (total === 0) return null;
+
+  const irAlDestino = (b) => {
+    if (b.destino_tipo === "producto") {
+      const p = products.find(pr => String(pr.id) === String(b.destino_valor));
+      if (p) setQuickView(p); else { setCatalogCat(0); setView("catalogo"); }
+    } else if (b.destino_tipo === "categoria") {
+      const catId = Number(b.destino_valor) || 0;
+      setCatalogCat(catId);
+      setView("catalogo");
+      if (catId) registrarEvento("click_categoria", catId, categories.find(c => c.id === catId)?.nombre);
+    } else if (b.destino_tipo === "ofertas") {
+      setView("ofertas");
+      registrarEvento("click_banner_ofertas");
+    } else if (b.destino_tipo === "url" && b.destino_valor) {
+      window.open(b.destino_valor, "_blank");
+    } else {
+      setCatalogCat(0);
+      setView("catalogo");
+    }
+  };
+
+  const onTouchStart = (e) => { touchStartX.current = e.touches[0].clientX; };
+  const onTouchEnd = (e) => {
+    if (touchStartX.current == null) return;
+    const diff = e.changedTouches[0].clientX - touchStartX.current;
+    if (Math.abs(diff) > 40) {
+      setIndice(i => diff > 0 ? (i - 1 + total) % total : (i + 1) % total);
+    }
+    touchStartX.current = null;
+  };
+
+  return (
+    <div className="oft-carousel" onMouseEnter={() => setPausado(true)} onMouseLeave={() => setPausado(false)}>
+      <div className="oft-carousel-track" style={{ transform: `translateX(-${indice * 100}%)` }} onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
+        {activos.map(b => (
+          <div key={b.id} className="oft-carousel-slide" onClick={() => irAlDestino(b)} role="button" tabIndex={0}>
+            <img src={imagenOptimizada(b.imagen_url, 1400)} alt={b.titulo || "Promoción"} loading="eager" decoding="async" />
+            {(b.titulo || b.subtitulo) && (
+              <div className="oft-carousel-caption">
+                {b.titulo && <div className="oft-carousel-title">{b.titulo}</div>}
+                {b.subtitulo && <div className="oft-carousel-subtitle">{b.subtitulo}</div>}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+      {total > 1 && (
+        <div className="oft-carousel-dots">
+          {activos.map((b, i) => (
+            <button key={b.id} className={"oft-carousel-dot" + (i === indice ? " active" : "")} onClick={() => setIndice(i)} aria-label={`Ver promoción ${i + 1}`} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function HomeView() {
+  const { setView, setCatalogCat, categories, gruposCategorias, products, addToCart, banners } = useApp();
+  // Ordena los destacados según el orden de categorías que configuraste en el
+  // admin (Categorías > Orden de las categorías) -- se ve igual que antes, una
+  // sola cuadrícula, solo que la SECUENCIA respeta ese orden. Los productos del
+  // mismo Flex Pack además quedan uno al lado del otro.
+  const ordenCategorias = new Map(categories.map((c, i) => [c.id, i]));
+  const featured = agruparPorFlexPack(
+    products.filter(p => p.activo && p.visible_web !== false && p.destacado)
+      .sort((a, b) => (ordenCategorias.get(a.categoria_id) ?? 999) - (ordenCategorias.get(b.categoria_id) ?? 999))
+  );
+  const [catSheetAbierto, setCatSheetAbierto] = useState(false);
+  const [grupoInicialSheet, setGrupoInicialSheet] = useState(null);
+
+  // Solo muestra grupos que de verdad tengan categorías adentro
+  const gruposConCategorias = gruposCategorias.filter(g => categories.some(c => c.grupo_id === g.id));
+  const sinGrupo = categories.filter(c => !c.grupo_id);
+
+  const abrirGrupo = (grupo) => { setGrupoInicialSheet(grupo); setCatSheetAbierto(true); };
+  const abrirCategoriaSuelta = (id) => {
+    setCatalogCat(id); setView("catalogo");
+    registrarEvento("click_categoria", id, categories.find(c => c.id === id)?.nombre);
+  };
+
+  return (
+    <>
+      {/* CARRUSEL DE PROMOCIONES — el fondo cubre todo el ancho, el contenido se queda centrado */}
+      <div className="oft-carousel-section">
+        <div className="oft-carousel-wrap">
+          <PromoCarousel banners={banners} />
+        </div>
+      </div>
+
+      {/* BARRA DE MARCA + ACCIONES — complementa el carrusel, minimalista y oscura */}
+      <div className="oft-cta-bar">
+        <div className="oft-cta-tag"><Zap size={11} strokeWidth={2.5} /> Distribuidora · Panamá</div>
+        <h1 className="oft-cta-title">Compra más <span>·</span> Crece más</h1>
+        <div className="oft-cta-actions">
+          <button className="oft-cta-btn-primary" onClick={() => { setCatalogCat(0); setView("catalogo"); }}>Ver catálogo</button>
+          <button className="oft-cta-btn-whatsapp" onClick={() => { registrarEvento("consulta_whatsapp", null, "Quiero hacer un pedido (inicio)"); window.open(`https://wa.me/${WA_NUMBER}?text=Hola%20Ofertodo%2C%20quiero%20hacer%20un%20pedido`, "_blank"); }}>
+            <MessageCircle size={16} strokeWidth={2.2} /> Consultar por WhatsApp
+          </button>
+        </div>
+      </div>
+      <div className="oft-infobar" style={{ background: RED, color: WHITE, padding: "10px 24px", display: "flex", gap: 32, justifyContent: "center", flexWrap: "wrap", fontSize: 13, fontWeight: 600 }}>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Package size={15} strokeWidth={2.2} /> Pieza · Media docena · Docena</span>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Truck size={15} strokeWidth={2.2} /> Envíos a todo Panamá</span>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><MessageCircle size={15} strokeWidth={2.2} /> WhatsApp disponible</span>
+      </div>
+
+      {/* CATEGORÍAS */}
+      <div className="oft-section" style={{ ...S.section, paddingBottom: 0 }}>
+        <div className="oft-sec-head"><span /><div><h2>Categorías</h2><p>Elige un grupo y encuentra lo que tu negocio necesita</p></div></div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 14 }}>
+          {gruposConCategorias.map((g, i) => {
+            const primeraCatDelGrupo = categories.find(c => c.grupo_id === g.id);
+            const cantidad = categories.filter(c => c.grupo_id === g.id).length;
+            // Usa el ícono propio del grupo si lo subiste; si no, toma prestado el de su primera categoría
+            const iconoParaMostrar = g.icono_url ? { icono_url: g.icono_url, nombre: g.nombre } : primeraCatDelGrupo;
+            return (
+              <div key={"grupo-" + g.id} onClick={() => abrirGrupo(g)} className="oft-btn-press oft-group-card" style={{ animationDelay: `${Math.min(i * 0.06, 0.4)}s` }}>
+                <div className="oft-group-card-icon"><CategoryIcon cat={iconoParaMostrar} size={24} color={RED} /></div>
+                <div style={{ fontWeight: 800, fontSize: 14, marginTop: 10 }}>{g.nombre}</div>
+                <div style={{ fontSize: 11, color: GRAY3, marginTop: 2 }}>{cantidad} categorías</div>
+                <ChevronRight size={14} color={GRAY3} className="oft-group-card-chevron" />
+              </div>
+            );
+          })}
+          {sinGrupo.map((c, i) => (
+            <div key={c.id} onClick={() => abrirCategoriaSuelta(c.id)} className="oft-btn-press oft-group-card" style={{ animationDelay: `${Math.min((i + gruposConCategorias.length) * 0.06, 0.4)}s` }}>
+              <div className="oft-group-card-icon"><CategoryIcon cat={c} size={24} color={RED} /></div>
+              <div style={{ fontWeight: 800, fontSize: 14, marginTop: 10 }}>{c.nombre}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+      {catSheetAbierto && (
+        <CategoriaSheet
+          categorias={categories}
+          gruposCategorias={gruposCategorias}
+          seleccionadaId={0}
+          grupoInicial={grupoInicialSheet}
+          onSeleccionar={(id) => {
+            setCatalogCat(id); setView("catalogo"); setCatSheetAbierto(false);
+            if (id) registrarEvento("click_categoria", id, categories.find(c => c.id === id)?.nombre);
+          }}
+          onClose={() => setCatSheetAbierto(false)}
+        />
+      )}
+
+      {/* DESTACADOS */}
+      {featured.length > 0 && (
+        <div className="oft-section" style={S.section}>
+          <div className="oft-sec-head"><span /><div><h2>Productos destacados</h2><p>Lo más pedido por nuestros clientes</p></div></div>
+          <div className="oft-prod-grid" style={S.prodGrid}>
+            {featured.map((p, i) => (
+              <div key={p.id} className="oft-prod-anim" style={{ animationDelay: `${Math.min(i * 0.08, 0.5)}s`, height: "100%" }}>
+                <ProductCard product={p} />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* CTA FOOTER */}
+      <div style={{ background: BLACK, color: WHITE, padding: "48px 24px", textAlign: "center" }}>
+        <div style={{ fontSize: 28, fontWeight: 900, marginBottom: 12 }}>¿Listo para hacer tu pedido?</div>
+        <p style={{ color: "#aaa", marginBottom: 24 }}>Explora todo nuestro catálogo o escríbenos directamente</p>
+        <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
+          <button style={{ ...S.btnRed, padding: "14px 28px" }} onClick={() => { setCatalogCat(0); setView("catalogo"); }}>Ver Catálogo</button>
+          <button style={{ ...S.btnWA, padding: "14px 24px" }} onClick={() => { registrarEvento("consulta_whatsapp", null, "Contacto general"); window.open(`https://wa.me/${WA_NUMBER}`, "_blank"); }}><MessageCircle size={16} strokeWidth={2.2} /> WhatsApp</button>
+        </div>
+      </div>
+
+      {/* FOOTER */}
+      <footer style={{ background: "#0a0a0a", color: WHITE, padding: "32px 24px" }}>
+        <div style={{ display: "flex", gap: 40, flexWrap: "wrap", justifyContent: "space-between", maxWidth: 900, margin: "0 auto" }}>
+          <div><Logo height={26} /><p style={{ color: "#aaa", fontSize: 13, marginTop: 10, maxWidth: 220 }}>Distribuidora · Panamá. Compra más, crece más.</p></div>
+          <div>
+            <div style={{ fontWeight: 700, marginBottom: 10 }}>Contacto</div>
+            <div style={{ fontSize: 13, color: "#aaa", lineHeight: 2.2 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}><MessageCircle size={14} /> WhatsApp: +507 6720-0474</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}><User size={14} /> soporte@ofertodo.com.pa</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}><MapPin size={14} /> Colón, Panamá</div>
+            </div>
+          </div>
+          <div>
+            <div style={{ fontWeight: 700, marginBottom: 10 }}>Envíos</div>
+            <div style={{ fontSize: 13, color: "#aaa", lineHeight: 2.2 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}><Truck size={14} /> A todo Panamá</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}><Package size={14} /> Mínimo: 1 docena</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}><Zap size={14} /> Despacho rápido</div>
+            </div>
+          </div>
+          <div>
+            <div style={{ fontWeight: 700, marginBottom: 10 }}>Legal</div>
+            <div style={{ fontSize: 13, color: "#aaa", lineHeight: 2.2, display: "flex", flexDirection: "column", gap: 2 }}>
+              <span onClick={() => setView("terminos")} style={{ cursor: "pointer" }}>Términos y Condiciones</span>
+              <span onClick={() => setView("devoluciones")} style={{ cursor: "pointer" }}>Devoluciones</span>
+              <span onClick={() => setView("privacidad")} style={{ cursor: "pointer" }}>Privacidad</span>
+            </div>
+          </div>
+        </div>
+        <div style={{ textAlign: "center", marginTop: 24, fontSize: 12, color: "#444", borderTop: "1px solid #222", paddingTop: 16 }}>© 2026 Ofertodo · Panamá</div>
+      </footer>
+    </>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  SELECTOR DE PRESENTACIÓN + CANTIDAD ANIMADO
+// ═══════════════════════════════════════════════════════════════
+// Precio para los bloques de presentación: sin ".00" cuando es exacto ($100), con decimales si los tiene ($54.50)
+const precioChip = (n) => { const v = Number(n) || 0; return Number.isInteger(Math.round(v * 100) / 100) ? v.toLocaleString("en-US") : v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
+
+function QtySelector({ product, pres, setPres, count, setCount, size = "normal" }) {
+  const { showToast } = useApp();
+  const [bump, setBump] = useState(false);
+  const triggerBump = () => { setBump(true); setTimeout(() => setBump(false), 280); };
+
+  const big = size === "big";
+  const btnSize = big ? 42 : 36;
+  const numFont = big ? 24 : 20;
+
+  // Modalidad de venta del producto -- 'estandar' (Pieza/Media Docena/Docena =
+  // 1/6/12) o 'perfumeria' (Pieza/3 Piezas/6 Piezas = 1/3/6), para productos
+  // costosos que se venden distinto. Los campos de precio y las claves internas
+  // ("pieza"/"media"/"docena") son las mismas -- solo cambia cuánto representa
+  // cada una y cómo se le llama en pantalla.
+  const esPerfumeria = product.modalidad_presentacion === "perfumeria";
+  const piezasMedia = esPerfumeria ? 3 : 6;
+  const piezasDocena = esPerfumeria ? 6 : 12;
+  const etiquetaMedia = esPerfumeria ? "3 Piezas" : "½ Doc";
+  const etiquetaDocena = esPerfumeria ? "6 Piezas" : "Docena";
+
+  // El stock por docena/media docena solo aplica a productos PROPIOS con stock sincronizado
+  // de Odoo — los de proveedor (bajo pedido) nunca se restringen por este motivo.
+  // Aplica reglas de stock si es producto propio, O si es de proveedor pero ya lo tenemos en stock físico
+  const respetaStockQty = (!product.proveedor_id || product.tiene_stock_fisico) && product.stock_actualizado_at;
+  const stockConocido = respetaStockQty ? stockWeb(product) : null;
+  const docenaDeshabilitada = stockConocido !== null && stockConocido < piezasDocena;
+  const mediaDeshabilitada = stockConocido !== null && stockConocido < piezasMedia;
+
+  // Cuántas unidades de la presentación ELEGIDA caben en el stock real -- así el
+  // botón "+" nunca deja seleccionar más de lo que hay, en vez de solo avisar
+  // después al agregarlo al carrito.
+  const piezasPorUnidadActual = pres === "docena" ? piezasDocena : pres === "media" ? piezasMedia : 1;
+  const maxUnidadesActual = stockConocido !== null ? Math.max(1, Math.floor(stockConocido / piezasPorUnidadActual)) : Infinity;
+  const enElMaximo = stockConocido !== null && count >= maxUnidadesActual;
+
+  const change = (delta) => {
+    setCount(prev => {
+      const siguiente = Math.max(1, prev + delta);
+      // Justo al topar con el límite (no en cada clic después, ya que el botón
+      // queda deshabilitado) -- se avisa arriba, en el mismo cuadro negro que
+      // usa "agregado al pedido", no como texto aparte debajo del contador.
+      if (siguiente > maxUnidadesActual) {
+        showToast(`Es lo máximo disponible en stock (${maxUnidadesActual})`);
+        return maxUnidadesActual;
+      }
+      return siguiente;
+    });
+    triggerBump();
+  };
+
+  const presentaciones = [
+    { key: "pieza", label: "Pieza", precio: Number(product.precio_pieza), porPieza: Number(product.precio_pieza), disabled: false },
+    { key: "media", label: etiquetaMedia, precio: Number(product.precio_media_docena), porPieza: Number(product.precio_media_docena) / piezasMedia, disabled: mediaDeshabilitada },
+    { key: "docena", label: etiquetaDocena, precio: Number(product.precio_docena), porPieza: Number(product.precio_docena) / piezasDocena, disabled: docenaDeshabilitada },
+  ];
+
+  // Si la opción seleccionada deja de estar disponible (por stock bajo), cambia sola a
+  // la siguiente mejor opción disponible — nunca deja al cliente "atascado" en una opción
+  // que ya no se puede comprar. Usa useLayoutEffect (no useEffect) a propósito: corre
+  // ANTES de que el navegador pinte el cuadro, así nunca se alcanza a ver, ni por un
+  // instante, el Total calculado con una presentación que ya se ve bloqueada/"No
+  // disponible" en los chips -- ambas partes cambian juntas, en el mismo cuadro.
+  useLayoutEffect(() => {
+    const actual = presentaciones.find(p => p.key === pres);
+    if (actual?.disabled) {
+      const siguiente = (pres === "docena" && !mediaDeshabilitada) ? "media" : "pieza";
+      setPres(siguiente);
+      setCount(1); // mismo comportamiento que un cambio manual de presentación
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pres, docenaDeshabilitada, mediaDeshabilitada]);
+
+  return (
+    <div>
+      {/* SELECTOR DE PRESENTACIÓN */}
+      <div className="oft-pres-grid" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6, marginBottom: 12, alignItems: "stretch" }}>
+        {presentaciones.map(p => {
+          const active = pres === p.key && !p.disabled;
+          return (
+            <button key={p.key}
+              onClick={() => { if (p.disabled) return; setPres(p.key); setCount(1); triggerBump(); }}
+              disabled={p.disabled}
+              className={"oft-pres-chip oft-btn-press" + (big ? " oft-pres-big" : "")}
+              style={{
+                padding: big ? "12px 4px" : "10px 2px", borderRadius: 12,
+                border: `2px solid ${p.disabled ? GRAY2 : (active ? RED : GRAY2)}`,
+                background: p.disabled ? GRAY : (active ? "#FFF5F5" : WHITE),
+                cursor: p.disabled ? "not-allowed" : "pointer", transition: "all 0.18s",
+                display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 4,
+                minWidth: 0, width: "100%", boxSizing: "border-box",
+                opacity: p.disabled ? 0.6 : 1,
+              }}
+            >
+              <div className="oft-pres-label" style={{ fontWeight: 800, color: p.disabled ? GRAY3 : (active ? RED : BLACK), textAlign: "center", width: "100%", lineHeight: 1.2, whiteSpace: "nowrap", overflow: "hidden" }}>{p.label}</div>
+              {p.disabled
+                ? <div style={{ fontSize: 10, fontWeight: 700, color: GRAY3, textAlign: "center", width: "100%", lineHeight: 1.2 }}>No disponible</div>
+                : <div className="oft-pres-price" style={{ fontWeight: 900, color: active ? RED : BLACK, textAlign: "center", width: "100%", lineHeight: 1.2, whiteSpace: "nowrap", overflow: "hidden" }}>${precioChip(p.precio)}</div>
+              }
+            </button>
+          );
+        })}
+      </div>
+
+      {/* CONTADOR DE CANTIDAD */}
+      <div style={{ display: "flex", alignItems: "center", gap: 10, background: WHITE, border: `1.5px solid ${GRAY2}`, borderRadius: 12, padding: big ? 8 : 6 }}>
+        <button
+          onClick={() => change(-1)}
+          className="oft-qty-btn oft-btn-press"
+          style={{ width: btnSize, height: btnSize, borderRadius: 10, border: `2px solid ${GRAY2}`, background: WHITE, color: count <= 1 ? GRAY3 : BLACK, fontSize: 20, fontWeight: 700, cursor: count <= 1 ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, lineHeight: 1 }}
+          disabled={count <= 1}
+          aria-label="Quitar uno"
+        >−</button>
+
+        <div style={{ flex: 1, textAlign: "center", minWidth: 0 }}>
+          <div className={bump ? "oft-qty-bump" : ""} style={{ fontSize: numFont, fontWeight: 900, color: BLACK, lineHeight: 1 }}>{count}</div>
+          <div style={{ fontSize: 10, color: GRAY3, fontWeight: 600, marginTop: 2 }}>{presLabelPlural(pres, count, product)}</div>
+        </div>
+
+        <button
+          onClick={() => change(1)}
+          className="oft-qty-btn oft-btn-press"
+          style={{ width: btnSize, height: btnSize, borderRadius: 10, border: "none", background: enElMaximo ? GRAY2 : `linear-gradient(135deg, ${RED}, ${RED_D})`, color: enElMaximo ? GRAY3 : WHITE, fontSize: 20, fontWeight: 700, cursor: enElMaximo ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, lineHeight: 1, boxShadow: enElMaximo ? "none" : "0 2px 8px rgba(227,30,36,0.3)" }}
+          disabled={enElMaximo}
+          aria-label="Agregar uno"
+        >+</button>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  FLEX PACK — insignia + panel para armar un paquete mezclado de
+//  varios productos del mismo grupo, a precio compartido x3/x6.
+// ═══════════════════════════════════════════════════════════════
+function FlexPackBadge({ onAbrir, tamano = "normal" }) {
+  const chico = tamano === "chico";
+  return (
+    <button onClick={onAbrir} className="oft-btn-press oft-flexpack-badge"
+      style={{ display: "inline-flex", alignItems: "center", gap: chico ? 5 : 7, padding: chico ? "5px 10px" : "7px 14px", borderRadius: 999, border: `1.5px solid ${RED}`, background: WHITE, color: RED, fontWeight: 800, fontSize: chico ? 11 : 12.5, cursor: "pointer" }}>
+      <img src={FLEXPACK_ICON_URL} alt="" style={{ width: chico ? 14 : 17, height: chico ? 14 : 17, objectFit: "contain" }} />
+      Crear Flex Pack
+    </button>
+  );
+}
+
+function FilaProductoFlexPack({ producto, cantidad, onCambiar, espacioDisponibleGlobal }) {
+  const stockConocido = producto.stock_actualizado_at ? stockWeb(producto) : null;
+  const maxPorStock = stockConocido !== null ? stockConocido : Infinity;
+  const maxAquí = Math.min(maxPorStock, cantidad + espacioDisponibleGlobal);
+  const sinStock = stockConocido !== null && stockConocido <= 0;
+  const enElTope = cantidad >= maxAquí;
+
+  return (
+    <div className="oft-fade-in" style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 4px", borderBottom: `1px solid ${GRAY}`, opacity: sinStock ? 0.5 : 1 }}>
+      {producto.imagen_url ? (
+        <img src={producto.imagen_url} style={{ width: 52, height: 52, borderRadius: 10, objectFit: "cover", flexShrink: 0 }} />
+      ) : (
+        <div style={{ width: 52, height: 52, borderRadius: 10, background: GRAY, flexShrink: 0 }} />
+      )}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontWeight: 700, fontSize: 13.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{producto.nombre}</div>
+        <div style={{ fontSize: 11.5, color: GRAY3 }}>
+          {sinStock ? "Sin stock por ahora" : stockConocido !== null ? `${stockConocido} disponibles` : "Disponible"}
+        </div>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
+        <button onClick={() => onCambiar(-1)} disabled={cantidad <= 0} className="oft-btn-press"
+          style={{ width: 28, height: 28, borderRadius: 8, border: `1.5px solid ${GRAY2}`, background: WHITE, color: cantidad <= 0 ? GRAY2 : BLACK, fontSize: 16, fontWeight: 700, cursor: cantidad <= 0 ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>−</button>
+        <span style={{ fontWeight: 900, fontSize: 15, minWidth: 16, textAlign: "center" }}>{cantidad}</span>
+        <button onClick={() => onCambiar(1)} disabled={enElTope || sinStock} className="oft-btn-press"
+          style={{ width: 28, height: 28, borderRadius: 8, border: "none", background: (enElTope || sinStock) ? GRAY2 : RED, color: (enElTope || sinStock) ? GRAY3 : WHITE, fontSize: 16, fontWeight: 700, cursor: (enElTope || sinStock) ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>+</button>
+      </div>
+    </div>
+  );
+}
+
+function PanelFlexPack({ grupo, onClose }) {
+  const { products, agregarFlexPackAlCarrito, showToast } = useApp();
+  const isMobile = useIsMobile();
+  const [mostrandoIntro, setMostrandoIntro] = useState(true);
+  const [targetElegido, setTargetElegido] = useState(null); // null | { modalidad, pres, piezas, etiqueta, detalle }
+  const [cantidades, setCantidades] = useState({}); // { productoId: cantidad }
+
+  useEffect(() => {
+    const t = setTimeout(() => setMostrandoIntro(false), 900);
+    return () => clearTimeout(t);
+  }, []);
+
+  const todosLosProductosDelGrupo = products.filter(p => p.flexpack_grupo_id === grupo.id && p.activo);
+  const tieneEstandar = todosLosProductosDelGrupo.some(p => p.modalidad_presentacion !== "perfumeria");
+  const tienePerfumeria = todosLosProductosDelGrupo.some(p => p.modalidad_presentacion === "perfumeria");
+
+  // Siempre se elige primero la meta exacta (Media Docena, Docena, 3 Piezas o 6
+  // Piezas) -- así el cliente sabe desde el principio qué está armando, sin que
+  // la meta cambie a medio camino ni haya que adivinar.
+  const opciones = [
+    ...(tieneEstandar ? [
+      { modalidad: "estandar", pres: "media", piezas: 6, etiqueta: "Media Docena", detalle: "6 piezas mezcladas como quieras" },
+      { modalidad: "estandar", pres: "docena", piezas: 12, etiqueta: "Docena", detalle: "12 piezas mezcladas como quieras" },
+    ] : []),
+    ...(tienePerfumeria ? [
+      { modalidad: "perfumeria", pres: "media", piezas: 3, etiqueta: "3 Piezas", detalle: "3 piezas mezcladas como quieras" },
+      { modalidad: "perfumeria", pres: "docena", piezas: 6, etiqueta: "6 Piezas", detalle: "6 piezas mezcladas como quieras" },
+    ] : []),
+  ];
+
+  // Cuánto se podría llegar a juntar entre TODOS los productos de una
+  // modalidad, como máximo -- si un producto no tiene stock sincronizado (es
+  // "bajo pedido"), cuenta como ilimitado.
+  const calcularStockMaximo = (modalidad) => {
+    const productosDeEsaModalidad = todosLosProductosDelGrupo.filter(p =>
+      modalidad === "perfumeria" ? p.modalidad_presentacion === "perfumeria" : p.modalidad_presentacion !== "perfumeria"
+    );
+    return productosDeEsaModalidad.reduce((suma, p) => {
+      if (suma === Infinity) return suma;
+      if (!p.stock_actualizado_at) return Infinity;
+      return suma + stockWeb(p);
+    }, 0);
+  };
+
+  const productosDelGrupo = targetElegido ? todosLosProductosDelGrupo.filter(p =>
+    targetElegido.modalidad === "perfumeria" ? p.modalidad_presentacion === "perfumeria" : p.modalidad_presentacion !== "perfumeria"
+  ) : [];
+
+  // Si ni sumando todo el stock de este grupo alcanza la meta elegida, no tiene
+  // caso dejar que el cliente empiece a armarlo -- se avisa de una vez.
+  const stockMaximoTotal = targetElegido ? calcularStockMaximo(targetElegido.modalidad) : Infinity;
+  const sinStockSuficiente = targetElegido ? stockMaximoTotal < targetElegido.piezas : false;
+
+  const totalPiezas = Object.values(cantidades).reduce((s, c) => s + c, 0);
+  const completo = targetElegido ? totalPiezas === targetElegido.piezas : false;
+
+  // El precio no es un número fijo -- se suma, producto por producto, el precio
+  // que YA tiene cada uno para esa presentación (media docena o docena),
+  // dividido entre sus piezas, multiplicado por cuántas se eligieron de ese
+  // producto. Así, si un perfume cuesta distinto que otro, el total simplemente
+  // refleja lo que corresponde a cada uno.
+  const precioActual = targetElegido ? Object.entries(cantidades).reduce((suma, [productId, cantidad]) => {
+    if (cantidad <= 0) return suma;
+    const prod = productosDelGrupo.find(p => p.id === Number(productId));
+    if (!prod) return suma;
+    const piezasPorUnidad = presToPiezas(targetElegido.pres, 1, prod);
+    const precioPorPieza = presUnitPrice(prod, targetElegido.pres) / piezasPorUnidad;
+    return suma + precioPorPieza * cantidad;
+  }, 0) : null;
+
+  // Lo que costaría exactamente lo mismo que ya eligió, pero comprado pieza por
+  // pieza (precio normal, sin el descuento del Flex Pack) -- así se puede
+  // mostrar cuánto se está ahorrando, sin que el cliente tenga que calcularlo.
+  // Se calcula siempre (no solo al completar), para dar una referencia mientras
+  // sigue armando el paquete.
+  const precioRegular = targetElegido ? Object.entries(cantidades).reduce((suma, [productId, cantidad]) => {
+    if (cantidad <= 0) return suma;
+    const prod = productosDelGrupo.find(p => p.id === Number(productId));
+    if (!prod) return suma;
+    return suma + Number(prod.precio_pieza || 0) * cantidad;
+  }, 0) : null;
+  const ahorro = (completo && precioActual != null && precioRegular != null) ? Math.max(0, precioRegular - precioActual) : null;
+  const ahorroPorcentaje = (ahorro != null && precioRegular > 0) ? Math.round((ahorro / precioRegular) * 100) : null;
+
+  const espacioDisponibleGlobal = targetElegido ? targetElegido.piezas - totalPiezas : 0;
+
+  const cambiarCantidad = (productoId, delta) => {
+    setCantidades(prev => {
+      const actual = prev[productoId] || 0;
+      const nueva = Math.max(0, actual + delta);
+      if (delta > 0 && totalPiezas >= targetElegido.piezas) return prev; // ya está al tope de la meta elegida
+      return { ...prev, [productoId]: nueva };
+    });
+  };
+
+  const elegirTarget = (opcion) => { setCantidades({}); setTargetElegido(opcion); };
+  const volverAElegir = () => { setTargetElegido(null); setCantidades({}); };
+
+  const confirmar = () => {
+    if (!completo) return;
+    agregarFlexPackAlCarrito(grupo, cantidades, productosDelGrupo, precioActual, totalPiezas);
+    onClose();
+  };
+
+  return createPortal(
+    <div className="oft-overlay" style={S.overlay} onClick={onClose}>
+      <div className={isMobile ? "oft-sheet-slide" : "oft-qv-pop"} style={{ ...S.modal, maxWidth: 480, padding: 0, overflow: "hidden", display: "flex", flexDirection: "column", maxHeight: "88vh" }} onClick={e => e.stopPropagation()}>
+
+        {mostrandoIntro ? (
+          <div style={{ padding: "60px 24px", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 14, minHeight: 260 }}>
+            <img src={FLEXPACK_ICON_URL} alt="Flex Pack" className="oft-flexpack-logo-intro" style={{ width: 76, height: 76, objectFit: "contain" }} />
+            <div style={{ fontWeight: 900, fontSize: 16, letterSpacing: 0.3 }}>Flex Pack</div>
+            <div style={{ fontSize: 12.5, color: GRAY3 }}>Arma tu paquete como quieras</div>
+          </div>
+        ) : !targetElegido ? (
+          <div style={{ padding: "26px 20px 24px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}>
+              <img src={FLEXPACK_ICON_URL} style={{ width: 24, height: 24, objectFit: "contain", flexShrink: 0 }} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 900, fontSize: 15.5 }}>¿Cuánto quieres armar?</div>
+                <div style={{ fontSize: 11.5, color: GRAY3 }}>{grupo.nombre}</div>
+              </div>
+              <button onClick={onClose} className="oft-btn-press" style={{ background: GRAY, border: "none", borderRadius: "50%", width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}><X size={15} /></button>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              {opciones.map((op, i) => {
+                const alcanza = calcularStockMaximo(op.modalidad) >= op.piezas;
+                return (
+                  <button key={op.etiqueta} onClick={() => alcanza && elegirTarget(op)} disabled={!alcanza} className="oft-btn-press oft-flexpack-track-card" style={{ animationDelay: `${0.05 + i * 0.05}s`, opacity: alcanza ? 1 : 0.55, cursor: alcanza ? "pointer" : "not-allowed" }}>
+                    <div className="oft-flexpack-track-num" style={!alcanza ? { background: GRAY2, color: GRAY3, boxShadow: "none" } : undefined}>{op.piezas}</div>
+                    <div style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
+                      <div style={{ fontWeight: 800, fontSize: 14.5 }}>{op.etiqueta}</div>
+                      <div style={{ fontSize: 11.5, color: alcanza ? GRAY3 : "#92400E", fontWeight: alcanza ? 400 : 700 }}>{alcanza ? op.detalle : "Sin stock suficiente por ahora"}</div>
+                    </div>
+                    {alcanza && <ChevronRight size={16} color={GRAY3} style={{ flexShrink: 0 }} />}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ) : (
+          <>
+            <div style={{ padding: "18px 20px 14px", borderBottom: `1px solid ${GRAY2}`, display: "flex", alignItems: "center", gap: 10 }}>
+              <button onClick={volverAElegir} className="oft-btn-press" style={{ background: GRAY, border: "none", borderRadius: "50%", width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}><ArrowLeft size={15} /></button>
+              <img src={FLEXPACK_ICON_URL} style={{ width: 26, height: 26, objectFit: "contain", flexShrink: 0 }} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 900, fontSize: 15.5 }}>Flex Pack · {targetElegido.etiqueta}</div>
+                <div style={{ fontSize: 11.5, color: GRAY3 }}>{grupo.nombre} · mezcla como quieras</div>
+              </div>
+              <button onClick={onClose} className="oft-btn-press" style={{ background: GRAY, border: "none", borderRadius: "50%", width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}><X size={15} /></button>
+            </div>
+
+            <div style={{ flex: 1, overflowY: "auto", padding: "4px 20px" }}>
+              {sinStockSuficiente && (
+                <div style={{ display: "flex", alignItems: "flex-start", gap: 10, background: "#FEF3C7", borderRadius: 12, padding: 14, margin: "12px 0" }}>
+                  <AlertCircle size={18} color="#92400E" style={{ flexShrink: 0, marginTop: 1 }} />
+                  <div>
+                    <div style={{ fontWeight: 800, fontSize: 13.5, color: "#92400E" }}>Sin stock suficiente para completar {targetElegido.etiqueta}</div>
+                    <div style={{ fontSize: 12, color: "#92400E", marginTop: 2 }}>Entre todos los productos de este grupo solo hay {stockMaximoTotal} disponibles -- no alcanza para {targetElegido.piezas}. Prueba con la otra opción si hay, o vuelve más tarde.</div>
+                  </div>
+                </div>
+              )}
+              {productosDelGrupo.length === 0 ? (
+                <div style={{ padding: "30px 0", textAlign: "center", color: GRAY3, fontSize: 13 }}>Este grupo todavía no tiene productos disponibles.</div>
+              ) : productosDelGrupo.map(p => (
+                <FilaProductoFlexPack key={p.id} producto={p} cantidad={cantidades[p.id] || 0}
+                  espacioDisponibleGlobal={espacioDisponibleGlobal}
+                  onCambiar={(delta) => cambiarCantidad(p.id, delta)} />
+              ))}
+            </div>
+
+            <div style={{ padding: "16px 20px 20px", borderTop: `1px solid ${GRAY2}`, background: GRAY }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                <span style={{ fontSize: 12.5, fontWeight: 700, color: completo ? "#0A9D4F" : GRAY3, display: "flex", alignItems: "center", gap: 5 }}>
+                  {completo && <CheckCircle2Icon />} {completo ? "Flex Pack completo" : `${totalPiezas} de ${targetElegido.piezas} piezas`}
+                </span>
+                {completo && precioActual != null && <span style={{ fontWeight: 900, fontSize: 17, color: RED }}>${precioActual.toFixed(2)}</span>}
+              </div>
+              <div style={{ height: 8, borderRadius: 5, background: GRAY2, overflow: "hidden" }}>
+                <div className={completo ? "oft-flexpack-bar-completo" : ""} style={{ height: "100%", width: `${Math.min(100, (totalPiezas / targetElegido.piezas) * 100)}%`, background: completo ? "#0A9D4F" : RED, borderRadius: 5, transition: "width 0.35s cubic-bezier(0.16,1,0.3,1)" }} />
+              </div>
+              {!completo && (
+                <div style={{ fontSize: 11.5, color: GRAY3, marginTop: 6 }}>
+                  Agrega {targetElegido.piezas - totalPiezas} más para completar tu {targetElegido.etiqueta}
+                  {totalPiezas > 0 && precioRegular > 0 && <span> · A precio normal: ${precioRegular.toFixed(2)}</span>}
+                </div>
+              )}
+              {completo && ahorro != null && ahorro > 0 && (
+                <div className="oft-fade-in" style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8, background: "#E8F5E9", borderRadius: 9, padding: "7px 11px" }}>
+                  <Zap size={14} color="#0A9D4F" style={{ flexShrink: 0 }} />
+                  <span style={{ fontSize: 12, color: "#0A9D4F", fontWeight: 700 }}>
+                    Ahorras ${ahorro.toFixed(2)}{ahorroPorcentaje != null ? ` (${ahorroPorcentaje}%)` : ""} comparado con comprarlo por pieza
+                  </span>
+                </div>
+              )}
+              <button onClick={confirmar} disabled={!completo} className="oft-btn-press"
+                style={{ width: "100%", marginTop: 12, padding: 14, borderRadius: 12, border: "none", background: completo ? RED : GRAY2, color: completo ? WHITE : GRAY3, fontWeight: 800, fontSize: 14.5, cursor: completo ? "pointer" : "not-allowed", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+                Agregar Flex Pack al carrito
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>,
+    document.body
+  );
+}
+function CheckCircle2Icon() { return <CheckCircle2 size={14} color="#0A9D4F" />; }
+
+// ═══════════════════════════════════════════════════════════════
+//  SELECTOR DE TALLA Y COLOR (animado) — solo "Por pieza"
+// ═══════════════════════════════════════════════════════════════
+// Mapa de colores comunes en español → hex (para el puntito de color)
+
+function VariantPicker({ product, talla, setTalla, color, setColor }) {
+  const tallas = (product.tallas || "").split(",").map(s => s.trim()).filter(Boolean);
+  const colores = (product.colores || "").split(",").map(s => s.trim()).filter(Boolean);
+  const showTallas = product.tiene_tallas && tallas.length > 0;
+  const showColores = product.tiene_colores && colores.length > 0;
+  if (!showTallas && !showColores) return null;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      {showTallas && (
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: GRAY3, marginBottom: 5 }}>Talla</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+            {tallas.map(t => {
+              const active = talla === t;
+              return (
+                <button key={t} onClick={() => setTalla(active ? "" : t)} className="oft-btn-press"
+                  style={{ minWidth: 34, padding: "5px 9px", borderRadius: 8, border: `2px solid ${active ? RED : GRAY2}`, background: active ? RED : WHITE, color: active ? WHITE : BLACK, fontWeight: 800, fontSize: 12, cursor: "pointer", transition: "all 0.15s" }}>
+                  {t}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+      {showColores && (
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: GRAY3, marginBottom: 5 }}>Color</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {colores.map(c => {
+              const active = color === c;
+              return (
+                <button key={c} onClick={() => setColor(active ? "" : c)} className="oft-btn-press oft-color-chip"
+                  title={c}
+                  style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 10px 4px 5px", borderRadius: 20, border: `2px solid ${active ? RED : GRAY2}`, background: active ? "#FFF5F5" : WHITE, cursor: "pointer", transition: "all 0.15s", transform: active ? "scale(1.05)" : "scale(1)" }}>
+                  <span style={{ width: 16, height: 16, borderRadius: "50%", background: colorToHex(c), border: `1px solid ${GRAY2}`, flexShrink: 0 }} />
+                  <span style={{ fontSize: 12, fontWeight: 700, color: active ? RED : BLACK }}>{nombreColorLimpio(c)}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  DISTRIBUCIÓN DE TALLA/COLOR (info al cliente en media docena/docena)
+//  Colapsada por defecto: el cliente hace click para verla.
+//  Usa el mismo patrón de animación liviano que el resto de la app
+//  (montar/desmontar + .oft-detail-open) en vez de animar grid-template-rows,
+//  que en celular se sentía lento por el reflow continuo.
+// ═══════════════════════════════════════════════════════════════
+function DistribucionInfo({ product, pres, count }) {
+  const [open, setOpen] = useState(false);
+  if (pres === "pieza") return null;
+  const distDocena = parseDistribucion(product.distribucion_docena);
+  if (totalDistribucion(distDocena) === 0) return null;
+
+  const eje = product.distribucion_eje === "color" ? "color" : "talla";
+  const dist = pres === "docena" ? distDocena : mediaDocenaDesdeDistribucion(distDocena);
+  const entradas = Object.entries(dist).filter(([, qty]) => Number(qty) > 0);
+  if (entradas.length === 0) return null;
+
+  return (
+    <div style={{ marginTop: 8, border: `1px solid ${GRAY2}`, borderRadius: 8, overflow: "hidden", background: WHITE }}>
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className="oft-btn-press"
+        style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", background: "transparent", border: "none", padding: "8px 10px", cursor: "pointer", fontSize: 11, fontWeight: 800, color: BLACK, WebkitTapHighlightColor: "transparent" }}
+      >
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+          <Tag size={13} color={RED} /> Ver distribución por {presLabel(pres)} ({eje === "color" ? "colores" : "tallas"})
+        </span>
+        <ChevronDown size={15} color={GRAY3} style={{ transition: "transform 0.2s ease", transform: open ? "rotate(180deg)" : "rotate(0deg)", flexShrink: 0 }} />
+      </button>
+      {open && (
+        <div className="oft-detail-open" style={{ display: "flex", flexWrap: "wrap", gap: 5, padding: "0 10px 10px" }}>
+          {entradas.map(([v, qty]) => (
+            <span key={v} className="oft-chip-pop" style={{ background: GRAY, border: `1px solid ${GRAY2}`, borderRadius: 6, padding: "2px 7px", fontWeight: 700, fontSize: 11, color: BLACK }}>
+              {Number(qty) * count}× {v}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  PRODUCT CARD
+// ═══════════════════════════════════════════════════════════════
+function ProductCard({ product }) {
+  const { addToCart, showToast, setQuickView, flexpackGrupos } = useApp();
+  const [pres, setPres] = useState("docena"); // siempre abre en Docena por defecto, incluso si "venta_por_unidad" está activo
+  const [count, setCount] = useState(1);
+  const [added, setAdded] = useState(false);
+  const [talla, setTalla] = useState("");
+  const [color, setColor] = useState("");
+  const [mostrarFlexPack, setMostrarFlexPack] = useState(false);
+  const grupoFlexPack = product.flexpack_grupo_id ? flexpackGrupos.find(g => g.id === product.flexpack_grupo_id) : null;
+  const total = presTotal(product, pres, count);
+  const imgUrl = product.imagen_url ? imagenOptimizada(product.imagen_url, 400) : null;
+  const coloresDisponibles = product.tiene_colores ? (product.colores || "").split(",").map(s => s.trim()).filter(Boolean) : [];
+  const btnRef = useRef(null);
+  // Solo bloqueamos la compra cuando se agota un producto PROPIO (sin proveedor).
+  // Los productos de proveedor externo siempre se pueden comprar — el stock ahí
+  // se maneja yendo a comprarle al proveedor cuando llega el pedido.
+  const respetaStock = (!product.proveedor_id || product.tiene_stock_fisico);
+  const agotadoBloqueado = respetaStock && product.stock_actualizado_at && stockWeb(product) <= 0;
+
+  // ¿Este producto tiene variantes y el cliente eligió "Por pieza"?
+  const tieneVariantes = (product.tiene_tallas && (product.tallas || "").trim()) || (product.tiene_colores && (product.colores || "").trim());
+  const modoConsulta = pres === "pieza" && tieneVariantes && !product.venta_por_unidad;
+
+  // Consultar por WhatsApp con la talla y el color elegidos
+  const consultarWhatsApp = () => {
+    if (product.tiene_tallas && (product.tallas || "").trim() && !talla) { showToast("Elige una talla primero"); return; }
+    if (product.tiene_colores && (product.colores || "").trim() && !color) { showToast("Elige un color primero"); return; }
+    let msg = `Hola Ofertodo, quiero consultar disponibilidad de:\n\n*${product.nombre}*`;
+    if (product.referencia) msg += `\nRef: ${product.referencia}`;
+    if (talla) msg += `\nTalla: ${talla}`;
+    if (color) msg += `\nColor: ${color}`;
+    msg += `\nPresentación: Por pieza`;
+    // Se manda el LINK del producto (no la foto directa) -- así WhatsApp arma la
+    // vista previa con imagen usando la misma página que ya funciona bien al compartir.
+    msg += `\n\nVer producto: ${window.location.origin}/producto/${product.id}`;
+    registrarEvento("consulta_whatsapp", product.id, "Consulta de producto (talla/color)");
+    window.open(`https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(msg)}`, "_blank");
+  };
+
+  const handleAdd = (e) => {
+    const piezas = presToPiezas(pres, count, product);
+    addToCart(product, piezas, pres, count);
+    showToast(`${product.nombre} agregado al pedido`);
+    // feedback visual en el botón
+    setAdded(true);
+    setTimeout(() => setAdded(false), 1100);
+    // animación "volar al carrito": clona la imagen y la lanza
+    try {
+      const card = e.currentTarget.closest("[data-prod-card]");
+      const img = card?.querySelector("[data-prod-img]");
+      const cartBtn = document.querySelector(".oft-nav button");
+      if (img && cartBtn) {
+        const r1 = img.getBoundingClientRect();
+        const r2 = cartBtn.getBoundingClientRect();
+        const fly = img.cloneNode(true);
+        fly.className = "oft-fly";
+        fly.style.left = r1.left + "px";
+        fly.style.top = r1.top + "px";
+        fly.style.width = r1.width + "px";
+        fly.style.height = r1.height + "px";
+        fly.style.borderRadius = "12px";
+        fly.style.setProperty("--fly-x", (r2.left - r1.left) + "px");
+        fly.style.setProperty("--fly-y", (r2.top - r1.top) + "px");
+        document.body.appendChild(fly);
+        setTimeout(() => fly.remove(), 750);
+      }
+    } catch(err) {}
+  };
+
+  return (
+    <>
+    <div data-prod-card className="oft-pcard" style={{ ...S.prodCard, border: undefined, borderRadius: undefined, boxShadow: undefined }}>
+      <div data-prod-img onClick={() => setQuickView(product)} title="Ver detalle" style={{ background: GRAY, aspectRatio: "1 / 1", width: "100%", display: "flex", alignItems: "center", justifyContent: "center", position: "relative", overflow: "hidden", cursor: "pointer" }}>
+        {imgUrl
+          ? <img src={imgUrl} alt={product.nombre} loading="lazy" decoding="async" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
+          : <Package size={56} color={GRAY3} strokeWidth={1.3} />
+        }
+        {product.badge && <span style={{ position: "absolute", top: 10, left: 10, background: RED, color: WHITE, fontSize: 11, fontWeight: 800, padding: "4px 10px", borderRadius: 10, display: "inline-flex", alignItems: "center", gap: 4 }}><Sparkles size={11} /> {product.badge}</span>}
+        {/* Indicador de stock — solo se muestra si el producto está sincronizado con Odoo */}
+        {product.stock_actualizado_at && (
+          stockWeb(product) <= 0
+            ? <span style={{ position: "absolute", top: 10, right: 10, background: "#721C24", color: WHITE, fontSize: 11, fontWeight: 800, padding: "4px 10px", borderRadius: 10 }}>Agotado</span>
+            : stockWeb(product) <= 5
+              ? <span style={{ position: "absolute", top: 10, right: 10, background: "#856404", color: WHITE, fontSize: 11, fontWeight: 800, padding: "4px 10px", borderRadius: 10 }}>Pocas unidades</span>
+              : null
+        )}
+        <span style={{ position: "absolute", bottom: 8, right: 8, background: "rgba(0,0,0,0.55)", color: WHITE, fontSize: 10, fontWeight: 700, padding: "3px 8px", borderRadius: 12, display: "inline-flex", alignItems: "center", gap: 4 }}><Search size={11} /> Ver</span>
+      </div>
+      <div className="oft-prod-body" style={{ padding: 16, display: "flex", flexDirection: "column", flex: 1 }}>
+        <div style={{ fontSize: 11, color: GRAY3, fontWeight: 600, marginBottom: 4 }}>REF: {product.referencia || "—"}</div>
+        <div className="oft-pcard-name" onClick={() => setQuickView(product)} style={{ marginBottom: 6, cursor: "pointer", height: 40, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{product.nombre}</div>
+        {coloresDisponibles.length > 0 && (
+          <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 8 }}>
+            {coloresDisponibles.slice(0, 5).map((c, i) => (
+              <span key={i} className="oft-btn-press" title={nombreColorLimpio(c)} style={{
+                width: 14, height: 14, borderRadius: "50%", background: colorToHex(c), flexShrink: 0,
+                boxShadow: `0 0 0 2px ${WHITE}, 0 0 0 2.5px ${GRAY2}, 0 1px 4px rgba(0,0,0,0.18)`,
+              }} />
+            ))}
+            {coloresDisponibles.length > 5 && <span style={{ fontSize: 10.5, color: GRAY3, fontWeight: 800, marginLeft: 2 }}>+{coloresDisponibles.length - 5}</span>}
+          </div>
+        )}
+        <div style={{ fontSize: 13, color: GRAY3, marginBottom: 12, lineHeight: 1.4, height: 36, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{product.descripcion}</div>
+        {/* SELECTOR DE PRESENTACIÓN + CANTIDAD + TOTAL */}
+        <div style={{ marginBottom: 10 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: "4px 8px", marginBottom: 10 }}>
+            <span style={{ fontSize: 13, fontWeight: 800, paddingBottom: 2 }}>Elige cómo comprar</span>
+            <div style={{ textAlign: "right", marginLeft: "auto" }}>
+              <div style={{ fontSize: 10, fontWeight: 800, color: GRAY3, marginBottom: 3 }}>Total</div>
+              <span className="oft-pcard-total">${Number(total).toFixed(2)}</span>
+            </div>
+          </div>
+          <QtySelector product={product} pres={pres} setPres={setPres} count={count} setCount={setCount} />
+          {grupoFlexPack && (
+            <div style={{ marginTop: 8 }}><FlexPackBadge tamano="chico" onAbrir={() => setMostrarFlexPack(true)} /></div>
+          )}
+          {/* DESGLOSE o VARIANTES (si eligió Por pieza y tiene tallas/colores) */}
+          {modoConsulta ? (
+            <div style={{ background: GRAY, borderRadius: 8, padding: "10px 12px", marginTop: 8 }}>
+              <VariantPicker product={product} talla={talla} setTalla={setTalla} color={color} setColor={setColor} />
+            </div>
+          ) : (
+            <div style={{ fontSize: 11, color: GRAY3, background: GRAY, borderRadius: 6, padding: "6px 10px", display: "flex", alignItems: "center", gap: 5, marginTop: 8, minHeight: 30 }}>
+              <Sparkles size={12} style={{ flexShrink: 0 }} /> <span>{presBreakdown(pres, count, product)}</span>
+            </div>
+          )}
+          <DistribucionInfo product={product} pres={pres} count={count} />
+        </div>
+        {/* Empuja los botones al fondo para alinear todas las tarjetas */}
+        <div style={{ marginTop: "auto" }} />
+        {modoConsulta ? (
+          <button className="oft-btn-press oft-pcard-add" style={{ width: "100%", background: "#25D366" }} onClick={consultarWhatsApp}>
+            <MessageCircle size={16} /> Consultar disponibilidad
+          </button>
+        ) : (
+        <div className="oft-pcard-actions" style={{ display: "flex", gap: 8 }}>
+          <button ref={btnRef} className="oft-pcard-add oft-btn-press" disabled={agotadoBloqueado} style={{ background: agotadoBloqueado ? GRAY3 : (added ? "#0A9D4F" : RED), cursor: agotadoBloqueado ? "not-allowed" : "pointer", opacity: agotadoBloqueado ? 0.7 : 1 }} onClick={agotadoBloqueado ? undefined : handleAdd}>
+            {agotadoBloqueado ? "Agotado" : added ? <><CheckCircle2 size={16} className="oft-check-pop" /> ¡Agregado!</> : <><Plus size={16} strokeWidth={2.8} /> Agregar</>}
+          </button>
+          <button className="oft-pcard-sq oft-btn-press" title="Consultar por WhatsApp" onClick={() => { registrarEvento("consulta_whatsapp", product.id, "Interés en producto"); let m = `Hola Ofertodo, me interesa: ${product.nombre}`; if (product.referencia) m += ` (Ref: ${product.referencia})`; m += `\n\nVer producto: ${window.location.origin}/producto/${product.id}`; window.open(`https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(m)}`, "_blank"); }}><MessageCircle size={18} /></button>
+          <button className="oft-pcard-sq gray oft-btn-press" title="Compartir producto" onClick={() => compartirProducto(product, showToast)}><Share2 size={16} /></button>
+        </div>
+        )}
+      </div>
+    </div>
+    {mostrarFlexPack && grupoFlexPack && <PanelFlexPack grupo={grupoFlexPack} onClose={() => setMostrarFlexPack(false)} />}
+    </>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  CATÁLOGO
+// ═══════════════════════════════════════════════════════════════
+function CatalogoView() {
+  const { products, categories, gruposCategorias, loading, catalogCat } = useApp();
+  const [catFilter, setCatFilter] = useState(catalogCat || 0);
+  const [search, setSearch] = useState("");
+  const [catSheetAbierto, setCatSheetAbierto] = useState(false);
+
+  // Si el usuario eligió una categoría desde el inicio, ábrela
+  useEffect(() => { setCatFilter(catalogCat || 0); }, [catalogCat]);
+
+  // Cambia el título y la meta descripción según la categoría que se esté viendo
+  useEffect(() => {
+    const cat = categories.find(c => c.id === catFilter);
+    const titulo = cat ? `${cat.nombre} | Ofertodo - Distribuidora en Panamá` : "Catálogo | Ofertodo - Distribuidora en Panamá";
+    const descripcion = cat
+      ? `Compra ${cat.nombre} al por mayor en Panamá -- por pieza, media docena o docena, con envíos a todo el país.`
+      : "Catálogo completo de Ofertodo -- ropa, calzado, accesorios y perfumería al por mayor en Panamá. Por pieza, media docena o docena.";
+    actualizarSEO({ title: titulo, description: descripcion, url: `${window.location.origin}/catalogo` });
+    return () => { document.title = "Ofertodo - Distribuidora al por Mayor en Panamá | Ropa, Calzado y Accesorios"; };
+  }, [catFilter, categories]);
+
+  // Quita tildes y pasa a minúsculas, para que la búsqueda encuentre resultados
+  // sin importar si el cliente escribe con o sin acentos (ej. "nino" encuentra "Niño")
+  const normalizar = (t) => (t || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const searchNorm = normalizar(search);
+
+  // Palabras de enlace que se ignoran al comparar (para que "jeans DE hombre" y
+  // "jeans hombre" se traten como lo mismo)
+  const PALABRAS_VACIAS = new Set(["de", "del", "la", "el", "los", "las", "para", "y", "en", "con", "un", "una"]);
+  // Forma singular aproximada de una palabra (quita la "s" final), para que "jeans"
+  // encuentre "jean" y viceversa, sin importar si el cliente escribe en plural o no.
+  const singularizar = (palabra) => (palabra.length > 3 && palabra.endsWith("s")) ? palabra.slice(0, -1) : palabra;
+  const palabrasClave = (texto) => normalizar(texto).split(/\s+/).filter(w => w && !PALABRAS_VACIAS.has(w)).map(singularizar);
+
+  // Compara dos textos por palabras clave en vez de frase exacta: no importa el orden
+  // ("hombre jeans" = "jeans hombre"), ni el plural/singular, ni palabras de enlace.
+  const coincideCategoria = (nombreCategoria, textoBusqueda) => {
+    const palabrasBusqueda = palabrasClave(textoBusqueda);
+    if (palabrasBusqueda.length === 0) return false;
+    const palabrasCategoria = palabrasClave(nombreCategoria);
+    return palabrasBusqueda.every(pb => palabrasCategoria.some(pc => pc.includes(pb) || pb.includes(pc)));
+  };
+
+  const filtered = agruparPorFlexPack(products.filter(p => {
+    if (!p.activo || p.visible_web === false) return false;
+    if (searchNorm === "") return catFilter === 0 || p.categoria_id === catFilter;
+    // Con texto de búsqueda: coincide por nombre, referencia, O por el nombre de la
+    // categoría del producto (así "jeans de hombre" encuentra "Jeans Hombre", sin
+    // importar el orden, el plural, o si le sobra/falta una palabra de enlace).
+    const categoriaProducto = categories.find(c => c.id === p.categoria_id);
+    const coincide =
+      normalizar(p.nombre).includes(searchNorm) ||
+      normalizar(p.referencia).includes(searchNorm) ||
+      (categoriaProducto && coincideCategoria(categoriaProducto.nombre, search));
+    if (!coincide) return false;
+    // Si además hay una categoría específica seleccionada con los chips, respétala también
+    return catFilter === 0 || p.categoria_id === catFilter;
+  }));
+
+  // Si lo que escribió coincide con el nombre de una categoría, la resalta visualmente
+  // (aunque no la haya seleccionado con clic) para que quede claro qué está viendo.
+  const categoriaSugerida = searchNorm !== "" ? categories.find(c => coincideCategoria(c.nombre, search)) : null;
+
+  // Registra la búsqueda solo cuando el cliente deja de escribir un momento (para
+  // "búsquedas más frecuentes" en Analítica, sin registrar cada letra). Si el texto
+  // coincide claramente con una categoría (aunque esté mal escrito, en plural, etc.),
+  // se registra bajo el NOMBRE de esa categoría -- así "jean", "jeans", "geans" se
+  // agrupan todos como una sola búsqueda ("Jeans Hombre"), en vez de aparecer sueltos.
+  // Si no coincide con nada, se guarda el texto tal cual lo escribió (útil para saber
+  // qué buscan los clientes que tu catálogo todavía no tiene).
+  useEffect(() => {
+    if (search.trim().length < 2) return;
+    const t = setTimeout(() => {
+      if (categoriaSugerida) registrarEvento("busqueda", categoriaSugerida.id, categoriaSugerida.nombre);
+      else registrarEvento("busqueda", null, search.trim());
+    }, 900);
+    return () => clearTimeout(t);
+  }, [search, categoriaSugerida]);
+
+  if (loading) return <Spinner />;
+
+  return (
+    <div>
+      <div className="oft-section" style={{ ...S.section, paddingTop: 34, paddingBottom: 20 }}>
+        <div className="oft-sec-head" style={{ marginBottom: 0 }}>
+          <span />
+          <div><h2>Catálogo de productos</h2><p>Compra por pieza, media docena o docena</p></div>
+          <em>{filtered.length} {filtered.length === 1 ? "producto" : "productos"}</em>
+        </div>
+      </div>
+      <div className="oft-tool">
+        <div className="oft-tool-in">
+          <div className="oft-tool-search">
+            <Search size={18} className="ic" />
+            <input placeholder="Buscar producto, referencia o categoría..." value={search} onChange={e => setSearch(e.target.value)} />
+            {search && <button className="x" onClick={() => setSearch("")} aria-label="Borrar búsqueda"><X size={14} /></button>}
+          </div>
+          <CategoriaTrigger categorias={categories} gruposCategorias={gruposCategorias} seleccionadaId={catFilter} onClick={() => setCatSheetAbierto(true)} />
+        </div>
+      </div>
+      <div className="oft-section" style={{ ...S.section, paddingTop: 26 }}>
+      {catSheetAbierto && (
+        <CategoriaSheet
+          categorias={categories}
+          gruposCategorias={gruposCategorias}
+          seleccionadaId={catFilter}
+          resaltadaId={categoriaSugerida?.id}
+          onSeleccionar={(id) => {
+            setCatFilter(id); setCatSheetAbierto(false);
+            if (id) registrarEvento("click_categoria", id, categories.find(c => c.id === id)?.nombre);
+          }}
+          onClose={() => setCatSheetAbierto(false)}
+        />
+      )}
+      {filtered.length === 0
+        ? <div style={{ textAlign: "center", padding: "60px 0", color: GRAY3 }}><Search size={48} strokeWidth={1.3} style={{ margin: "0 auto 12px" }} /><p>No se encontraron productos</p></div>
+        : <div key={catFilter + "-" + search} className="oft-prod-grid" style={S.prodGrid}>
+            {filtered.map((p, i) => (
+              <div key={p.id} className="oft-prod-anim" style={{ animationDelay: `${Math.min(i * 0.05, 0.4)}s`, height: "100%" }}>
+                <ProductCard product={p} />
+              </div>
+            ))}
+          </div>
+      }
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  MODAL DE DETALLE DEL PRODUCTO (Quick View)
+// ═══════════════════════════════════════════════════════════════
+// Caja de compra que reemplaza "Elige como comprar" cuando el producto se abre desde una OFERTA:
+// muestra el precio de esa oferta/sección (detal o mayor), no el de pieza/3/6/media/docena.
+function OfertaCompraBox({ ofe, onCerrar }) {
+  const { agregarOfertaAlCarrito, cart, showToast } = useApp();
+  const { info, vigente, campana } = ofe;
+  const o = info.oferta;
+  const esCombo = o.tipo === "combo";
+  const tieneTallas = (p) => p.tiene_tallas && (p.tallas || "").trim();
+  const tieneColores = (p) => p.tiene_colores && (p.colores || "").trim();
+  const lineasConVariantes = info.lineas.filter(l => tieneTallas(l.product) || tieneColores(l.product));
+  const modoConsulta = lineasConVariantes.length > 0;
+  const [sel, setSel] = useState({});
+  const setVar = (pid, campo, valor) => setSel(prev => ({ ...prev, [pid]: { ...(prev[pid] || {}), [campo]: valor } }));
+  const [uni, setUni] = useState(1);
+  const [okAnim, setOkAnim] = useState(false);
+  const enCarrito = cart.filter(i => i.esOferta && i.ofertaId === o.id).reduce((s, i) => s + i.unidades, 0);
+  const limite = o.limite_por_pedido ? Math.max(0, o.limite_por_pedido - enCarrito) : Infinity;
+  const stock = Number.isFinite(info.stockMax) ? Math.max(0, info.stockMax) : Infinity;
+  const maxAhora = Math.min(limite, stock);
+  const agotado = stock === 0;
+  const sinMas = !agotado && maxAhora <= 0;
+  const topeUni = Number.isFinite(maxAhora) ? Math.max(1, maxAhora) : 99;
+  useEffect(() => { if (uni > topeUni) setUni(topeUni); }, [topeUni]);
+  const seccion = o.seccion === "mayor" ? "al mayor" : "al detal";
+  const unidadTxt = (n) => esCombo ? (n === 1 ? "combo" : "combos") : (n === 1 ? "oferta" : "ofertas");
+
+  const agregar = () => {
+    if (!vigente) return;
+    const ok = agregarOfertaAlCarrito(info, uni);
+    if (ok) { setOkAnim(true); setTimeout(() => setOkAnim(false), 1400); setUni(1); }
+  };
+  const consultarWhatsApp = () => {
+    if (!vigente) return;
+    for (const l of lineasConVariantes) {
+      const v = sel[l.product.id] || {};
+      if (tieneTallas(l.product) && !v.talla) { showToast(`Elige la talla${info.lineas.length > 1 ? ` de ${l.product.nombre}` : ""} primero`); return; }
+      if (tieneColores(l.product) && !v.color) { showToast(`Elige el color${info.lineas.length > 1 ? ` de ${l.product.nombre}` : ""} primero`); return; }
+    }
+    let msg = `Hola Ofertodo, quiero consultar disponibilidad de esta oferta:\n\n*${campana ? `${campana.prefijo} ${campana.nombre}` : "Oferta"}*\n*${info.titulo}* (${esCombo ? "Combo" : "Oferta"} ${seccion})`;
+    msg += `\nPrecio de oferta: $${info.precioOferta.toFixed(2)}${info.precioNormal > info.precioOferta ? ` (antes $${info.precioNormal.toFixed(2)})` : ""}`;
+    msg += `\nCantidad: ${uni} ${unidadTxt(uni)}`;
+    msg += `\n\nIncluye:`;
+    for (const l of info.lineas) {
+      const v = sel[l.product.id] || {};
+      msg += `\n• ${l.piezas * uni}x ${l.product.nombre}${l.product.referencia ? ` (Ref: ${l.product.referencia})` : ""}`;
+      if (v.talla) msg += ` — Talla: ${v.talla}`;
+      if (v.color) msg += ` — Color: ${v.color}`;
+    }
+    if (info.lineas.length === 1) msg += `\n\nVer producto: ${window.location.origin}/producto/${info.lineas[0].product.id}`;
+    registrarEvento("consulta_whatsapp", o.id, `Consulta de oferta: ${info.titulo}`);
+    window.open(`https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(msg)}`, "_blank");
+  };
+  const total = Math.round(info.precioOferta * uni * 100) / 100;
+  const presTxt = o.presentacion === "pieza" ? "Por pieza" : `${info.totalPiezas} piezas · ${o.presentacion === "media" ? "media docena" : "docena"}`;
+
+  return (
+    <div style={{ background: "#FFF5F5", border: `1.5px solid ${RED}`, borderRadius: 12, padding: 16, margin: "8px 0 16px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, marginBottom: 10 }}>
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 800, color: RED, display: "flex", alignItems: "center", gap: 5 }}>
+            {esCombo ? <Boxes size={13} /> : <Sparkles size={13} />} {esCombo ? "COMBO" : "OFERTA"} {seccion.toUpperCase()}{campana ? ` · ${campana.nombre}` : ""}
+          </div>
+          <div style={{ fontSize: 15, fontWeight: 800, marginTop: 3 }}>{info.titulo}</div>
+          <div style={{ fontSize: 12, color: GRAY3, marginTop: 2 }}>
+            {esCombo ? `${info.totalPiezas} piezas en total` : presTxt}
+            {!esCombo && info.totalPiezas > 1 && <> · ${(info.precioOferta / info.totalPiezas).toFixed(2)} c/u</>}
+          </div>
+        </div>
+        <div style={{ textAlign: "right", flexShrink: 0 }}>
+          {info.precioNormal > info.precioOferta && <div style={{ fontSize: 13, color: GRAY3, textDecoration: "line-through", fontWeight: 600 }}>${info.precioNormal.toFixed(2)}</div>}
+          <div style={{ fontSize: 26, color: RED, fontWeight: 900, lineHeight: 1 }}>${info.precioOferta.toFixed(2)}</div>
+          {info.pct > 0 && <div style={{ fontSize: 11, fontWeight: 800, color: "#0F6E56", marginTop: 3 }}>-{info.pct}%{info.ahorro > 0.005 ? ` · ahorras $${info.ahorro.toFixed(2)}` : ""}</div>}
+        </div>
+      </div>
+
+      {esCombo && (
+        <div style={{ background: WHITE, borderRadius: 8, padding: "10px 12px", marginBottom: 10, fontSize: 13 }}>
+          <div style={{ fontWeight: 800, fontSize: 11, color: GRAY3, marginBottom: 4 }}>INCLUYE</div>
+          {info.lineas.map((l, i) => <div key={i}><b>{l.piezas}×</b> {l.product.nombre}</div>)}
+          {o.descripcion && <div style={{ fontSize: 12, color: GRAY3, marginTop: 6 }}>{o.descripcion}</div>}
+        </div>
+      )}
+
+      {modoConsulta && (
+        <div style={{ background: WHITE, borderRadius: 8, padding: 12, marginBottom: 10 }}>
+          {lineasConVariantes.map(l => (
+            <div key={l.product.id} style={{ marginTop: 4 }}>
+              {info.lineas.length > 1 && <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 4 }}>{l.product.nombre}</div>}
+              <VariantPicker product={l.product} talla={(sel[l.product.id] || {}).talla || ""} setTalla={v => setVar(l.product.id, "talla", v)} color={(sel[l.product.id] || {}).color || ""} setColor={v => setVar(l.product.id, "color", v)} />
+            </div>
+          ))}
+          <div style={{ fontSize: 11, color: GRAY3, marginTop: 6 }}>¿Necesitas varias tallas o colores? Indícalo en el mensaje de WhatsApp.</div>
+        </div>
+      )}
+
+      {info.stockMax !== undefined && Number.isFinite(stock) && !agotado && stock <= 5 && (
+        <div style={{ fontSize: 12, fontWeight: 800, color: "#B45309", marginBottom: 8, display: "flex", alignItems: "center", gap: 5 }}><AlertTriangle size={13} /> ¡Quedan solo {stock}!</div>
+      )}
+      {o.limite_por_pedido && <div style={{ fontSize: 11, color: GRAY3, marginBottom: 8 }}>Máx. {o.limite_por_pedido} por pedido</div>}
+
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 10, overflow: "hidden" }}>
+          <button onClick={() => setUni(u => Math.max(1, u - 1))} disabled={uni <= 1 || agotado} aria-label="Menos" style={{ width: 40, height: 44, border: "none", background: "transparent", fontSize: 20, cursor: "pointer", opacity: uni <= 1 || agotado ? 0.35 : 1 }}>−</button>
+          <span style={{ minWidth: 30, textAlign: "center", fontWeight: 800 }}>{uni}</span>
+          <button onClick={() => setUni(u => Math.min(topeUni, u + 1))} disabled={uni >= topeUni || agotado || (sinMas && !modoConsulta)} aria-label="Más" style={{ width: 40, height: 44, border: "none", background: "transparent", fontSize: 20, cursor: "pointer", opacity: uni >= topeUni || agotado ? 0.35 : 1 }}>+</button>
+        </div>
+        {modoConsulta ? (
+          <button className="oft-btn-press" onClick={consultarWhatsApp} disabled={agotado || !vigente}
+            style={{ ...S.btnWA, flex: 1, justifyContent: "center", padding: 13, fontSize: 15, opacity: agotado || !vigente ? 0.6 : 1 }}>
+            {agotado ? "Agotado" : !vigente ? "Terminó" : <><MessageCircle size={17} /> Consultar disponibilidad</>}
+          </button>
+        ) : (
+          <button className="oft-btn-press" onClick={agregar} disabled={agotado || sinMas || !vigente}
+            style={{ ...S.btnRed, flex: 1, justifyContent: "center", padding: 13, fontSize: 15, background: agotado || sinMas || !vigente ? GRAY3 : (okAnim ? "#25D366" : RED), transition: "background 0.2s" }}>
+            {agotado ? "Agotado" : !vigente ? "Terminó" : sinMas ? "Límite en tu pedido" : okAnim ? <><CheckCircle2 size={17} /> ¡Agregado!</> : <><ShoppingCart size={16} /> Agregar · ${total.toFixed(2)}</>}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ProductModal() {
+  const { quickView: product, setQuickView, addToCart, showToast, flexpackGrupos } = useApp();
+  const [pres, setPres] = useState("docena"); // siempre abre en Docena por defecto, incluso si "venta_por_unidad" está activo
+  const [count, setCount] = useState(1);
+  const [added, setAdded] = useState(false);
+  const [talla, setTalla] = useState("");
+  const [color, setColor] = useState("");
+  const [mostrarFlexPack, setMostrarFlexPack] = useState(false);
+  const ofe = product?.__oferta || null; // { info, vigente, campana } cuando se abre desde la página de Ofertas
+  const coloresDisponibles = product?.tiene_colores ? (product.colores || "").split(",").map(s => s.trim()).filter(Boolean) : [];
+  const grupoFlexPack = product?.flexpack_grupo_id ? flexpackGrupos.find(g => g.id === product.flexpack_grupo_id) : null;
+
+  useEffect(() => { setPres("docena"); setCount(1); setAdded(false); setTalla(""); setColor(""); }, [product]);
+
+  // Mientras el producto está abierto, actualiza título, meta descripción,
+  // Open Graph, y los datos estructurados de Producto (para Google y para que
+  // se vea bien al compartir el link por WhatsApp).
+  useEffect(() => {
+    if (!product) return;
+    const descripcion = (product.descripcion ? product.descripcion.slice(0, 155) : "")
+      || `${product.nombre}${product.referencia ? ` (Ref: ${product.referencia})` : ""} -- disponible por pieza, media docena y docena. Distribuidora al por mayor en Panamá.`;
+    const deshacer = actualizarSEO({
+      title: `${product.nombre} | Ofertodo`,
+      description: descripcion,
+      image: product.imagen_url,
+      url: `${window.location.origin}/producto/${product.id}`,
+      productoParaSchema: product,
+    });
+    return deshacer;
+  }, [product]);
+
+  // Registra que se vio este producto (para "productos más vistos" en Analítica),
+  // y avisa a los píxeles de marketing (si están configurados)
+  useEffect(() => {
+    if (product?.id) {
+      registrarEvento("click_producto", product.id, product.nombre);
+      trackVerProducto({ id: product.id, nombre: product.nombre, precio: product.precio_pieza });
+    }
+  }, [product?.id]);
+
+  if (!product) return null;
+  const total = presTotal(product, pres, count);
+  const imgUrl = product.imagen_url ? imagenOptimizada(product.imagen_url, 700) : null;
+  const respetaStock = (!product.proveedor_id || product.tiene_stock_fisico);
+  const agotadoBloqueado = respetaStock && product.stock_actualizado_at && stockWeb(product) <= 0;
+
+  const tieneVariantes = (product.tiene_tallas && (product.tallas || "").trim()) || (product.tiene_colores && (product.colores || "").trim());
+  const modoConsulta = pres === "pieza" && tieneVariantes && !product.venta_por_unidad;
+
+  const consultarWhatsApp = () => {
+    if (product.tiene_tallas && (product.tallas || "").trim() && !talla) { showToast("Elige una talla primero"); return; }
+    if (product.tiene_colores && (product.colores || "").trim() && !color) { showToast("Elige un color primero"); return; }
+    let msg = `Hola Ofertodo, quiero consultar disponibilidad de:\n\n*${product.nombre}*`;
+    if (product.referencia) msg += `\nRef: ${product.referencia}`;
+    if (talla) msg += `\nTalla: ${talla}`;
+    if (color) msg += `\nColor: ${color}`;
+    msg += `\nPresentación: Por pieza`;
+    // Se manda el LINK del producto (no la foto directa) -- así WhatsApp arma la
+    // vista previa con imagen usando la misma página que ya funciona bien al compartir.
+    msg += `\n\nVer producto: ${window.location.origin}/producto/${product.id}`;
+    registrarEvento("consulta_whatsapp", product.id, "Consulta de producto (talla/color)");
+    window.open(`https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(msg)}`, "_blank");
+  };
+
+  const handleAdd = () => {
+    addToCart(product, presToPiezas(pres, count, product), pres, count);
+    showToast(`${product.nombre} agregado al pedido`);
+    setAdded(true);
+    setTimeout(() => setAdded(false), 1100);
+  };
+
+  return (
+    <>
+    <div className="oft-overlay" style={S.overlay} onClick={() => setQuickView(null)}>
+      <div className="oft-modal-sheet oft-qv-pop" style={{ ...S.modal, maxWidth: 560, padding: 0, overflow: "hidden" }} onClick={e => e.stopPropagation()}>
+        {/* BOTÓN CERRAR */}
+        <button onClick={() => setQuickView(null)} style={{ position: "absolute", top: 14, right: 14, background: "rgba(255,255,255,0.9)", border: "none", borderRadius: "50%", width: 36, height: 36, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 5, boxShadow: "0 2px 8px rgba(0,0,0,0.15)" }}>
+          <X size={20} />
+        </button>
+
+        {/* IMAGEN GRANDE */}
+        <div style={{ background: GRAY, aspectRatio: "1 / 1", width: "100%", maxHeight: 320, display: "flex", alignItems: "center", justifyContent: "center", position: "relative", overflow: "hidden" }}>
+          {imgUrl
+            ? <img src={imgUrl} alt={product.nombre} decoding="async" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
+            : <Package size={80} color={GRAY3} strokeWidth={1.2} />
+          }
+          {ofe && ofe.info.pct > 0 && <span style={{ position: "absolute", top: 14, right: 60, background: RED, color: WHITE, fontSize: 12, fontWeight: 900, padding: "4px 10px", borderRadius: 4 }}>-{ofe.info.pct}%</span>}
+          {product.badge && <span style={{ position: "absolute", top: 14, left: 14, background: RED, color: WHITE, fontSize: 11, fontWeight: 800, padding: "4px 10px", borderRadius: 4, display: "inline-flex", alignItems: "center", gap: 4 }}><Sparkles size={12} /> {product.badge}</span>}
+        </div>
+
+        {/* CONTENIDO */}
+        <div style={{ padding: 24, maxHeight: "50vh", overflowY: "auto" }}>
+          <div style={{ fontSize: 12, color: GRAY3, fontWeight: 600, marginBottom: 4 }}>REF: {product.referencia}</div>
+          <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 8 }}>{product.nombre}</div>
+          {coloresDisponibles.length > 0 && (
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 14 }}>
+              {coloresDisponibles.slice(0, 8).map((c, i) => (
+                <span key={i} title={nombreColorLimpio(c)} style={{
+                  width: 17, height: 17, borderRadius: "50%", background: colorToHex(c), flexShrink: 0,
+                  boxShadow: `0 0 0 2px ${WHITE}, 0 0 0 2.5px ${GRAY2}, 0 1px 4px rgba(0,0,0,0.18)`,
+                }} />
+              ))}
+              {coloresDisponibles.length > 8 && <span style={{ fontSize: 11, color: GRAY3, fontWeight: 800, marginLeft: 2 }}>+{coloresDisponibles.length - 8}</span>}
+            </div>
+          )}
+          {product.descripcion && <div style={{ fontSize: 14, color: GRAY3, marginBottom: 16, lineHeight: 1.5 }}>{product.descripcion}</div>}
+
+          {/* NOTAS DE FRAGANCIA -- solo se muestra si el producto tiene alguna guardada */}
+          {product.notas_fragancia && product.notas_fragancia.trim() && (
+            <div style={{ marginBottom: 18 }}>
+              <div style={{ fontSize: 11.5, fontWeight: 800, color: GRAY3, marginBottom: 9, display: "flex", alignItems: "center", gap: 6, textTransform: "uppercase", letterSpacing: 0.6 }}>
+                <Sparkles size={13} /> Notas de fragancia
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                {product.notas_fragancia.split(",").map(n => n.trim()).filter(Boolean).map((nombreNota, i) => {
+                  const nota = notaFragancia(nombreNota);
+                  const Icono = nota.icono;
+                  return (
+                    <div key={nombreNota} className="oft-prod-anim" style={{
+                      display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 20,
+                      background: `linear-gradient(135deg, ${nota.color}22, ${nota.color}08)`,
+                      border: `1px solid ${nota.color}45`, boxShadow: `0 2px 10px ${nota.color}22`,
+                      animationDelay: `${i * 0.06}s`,
+                    }}>
+                      <Icono size={15} color={nota.color} strokeWidth={2.2} />
+                      <span style={{ fontSize: 12.5, fontWeight: 700, color: BLACK }}>{nota.nombre}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Abierto desde una OFERTA: precio de esa oferta/sección en vez de pieza/3/6/media/docena */}
+          {ofe && <OfertaCompraBox key={ofe.info.oferta.id} ofe={ofe} />}
+
+          {/* SELECTOR DE PRESENTACIÓN + CANTIDAD + TOTAL */}
+          {!ofe && (
+          <div style={{ background: GRAY, borderRadius: 12, padding: 16, margin: "8px 0 16px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <span style={{ fontSize: 15, fontWeight: 700 }}>Elige como comprar</span>
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: GRAY3, letterSpacing: 0.5 }}>TOTAL</div>
+                <span style={{ fontSize: 24, color: RED, fontWeight: 900, lineHeight: 1 }}>${Number(total).toFixed(2)}</span>
+              </div>
+            </div>
+            <QtySelector product={product} pres={pres} setPres={setPres} count={count} setCount={setCount} size="big" />
+            {grupoFlexPack && (
+              <div style={{ marginTop: 10 }}><FlexPackBadge onAbrir={() => setMostrarFlexPack(true)} /></div>
+            )}
+            {modoConsulta ? (
+              <div style={{ background: WHITE, borderRadius: 8, padding: "12px", marginTop: 12 }}>
+                <VariantPicker product={product} talla={talla} setTalla={setTalla} color={color} setColor={setColor} />
+              </div>
+            ) : (
+              <div style={{ fontSize: 12, color: GRAY3, background: WHITE, borderRadius: 8, padding: "8px 12px", display: "flex", alignItems: "center", gap: 6, marginTop: 12 }}>
+                <Sparkles size={13} /> {presBreakdown(pres, count, product)}
+              </div>
+            )}
+            <DistribucionInfo key={product?.id} product={product} pres={pres} count={count} />
+          </div>
+          )}
+
+          {/* BOTONES */}
+          {ofe ? (
+            <div style={{ display: "flex", gap: 10 }}>
+              <button className="oft-btn-press" style={{ ...S.btnWA, flex: 1, justifyContent: "center", padding: "12px 16px" }} onClick={() => { registrarEvento("consulta_whatsapp", product.id, "Interés en producto (oferta)"); window.open(`https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(`Hola Ofertodo, me interesa esta oferta: ${ofe.info.titulo} ($${ofe.info.precioOferta.toFixed(2)})\n${window.location.origin}/producto/${product.id}`)}`, "_blank"); }}><MessageCircle size={17} /> Preguntar por WhatsApp</button>
+              <button className="oft-btn-press" style={{ ...S.btnWA, padding: "12px 16px", background: GRAY2, color: BLACK }} title="Compartir producto" onClick={() => compartirProducto(product, showToast)}><Share2 size={18} /></button>
+            </div>
+          ) : modoConsulta ? (
+            <button className="oft-btn-press" style={{ ...S.btnWA, width: "100%", justifyContent: "center", padding: 14, fontSize: 15 }} onClick={consultarWhatsApp}>
+              <MessageCircle size={18} /> Consultar disponibilidad
+            </button>
+          ) : (
+          <div style={{ display: "flex", gap: 10 }}>
+            <button className="oft-btn-press" disabled={agotadoBloqueado} style={{ ...S.btnRed, flex: 1, justifyContent: "center", padding: 14, fontSize: 15, background: agotadoBloqueado ? GRAY3 : (added ? "#25D366" : RED), transition: "background 0.3s", cursor: agotadoBloqueado ? "not-allowed" : "pointer", opacity: agotadoBloqueado ? 0.7 : 1 }} onClick={agotadoBloqueado ? undefined : handleAdd}>
+              {agotadoBloqueado ? "Agotado" : added ? <><CheckCircle2 size={17} className="oft-check-pop" /> ¡Agregado!</> : <><Plus size={16} strokeWidth={2.5} /> Agregar al pedido</>}
+            </button>
+            <button className="oft-btn-press" style={{ ...S.btnWA, padding: "14px 16px" }} onClick={() => { registrarEvento("consulta_whatsapp", product.id, "Interés en producto"); let m = `Hola Ofertodo, me interesa: ${product.nombre}`; if (product.referencia) m += ` (Ref: ${product.referencia})`; m += `\n\nVer producto: ${window.location.origin}/producto/${product.id}`; window.open(`https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(m)}`, "_blank"); }}><MessageCircle size={18} /></button>
+            <button className="oft-btn-press" style={{ ...S.btnWA, padding: "14px 16px", background: GRAY2, color: BLACK }} title="Compartir producto" onClick={() => compartirProducto(product, showToast)}><Share2 size={18} /></button>
+          </div>
+          )}
+        </div>
+      </div>
+    </div>
+    {mostrarFlexPack && grupoFlexPack && <PanelFlexPack grupo={grupoFlexPack} onClose={() => setMostrarFlexPack(false)} />}
+    </>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  CARRITO FLOTANTE (FAB)
+// ═══════════════════════════════════════════════════════════════
+function FloatingCart() {
+  const { cart, cartPulse, setShowCart, view } = useApp();
+  const [bounce, setBounce] = useState(false);
+  const cartCount = cart.reduce((s, i) => s + i.qty, 0);
+  const total = cart.reduce((s, i) => s + cartItemTotal(i), 0);
+
+  useEffect(() => {
+    if (cartPulse > 0) {
+      setBounce(true);
+      const t = setTimeout(() => setBounce(false), 500);
+      return () => clearTimeout(t);
+    }
+  }, [cartPulse]);
+
+  // Solo se muestra navegando inicio/catálogo/ofertas y con productos
+  if (cartCount === 0 || !["home", "catalogo", "ofertas"].includes(view)) return null;
+
+  return (
+    <div
+      onClick={() => setShowCart(true)}
+      className={bounce ? "oft-cart-bounce" : ""}
+      style={{
+        position: "fixed", bottom: 24, right: 24, zIndex: 150,
+        background: RED, color: WHITE, borderRadius: 50,
+        padding: "14px 20px", cursor: "pointer",
+        display: "flex", alignItems: "center", gap: 12,
+        boxShadow: "0 8px 24px rgba(227,30,36,0.4)",
+        fontWeight: 800,
+      }}
+    >
+      <div style={{ position: "relative", display: "flex" }}>
+        <ShoppingCart size={24} strokeWidth={2.2} />
+        <span style={{ position: "absolute", top: -8, right: -10, background: WHITE, color: RED, borderRadius: "50%", fontSize: 11, fontWeight: 900, minWidth: 20, height: 20, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 4px", border: `2px solid ${RED}` }}>
+          {cartCount}
+        </span>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.1 }}>
+        <span style={{ fontSize: 11, opacity: 0.85, fontWeight: 600 }}>Ver pedido</span>
+        <span style={{ fontSize: 16 }}>${total.toFixed(2)}</span>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  PÁGINA DE OFERTAS — "Ofertas de <campaña>": ofertas de un producto y
+//  combos fijos, separados en Detal y Mayor, con buscador, contador
+//  regresivo y precio normal vs precio de oferta.
+// ═══════════════════════════════════════════════════════════════
+function esc(s) { return String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase(); }
+
+function OfertaCard({ info, delay, vigente, campana }) {
+  const { agregarOfertaAlCarrito, cart, showToast, setQuickView } = useApp();
+  // Ropa / calzado (productos con tallas o colores): por ahora se elige talla y color y se consulta por WhatsApp
+  const tieneTallas = (p) => p.tiene_tallas && (p.tallas || "").trim();
+  const tieneColores = (p) => p.tiene_colores && (p.colores || "").trim();
+  const lineasConVariantes = info.lineas.filter(l => tieneTallas(l.product) || tieneColores(l.product));
+  const modoConsulta = lineasConVariantes.length > 0;
+  const [sel, setSel] = useState({}); // { [productoId]: { talla, color } }
+  const setVar = (pid, campo, valor) => setSel(prev => ({ ...prev, [pid]: { ...(prev[pid] || {}), [campo]: valor } }));
+  const [uni, setUni] = useState(1);
+  const [okAnim, setOkAnim] = useState(false);
+  const o = info.oferta;
+  const enCarrito = cart.filter(i => i.esOferta && i.ofertaId === o.id).reduce((s, i) => s + i.unidades, 0);
+  const limite = o.limite_por_pedido ? Math.max(0, o.limite_por_pedido - enCarrito) : Infinity;
+  const stock = Number.isFinite(info.stockMax) ? Math.max(0, info.stockMax) : Infinity;
+  const maxAhora = Math.min(limite, stock === Infinity ? Infinity : stock);
+  const agotado = stock === 0;
+  const sinMas = !agotado && maxAhora <= 0;
+  const topeUni = Number.isFinite(maxAhora) ? Math.max(1, maxAhora) : 99;
+  useEffect(() => { if (uni > topeUni) setUni(topeUni); }, [topeUni]);
+
+  const agregar = () => {
+    if (!vigente) return;
+    const ok = agregarOfertaAlCarrito(info, uni);
+    if (ok) { setOkAnim(true); setTimeout(() => setOkAnim(false), 1400); setUni(1); }
+  };
+  const consultarWhatsApp = () => {
+    if (!vigente) return;
+    for (const l of lineasConVariantes) {
+      const v = sel[l.product.id] || {};
+      if (tieneTallas(l.product) && !v.talla) { showToast(`Elige la talla${info.lineas.length > 1 ? ` de ${l.product.nombre}` : ""} primero`); return; }
+      if (tieneColores(l.product) && !v.color) { showToast(`Elige el color${info.lineas.length > 1 ? ` de ${l.product.nombre}` : ""} primero`); return; }
+    }
+    const esC = o.tipo === "combo";
+    let msg = `Hola Ofertodo, quiero consultar disponibilidad de esta oferta:\n\n*${campana ? `${campana.prefijo} ${campana.nombre}` : "Oferta"}*\n*${info.titulo}* (${esC ? "Combo" : "Oferta"} al ${o.seccion === "mayor" ? "mayor" : "detal"})`;
+    msg += `\nPrecio de oferta: $${info.precioOferta.toFixed(2)}${info.precioNormal > info.precioOferta ? ` (antes $${info.precioNormal.toFixed(2)})` : ""}`;
+    msg += `\nCantidad: ${uni} ${esC ? (uni === 1 ? "combo" : "combos") : (uni === 1 ? "oferta" : "ofertas")}`;
+    msg += `\n\nIncluye:`;
+    for (const l of info.lineas) {
+      const v = sel[l.product.id] || {};
+      msg += `\n• ${l.piezas * uni}x ${l.product.nombre}${l.product.referencia ? ` (Ref: ${l.product.referencia})` : ""}`;
+      if (v.talla) msg += ` — Talla: ${v.talla}`;
+      if (v.color) msg += ` — Color: ${v.color}`;
+    }
+    if (info.lineas.length === 1) msg += `\n\nVer producto: ${window.location.origin}/producto/${info.lineas[0].product.id}`;
+    registrarEvento("consulta_whatsapp", o.id, `Consulta de oferta: ${info.titulo}`);
+    window.open(`https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(msg)}`, "_blank");
+  };
+  const imgs = info.imagenes.slice(0, 4);
+  const esCombo = o.tipo === "combo";
+  // Igual que en el catálogo: al tocar la foto o el nombre se abre el detalle del producto.
+  // Si la oferta es de un solo producto se abre ese; si es un combo, cada línea de "Incluye" abre el suyo.
+  const unico = info.lineas.length === 1 ? info.lineas[0].product : null;
+  const abrir = (prod) => setQuickView({ ...prod, __oferta: { info, vigente, campana } });
+  const verProducto = () => { if (unico) abrir(unico); };
+  const ultimas = !agotado && stock <= 5 && Number.isFinite(stock);
+
+  return (
+    <div className="oft-of-card" style={{ animationDelay: `${Math.min(delay * 0.06, 0.6)}s`, opacity: agotado || !vigente ? 0.75 : 1 }}>
+      <div className="oft-of-img" onClick={unico ? verProducto : undefined} title={unico ? "Ver detalle" : undefined} style={unico ? { cursor: "pointer" } : undefined}>
+        {o.imagen_url || !esCombo || imgs.length < 2
+          ? (info.imagen ? <img src={imagenOptimizada(info.imagen, 500)} alt={info.titulo} loading="lazy" /> : <div className="oft-of-noimg"><Package size={40} color={GRAY3} /></div>)
+          : (
+            <div className={"oft-of-collage c" + imgs.length}>
+              {imgs.map((u, i) => <img key={i} src={imagenOptimizada(u, 300)} alt="" loading="lazy" />)}
+            </div>
+          )}
+        {info.pct > 0 && <div className="oft-of-pct">-{info.pct}%</div>}
+        {esCombo && <div className="oft-of-combo-tag"><Boxes size={12} /> COMBO</div>}
+        {o.etiqueta && <div className="oft-of-ribbon">{o.etiqueta}</div>}
+        {agotado && <div className="oft-of-agotado">AGOTADO</div>}
+      </div>
+      <div className="oft-of-body">
+        <div className="oft-of-title" onClick={unico ? verProducto : undefined} style={unico ? { cursor: "pointer" } : undefined}>{info.titulo}</div>
+        {unico && <div onClick={verProducto} style={{ fontSize: 12, fontWeight: 700, color: RED, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4, width: "fit-content" }}><Eye size={13} /> Ver producto</div>}
+        {esCombo ? (
+          <div className="oft-of-incluye">
+            <div style={{ fontWeight: 800, fontSize: 11, color: GRAY3, marginBottom: 3 }}>INCLUYE · {info.totalPiezas} piezas</div>
+            {info.lineas.map((l, i) => <div key={i} className="oft-of-linea" onClick={() => abrir(l.product)} title="Ver detalle" style={{ cursor: "pointer", textDecoration: "underline", textDecorationColor: GRAY2, textUnderlineOffset: 2 }}><b>{l.piezas}×</b> {l.product.nombre}</div>)}
+            {o.descripcion && <div style={{ fontSize: 11.5, color: GRAY3, marginTop: 4 }}>{o.descripcion}</div>}
+          </div>
+        ) : (
+          <div style={{ fontSize: 12, color: GRAY3 }}>
+            {o.presentacion === "pieza" ? "Por pieza" : `${info.totalPiezas} piezas · ${o.presentacion === "media" ? "media docena" : "docena"}`}
+            {info.totalPiezas > 1 && <> · ${(info.precioOferta / info.totalPiezas).toFixed(2)} c/u</>}
+          </div>
+        )}
+        <div className="oft-of-prices">
+          {info.precioNormal > info.precioOferta && <span className="oft-of-old">${info.precioNormal.toFixed(2)}</span>}
+          <span className="oft-of-new">${info.precioOferta.toFixed(2)}</span>
+        </div>
+        {info.ahorro > 0.005 && <div className="oft-of-save"><Sparkles size={12} /> Ahorras ${info.ahorro.toFixed(2)}</div>}
+        {ultimas && <div className="oft-of-last"><AlertTriangle size={12} /> ¡Quedan solo {stock}!</div>}
+        {o.limite_por_pedido && <div style={{ fontSize: 11, color: GRAY3 }}>Máx. {o.limite_por_pedido} por pedido</div>}
+        {modoConsulta && (
+          <div className="oft-of-variantes">
+            {lineasConVariantes.map(l => (
+              <div key={l.product.id} style={{ marginTop: 4 }}>
+                {info.lineas.length > 1 && <div style={{ fontSize: 11.5, fontWeight: 800, marginBottom: 4 }}>{l.product.nombre}</div>}
+                <VariantPicker product={l.product} talla={(sel[l.product.id] || {}).talla || ""} setTalla={v => setVar(l.product.id, "talla", v)} color={(sel[l.product.id] || {}).color || ""} setColor={v => setVar(l.product.id, "color", v)} />
+              </div>
+            ))}
+            <div style={{ fontSize: 11, color: GRAY3, marginTop: 6 }}>¿Necesitas varias tallas o colores? Indícalo en el mensaje de WhatsApp.</div>
+          </div>
+        )}
+        <div className="oft-of-actions">
+          <div className="oft-of-stepper">
+            <button onClick={() => setUni(u => Math.max(1, u - 1))} disabled={uni <= 1 || agotado} aria-label="Menos">−</button>
+            <span>{uni}</span>
+            <button onClick={() => setUni(u => Math.min(topeUni, u + 1))} disabled={uni >= topeUni || agotado || (sinMas && !modoConsulta)} aria-label="Más">+</button>
+          </div>
+          {modoConsulta ? (
+            <button className="oft-of-add oft-of-wa oft-btn-press" onClick={consultarWhatsApp} disabled={agotado || !vigente}>
+              {agotado ? "Agotado" : !vigente ? "Terminó" : <><MessageCircle size={16} /> Consultar</>}
+            </button>
+          ) : (
+          <button className={"oft-of-add oft-btn-press" + (okAnim ? " ok" : "")} onClick={agregar} disabled={agotado || sinMas || !vigente}>
+            {agotado ? "Agotado" : !vigente ? "Terminó" : sinMas ? "Límite en tu pedido" : okAnim ? <><CheckCircle2 size={16} /> ¡Agregado!</> : <><ShoppingCart size={16} /> Agregar</>}
+          </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function OfertasView() {
+  const { campanaActiva, products, cargarOfertas, setView, setCatalogCat, loading } = useApp();
+  const [q, setQ] = useState("");
+  const [seccion, setSeccion] = useState("todas");
+  const [tipo, setTipo] = useState("todo");
+  const [orden, setOrden] = useState("destacado");
+  const [ahora, setAhora] = useState(Date.now());
+  // En celular, la barra de búsqueda/filtros se esconde al bajar (para ver bien los productos) y reaparece al subir
+  const [barOculta, setBarOculta] = useState(false);
+  useEffect(() => {
+    let ultimo = window.scrollY;
+    const onScroll = () => {
+      const y = window.scrollY;
+      const dy = y - ultimo;
+      if (Math.abs(dy) < 6) return;
+      ultimo = y;
+      const enfocado = document.activeElement && document.activeElement.closest && document.activeElement.closest(".oft-of-bar");
+      if (y < 420 || dy < 0 || enfocado) setBarOculta(false); else setBarOculta(true);
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: "instant" });
+    cargarOfertas();
+    registrarEvento("ver_ofertas");
+  }, []);
+  useEffect(() => { const t = setInterval(() => setAhora(Date.now()), 1000); return () => clearInterval(t); }, []);
+
+  const c = campanaActiva?.campana;
+  const productosPorId = {};
+  products.forEach(p => { productosPorId[p.id] = p; });
+  const todas = (campanaActiva?.items || []).map(it => ofertaInfo(it, productosPorId, campanaActiva.combos)).filter(Boolean);
+  const restante = c?.fecha_fin ? tiempoRestante(c.fecha_fin, ahora) : null;
+  const vigente = !!c && !(restante && restante.terminado);
+
+  if (loading && !campanaActiva) return <Spinner />;
+
+  if (!c || !vigente) {
+    return (
+      <div className="oft-section" style={{ ...S.section, textAlign: "center", padding: "80px 24px" }}>
+        <Tag size={56} color={GRAY3} strokeWidth={1.3} style={{ margin: "0 auto 14px" }} />
+        <h2 style={{ fontWeight: 900, fontSize: 24, margin: "0 0 8px" }}>Por ahora no hay ofertas activas</h2>
+        <p style={{ color: GRAY3, maxWidth: 420, margin: "0 auto 22px" }}>Estamos preparando la próxima campaña. Mientras tanto, mira todo nuestro catálogo.</p>
+        <button className="oft-btn-press" style={{ ...S.btnRed, padding: "12px 26px" }} onClick={() => { setCatalogCat(0); setView("catalogo"); }}>Ver catálogo</button>
+      </div>
+    );
+  }
+
+  const A = c.color_principal || RED, B = c.color_secundario || BLACK;
+  const maxPct = todas.reduce((m, i) => Math.max(m, i.pct), 0);
+  const nq = esc(q).trim();
+  const coincide = (i) => {
+    if (!nq) return true;
+    const texto = esc([i.titulo, i.oferta.descripcion, i.oferta.etiqueta, ...i.lineas.flatMap(l => [l.product.nombre, l.product.referencia])].join(" "));
+    return nq.split(/\s+/).every(w => texto.includes(w));
+  };
+  const filtradas = todas.filter(i => coincide(i) && (tipo === "todo" || i.oferta.tipo === tipo));
+  const ordenar = (arr) => {
+    const a = [...arr];
+    if (orden === "descuento") a.sort((x, y) => y.pct - x.pct);
+    else if (orden === "menor") a.sort((x, y) => x.precioOferta - y.precioOferta);
+    else if (orden === "mayor") a.sort((x, y) => y.precioOferta - x.precioOferta);
+    return a;
+  };
+  const detal = ordenar(filtradas.filter(i => i.oferta.seccion === "detal"));
+  const mayor = ordenar(filtradas.filter(i => i.oferta.seccion === "mayor"));
+  const cntDetal = todas.filter(i => i.oferta.seccion === "detal").length;
+  const cntMayor = todas.filter(i => i.oferta.seccion === "mayor").length;
+  const verDetal = seccion !== "mayor" && detal.length > 0;
+  const verMayor = seccion !== "detal" && mayor.length > 0;
+  const sinResultados = !verDetal && !verMayor;
+  const pad = (n) => String(n).padStart(2, "0");
+
+  const seccionHtml = (titulo, sub, lista, clave) => (
+    <div className="oft-of-seccion" key={clave}>
+      <div className="oft-of-sec-head"><span style={{ background: A }} />
+        <div><h2>{titulo}</h2><p>{sub}</p></div>
+        <em>{lista.length} {lista.length === 1 ? "oferta" : "ofertas"}</em>
+      </div>
+      <div className="oft-of-grid">
+        {lista.map((i, idx) => <OfertaCard key={i.oferta.id} info={i} delay={idx} vigente={vigente} campana={c} />)}
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="oft-of-page">
+      <style>{`
+        @keyframes ofShine { 0% { background-position: 0% 50%; } 100% { background-position: 200% 50%; } }
+        @keyframes ofFloat { 0%,100% { transform: translateY(0) rotate(0deg); } 50% { transform: translateY(-14px) rotate(6deg); } }
+        @keyframes ofPulse { 0%,100% { transform: scale(1) rotate(-6deg); } 50% { transform: scale(1.12) rotate(-6deg); } }
+        @keyframes ofIn { from { opacity: 0; transform: translateY(22px) scale(0.97); } to { opacity: 1; transform: none; } }
+        @keyframes ofTick { 0% { transform: translateY(-6px); opacity: 0.2; } 100% { transform: none; opacity: 1; } }
+        @keyframes ofOk { 0% { transform: scale(0.9); } 50% { transform: scale(1.06); } 100% { transform: scale(1); } }
+        .oft-of-hero { position: relative; overflow: hidden; padding: 48px 20px 40px; text-align: center; color: #fff; }
+        .oft-of-hero .blob { position: absolute; border-radius: 50%; opacity: 0.18; animation: ofFloat 7s ease-in-out infinite; pointer-events: none; }
+        .oft-of-pre { font-weight: 800; letter-spacing: 3px; text-transform: uppercase; font-size: 14px; opacity: 0.85; animation: ofIn .6s both; }
+        .oft-of-name { font-weight: 900; font-size: clamp(38px, 9vw, 84px); line-height: 1.02; margin: 6px 0 10px; background-size: 200% auto; -webkit-background-clip: text; background-clip: text; color: transparent; animation: ofShine 4s linear infinite, ofIn .7s .1s both; }
+        .oft-of-sub { max-width: 560px; margin: 0 auto; font-size: 16px; opacity: 0.9; animation: ofIn .7s .2s both; }
+        .oft-of-count { display: inline-flex; gap: 10px; margin-top: 22px; animation: ofIn .7s .3s both; }
+        .oft-of-count div { background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.22); backdrop-filter: blur(4px); border-radius: 12px; min-width: 62px; padding: 8px 6px; }
+        .oft-of-count b { display: block; font-size: 28px; font-weight: 900; font-variant-numeric: tabular-nums; }
+        .oft-of-count small { font-size: 10px; letter-spacing: 1px; text-transform: uppercase; opacity: 0.75; }
+        .oft-of-count .s b { animation: ofTick .5s ease both; }
+        .oft-of-maxpct { display: inline-block; margin-top: 18px; padding: 6px 16px; border-radius: 30px; font-weight: 900; font-size: 14px; animation: ofIn .7s .4s both; }
+        .oft-of-bar { position: sticky; top: 60px; z-index: 40; background: #fff; border-bottom: 1px solid ${GRAY2}; padding: 12px 16px; box-shadow: 0 4px 14px rgba(0,0,0,0.05); }
+        .oft-of-bar-in { max-width: 1152px; margin: 0 auto; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+        .oft-of-search { flex: 1 1 260px; position: relative; }
+        .oft-of-search input { width: 100%; border: 2px solid ${GRAY2}; border-radius: 30px; padding: 11px 40px 11px 42px; font-size: 15px; outline: none; transition: border-color .2s, box-shadow .2s; }
+        .oft-of-search input:focus { border-color: ${A}; box-shadow: 0 0 0 4px ${A}22; }
+        .oft-of-search .ic { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: ${GRAY3}; }
+        .oft-of-search .x { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); background: ${GRAY2}; border: none; width: 24px; height: 24px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+        .oft-of-chip { border: 2px solid ${GRAY2}; background: #fff; border-radius: 30px; padding: 8px 14px; font-weight: 700; font-size: 13px; cursor: pointer; transition: all .18s; white-space: nowrap; }
+        .oft-of-chip:hover { border-color: ${A}; }
+        .oft-of-chip.on { background: ${A}; border-color: ${A}; color: #fff; transform: scale(1.04); }
+        .oft-of-sel { border: 2px solid ${GRAY2}; border-radius: 30px; padding: 8px 12px; font-size: 13px; font-weight: 700; background: #fff; }
+        .oft-of-wrap { max-width: 1200px; margin: 0 auto; padding: 34px 24px 110px; }
+        .oft-of-seccion { margin-bottom: 40px; }
+        .oft-of-sec-head { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+        .oft-of-sec-head > span { width: 6px; height: 40px; border-radius: 4px; }
+        .oft-of-sec-head h2 { margin: 0; font-size: 24px; font-weight: 900; line-height: 1.15; letter-spacing: -0.2px; }
+        .oft-of-sec-head p { margin: 2px 0 0; font-size: 13px; color: ${GRAY3}; }
+        .oft-of-sec-head em { margin-left: auto; font-style: normal; font-size: 12px; font-weight: 800; color: ${GRAY3}; }
+        .oft-of-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 18px; }
+        .oft-of-card { background: #fff; border: 1px solid ${GRAY2}; border-radius: 18px; overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 2px 10px rgba(0,0,0,0.05); animation: ofIn .55s cubic-bezier(.16,1,.3,1) both; transition: transform .25s, box-shadow .25s, border-color .25s; }
+        .oft-of-card:hover { transform: translateY(-6px); box-shadow: 0 14px 30px rgba(0,0,0,0.13); border-color: ${A}; }
+        .oft-of-img { position: relative; aspect-ratio: 1 / 1; background: ${GRAY}; overflow: hidden; }
+        .oft-of-img > img { width: 100%; height: 100%; object-fit: cover; transition: transform .5s; }
+        .oft-of-card:hover .oft-of-img > img, .oft-of-card:hover .oft-of-collage img { transform: scale(1.07); }
+        .oft-of-noimg { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
+        .oft-of-collage { display: grid; width: 100%; height: 100%; gap: 2px; }
+        .oft-of-collage.c2 { grid-template-columns: 1fr 1fr; } .oft-of-collage.c3 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; } .oft-of-collage.c3 img:first-child { grid-row: span 2; } .oft-of-collage.c4 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+        .oft-of-collage img { width: 100%; height: 100%; object-fit: cover; transition: transform .5s; min-height: 0; }
+        .oft-of-pct { position: absolute; top: 10px; right: 10px; background: ${A}; color: #fff; font-weight: 900; font-size: 15px; padding: 7px 11px; border-radius: 12px; animation: ofPulse 2.2s ease-in-out infinite; box-shadow: 0 4px 12px ${A}66; }
+        .oft-of-combo-tag { position: absolute; top: 10px; left: 10px; background: ${B}; color: #fff; font-weight: 800; font-size: 11px; padding: 5px 9px; border-radius: 8px; display: flex; align-items: center; gap: 4px; }
+        .oft-of-ribbon { position: absolute; bottom: 10px; left: 10px; background: #FFD43B; color: #111; font-weight: 900; font-size: 11px; padding: 4px 10px; border-radius: 8px; }
+        .oft-of-agotado { position: absolute; inset: 0; background: rgba(255,255,255,0.7); display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 20px; letter-spacing: 2px; color: #333; }
+        .oft-of-body { padding: 14px; display: flex; flex-direction: column; gap: 6px; flex: 1; }
+        .oft-of-title { font-weight: 900; font-size: 16px; line-height: 1.25; }
+        .oft-of-incluye { background: ${GRAY}; border-radius: 10px; padding: 8px 10px; }
+        .oft-of-linea { font-size: 12.5px; line-height: 1.5; }
+        .oft-of-prices { display: flex; align-items: baseline; gap: 10px; margin-top: auto; padding-top: 4px; flex-wrap: wrap; }
+        .oft-of-old { text-decoration: line-through; color: ${GRAY3}; font-size: 15px; font-weight: 600; }
+        .oft-of-new { color: ${A}; font-weight: 900; font-size: 28px; line-height: 1; }
+        .oft-of-save { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 800; color: #0A7D3B; background: #E3F7EA; border-radius: 8px; padding: 3px 9px; align-self: flex-start; }
+        .oft-of-last { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 800; color: #B45309; }
+        .oft-of-actions { display: flex; gap: 8px; margin-top: 6px; }
+        .oft-of-stepper { display: flex; align-items: center; border: 2px solid ${GRAY2}; border-radius: 12px; overflow: hidden; }
+        .oft-of-stepper button { width: 34px; height: 100%; min-height: 42px; border: none; background: ${GRAY}; font-size: 18px; font-weight: 800; cursor: pointer; }
+        .oft-of-stepper button:disabled { opacity: 0.35; cursor: default; }
+        .oft-of-stepper span { min-width: 30px; text-align: center; font-weight: 900; }
+        .oft-of-add { flex: 1; border: none; border-radius: 12px; background: ${A}; color: #fff; font-weight: 800; font-size: 14px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px; min-height: 42px; transition: background .2s, transform .15s; }
+        .oft-of-add:hover:not(:disabled) { filter: brightness(1.08); }
+        .oft-of-add.oft-of-wa { background: #25D366; }
+        .oft-of-variantes { border-top: 1px dashed #E0E0E0; padding-top: 8px; margin-top: 2px; }
+        .oft-of-add.ok { background: #0A9D4F; animation: ofOk .4s ease; }
+        .oft-of-add:disabled { background: ${GRAY2}; color: ${GRAY3}; cursor: default; }
+        @media (max-width: 768px) {
+          .oft-of-bar { transition: transform .28s ease, box-shadow .28s; }
+          .oft-of-bar.oculta { transform: translateY(-110%); box-shadow: none; }
+        }
+        @media (max-width: 520px) {
+          .oft-of-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+          .oft-of-count b { font-size: 22px; } .oft-of-count div { min-width: 54px; }
+          .oft-of-body { padding: 10px; }
+          .oft-of-title { font-size: 14px; }
+          .oft-of-new { font-size: 22px; } .oft-of-old { font-size: 13px; }
+          .oft-of-pct { font-size: 13px; padding: 5px 8px; top: 6px; right: 6px; }
+          .oft-of-actions { flex-direction: column; }
+          .oft-of-stepper { justify-content: space-between; } .oft-of-stepper button { flex: 0 0 44px; }
+          .oft-of-wrap { padding: 26px 16px 100px; }
+          .oft-of-sec-head h2 { font-size: 21px; } .oft-of-sec-head > span { height: 36px !important; }
+        }
+        @media (prefers-reduced-motion: reduce) { .oft-of-page * { animation: none !important; transition: none !important; } }
+      `}</style>
+
+      <div className="oft-of-hero" style={{ background: `linear-gradient(135deg, ${B} 0%, ${B} 55%, ${A}55 100%)` }}>
+        <div className="blob" style={{ width: 220, height: 220, background: A, top: -60, left: -50 }} />
+        <div className="blob" style={{ width: 150, height: 150, background: A, bottom: -40, right: "8%", animationDelay: "1.5s" }} />
+        <div className="blob" style={{ width: 90, height: 90, background: "#fff", top: 30, right: "22%", animationDelay: "3s" }} />
+        <div className="oft-of-pre">{c.prefijo}</div>
+        <h1 className="oft-of-name" style={{ backgroundImage: `linear-gradient(90deg, #fff, ${A}, #fff, ${A})` }}>{c.nombre}</h1>
+        {c.subtitulo && <div className="oft-of-sub">{c.subtitulo}</div>}
+        {restante && !restante.terminado && (
+          <div style={{ display: "block" }}>
+            <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: 2, marginTop: 20, opacity: 0.8 }}>TERMINA EN</div>
+            <div className="oft-of-count" style={{ marginTop: 8 }}>
+              {restante.d > 0 && <div><b>{pad(restante.d)}</b><small>días</small></div>}
+              <div><b>{pad(restante.h)}</b><small>horas</small></div>
+              <div><b>{pad(restante.m)}</b><small>min</small></div>
+              <div className="s"><b key={restante.s}>{pad(restante.s)}</b><small>seg</small></div>
+            </div>
+          </div>
+        )}
+        {maxPct > 0 && <div><span className="oft-of-maxpct" style={{ background: A }}>Hasta {maxPct}% de descuento</span></div>}
+      </div>
+
+      <div className={"oft-of-bar" + (barOculta ? " oculta" : "")}>
+        <div className="oft-of-bar-in">
+          <div className="oft-of-search">
+            <Search size={18} className="ic" />
+            <input value={q} onChange={e => setQ(e.target.value)} placeholder="Buscar una oferta: bolsos, combo, perfume…" aria-label="Buscar ofertas" />
+            {q && <button className="x" onClick={() => setQ("")} aria-label="Borrar búsqueda"><X size={14} /></button>}
+          </div>
+          <button className={"oft-of-chip" + (seccion === "todas" ? " on" : "")} onClick={() => setSeccion("todas")}>Todas ({todas.length})</button>
+          {cntDetal > 0 && <button className={"oft-of-chip" + (seccion === "detal" ? " on" : "")} onClick={() => setSeccion("detal")}>Al detal ({cntDetal})</button>}
+          {cntMayor > 0 && <button className={"oft-of-chip" + (seccion === "mayor" ? " on" : "")} onClick={() => setSeccion("mayor")}>Al mayor ({cntMayor})</button>}
+          <button className={"oft-of-chip" + (tipo === "combo" ? " on" : "")} onClick={() => setTipo(tipo === "combo" ? "todo" : "combo")}>Solo combos</button>
+          <select className="oft-of-sel" value={orden} onChange={e => setOrden(e.target.value)} aria-label="Ordenar">
+            <option value="destacado">Ordenar: destacados</option>
+            <option value="descuento">Mayor descuento</option>
+            <option value="menor">Menor precio</option>
+            <option value="mayor">Mayor precio</option>
+          </select>
+        </div>
+      </div>
+
+      <div className="oft-of-wrap">
+        {todas.length === 0 ? (
+          <div style={{ textAlign: "center", padding: "60px 0", color: GRAY3 }}>Estamos cargando las ofertas de la campaña…</div>
+        ) : sinResultados ? (
+          <div style={{ textAlign: "center", padding: "60px 16px" }}>
+            <Search size={48} color={GRAY3} strokeWidth={1.3} style={{ margin: "0 auto 12px" }} />
+            <div style={{ fontWeight: 900, fontSize: 20, marginBottom: 6 }}>No encontramos ofertas{nq ? ` para "${q}"` : ""}</div>
+            <p style={{ color: GRAY3, marginBottom: 18 }}>Prueba con otra palabra o quita los filtros.</p>
+            <div style={{ display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap" }}>
+              <button className="oft-btn-press" style={{ ...S.btnRed, padding: "11px 22px", background: A }} onClick={() => { setQ(""); setSeccion("todas"); setTipo("todo"); }}>Ver todas las ofertas</button>
+              <button className="oft-btn-press" style={{ ...S.btnOutline, padding: "9px 20px" }} onClick={() => { setCatalogCat(0); setView("catalogo"); }}>Buscar en el catálogo</button>
+            </div>
+          </div>
+        ) : (
+          <>
+            {verDetal && seccionHtml("Ofertas al detal", "Para llevar pocas piezas a precio especial", detal, "detal")}
+            {verMayor && seccionHtml("Ofertas al mayor", "Docenas, medias docenas y combos de volumen", mayor, "mayor")}
+          </>
+        )}
+        <div style={{ textAlign: "center", fontSize: 12, color: GRAY3, marginTop: 10 }}>Los precios de oferta no se combinan con códigos de descuento. Hasta agotar existencias.</div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  CART MODAL
+// ═══════════════════════════════════════════════════════════════
+function CartModal() {
+  const { cart, setCart, setShowCart, user, setShowLogin, setView, setPendingCheckout } = useApp();
+  const total = cart.reduce((s, i) => s + cartItemTotal(i), 0);
+
+  return (
+    <div className="oft-overlay" style={S.overlay} onClick={() => setShowCart(false)}>
+      <div className="oft-modal-sheet" style={{ ...S.modal, maxWidth: 520 }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+          <div style={{ fontSize: 20, fontWeight: 800, display: "flex", alignItems: "center", gap: 8 }}><ShoppingCart size={20} /> Tu Pedido</div>
+          <button onClick={() => setShowCart(false)} style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}><X size={22} /></button>
+        </div>
+        {cart.length === 0
+          ? <div style={{ textAlign: "center", padding: "40px 0", color: GRAY3 }}><ShoppingCart size={48} strokeWidth={1.3} style={{ margin: "0 auto 12px" }} /><p>Tu pedido está vacío</p></div>
+          : <>
+            {cart.map((item, idx) => (
+              item.esOferta ? (
+                <div key={idx} style={{ display: "flex", gap: 12, alignItems: "flex-start", padding: "12px 0", borderBottom: `1px solid ${GRAY2}` }}>
+                  {item.imagen
+                    ? <img src={item.imagen} style={{ width: 36, height: 36, borderRadius: 6, objectFit: "cover", flexShrink: 0 }} />
+                    : <div style={{ width: 36, height: 36, borderRadius: 6, background: GRAY, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Tag size={18} color={RED} /></div>}
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 700, fontSize: 14 }}>{item.tipo === "combo" ? "Combo" : "Oferta"} · {item.titulo}</div>
+                    {item.tipo === "combo" && (
+                      <div style={{ fontSize: 11.5, color: GRAY3, lineHeight: 1.5 }}>
+                        {item.lineas.map((l, i) => <span key={i}>{l.piezas * item.unidades}× {l.nombre}{i < item.lineas.length - 1 ? ", " : ""}</span>)}
+                      </div>
+                    )}
+                    <div style={{ fontSize: 12, color: GRAY3, marginTop: 2 }}>{cartItemLabel(item)} · <b style={{ color: BLACK }}>${cartItemTotal(item).toFixed(2)}</b> <span style={{ textDecoration: "line-through" }}>${(item.precioNormalUnidad * item.unidades).toFixed(2)}</span></div>
+                  </div>
+                  <button onClick={() => setCart(cart.filter((_, i) => i !== idx))} style={{ background: "none", border: "none", color: RED, cursor: "pointer", display: "flex", flexShrink: 0 }}><Trash2 size={18} /></button>
+                </div>
+              ) : item.esFlexPack ? (
+                <div key={idx} style={{ display: "flex", gap: 12, alignItems: "flex-start", padding: "12px 0", borderBottom: `1px solid ${GRAY2}` }}>
+                  <div style={{ width: 36, height: 36, borderRadius: 6, background: GRAY, border: `1px solid ${GRAY2}`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                    <img src={FLEXPACK_ICON_URL} style={{ width: 20, height: 20, objectFit: "contain" }} />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 700, fontSize: 14 }}>Flex Pack · {item.grupoNombre}</div>
+                    <div style={{ fontSize: 11.5, color: GRAY3, lineHeight: 1.5 }}>
+                      {item.items.map((it, i) => <span key={i}>{it.cantidad}× {it.nombre}{i < item.items.length - 1 ? ", " : ""}</span>)}
+                    </div>
+                    <div style={{ fontSize: 12, color: GRAY3, marginTop: 2 }}>{cartItemLabel(item)} · ${cartItemTotal(item).toFixed(2)}</div>
+                  </div>
+                  <button onClick={() => setCart(cart.filter((_, i) => i !== idx))} style={{ background: "none", border: "none", color: RED, cursor: "pointer", display: "flex", flexShrink: 0 }}><Trash2 size={18} /></button>
+                </div>
+              ) : (
+              <div key={idx} style={{ display: "flex", gap: 12, alignItems: "center", padding: "12px 0", borderBottom: `1px solid ${GRAY2}` }}>
+                {item.product.imagen_url
+                  ? <img src={item.product.imagen_url} style={{ width: 36, height: 36, borderRadius: 6, objectFit: "cover" }} />
+                  : <div style={{ width: 36, height: 36, borderRadius: 6, background: GRAY, display: "flex", alignItems: "center", justifyContent: "center" }}><Package size={18} color={GRAY3} /></div>
+                }
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 700, fontSize: 14 }}>{item.product.nombre}</div>
+                  <div style={{ fontSize: 12, color: GRAY3 }}>{cartItemLabel(item)} · ${cartItemTotal(item).toFixed(2)}</div>
+                </div>
+                <button onClick={() => setCart(cart.filter((_, i) => i !== idx))} style={{ background: "none", border: "none", color: RED, cursor: "pointer", display: "flex" }}><Trash2 size={18} /></button>
+              </div>
+              )
+            ))}
+            <div style={{ display: "flex", justifyContent: "space-between", padding: "16px 0", fontWeight: 900, fontSize: 18 }}>
+              <span>Total</span><span style={{ color: RED }}>${total.toFixed(2)}</span>
+            </div>
+            <button style={{ ...S.btnRed, width: "100%", justifyContent: "center", padding: 14, fontSize: 15 }}
+              onClick={() => { setShowCart(false); setView("checkout"); }}>
+              Finalizar Pedido →
+            </button>
+            {!user && (
+              <div style={{ textAlign: "center", fontSize: 12, color: GRAY3, marginTop: 8 }}>
+                Compra sin crear cuenta · <span style={{ color: RED, fontWeight: 700, cursor: "pointer" }} onClick={() => { setShowCart(false); setPendingCheckout(true); setShowLogin(true); }}>Ya tengo cuenta</span>
+              </div>
+            )}
+            <button style={{ ...S.btnWA, width: "100%", justifyContent: "center", padding: 12, marginTop: 10 }}
+              onClick={() => {
+                registrarEvento("consulta_whatsapp", null, "Pedido desde el carrito");
+                const lineas = cart.map((i, idx) => {
+                  if (i.esOferta) {
+                    const det = i.tipo === "combo" ? "\n" + i.lineas.map(l => `   • ${l.piezas * i.unidades}x ${l.nombre}`).join("\n") : "";
+                    return `${idx + 1}. ${i.tipo === "combo" ? "Combo" : "Oferta"}: ${i.titulo} — ${i.unidades} und. por $${cartItemTotal(i).toFixed(2)}${det}`;
+                  }
+                  if (i.esFlexPack) {
+                    const detalle = i.items.map(it => `   • ${it.cantidad}x ${it.nombre}${it.referencia ? ` (Ref: ${it.referencia})` : ""}`).join("\n");
+                    return `${idx + 1}. Flex Pack (${i.grupoNombre}) — ${i.totalPiezas} piezas por $${Number(i.precioTotal).toFixed(2)}\n${detalle}`;
+                  }
+                  let linea = `${idx + 1}. ${i.product.nombre}`;
+                  if (i.product.referencia) linea += ` (Ref: ${i.product.referencia})`;
+                  const etiquetaPres = i.pres ? `${i.count} ${presLabelPlural(i.pres, i.count, i.product)}` : `x${i.qty}`;
+                  return `${linea} — ${etiquetaPres}`;
+                });
+                const msg = `Hola Ofertodo, quiero pedir:\n\n${lineas.join("\n")}\n\nTotal: $${total.toFixed(2)}`;
+                window.open(`https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(msg)}`, "_blank");
+              }}>
+              <MessageCircle size={16} /> Pedir por WhatsApp
+            </button>
+          </>
+        }
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  AUTH MODALS
+// ═══════════════════════════════════════════════════════════════
+function LoginModal() {
+  const { setShowLogin, setShowRegister, setUser, showToast } = useApp();
+  const [email, setEmail] = useState(""), [pass, setPass] = useState(""), [loading, setLoading] = useState(false), [err, setErr] = useState("");
+  // Paso de verificación en dos pasos (solo aparece si la cuenta lo tiene activado)
+  const [mfaPaso, setMfaPaso] = useState(null); // null | { factorId, res, users }
+  const [mfaCodigo, setMfaCodigo] = useState("");
+  // "Olvidé mi contraseña" -- un modo aparte, más simple, solo pide el correo
+  const [modoRecuperar, setModoRecuperar] = useState(false);
+  const [recuperarEnviado, setRecuperarEnviado] = useState(false);
+
+  const enviarRecuperacion = async () => {
+    if (!email.trim()) { setErr("Escribe tu correo primero"); return; }
+    setLoading(true); setErr("");
+    try { await sb.recoverPassword(email.trim()); setRecuperarEnviado(true); }
+    catch(e) { setErr("No se pudo enviar el correo, intenta de nuevo"); }
+    setLoading(false);
+  };
+
+  const handle = async () => {
+    setLoading(true); setErr("");
+    // .trim() por si acaso -- al copiar y pegar el correo/contraseña de otro lado
+    // (notas, WhatsApp, etc.) es fácil que se cuele un espacio invisible al inicio
+    // o al final, y eso hace que no coincida con lo guardado aunque se vea igual.
+    const emailLimpio = email.trim(), passLimpio = pass.trim();
+    try {
+      const res = await sb.signIn(emailLimpio, passLimpio);
+      // IMPORTANTE: nos fijamos en si realmente llegó un access_token, no en si "hay un campo error"
+      // (Supabase puede devolver el error en formatos distintos según la versión — confiar solo en
+      // detectar el error es justo lo que dejaba entrar a cualquiera con credenciales inválidas).
+      if (!res.access_token || !res.user) {
+        const msg = res.error_description || res.msg || (typeof res.error === "string" ? res.error : res.error?.message) || "Correo o contraseña incorrectos";
+        setErr(msg === "invalid_grant" ? "Correo o contraseña incorrectos" : msg);
+      } else {
+        // Activa la sesión (aunque sea parcial) para poder consultar el perfil y, si aplica, el 2do factor
+        sb.setSession(res);
+        // La ficha se guarda con el correo en minúsculas (así lo entrega también el inicio de sesión)
+        let users = await sb.get("usuarios", `?email=eq.${encodeURIComponent(emailLimpio.toLowerCase())}&limit=1`);
+        if (!users || !users[0]) {
+          // Cuenta sin ficha de cliente (ej. falló al registrarse): el servidor la crea, o la une a la que ya
+          // exista con ese correo, usando el correo de la sesión
+          try {
+            await fetch(SUPABASE_URL + "/functions/v1/registrar-cliente-web", {
+              method: "POST", headers: sb.functionHeaders(),
+              body: JSON.stringify({ nombre: res.user?.user_metadata?.nombre || emailLimpio.split("@")[0], email: emailLimpio, telefono: "" }),
+            });
+            users = await sb.get("usuarios", `?email=eq.${encodeURIComponent(emailLimpio.toLowerCase())}&limit=1`);
+          } catch(e) {}
+        }
+        let factorVerificado = null;
+        try {
+          const factores = await sb.mfaListFactors();
+          factorVerificado = factores.find(f => f.status === "verified") || null;
+        } catch(e) {}
+        if (factorVerificado) {
+          // Esta cuenta tiene 2FA activado: pide el código antes de terminar de entrar
+          setMfaPaso({ factorId: factorVerificado.id, res, users });
+        } else {
+          setUser({ ...res.user, ...(users[0] || {}), token: res.access_token, refresh_token: res.refresh_token, expires_at: sb.session?.expires_at });
+          showToast("¡Bienvenido de vuelta!");
+          setShowLogin(false);
+        }
+      }
+    } catch(e) { setErr("Error de conexión. Verifica tu configuración de Supabase."); }
+    setLoading(false);
+  };
+
+  const confirmarMfa = async () => {
+    if (mfaCodigo.trim().length < 6) { setErr("Escribe el código de 6 dígitos"); return; }
+    setLoading(true); setErr("");
+    try {
+      const ch = await sb.mfaChallenge(mfaPaso.factorId);
+      if (!ch.id) { setErr("No se pudo verificar, intenta de nuevo"); setLoading(false); return; }
+      const v = await sb.mfaVerify(mfaPaso.factorId, ch.id, mfaCodigo.trim());
+      if (v.error || !v.access_token) {
+        setErr("Código incorrecto");
+        setLoading(false);
+        return;
+      }
+      sb.setSession(v);
+      setUser({ ...mfaPaso.res.user, ...(mfaPaso.users[0] || {}), token: v.access_token, refresh_token: v.refresh_token, expires_at: sb.session?.expires_at });
+      showToast("¡Bienvenido de vuelta!");
+      setShowLogin(false);
+    } catch(e) { setErr("Error de conexión"); }
+    setLoading(false);
+  };
+
+  if (modoRecuperar) {
+    return (
+      <div className="oft-overlay" style={S.overlay} onClick={() => setShowLogin(false)}>
+        <div className="oft-modal-sheet oft-modal oft-auth-pop" style={S.modal} onClick={e => e.stopPropagation()}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}><Logo height={28} /><button onClick={() => setShowLogin(false)} style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}><X size={22} /></button></div>
+          {recuperarEnviado ? (
+            <>
+              <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 8 }}>Revisa tu correo</div>
+              <p style={{ fontSize: 13, color: GRAY3, marginBottom: 18 }}>Si <strong>{email}</strong> tiene una cuenta con nosotros, te llegó un link para crear una contraseña nueva. Puede tardar unos minutos, y revisa spam por si acaso.</p>
+              <button style={{ ...S.btnRed, width: "100%", justifyContent: "center", padding: 14, fontSize: 15 }} onClick={() => { setModoRecuperar(false); setRecuperarEnviado(false); }}>
+                Volver a iniciar sesión
+              </button>
+            </>
+          ) : (
+            <>
+              <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 8 }}>¿Olvidaste tu contraseña?</div>
+              <p style={{ fontSize: 13, color: GRAY3, marginBottom: 18 }}>Escribe tu correo y te mandamos un link para crear una nueva.</p>
+              <label style={S.label}>Correo electrónico</label>
+              <input style={S.input} type="email" placeholder="tu@email.com" value={email} onChange={e => setEmail(e.target.value)} onKeyDown={e => e.key === "Enter" && enviarRecuperacion()} autoFocus />
+              {err && <div style={{ color: RED, fontSize: 13, marginBottom: 12 }}>{err}</div>}
+              <button style={{ ...S.btnRed, width: "100%", justifyContent: "center", padding: 14, fontSize: 15, opacity: loading ? 0.7 : 1 }} onClick={enviarRecuperacion} disabled={loading}>
+                {loading ? "Enviando..." : "Enviar link de recuperación"}
+              </button>
+              <div style={{ textAlign: "center", marginTop: 16, fontSize: 13, color: GRAY3, cursor: "pointer" }} onClick={() => { setModoRecuperar(false); setErr(""); }}>
+                ← Volver a iniciar sesión
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  if (mfaPaso) {
+    return (
+      <div className="oft-overlay" style={S.overlay} onClick={() => setShowLogin(false)}>
+        <div className="oft-modal-sheet oft-modal oft-auth-pop" style={S.modal} onClick={e => e.stopPropagation()}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}><Logo height={28} /><button onClick={() => setShowLogin(false)} style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}><X size={22} /></button></div>
+          <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 8, display: "flex", alignItems: "center", gap: 8 }}><Lock size={19} color={RED} /> Verificación en dos pasos</div>
+          <p style={{ fontSize: 13, color: GRAY3, marginBottom: 18 }}>Abre tu app de autenticación (Google Authenticator, Authy, etc.) y escribe el código de 6 dígitos.</p>
+          <input style={{ ...S.input, textAlign: "center", fontSize: 20, letterSpacing: 4, fontWeight: 800 }} maxLength={6} inputMode="numeric" placeholder="000000" value={mfaCodigo} onChange={e => setMfaCodigo(e.target.value.replace(/\D/g, ""))} onKeyDown={e => e.key === "Enter" && confirmarMfa()} autoFocus />
+          {err && <div style={{ color: RED, fontSize: 13, marginBottom: 12 }}>{err}</div>}
+          <button style={{ ...S.btnRed, width: "100%", justifyContent: "center", padding: 14, fontSize: 15, opacity: loading ? 0.7 : 1, marginTop: 8 }} onClick={confirmarMfa} disabled={loading}>
+            {loading ? "Verificando..." : "Confirmar"}
+          </button>
+          <div style={{ textAlign: "center", marginTop: 16, fontSize: 13, color: GRAY3, cursor: "pointer" }} onClick={() => { setMfaPaso(null); setMfaCodigo(""); setErr(""); }}>
+            ← Volver
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="oft-overlay" style={S.overlay} onClick={() => setShowLogin(false)}>
+      <div className="oft-modal-sheet oft-modal oft-auth-pop" style={S.modal} onClick={e => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}><Logo height={28} /><button onClick={() => setShowLogin(false)} style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}><X size={22} /></button></div>
+        <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 20 }}>Iniciar sesión</div>
+        {/* BOTÓN DE GOOGLE */}
+        <button onClick={() => sb.signInWithGoogle()} className="oft-btn-press" style={{ width: "100%", justifyContent: "center", padding: 13, fontSize: 15, fontWeight: 700, border: `1.5px solid ${GRAY2}`, borderRadius: 10, background: WHITE, cursor: "pointer", display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+          <svg width="18" height="18" viewBox="0 0 18 18"><path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 01-1.8 2.72v2.26h2.92c1.71-1.57 2.68-3.89 2.68-6.62z"/><path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.8.54-1.83.86-3.04.86-2.34 0-4.32-1.58-5.03-3.7H.96v2.33A9 9 0 009 18z"/><path fill="#FBBC05" d="M3.97 10.72a5.4 5.4 0 010-3.44V4.95H.96a9 9 0 000 8.1l3.01-2.33z"/><path fill="#EA4335" d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.58A9 9 0 00.96 4.95l3.01 2.33C4.68 5.16 6.66 3.58 9 3.58z"/></svg>
+          Continuar con Google
+        </button>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+          <div style={{ flex: 1, height: 1, background: GRAY2 }} /><span style={{ fontSize: 12, color: GRAY3 }}>o con tu correo</span><div style={{ flex: 1, height: 1, background: GRAY2 }} />
+        </div>
+        <label style={S.label}>Correo electrónico</label>
+        <input style={S.input} type="email" placeholder="tu@email.com" value={email} onChange={e => setEmail(e.target.value)} />
+        <label style={S.label}>Contraseña</label>
+        <input style={S.input} type="password" placeholder="••••••••" value={pass} onChange={e => setPass(e.target.value)} onKeyDown={e => e.key === "Enter" && handle()} />
+        <div style={{ textAlign: "right", marginTop: -12, marginBottom: 16 }}>
+          <span style={{ fontSize: 12.5, color: GRAY3, cursor: "pointer" }} onClick={() => { setModoRecuperar(true); setErr(""); }}>¿Olvidaste tu contraseña?</span>
+        </div>
+        {err && <div style={{ color: RED, fontSize: 13, marginBottom: 12 }}>{err}</div>}
+        <button style={{ ...S.btnRed, width: "100%", justifyContent: "center", padding: 14, fontSize: 15, opacity: loading ? 0.7 : 1 }} onClick={handle} disabled={loading}>
+          {loading ? "Verificando..." : "Iniciar sesión"}
+        </button>
+        <div style={{ textAlign: "center", marginTop: 16, fontSize: 13, color: GRAY3 }}>
+          ¿No tienes cuenta? <span style={{ color: RED, fontWeight: 700, cursor: "pointer" }} onClick={() => { setShowLogin(false); setShowRegister(true); }}>Regístrate</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RegisterModal() {
+  const { setShowRegister, setShowLogin, setUser, showToast, registerPrefill, setRegisterPrefill } = useApp();
+  const [form, setForm] = useState({ nombre: registerPrefill?.nombre || "", telefono: registerPrefill?.telefono || "", email: registerPrefill?.email || "", pass: "", pass2: "" });
+  useEffect(() => () => setRegisterPrefill(null), []); // los datos de la compra anterior no se quedan para la próxima vez
+  const [loading, setLoading] = useState(false), [err, setErr] = useState("");
+
+  const handle = async () => {
+    const nombreLimpio = form.nombre.trim(), emailLimpio = form.email.trim(), passLimpio = form.pass.trim(), pass2Limpio = form.pass2.trim();
+    if (!nombreLimpio || !emailLimpio || !passLimpio) { setErr("Por favor completa todos los campos."); return; }
+    if (passLimpio.length < 6) { setErr("La contraseña debe tener al menos 6 caracteres."); return; }
+    if (passLimpio !== pass2Limpio) { setErr("Las contraseñas no coinciden. Verifica que sean iguales."); return; }
+    setLoading(true); setErr("");
+    try {
+      const auth = await sb.signUp(emailLimpio, passLimpio, { nombre: nombreLimpio });
+      if (auth.error || auth.error_description || auth.msg) {
+        setErr(auth.error?.message || auth.error_description || auth.msg || "No se pudo crear la cuenta.");
+      } else {
+        // Si esta persona ya compró antes sin cuenta (o el admin la registró), el servidor reutiliza esa MISMA ficha
+        // (mismo ID interno y mismos pedidos) en vez de crear una duplicada. Si falla, la cuenta ya existe y la ficha
+        // se completa sola la primera vez que inicie sesión.
+        try {
+          await fetch(SUPABASE_URL + "/functions/v1/registrar-cliente-web", {
+            method: "POST", headers: sb.authHeaders(),
+            body: JSON.stringify({ nombre: nombreLimpio, email: emailLimpio, telefono: form.telefono.trim() }),
+          });
+        } catch(e) {}
+        // Enviar email de bienvenida (sin bloquear el flujo si falla)
+        try {
+          fetch(SUPABASE_URL + "/functions/v1/bienvenida-cliente", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "Authorization": "Bearer " + SUPABASE_KEY },
+            body: JSON.stringify({ nombre: nombreLimpio, email: emailLimpio }),
+          });
+        } catch(e) {}
+        showToast("¡Cuenta creada! Revisa tu correo para confirmar y luego inicia sesión.");
+        setShowRegister(false);
+      }
+    } catch(e) { setErr("Error de conexión."); }
+    setLoading(false);
+  };
+
+  return (
+    <div className="oft-overlay" style={S.overlay} onClick={() => setShowRegister(false)}>
+      <div className="oft-modal-sheet oft-modal oft-auth-pop" style={S.modal} onClick={e => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}><Logo height={28} /><button onClick={() => setShowRegister(false)} style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}><X size={22} /></button></div>
+        <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 20 }}>Crear cuenta</div>
+
+        {/* BOTÓN DE GOOGLE */}
+        <button onClick={() => sb.signInWithGoogle()} className="oft-btn-press" style={{ width: "100%", justifyContent: "center", padding: 13, fontSize: 15, fontWeight: 700, border: `1.5px solid ${GRAY2}`, borderRadius: 10, background: WHITE, cursor: "pointer", display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+          <svg width="18" height="18" viewBox="0 0 18 18"><path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 01-1.8 2.72v2.26h2.92c1.71-1.57 2.68-3.89 2.68-6.62z"/><path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.8.54-1.83.86-3.04.86-2.34 0-4.32-1.58-5.03-3.7H.96v2.33A9 9 0 009 18z"/><path fill="#FBBC05" d="M3.97 10.72a5.4 5.4 0 010-3.44V4.95H.96a9 9 0 000 8.1l3.01-2.33z"/><path fill="#EA4335" d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.58A9 9 0 00.96 4.95l3.01 2.33C4.68 5.16 6.66 3.58 9 3.58z"/></svg>
+          Continuar con Google
+        </button>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+          <div style={{ flex: 1, height: 1, background: GRAY2 }} /><span style={{ fontSize: 12, color: GRAY3 }}>o con tu correo</span><div style={{ flex: 1, height: 1, background: GRAY2 }} />
+        </div>
+
+        {[["nombre","Nombre completo","Tu nombre completo","text"],["telefono","WhatsApp / Celular","+507 0000-0000","text"],["email","Correo electrónico","tu@email.com","email"],["pass","Contraseña","Mínimo 6 caracteres","password"],["pass2","Repite la contraseña","Escríbela de nuevo","password"]].map(([k,l,ph,tp]) => (
+          <div key={k}><label style={S.label}>{l}</label><input style={S.input} type={tp} placeholder={ph} value={form[k]} onChange={e => setForm({...form,[k]:e.target.value})} /></div>
+        ))}
+        {err && <div style={{ color: RED, fontSize: 13, marginBottom: 12 }}>{err}</div>}
+        <button style={{ ...S.btnRed, width: "100%", justifyContent: "center", padding: 14, fontSize: 15, opacity: loading ? 0.7 : 1 }} onClick={handle} disabled={loading}>
+          {loading ? "Creando cuenta..." : "Crear cuenta"}
+        </button>
+        <div style={{ textAlign: "center", marginTop: 16, fontSize: 14, color: GRAY3 }}>
+          ¿Ya tienes cuenta? <span style={{ color: RED, fontWeight: 700, cursor: "pointer" }} onClick={() => { setShowRegister(false); setShowLogin(true); }}>Inicia sesión</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  COMPLETAR PERFIL (después de registrarse con Google)
+// ═══════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════
+//  2FA AL INICIAR SESIÓN CON GOOGLE (cuenta con verificación en dos pasos activada)
+// ═══════════════════════════════════════════════════════════════
+// Sección dentro de "Mi Cuenta" para cambiar la contraseña estando ya logueado
+// (distinto del flujo de "olvidé mi contraseña", que es para cuando NO se puede entrar)
+function SeccionCambiarPassword() {
+  const { showToast } = useApp();
+  const [abierto, setAbierto] = useState(false);
+  const [pass, setPass] = useState(""), [pass2, setPass2] = useState("");
+  const [loading, setLoading] = useState(false), [err, setErr] = useState("");
+
+  const guardar = async () => {
+    const passLimpio = pass.trim(), pass2Limpio = pass2.trim();
+    if (passLimpio.length < 6) { setErr("La contraseña debe tener al menos 6 caracteres."); return; }
+    if (passLimpio !== pass2Limpio) { setErr("Las contraseñas no coinciden."); return; }
+    setLoading(true); setErr("");
+    try {
+      const r = await sb.updatePassword(passLimpio);
+      if (!r.ok) { setErr(r.data?.msg || r.data?.error_description || "No se pudo cambiar la contraseña."); setLoading(false); return; }
+      showToast("Contraseña actualizada");
+      setPass(""); setPass2(""); setAbierto(false);
+    } catch(e) { setErr("Error de conexión, intenta de nuevo."); }
+    setLoading(false);
+  };
+
+  return (
+    <div style={{ background: WHITE, borderRadius: 14, padding: 20, border: `1px solid ${GRAY2}`, marginBottom: 32 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: abierto ? 16 : 0 }}>
+        <div style={{ fontWeight: 800, fontSize: 16, display: "flex", alignItems: "center", gap: 8 }}><Lock size={17} color={RED} /> Contraseña</div>
+        {!abierto && (
+          <button onClick={() => setAbierto(true)} className="oft-btn-press" style={{ background: "none", border: `1.5px solid ${BLACK}`, color: BLACK, borderRadius: 8, padding: "6px 12px", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 5 }}>
+            <PencilIcon size={14} /> Cambiar
+          </button>
+        )}
+      </div>
+      {abierto && (
+        <div>
+          <label style={S.label}>Nueva contraseña</label>
+          <input style={S.input} type="password" placeholder="••••••••" value={pass} onChange={e => setPass(e.target.value)} />
+          <label style={S.label}>Confirma la contraseña</label>
+          <input style={S.input} type="password" placeholder="••••••••" value={pass2} onChange={e => setPass2(e.target.value)} onKeyDown={e => e.key === "Enter" && guardar()} />
+          {err && <div style={{ color: RED, fontSize: 13, marginBottom: 12 }}>{err}</div>}
+          <div style={{ display: "flex", gap: 10, marginTop: 6 }}>
+            <button onClick={guardar} disabled={loading} className="oft-btn-press" style={{ ...S.btnRed, justifyContent: "center", opacity: loading ? 0.7 : 1 }}>
+              {loading ? "Guardando..." : "Guardar contraseña"}
+            </button>
+            <button onClick={() => { setAbierto(false); setErr(""); setPass(""); setPass2(""); }} className="oft-btn-press" style={S.btnOutline}>Cancelar</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Pantalla para poner una contraseña nueva, después de darle clic al link que
+// llega por correo al pedir "olvidé mi contraseña"
+function ResetPasswordModal() {
+  const { recuperacionToken, setRecuperacionToken, showToast } = useApp();
+  const [pass, setPass] = useState(""), [pass2, setPass2] = useState("");
+  const [loading, setLoading] = useState(false), [err, setErr] = useState("");
+  const [listo, setListo] = useState(false);
+
+  const confirmar = async () => {
+    const passLimpio = pass.trim(), pass2Limpio = pass2.trim();
+    if (passLimpio.length < 6) { setErr("La contraseña debe tener al menos 6 caracteres."); return; }
+    if (passLimpio !== pass2Limpio) { setErr("Las contraseñas no coinciden."); return; }
+    setLoading(true); setErr("");
+    try {
+      const r = await sb.updatePassword(passLimpio, recuperacionToken);
+      if (!r.ok) { setErr(r.data?.msg || r.data?.error_description || "No se pudo cambiar la contraseña. El link puede haber vencido -- pide uno nuevo."); setLoading(false); return; }
+      setListo(true);
+    } catch(e) { setErr("Error de conexión, intenta de nuevo."); }
+    setLoading(false);
+  };
+
+  return (
+    <div className="oft-overlay" style={S.overlay}>
+      <div className="oft-modal-sheet oft-modal oft-auth-pop" style={S.modal} onClick={e => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "center", marginBottom: 24 }}><Logo height={28} /></div>
+        {listo ? (
+          <>
+            <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 8, textAlign: "center" }}>¡Contraseña actualizada!</div>
+            <p style={{ fontSize: 13, color: GRAY3, marginBottom: 18, textAlign: "center" }}>Ya puedes iniciar sesión con tu nueva contraseña.</p>
+            <button style={{ ...S.btnRed, width: "100%", justifyContent: "center", padding: 14, fontSize: 15 }} onClick={() => setRecuperacionToken(null)}>
+              Entendido
+            </button>
+          </>
+        ) : (
+          <>
+            <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 8 }}>Crea tu nueva contraseña</div>
+            <label style={S.label}>Nueva contraseña</label>
+            <input style={S.input} type="password" placeholder="••••••••" value={pass} onChange={e => setPass(e.target.value)} />
+            <label style={S.label}>Confirma la contraseña</label>
+            <input style={S.input} type="password" placeholder="••••••••" value={pass2} onChange={e => setPass2(e.target.value)} onKeyDown={e => e.key === "Enter" && confirmar()} />
+            {err && <div style={{ color: RED, fontSize: 13, marginBottom: 12 }}>{err}</div>}
+            <button style={{ ...S.btnRed, width: "100%", justifyContent: "center", padding: 14, fontSize: 15, opacity: loading ? 0.7 : 1 }} onClick={confirmar} disabled={loading}>
+              {loading ? "Guardando..." : "Guardar contraseña"}
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function GoogleMfaModal() {
+  const { googleMfaPaso, setGoogleMfaPaso, setUser, showToast } = useApp();
+  const [codigo, setCodigo] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState("");
+
+  const confirmar = async () => {
+    if (codigo.trim().length < 6) { setErr("Escribe el código de 6 dígitos"); return; }
+    setLoading(true); setErr("");
+    try {
+      const ch = await sb.mfaChallenge(googleMfaPaso.factorId);
+      if (!ch.id) { setErr("No se pudo verificar, intenta de nuevo"); setLoading(false); return; }
+      const v = await sb.mfaVerify(googleMfaPaso.factorId, ch.id, codigo.trim());
+      if (v.error || !v.access_token) { setErr("Código incorrecto"); setLoading(false); return; }
+      sb.setSession(v);
+      const { gUser, perfil } = googleMfaPaso;
+      setUser({ ...gUser, ...(perfil[0] || {}), token: v.access_token, refresh_token: v.refresh_token, expires_at: sb.session?.expires_at });
+      showToast(`¡Bienvenido de vuelta, ${perfil[0]?.nombre?.split(" ")[0] || ""}!`);
+      setGoogleMfaPaso(null);
+    } catch(e) { setErr("Error de conexión"); }
+    setLoading(false);
+  };
+
+  return (
+    <div className="oft-overlay" style={S.overlay} onClick={() => setGoogleMfaPaso(null)}>
+      <div className="oft-modal-sheet oft-modal oft-auth-pop" style={S.modal} onClick={e => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}><Logo height={28} /><button onClick={() => setGoogleMfaPaso(null)} style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}><X size={22} /></button></div>
+        <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 8, display: "flex", alignItems: "center", gap: 8 }}><Lock size={19} color={RED} /> Verificación en dos pasos</div>
+        <p style={{ fontSize: 13, color: GRAY3, marginBottom: 18 }}>Esta cuenta tiene 2FA activado. Abre tu app de autenticación y escribe el código de 6 dígitos.</p>
+        <input style={{ ...S.input, textAlign: "center", fontSize: 20, letterSpacing: 4, fontWeight: 800 }} maxLength={6} inputMode="numeric" placeholder="000000" value={codigo} onChange={e => setCodigo(e.target.value.replace(/\D/g, ""))} onKeyDown={e => e.key === "Enter" && confirmar()} autoFocus />
+        {err && <div style={{ color: RED, fontSize: 13, marginBottom: 12 }}>{err}</div>}
+        <button style={{ ...S.btnRed, width: "100%", justifyContent: "center", padding: 14, fontSize: 15, opacity: loading ? 0.7 : 1, marginTop: 8 }} onClick={confirmar} disabled={loading}>
+          {loading ? "Verificando..." : "Confirmar"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function CompleteProfileModal() {
+  const { completeProfile, setCompleteProfile, setUser, showToast } = useApp();
+  const [nombre, setNombre] = useState(completeProfile?.nombre || "");
+  const [telefono, setTelefono] = useState("");
+  const [loading, setLoading] = useState(false), [err, setErr] = useState("");
+
+  const handle = async () => {
+    if (!nombre.trim()) { setErr("Escribe tu nombre."); return; }
+    if (!telefono.trim()) { setErr("Escribe tu WhatsApp / celular."); return; }
+    setLoading(true); setErr("");
+    try {
+      const regResp = await fetch(SUPABASE_URL + "/functions/v1/registrar-cliente-web", {
+        method: "POST", headers: sb.authHeaders(),
+        body: JSON.stringify({ nombre: nombre.trim(), email: completeProfile.email, telefono: telefono.trim() }),
+      });
+      if (!regResp.ok) throw new Error("registro");
+      const perfil = await sb.get("usuarios", `?email=eq.${encodeURIComponent(completeProfile.email)}&limit=1`);
+      setUser({ ...completeProfile.gUser, ...(perfil[0] || {}), token: completeProfile.token, refresh_token: completeProfile.refresh_token, expires_at: completeProfile.expires_at });
+      // Enviar email de bienvenida (sin bloquear si falla)
+      try {
+        fetch(SUPABASE_URL + "/functions/v1/bienvenida-cliente", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Authorization": "Bearer " + SUPABASE_KEY },
+          body: JSON.stringify({ nombre: nombre.trim(), email: completeProfile.email }),
+        });
+      } catch(e) {}
+      showToast(`¡Cuenta creada! Bienvenido, ${nombre.split(" ")[0]}`);
+      setCompleteProfile(null);
+    } catch(e) { setErr("Error al guardar. Intenta de nuevo."); }
+    setLoading(false);
+  };
+
+  return (
+    <div className="oft-overlay" style={S.overlay}>
+      <div className="oft-modal-sheet oft-modal oft-auth-pop" style={S.modal} onClick={e => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "center", marginBottom: 18 }}><Logo height={28} /></div>
+        <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 6, textAlign: "center" }}>¡Casi listo! 🎉</div>
+        <p style={{ fontSize: 14, color: GRAY3, textAlign: "center", marginBottom: 22 }}>
+          Entraste con Google como <strong>{completeProfile.email}</strong>. Completa estos datos para terminar tu registro.
+        </p>
+        <label style={S.label}>Nombre completo</label>
+        <input style={S.input} placeholder="Tu nombre completo" value={nombre} onChange={e => setNombre(e.target.value)} />
+        <label style={S.label}>WhatsApp / Celular</label>
+        <input style={S.input} placeholder="+507 0000-0000" value={telefono} onChange={e => setTelefono(e.target.value)} />
+        {err && <div style={{ color: RED, fontSize: 13, marginBottom: 12 }}>{err}</div>}
+        <button style={{ ...S.btnRed, width: "100%", justifyContent: "center", padding: 14, fontSize: 15, opacity: loading ? 0.7 : 1 }} onClick={handle} disabled={loading}>
+          {loading ? "Guardando..." : "Completar registro"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  BOTÓN DE PAGO YAPPY (oficial, vía CDN)
+// ═══════════════════════════════════════════════════════════════
+function YappyButton({ pedido, onExito, onCancelar }) {
+  const ref = useRef(null);
+  const esperandoRef = useRef(false); // evita el cierre obsoleto en handleError
+  const [estado, setEstado] = useState("listo"); // listo | enviando | esperando | error
+  const [errorMsg, setErrorMsg] = useState("");
+
+  useEffect(() => {
+    const btn = ref.current;
+    if (!btn) return;
+
+    // Cuando el cliente toca el botón de Yappy: creamos la orden en el backend
+    const handleClick = async () => {
+      setEstado("enviando");
+      setErrorMsg("");
+      try {
+        btn.isButtonLoading = true;
+        const resp = await fetch(YAPPY_FN_CREAR, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Authorization": "Bearer " + SUPABASE_KEY },
+          body: JSON.stringify({ total: pedido.total, orderId: pedido.yappyOrderId, telefono: pedido.telefono }),
+        });
+        const result = await resp.json();
+        // La función devuelve { paso, enviado, respuestaYappy }
+        // Los datos del pago están en respuestaYappy.body
+        const body = result?.respuestaYappy?.body || result?.body;
+        if (body && body.transactionId && body.token && body.documentName) {
+          // Marcamos ANTES de llamar eventPayment para que handleError lo vea
+          esperandoRef.current = true;
+          setEstado("esperando");
+          btn.eventPayment({
+            transactionId: body.transactionId,
+            documentName: body.documentName,
+            token: body.token,
+          });
+        } else {
+          const desc = result?.respuestaYappy?.status?.description || result?.status?.description || "No se pudo crear el pago. Intenta de nuevo.";
+          setEstado("error");
+          setErrorMsg(desc);
+          btn.isButtonLoading = false;
+        }
+      } catch (e) {
+        setEstado("error");
+        setErrorMsg("Error de conexión. Intenta de nuevo.");
+        btn.isButtonLoading = false;
+      }
+    };
+
+    const handleSuccess = () => { esperandoRef.current = false; onExito(); };
+
+    // NO conectamos eventError de Yappy — lo manejamos todo nosotros
+    // Yappy dispara eventError cuando envía la solicitud al teléfono del cliente,
+    // pero eso NO es un error real — el cliente debe confirmar en su app.
+    btn.addEventListener("eventClick", handleClick);
+    btn.addEventListener("eventSuccess", handleSuccess);
+    return () => {
+      btn.removeEventListener("eventClick", handleClick);
+      btn.removeEventListener("eventSuccess", handleSuccess);
+    };
+  }, [pedido]);
+
+  return (
+    <div style={{ textAlign: "center" }}>
+      <div style={{ display: "flex", justifyContent: "center", marginBottom: 12 }}>
+        {/* @ts-ignore */}
+        <btn-yappy ref={ref} theme="sky"></btn-yappy>
+      </div>
+      {/* Mensaje cuando la solicitud ya fue enviada al Yappy del cliente */}
+      {estado === "esperando" && (
+        <div style={{ background: "#E8F5E9", border: "1px solid #A5D6A7", borderRadius: 10, padding: "12px 16px", marginBottom: 10 }}>
+          <div style={{ fontWeight: 800, color: "#2E7D32", fontSize: 14, marginBottom: 4 }}>
+            ✅ ¡Solicitud enviada a tu Yappy!
+          </div>
+          <div style={{ fontSize: 13, color: "#2E7D32", lineHeight: 1.5 }}>
+            Abre tu app de <strong>Yappy</strong> y confirma el pago pendiente de <strong>{pedido?.total ? `$${Number(pedido.total).toFixed(2)}` : ""}</strong>.<br />
+            Tu pedido se confirmará automáticamente.
+          </div>
+        </div>
+      )}
+      {estado === "error" && (
+        <div style={{ color: RED, fontSize: 13, fontWeight: 600, marginBottom: 10 }}>{errorMsg}</div>
+      )}
+      <button onClick={onCancelar} style={{ background: "none", border: "none", color: GRAY3, fontSize: 13, textDecoration: "underline", cursor: "pointer" }}>
+        Cancelar y volver
+      </button>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  CHECKOUT
+// ═══════════════════════════════════════════════════════════════
+function CheckoutView() {
+  const { cart, setCart, user, setView, showToast, products, categories, empresas, sucursales, localesRetiro, retiroLocalHabilitado, setShowLogin, setPendingCheckout, sincronizarOfertasCarrito } = useApp();
+  const [localRetiroId, setLocalRetiroId] = useState(null);
+  const [address, setAddress] = useState(""), [areaEnvio, setAreaEnvio] = useState(""), [notes, setNotes] = useState(""), [loading, setLoading] = useState(false), [placed, setPlaced] = useState(null);
+  const [avisoValidacion, setAvisoValidacion] = useState(null); // mensaje del pop-up de validación (reemplaza alert() nativo)
+  const [nombre, setNombre] = useState(user?.nombre || "");
+  const [telefono, setTelefono] = useState(user?.telefono || "");
+  const [telefonoYappy, setTelefonoYappy] = useState(user?.telefono || ""); // número específico para pagar con Yappy
+  const [email, setEmail] = useState(user?.email || "");
+  // Sin sesión iniciada = compra de invitado: no hace falta cuenta, pero sí nombre, WhatsApp y correo
+  const esInvitado = !user;
+  // Si inicia sesión estando ya aquí, se rellenan sus datos sin pisar lo que ya escribió
+  useEffect(() => {
+    if (!user) return;
+    setNombre(n => n || user.nombre || "");
+    setTelefono(t => t || user.telefono || "");
+    setTelefonoYappy(t => t || user.telefono || "");
+    setEmail(e => e || user.email || "");
+  }, [user]);
+  const [empresaId, setEmpresaId] = useState(null);
+  const [sucursalId, setSucursalId] = useState(null);
+  const [modoEntrega, setModoEntrega] = useState("sucursal"); // "sucursal" | "puerta"
+  const [costoEnvioPuerta, setCostoEnvioPuerta] = useState(0);
+
+  // Costo fijo de puerta a puerta -- un solo valor, configurado en el admin
+  useEffect(() => {
+    sb.get("configuracion", "?clave=eq.costo_envio_puerta_a_puerta&limit=1")
+      .then(data => { if (data?.[0]?.valor != null) setCostoEnvioPuerta(Number(data[0].valor)); })
+      .catch(() => {});
+  }, []);
+  const [metodoPago, setMetodoPago] = useState("yappy"); // "yappy" | "tarjeta"
+  const [tarjetaPagoData, setTarjetaPagoData] = useState(null); // { RedirectData, codigo } — cuando se muestra el iframe de la tarjeta
+  const tarjetaContainerRef = useRef(null);
+  const [tarjetaProcesando, setTarjetaProcesando] = useState(false);
+
+  // Scroll al inicio al abrir el checkout — importante en celular
+  useEffect(() => { window.scrollTo({ top: 0, behavior: "instant" }); }, []);
+
+  // Empieza a cargar el script de reCAPTCHA desde que el cliente llega aquí (no
+  // hasta que le dé clic a "Pagar") -- así ya está listo cuando lo necesite, en
+  // vez de tener que esperar esa carga justo en el momento del pago.
+  useEffect(() => { obtenerTokenRecaptcha("checkout_precarga").catch(() => {}); }, []);
+
+  // Avisa a los píxeles de marketing que el cliente llegó al checkout (una sola
+  // vez, al entrar a esta pantalla con productos en el carrito)
+  useEffect(() => {
+    if (cart.length > 0) {
+      trackIniciarCheckout({
+        total: cart.reduce((s, i) => s + cartItemTotal(i), 0),
+        items: itemsTrackDeCarrito(cart),
+      });
+    }
+  }, []);
+  const subtotalBruto = cart.reduce((s, i) => s + cartItemTotal(i), 0);
+  // ── DESCUENTO ──
+  const [codigoInput, setCodigoInput] = useState("");        // lo que el cliente escribe
+  const [descuentoAplicado, setDescuentoAplicado] = useState(null); // {codigo, porcentaje, tipo_aplicacion, productos_ids}
+  const [validandoCodigo, setValidandoCodigo] = useState(false);
+  const [errorCodigo, setErrorCodigo] = useState("");
+
+  // Calcula cuánto se descuenta según el tipo (tienda o productos seleccionados)
+  const montoDescuento = (() => {
+    if (!descuentoAplicado) return 0;
+    // Código por MONTO fijo (ej. nota de crédito): se resta del total, sin pasar del valor del pedido
+    // (siempre queda al menos $0.01 por pagar para que el cobro no falle con total en cero)
+    if (descuentoAplicado.monto != null && descuentoAplicado.monto !== "") {
+      return Math.max(Math.min(Number(descuentoAplicado.monto) || 0, subtotalBruto - 0.01), 0);
+    }
+    const pct = Number(descuentoAplicado.porcentaje) / 100;
+    if (descuentoAplicado.tipo_aplicacion === "tienda") {
+      // Las ofertas y combos ya tienen su precio rebajado: el código no se acumula con ellas
+      const baseSinOfertas = cart.reduce((s, i) => i.esOferta ? s : s + cartItemTotal(i), 0);
+      return baseSinOfertas * pct;
+    }
+    // Solo sobre los productos incluidos en el descuento
+    const ids = descuentoAplicado.productos_ids || [];
+    const baseAplicable = cart.reduce((s, i) => (i.product && ids.includes(i.product.id)) ? s + cartItemTotal(i) : s, 0);
+    return baseAplicable * pct;
+  })();
+  const total = Math.max(subtotalBruto - montoDescuento, 0);
+  const money = (n) => "$" + Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  // Valida el código contra la tabla de descuentos
+  const aplicarCodigo = async () => {
+    const code = codigoInput.trim().toUpperCase();
+    if (!code) { setErrorCodigo("Escribe un código"); return; }
+    setValidandoCodigo(true);
+    setErrorCodigo("");
+    try {
+      let res = await sb.get("descuentos", `?codigo=eq.${encodeURIComponent(code)}&activo=eq.true`);
+      // Los códigos por monto (notas de crédito) no se pueden listar: se consultan uno a uno con el código exacto
+      if (!res || res.length === 0) {
+        try {
+          const rr = await fetch(`${SUPABASE_URL}/rest/v1/rpc/consultar_codigo_monto`, { method: "POST", headers: sb.dataHeaders(), body: JSON.stringify({ p_codigo: code }) });
+          if (rr.ok) { const d1 = await rr.json(); if (d1 && d1.codigo) res = [d1]; }
+        } catch (e2) { /* si falla, se muestra "no válido" como antes */ }
+      }
+      if (!res || res.length === 0) {
+        setErrorCodigo("Código no válido o inactivo");
+        setDescuentoAplicado(null);
+      } else {
+        const d = res[0];
+        // Código de un solo uso que ya se gastó
+        if (d.usos_max != null && Number(d.usos || 0) >= Number(d.usos_max)) {
+          setErrorCodigo("Este código ya fue utilizado");
+          setDescuentoAplicado(null);
+          setValidandoCodigo(false);
+          return;
+        }
+        // Código por monto: el pedido tiene que valer más que el crédito para no perder el sobrante
+        if (d.monto != null && Number(d.monto) >= subtotalBruto) {
+          setErrorCodigo(`Este código es de $${Number(d.monto).toFixed(2)}. Agrega productos por más de ese monto para usarlo completo.`);
+          setDescuentoAplicado(null);
+          setValidandoCodigo(false);
+          return;
+        }
+        // Si es por productos, verifica que el carrito tenga al menos uno incluido
+        if (d.tipo_aplicacion === "productos") {
+          const ids = d.productos_ids || [];
+          const hayAlguno = cart.some(i => i.product && ids.includes(i.product.id));
+          if (!hayAlguno) {
+            setErrorCodigo("Este código aplica a productos que no están en tu carrito");
+            setDescuentoAplicado(null);
+            setValidandoCodigo(false);
+            return;
+          }
+        }
+        setDescuentoAplicado(d);
+        showToast(d.monto != null ? `¡Código ${code} aplicado! −$${Number(d.monto).toFixed(2)} de descuento` : `¡Código ${code} aplicado! ${d.porcentaje}% de descuento`);
+      }
+    } catch(e) {
+      setErrorCodigo("No se pudo validar el código");
+    }
+    setValidandoCodigo(false);
+  };
+  const quitarCodigo = () => { setDescuentoAplicado(null); setCodigoInput(""); setErrorCodigo(""); };
+
+  const empresasActivas = empresas.filter(e => e.activa !== false);
+  const sucursalesEmpresa = sucursales.filter(s => s.empresa_id === empresaId && s.activa !== false);
+  const empresaSel = empresas.find(e => e.id === empresaId);
+  const sucursalSel = sucursales.find(s => s.id === sucursalId);
+  // Para puerta a puerta: busca la empresa Servientrega en la lista (por nombre)
+  const servientrega = empresas.find(e => (e.nombre || "").toLowerCase().includes("servientrega"));
+
+  // Costo de envío según el modo elegido: gratis en retiro local, fijo en puerta a
+  // puerta, o el que tenga configurada la sucursal elegida (puede ser $0 también)
+  // Envío especial de perfumes: solo a sucursal, si TODO el carrito son perfumes y la cantidad
+  // cae dentro del rango que se configura en el admin (ej. 1 a 3 perfumes = $5)
+  const cfgEnvioPerf = useEnvioPerfumes();
+  const envioPerfumesActivo = modoEntrega === "sucursal"
+    && envioPerfumesAplica(cfgEnvioPerf, cart.flatMap(i => {
+      // Una oferta o combo también se revisa producto por producto (piezas × unidades pedidas)
+      if (i.esOferta) return (i.lineas || []).map(l => ({ product: products.find(p => p.id === l.productId) || null, piezas: (Number(l.piezas) || 0) * (Number(i.unidades) || 1) }));
+      // Un Flex Pack se revisa producto por producto: si todos son perfumes cuenta como perfumes
+      if (i.esFlexPack) return (i.items || []).map(it => ({ product: products.find(p => p.id === it.productId) || null, piezas: it.cantidad }));
+      return [{ product: i.product, piezas: i.qty }];
+    }), categories);
+  const costoSucursal = (suc) => envioPerfumesActivo ? cfgEnvioPerf.precio : (Number(suc?.costo_envio) || 0);
+  const costoEnvioFinal = modoEntrega === "local" ? 0
+    : modoEntrega === "puerta" ? costoEnvioPuerta
+    : (sucursalSel ? costoSucursal(sucursalSel) : 0);
+  const totalConEnvio = total + costoEnvioFinal;
+
+  const [pedidoPendiente, setPedidoPendiente] = useState(null); // pedido guardado, esperando pago Yappy
+
+    const construirItemsPayload = () => cart.flatMap(item => {
+          if (item.esOferta) return prorratearLinea(item); // varias filas, con oferta_id y oferta_unidades
+          if (item.esFlexPack) {
+            // Una línea de Flex Pack se reparte en varias filas (una por producto elegido),
+            // prorrateando el precio del paquete por pieza -- tiene un precio ÚNICO para
+            // todo el conjunto, no por producto.
+            const precioPorPieza = item.precioTotal / item.totalPiezas;
+            return item.items.map(it => ({
+              producto_id: it.productId, nombre_producto: `${it.nombre} (Flex Pack ${item.grupoNombre})`,
+              cantidad: it.cantidad, precio_unitario: Number(precioPorPieza.toFixed(4)),
+              subtotal: Number((precioPorPieza * it.cantidad).toFixed(2)), presentacion: "pieza",
+            }));
+          }
+          return [{
+            producto_id: item.product.id, nombre_producto: item.product.nombre,
+            cantidad: item.qty, precio_unitario: item.product.precio_pieza, subtotal: cartItemTotal(item),
+            presentacion: item.pres || "pieza",
+          }];
+        });
+
+  const handlePlace = async () => {
+    if (!nombre.trim()) { setAvisoValidacion("Por favor escribe tu nombre."); return; }
+    if (esInvitado) {
+      if (!/^[^@ ]+@[^@ ]+[.][^@ ]+$/.test(email.trim())) { setAvisoValidacion("Por favor escribe un correo válido: ahí te enviamos la confirmación de tu pedido."); return; }
+      if (telefono.replace(/\D/g, "").length < 7) { setAvisoValidacion("Por favor escribe tu WhatsApp o celular para coordinar tu pedido."); return; }
+    }
+    if (metodoPago === "yappy") {
+      const aliasLimpio = telefonoYappy.replace(/\D/g, "");
+      if (aliasLimpio.length < 7) { setAvisoValidacion("Por favor escribe tu número de Yappy para poder cobrar el pago."); return; }
+    }
+
+    // Definir empresa, sucursal y dirección según el modo de entrega
+    let empresaFinalId, empresaFinalNombre, sucursalFinalId, sucursalFinalNombre;
+
+    if (modoEntrega === "local") {
+      // Retiro en el local: no hay empresa de envío ni sucursal, ni costo de envío
+      if (localesRetiro.length > 1 && !localRetiroId) { setAvisoValidacion("Por favor elige en cuál local vas a retirar tu pedido."); return; }
+      empresaFinalId = null;
+      empresaFinalNombre = "";
+      sucursalFinalId = null;
+      sucursalFinalNombre = "";
+    } else if (modoEntrega === "puerta") {
+      // Puerta a puerta: Servientrega automático + dirección obligatoria + sin sucursal
+      if (!servientrega) { setAvisoValidacion("El envío puerta a puerta no está disponible por ahora. Por favor elige una sucursal."); return; }
+      if (!areaEnvio.trim()) { setAvisoValidacion("Para envío puerta a puerta, escribe tu provincia o área."); return; }
+      if (!address.trim()) { setAvisoValidacion("Para envío puerta a puerta, escribe tu dirección exacta."); return; }
+      empresaFinalId = servientrega.id;
+      empresaFinalNombre = servientrega.nombre;
+      sucursalFinalId = null;
+      sucursalFinalNombre = "Puerta a puerta";
+    } else {
+      // Recoger en sucursal
+      if (!empresaId) { setAvisoValidacion("Por favor elige una empresa de envío."); return; }
+      if (sucursalesEmpresa.length > 0 && !sucursalId) { setAvisoValidacion("Por favor elige una sucursal."); return; }
+      empresaFinalId = empresaId;
+      empresaFinalNombre = empresaSel?.nombre || "";
+      sucursalFinalId = sucursalId;
+      sucursalFinalNombre = sucursalSel?.nombre || "";
+    }
+
+    // La dirección solo existe en puerta a puerta (provincia/área + dirección exacta);
+    // en sucursal o retiro en local no se envía ninguna, aunque se haya escrito antes.
+    const direccionFinal = modoEntrega === "puerta" ? `${areaEnvio.trim()} — ${address.trim()}` : "";
+
+    // Muestras abiertas: si algún perfume del pedido tiene una pieza de muestra (no vendible) y
+    // lo que pide el cliente ya no cabe, se frena aquí aunque el carrito se haya armado antes de
+    // que se marcara la muestra. Odoo no se toca; solo la web deja de venderla.
+    try {
+      const pedidas = {};
+      for (const i of cart) {
+        if (i.esOferta) (i.lineas || []).forEach(l => { pedidas[l.productId] = (pedidas[l.productId] || 0) + (Number(l.piezas) || 0) * (Number(i.unidades) || 1); });
+        else if (i.esFlexPack) (i.items || []).forEach(it => { pedidas[it.productId] = (pedidas[it.productId] || 0) + (Number(it.cantidad) || 0); });
+        else if (i.product) pedidas[i.product.id] = (pedidas[i.product.id] || 0) + (Number(i.qty) || 0);
+      }
+      const ids = Object.keys(pedidas);
+      let frescos = products;
+      try { const r = await sb.get("productos", `?id=in.(${ids.join(",")})&select=id,nombre,stock,piezas_muestra,stock_actualizado_at,proveedor_id,tiene_stock_fisico`); if (Array.isArray(r) && r.length) frescos = r; } catch (e) { /* si no se puede consultar, se usa lo que ya tiene la página */ }
+      const sinCupo = [];
+      for (const id of ids) {
+        const p = frescos.find(x => String(x.id) === String(id));
+        if (!p || !(Number(p.piezas_muestra) > 0) || !p.stock_actualizado_at || (p.proveedor_id && !p.tiene_stock_fisico)) continue;
+        const disponibles = stockWeb(p);
+        if (pedidas[id] > disponibles) sinCupo.push(`${p.nombre}: ${disponibles > 0 ? `solo quedan ${disponibles} disponibles` : "ya no está disponible"}`);
+      }
+      if (sinCupo.length) { setAvisoValidacion("Algunos productos ya no tienen la cantidad que pediste:\n\n" + sinCupo.join("\n") + "\n\nAjusta tu pedido y vuelve a intentarlo."); return; }
+    } catch (e) { /* esta revisión nunca debe impedir una compra normal */ }
+
+    const localElegido = modoEntrega === "local" ? (localesRetiro.find(l => l.id === localRetiroId) || localesRetiro[0] || null) : null;
+
+    setLoading(true);
+
+    // Si hay ofertas o combos en el pedido, se confirma con el servidor que sigan vigentes y que el
+    // precio sea el de la oferta (por si cambió o terminó la campaña mientras el cliente decidía).
+    if (cart.some(i => i.esOferta)) {
+      try {
+        const filas = construirItemsPayload().filter(r => r.oferta_id).map(r => ({ oferta_id: r.oferta_id, oferta_unidades: r.oferta_unidades, producto_id: r.producto_id, cantidad: r.cantidad, subtotal: r.subtotal }));
+        await sb.ensureFreshToken();
+        const rr = await fetch(`${SUPABASE_URL}/rest/v1/rpc/verificar_ofertas_items`, { method: "POST", headers: sb.dataHeaders(), body: JSON.stringify({ p_items: filas }) });
+        if (rr.ok) {
+          const chk = await rr.json();
+          if (chk && chk.ok === false) {
+            const avisos = await sincronizarOfertasCarrito();
+            setLoading(false);
+            setAvisoValidacion(((chk.errores || []).join(" ") + " Actualizamos tu pedido con las ofertas vigentes: revísalo y vuelve a confirmar.").trim());
+            return;
+          }
+        }
+      } catch (e) { /* si no se puede consultar, el servidor vuelve a verificar al guardar */ }
+    }
+
+    // Verificación antibots (reCAPTCHA v3, pedida por el banco) -- nunca bloquea
+    // la compra si el servicio de Google o nuestra propia verificación fallan,
+    // solo frena si Google mismo dice con seguridad que esto parece un robot.
+    try {
+      const tokenRecaptcha = await obtenerTokenRecaptcha("checkout");
+      const verifResp = await fetch(`${SUPABASE_URL}/functions/v1/verificar-recaptcha`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: tokenRecaptcha }),
+      });
+      const verifData = await verifResp.json();
+      if (verifData && verifData.ok === false) {
+        setLoading(false);
+        setAvisoValidacion("No pudimos confirmar que esto sea una compra real. Por favor recarga la página e intenta de nuevo.");
+        return;
+      }
+    } catch (e) { /* si la verificación misma falla, no se bloquea la compra por eso */ }
+
+    try {
+      if (metodoPago === "tarjeta") {
+        // El pedido se crea DENTRO de la función (junto con el inicio del pago en Powertranz)
+        const itemsPayload = construirItemsPayload();
+        const resp = await fetch(`${SUPABASE_URL}/functions/v1/crear-pago-tarjeta`, {
+          method: "POST", headers: sb.functionHeaders(),
+          body: JSON.stringify({
+            usuario_id: user?.id || null, cliente: esInvitado ? { nombre: nombre.trim(), email: email.trim(), telefono: telefono.trim() } : undefined,
+            nombre_cliente: nombre, telefono, direccion: direccionFinal, notas: notes, total: totalConEnvio,
+            items: itemsPayload,
+            empresa_envio_id: empresaFinalId, empresa_envio_nombre: empresaFinalNombre,
+            sucursal_id: sucursalFinalId, sucursal_nombre: sucursalFinalNombre,
+            retiro_local: modoEntrega === "local", local_retiro_id: localElegido?.id || null, local_retiro_nombre: localElegido?.nombre || null,
+            costo_envio: costoEnvioFinal,
+            descuento_codigo: descuentoAplicado?.codigo || null,
+            descuento_monto: montoDescuento > 0 ? Number(montoDescuento.toFixed(2)) : 0,
+            visitante_id: idVisitante(),
+          }),
+        });
+        const data = await resp.json();
+        if (!resp.ok || data.error) { setAvisoValidacion("Error al iniciar el pago: " + (data.error || "intenta de nuevo")); setLoading(false); return; }
+        // Al volver del banco la página se recarga y un invitado no puede leer su pedido (solo lo ve su dueño
+        // con sesión) -- se guarda un resumen aquí mismo para poder mostrarle su confirmación y avisar a marketing.
+        try {
+          localStorage.setItem("oft_pago_tarjeta_pendiente", JSON.stringify({
+            codigo: data.codigo, email: esInvitado ? email.trim() : (user?.email || ""), nombre: nombre.trim(), telefono: telefono.trim(),
+            pedido: {
+              total: totalConEnvio, retiro_local: modoEntrega === "local", local_retiro_nombre: localElegido?.nombre || null,
+              empresa_envio_nombre: empresaFinalNombre, sucursal_nombre: sucursalFinalNombre,
+              items: itemsPayload.map(it => ({ nombre_producto: it.nombre_producto, cantidad: it.cantidad, subtotal: it.subtotal })),
+            },
+            itemsTrack: itemsTrackDeCarrito(cart),
+          }));
+        } catch (e) {}
+        setTarjetaPagoData({ RedirectData: data.RedirectData, codigo: data.codigo, modoPrueba: data.modo_prueba });
+      } else if (esInvitado) {
+        // Compra SIN cuenta: la ficha del cliente y el pedido los crea el servidor
+        const resp = await fetch(`${SUPABASE_URL}/functions/v1/crear-pedido-invitado`, {
+          method: "POST", headers: sb.functionHeaders(),
+          body: JSON.stringify({
+            cliente: { nombre: nombre.trim(), email: email.trim(), telefono: telefono.trim() },
+            nombre_cliente: nombre, telefono, direccion: direccionFinal, notas: notes, total: totalConEnvio,
+            items: construirItemsPayload(),
+            empresa_envio_id: empresaFinalId, empresa_envio_nombre: empresaFinalNombre,
+            sucursal_id: sucursalFinalId, sucursal_nombre: sucursalFinalNombre,
+            retiro_local: modoEntrega === "local", local_retiro_id: localElegido?.id || null, local_retiro_nombre: localElegido?.nombre || null,
+            costo_envio: costoEnvioFinal,
+            descuento_codigo: descuentoAplicado?.codigo || null,
+            descuento_monto: montoDescuento > 0 ? Number(montoDescuento.toFixed(2)) : 0,
+            visitante_id: idVisitante(),
+          }),
+        });
+        const data = await resp.json();
+        if (!resp.ok || data.error) { setAvisoValidacion(data.error || "No se pudo crear el pedido. Intenta de nuevo."); setLoading(false); return; }
+        setPedidoPendiente({ id: data.pedido_id, codigo: data.codigo, yappyOrderId: data.yappy_order_id, total: totalConEnvio, telefono: telefonoYappy });
+      } else {
+        // orderId corto para Yappy (máx 15 caracteres alfanuméricos)
+        const yappyOrderId = "OFT" + Date.now().toString().slice(-10);
+        const codigo = `OFT-${Date.now().toString().slice(-6)}`;
+        const pedido = await sb.post("pedidos", {
+          codigo, usuario_id: user.id, nombre_cliente: nombre, telefono: telefono,
+          direccion: direccionFinal, notas: notes, total: totalConEnvio, estado: 0,
+          empresa_envio_id: empresaFinalId, empresa_envio_nombre: empresaFinalNombre,
+          sucursal_id: sucursalFinalId, sucursal_nombre: sucursalFinalNombre,
+          retiro_local: modoEntrega === "local",
+          local_retiro_id: localElegido?.id || null, local_retiro_nombre: localElegido?.nombre || null,
+          pagado: false, yappy_order_id: yappyOrderId, metodo_pago: "yappy",
+          costo_envio: costoEnvioFinal,
+          descuento_codigo: descuentoAplicado?.codigo || null,
+          descuento_monto: montoDescuento > 0 ? Number(montoDescuento.toFixed(2)) : 0,
+        });
+        const pedidoId = pedido[0].id;
+        for (const item of cart) {
+          if (item.esOferta) {
+            // Oferta o combo: una fila por producto, con el precio de la oferta repartido y la marca de oferta
+            for (const fila of prorratearLinea(item)) await sb.post("pedido_items", { pedido_id: pedidoId, ...fila });
+          } else if (item.esFlexPack) {
+            // Una línea de Flex Pack se reparte en varias filas de pedido_items (una por
+            // producto elegido), prorrateando el precio del paquete por pieza -- ya que el
+            // Flex Pack tiene un precio ÚNICO para todo el conjunto, no por producto.
+            const precioPorPieza = item.precioTotal / item.totalPiezas;
+            for (const it of item.items) {
+              await sb.post("pedido_items", {
+                pedido_id: pedidoId, producto_id: it.productId, nombre_producto: `${it.nombre} (Flex Pack ${item.grupoNombre})`,
+                cantidad: it.cantidad, precio_unitario: Number(precioPorPieza.toFixed(4)),
+                subtotal: Number((precioPorPieza * it.cantidad).toFixed(2)), presentacion: "pieza",
+              });
+            }
+          } else {
+            await sb.post("pedido_items", { pedido_id: pedidoId, producto_id: item.product.id, nombre_producto: item.product.nombre, cantidad: item.qty, precio_unitario: item.product.precio_pieza, subtotal: cartItemTotal(item), presentacion: item.pres || "pieza" });
+          }
+        }
+        // Guarda el pedido pendiente y muestra el botón de Yappy (el pago va primero)
+        setPedidoPendiente({ id: pedidoId, codigo, yappyOrderId, total: totalConEnvio, telefono: telefonoYappy });
+      }
+    } catch(e) { setAvisoValidacion("Error al guardar el pedido: " + e.message); }
+    setLoading(false);
+  };
+
+  // Cuando aparece el formulario de tarjeta, desplaza la página hasta ahí automáticamente
+  // (para que el cliente no tenga que buscarlo manualmente hacia abajo)
+  useEffect(() => {
+    if (tarjetaPagoData && tarjetaContainerRef.current) {
+      setTimeout(() => tarjetaContainerRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 100);
+    }
+  }, [tarjetaPagoData]);
+
+  // Escucha el mensaje de "pago simulado" mientras Powertranz no esté conectado (modo de prueba)
+  useEffect(() => {
+    const onMessage = (ev) => {
+      if (ev.data?.tipo === "pago_prueba_ok" && tarjetaPagoData) {
+        setTarjetaProcesando(true);
+        showToast("✅ Pago de prueba simulado (modo de prueba, sin cargo real)");
+        setTimeout(() => {
+          setTarjetaProcesando(false);
+          setPlaced(tarjetaPagoData.codigo);
+          setCart([]);
+          setTarjetaPagoData(null);
+        }, 1200);
+      }
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [tarjetaPagoData]);
+
+  // Cuando el pago de Yappy se confirma con éxito
+  const onPagoExitoso = async () => {
+    // La confirmación oficial del pago la hace el IPN de Yappy en el servidor (con firma).
+    // El navegador ya NO marca el pedido como pagado: la base de datos lo bloquea por seguridad.
+    setPlaced(pedidoPendiente.codigo);
+    trackCompra({
+      codigo: pedidoPendiente.codigo, total: pedidoPendiente.total,
+      items: itemsTrackDeCarrito(cart),
+    });
+    setCart([]);
+    setPedidoPendiente(null);
+    showToast("¡Pago recibido! Tu pedido está confirmado.");
+  };
+
+  if (placed) return (
+    <div className="oft-section" style={{ ...S.section, textAlign: "center", maxWidth: 500 }}>
+      <div style={{ display: "flex", justifyContent: "center", marginBottom: 12 }}><CheckCircle2 size={64} color="#22c55e" strokeWidth={1.5} /></div>
+      <h2 style={{ fontSize: 24, fontWeight: 900 }}>¡Pago recibido!</h2>
+      <p style={{ color: GRAY3 }}>{user ? 'Tu pedido está confirmado. Sigue su estado desde "Mi Cuenta".' : "Tu pedido está confirmado. Te avisaremos por WhatsApp y por correo."}</p>
+      <div style={{ background: GRAY, borderRadius: 12, padding: 20, margin: "20px 0", textAlign: "left" }}>
+        <div style={{ fontWeight: 800, marginBottom: 8 }}>Número: <span style={{ color: RED }}>{placed}</span></div>
+        <div style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "#D4EDDA", color: "#155724", padding: "4px 12px", borderRadius: 20, fontWeight: 700, fontSize: 13, marginBottom: 4 }}>
+          <CheckCircle2 size={14} /> Pagado con Yappy
+        </div>
+        {modoEntrega === "local"
+          ? <div style={{ marginTop: 10, fontSize: 13, color: "#856404", display: "flex", alignItems: "center", gap: 6, fontWeight: 700 }}><Home size={14} /> Retiro en el local{(() => { const l = localesRetiro.find(x => x.id === localRetiroId) || (localesRetiro.length === 1 ? localesRetiro[0] : null); return l ? `: ${l.nombre}` : ""; })()}</div>
+          : empresaSel && <div style={{ marginTop: 10, fontSize: 13, color: GRAY3, display: "flex", alignItems: "center", gap: 6 }}><Truck size={14} /> {empresaSel.nombre}{sucursalSel ? ` · ${sucursalSel.nombre}` : ""}</div>}
+      </div>
+      <FinPedidoAcciones email={email.trim()} nombre={nombre.trim()} telefono={telefono.trim()} />
+    </div>
+  );
+
+  return (
+    <div className="oft-section" style={{ ...S.section, maxWidth: 620 }}>
+      {/* AVISO DE VALIDACIÓN (reemplaza el alert() nativo del navegador) */}
+      {avisoValidacion && createPortal(
+        <div className="oft-overlay" style={S.overlay} onClick={() => setAvisoValidacion(null)}>
+          <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 18, maxWidth: 360, width: "90%", padding: "28px 24px", textAlign: "center" }} onClick={e => e.stopPropagation()}>
+            <div style={{ width: 56, height: 56, borderRadius: "50%", background: "#FFF0EF", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
+              <AlertTriangle size={28} color={RED} strokeWidth={2} />
+            </div>
+            <div style={{ fontWeight: 900, fontSize: 17, marginBottom: 8 }}>Falta un dato</div>
+            <p style={{ fontSize: 14, color: GRAY3, marginBottom: 22, lineHeight: 1.5, whiteSpace: "pre-line" }}>{avisoValidacion}</p>
+            <button onClick={() => setAvisoValidacion(null)} className="oft-btn-press" style={{ ...S.btnRed, width: "100%", justifyContent: "center", padding: 13 }}>
+              Entendido
+            </button>
+          </div>
+        </div>
+      , document.body)}
+
+      <div style={S.sectionTitle}>Finalizar Pedido</div>
+      <div style={{ background: WHITE, borderRadius: 12, padding: 24, marginBottom: 16, border: `1px solid ${GRAY2}` }}>
+        <div style={{ fontWeight: 800, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}><Package size={18} /> Resumen</div>
+        {cart.map((item, idx) => (
+          <div key={idx} style={{ display: "flex", justifyContent: "space-between", fontSize: 14, padding: "6px 0", borderBottom: `1px solid ${GRAY2}` }}>
+            <span>{item.esOferta ? `${item.tipo === "combo" ? "Combo" : "Oferta"}: ${item.titulo}` : item.esFlexPack ? `Flex Pack (${item.grupoNombre})` : item.product.nombre} <span style={{ color: GRAY3, fontSize: 12 }}>({cartItemLabel(item)})</span></span>
+            <span style={{ fontWeight: 700 }}>${cartItemTotal(item).toFixed(2)}</span>
+          </div>
+        ))}
+
+        {/* CÓDIGO DE DESCUENTO */}
+        <div style={{ marginTop: 14 }}>
+          {!descuentoAplicado ? (
+            <div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <input
+                  style={{ flex: 1, padding: "10px 12px", borderRadius: 8, border: `1.5px solid ${errorCodigo ? RED : GRAY2}`, fontSize: 14, textTransform: "uppercase", outline: "none" }}
+                  placeholder="¿Tienes un código?"
+                  value={codigoInput}
+                  onChange={e => { setCodigoInput(e.target.value.toUpperCase()); setErrorCodigo(""); }}
+                  onKeyDown={e => e.key === "Enter" && aplicarCodigo()}
+                />
+                <button onClick={aplicarCodigo} disabled={validandoCodigo} className="oft-btn-press" style={{ background: BLACK, color: WHITE, border: "none", borderRadius: 8, padding: "0 18px", fontSize: 14, fontWeight: 700, cursor: "pointer", opacity: validandoCodigo ? 0.6 : 1 }}>
+                  {validandoCodigo ? "..." : "Aplicar"}
+                </button>
+              </div>
+              {errorCodigo && <div style={{ color: RED, fontSize: 12, marginTop: 6, fontWeight: 600 }}>{errorCodigo}</div>}
+            </div>
+          ) : (
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "#E8F5E9", border: "1px solid #A5D6A7", borderRadius: 8, padding: "10px 14px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <CheckCircle2 size={16} color="#2E7D32" />
+                <div>
+                  <div style={{ fontWeight: 800, fontSize: 13, color: "#2E7D32" }}>{descuentoAplicado.codigo}</div>
+                  <div style={{ fontSize: 11, color: "#2E7D32" }}>{descuentoAplicado.monto != null ? `$${Number(descuentoAplicado.monto).toFixed(2)} de descuento aplicado` : `${descuentoAplicado.porcentaje}% de descuento aplicado`}</div>
+                </div>
+              </div>
+              <button onClick={quitarCodigo} style={{ background: "none", border: "none", cursor: "pointer", color: "#2E7D32", display: "flex" }}><X size={18} /></button>
+            </div>
+          )}
+        </div>
+
+        {/* DESGLOSE */}
+        {montoDescuento > 0 && (
+          <>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 14, marginTop: 14, color: GRAY3 }}>
+              <span>Subtotal</span><span>${subtotalBruto.toFixed(2)}</span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 14, marginTop: 6, color: "#2E7D32", fontWeight: 700 }}>
+              <span>{descuentoAplicado.monto != null ? "Descuento (crédito)" : `Descuento (${descuentoAplicado.porcentaje}%)`}</span><span>−${montoDescuento.toFixed(2)}</span>
+            </div>
+          </>
+        )}
+        <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 900, fontSize: 18, marginTop: 14 }}>
+          <span>Total</span><span style={{ color: RED }}>${total.toFixed(2)}</span>
+        </div>
+      </div>
+
+      {/* MODO DE ENTREGA */}
+      <div style={{ background: WHITE, borderRadius: 12, padding: 24, marginBottom: 16, border: `1px solid ${GRAY2}` }}>
+        <div style={{ fontWeight: 800, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}><Truck size={18} /> ¿Cómo quieres recibir tu pedido? *</div>
+        <div style={{ display: "grid", gridTemplateColumns: retiroLocalHabilitado ? "1fr 1fr 1fr" : "1fr 1fr", gap: 10, marginBottom: 6 }}>
+          <div onClick={() => setModoEntrega("sucursal")}
+            style={{ border: `2px solid ${modoEntrega === "sucursal" ? RED : GRAY2}`, background: modoEntrega === "sucursal" ? "#FFF5F5" : WHITE, borderRadius: 10, padding: 16, cursor: "pointer", textAlign: "center" }}>
+            <Building2 size={28} color={modoEntrega === "sucursal" ? RED : GRAY3} strokeWidth={1.6} />
+            <div style={{ fontWeight: 800, fontSize: 14, marginTop: 8 }}>Recoger en sucursal</div>
+            <div style={{ fontSize: 11, color: GRAY3, marginTop: 2 }}>Tú eliges la empresa y sucursal</div>
+          </div>
+          <div onClick={() => setModoEntrega("puerta")}
+            style={{ border: `2px solid ${modoEntrega === "puerta" ? RED : GRAY2}`, background: modoEntrega === "puerta" ? "#FFF5F5" : WHITE, borderRadius: 10, padding: 16, cursor: "pointer", textAlign: "center" }}>
+            <MapPin size={28} color={modoEntrega === "puerta" ? RED : GRAY3} strokeWidth={1.6} />
+            <div style={{ fontWeight: 800, fontSize: 14, marginTop: 8 }}>Puerta a puerta</div>
+            <div style={{ fontSize: 11, color: GRAY3, marginTop: 2 }}>Te lo llevamos por Servientrega</div>
+          </div>
+          {retiroLocalHabilitado && (
+            <div onClick={() => setModoEntrega("local")}
+              style={{ border: `2px solid ${modoEntrega === "local" ? RED : GRAY2}`, background: modoEntrega === "local" ? "#FFF5F5" : WHITE, borderRadius: 10, padding: 16, cursor: "pointer", textAlign: "center" }}>
+              <Home size={28} color={modoEntrega === "local" ? RED : GRAY3} strokeWidth={1.6} />
+              <div style={{ fontWeight: 800, fontSize: 14, marginTop: 8 }}>Retiro en el local</div>
+              <div style={{ fontSize: 11, color: GRAY3, marginTop: 2 }}>Pasas tú mismo a recogerlo</div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* AVISO / SELECCIÓN RETIRO EN EL LOCAL */}
+      {modoEntrega === "local" && retiroLocalHabilitado && (
+        <div style={{ background: "#FFF5F5", border: `1.5px solid ${RED}`, borderRadius: 12, padding: 16, marginBottom: 16 }}>
+          {localesRetiro.length === 0 ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <Home size={22} color={RED} />
+              <div style={{ fontSize: 13 }}>
+                <strong>Retiro en nuestro local en Colón, Panamá.</strong> Te avisaremos por WhatsApp apenas esté listo para que pases a recogerlo — sin costo de envío.
+              </div>
+            </div>
+          ) : localesRetiro.length === 1 ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <Home size={22} color={RED} />
+              <div style={{ fontSize: 13 }}>
+                <strong>Retiro en: {localesRetiro[0].nombre}</strong>{localesRetiro[0].direccion ? ` — ${localesRetiro[0].direccion}` : ""}. Te avisaremos por WhatsApp apenas esté listo — sin costo de envío.
+              </div>
+            </div>
+          ) : (
+            <>
+              <div style={{ fontWeight: 800, fontSize: 13, marginBottom: 10, display: "flex", alignItems: "center", gap: 8 }}><Home size={18} color={RED} /> ¿En cuál local deseas retirarlo? *</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {localesRetiro.map(loc => (
+                  <div key={loc.id} onClick={() => setLocalRetiroId(loc.id)}
+                    style={{ border: `2px solid ${localRetiroId === loc.id ? RED : GRAY2}`, background: localRetiroId === loc.id ? WHITE : "#FFFAFA", borderRadius: 10, padding: "10px 14px", cursor: "pointer", display: "flex", alignItems: "center", gap: 10 }}>
+                    <Home size={16} color={localRetiroId === loc.id ? RED : GRAY3} />
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 700, fontSize: 13 }}>{loc.nombre}</div>
+                      {loc.direccion && <div style={{ fontSize: 11, color: GRAY3 }}>{loc.direccion}</div>}
+                    </div>
+                    {localRetiroId === loc.id && <CheckCircle2 size={16} color={RED} />}
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* EMPRESA DE ENVÍO (solo si recoge en sucursal) */}
+      {modoEntrega === "sucursal" && (
+      <div style={{ background: WHITE, borderRadius: 12, padding: 24, marginBottom: 16, border: `1px solid ${GRAY2}` }}>
+        <div style={{ fontWeight: 800, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}><Truck size={18} /> Empresa de envío *</div>
+        {empresasActivas.length === 0 ? (
+          <div style={{ background: GRAY, borderRadius: 8, padding: 14, fontSize: 13, color: GRAY3 }}>No hay empresas de envío disponibles. Contáctanos por WhatsApp para coordinar.</div>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            {empresasActivas.map(emp => (
+              <div key={emp.id}
+                onClick={() => { setEmpresaId(emp.id); setSucursalId(null); }}
+                style={{ border: `2px solid ${empresaId === emp.id ? RED : GRAY2}`, background: empresaId === emp.id ? "#FFF5F5" : WHITE, borderRadius: 10, padding: 14, cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 8, textAlign: "center" }}
+              >
+                {emp.logo_url
+                  ? <img src={emp.logo_url} alt={emp.nombre} style={{ height: 36, objectFit: "contain" }} />
+                  : <Building2 size={30} color={empresaId === emp.id ? RED : GRAY3} strokeWidth={1.6} />
+                }
+                <span style={{ fontWeight: 700, fontSize: 13 }}>{emp.nombre}</span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* SUCURSAL */}
+        {empresaId && sucursalesEmpresa.length > 0 && (
+          <div style={{ marginTop: 18 }}>
+            <label style={S.label}>Elige la sucursal de {empresaSel?.nombre} *</label>
+            {envioPerfumesActivo && (
+              <div style={{ background: "#E8F6F1", border: "1px solid #0F6E56", color: "#0F6E56", borderRadius: 8, padding: "8px 12px", fontSize: 12.5, fontWeight: 700, marginBottom: 10 }}>
+                Envío especial por pedir perfumes: {money(cfgEnvioPerf.precio)} a cualquier sucursal
+              </div>
+            )}
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {sucursalesEmpresa.map(suc => (
+                <div key={suc.id}
+                  onClick={() => setSucursalId(suc.id)}
+                  style={{ border: `2px solid ${sucursalId === suc.id ? RED : GRAY2}`, background: sucursalId === suc.id ? "#FFF5F5" : WHITE, borderRadius: 10, padding: "12px 14px", cursor: "pointer", display: "flex", alignItems: "center", gap: 12 }}
+                >
+                  <MapPinIcon size={18} color={sucursalId === suc.id ? RED : GRAY3} />
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 700, fontSize: 14 }}>{suc.nombre}</div>
+                    {suc.direccion && <div style={{ fontSize: 12, color: GRAY3 }}>{suc.direccion}</div>}
+                    {suc.telefono && <div style={{ fontSize: 12, color: GRAY3 }}>Tel: {suc.telefono}</div>}
+                  </div>
+                  <span style={{ fontSize: 13, fontWeight: 800, color: costoSucursal(suc) > 0 ? BLACK : "#0F6E56", textAlign: "right" }}>
+                    {envioPerfumesActivo && Number(suc.costo_envio) > costoSucursal(suc) && (
+                      <span style={{ display: "block", fontSize: 11, fontWeight: 600, color: GRAY3, textDecoration: "line-through" }}>{money(suc.costo_envio)}</span>
+                    )}
+                    {costoSucursal(suc) > 0 ? money(costoSucursal(suc)) : "Gratis"}
+                  </span>
+                  {sucursalId === suc.id && <CheckCircle2 size={18} color={RED} />}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        {empresaId && sucursalesEmpresa.length === 0 && (
+          <div style={{ marginTop: 14, fontSize: 13, color: GRAY3, background: GRAY, borderRadius: 8, padding: 12 }}>
+            Esta empresa aún no tiene sucursales registradas. Coordinaremos los detalles por WhatsApp.
+          </div>
+        )}
+      </div>
+      )}
+
+      {/* AVISO PUERTA A PUERTA */}
+      {modoEntrega === "puerta" && (
+        <div style={{ background: "#FFF5F5", border: `1.5px solid ${RED}`, borderRadius: 12, padding: 16, marginBottom: 16, display: "flex", alignItems: "center", gap: 12 }}>
+          <Truck size={22} color={RED} />
+          <div style={{ fontSize: 13 }}>
+            <strong>Envío puerta a puerta por Servientrega — {costoEnvioPuerta > 0 ? money(costoEnvioPuerta) : "Gratis"}.</strong> Te lo llevamos a la dirección que indiques abajo. <span style={{ color: RED, fontWeight: 700 }}>La provincia o área y la dirección exacta son obligatorias.</span>
+          </div>
+        </div>
+      )}
+
+      {/* DIRECCIÓN / NOTAS */}
+      <div style={{ background: WHITE, borderRadius: 12, padding: 24, marginBottom: 16, border: `1px solid ${GRAY2}` }}>
+        <div style={{ fontWeight: 800, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}><MapPin size={18} /> Datos adicionales</div>
+        {esInvitado && (
+          <div style={{ background: "#F0FAF3", border: "1px solid #BFE5CB", borderRadius: 10, padding: "10px 14px", marginBottom: 14, fontSize: 13, color: "#1F6B3A", lineHeight: 1.45 }}>
+            <strong>Compra sin crear cuenta.</strong> Solo necesitamos tus datos de contacto. ¿Ya tienes cuenta?{" "}
+            <span style={{ color: RED, fontWeight: 700, cursor: "pointer" }} onClick={() => { setPendingCheckout(true); setShowLogin(true); }}>Inicia sesión</span>
+          </div>
+        )}
+        <label style={S.label}>Nombre *</label>
+        <input style={S.input} placeholder="Tu nombre" value={nombre} onChange={e => setNombre(e.target.value)} autoComplete="name" />
+        <label style={S.label}>WhatsApp / Teléfono{esInvitado ? " *" : ""}</label>
+        <input style={S.input} placeholder="Ej: 6720-0474" type="tel" value={telefono} onChange={e => setTelefono(e.target.value)} autoComplete="tel" />
+        {esInvitado && (
+          <>
+            <label style={S.label}>Correo electrónico *</label>
+            <input style={S.input} placeholder="tu@correo.com" type="email" inputMode="email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} />
+            <div style={{ fontSize: 11, color: GRAY3, marginTop: -6, marginBottom: 10 }}>Ahí te enviamos la confirmación de tu pedido.</div>
+          </>
+        )}
+        {modoEntrega === "puerta" && (
+          <>
+            <label style={S.label}>Provincia o área *</label>
+            <input style={{ ...S.input, borderColor: !areaEnvio.trim() ? RED : GRAY2 }} placeholder="Ej: Colón, Costa Arriba, Panamá Oeste..." value={areaEnvio} onChange={e => setAreaEnvio(e.target.value)} autoComplete="address-level1" />
+            <label style={S.label}>Dirección exacta *</label>
+            <input style={{ ...S.input, borderColor: !address.trim() ? RED : GRAY2 }} placeholder="Calle, casa o edificio, punto de referencia..." value={address} onChange={e => setAddress(e.target.value)} autoComplete="street-address" />
+          </>
+        )}
+        <label style={S.label}>Notas (tallas, colores, referencias)</label>
+        <input style={S.input} placeholder="Opcional..." value={notes} onChange={e => setNotes(e.target.value)} />
+      </div>
+
+      {/* PAGO */}
+      <div style={{ background: WHITE, borderRadius: 12, padding: 24, marginBottom: 20, border: `1px solid ${GRAY2}` }}>
+        <div style={{ fontWeight: 800, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}><CreditCard size={18} /> Pago</div>
+
+        {!pedidoPendiente && !tarjetaPagoData ? (
+          <>
+            <div style={{ background: GRAY, borderRadius: 10, padding: "12px 16px", marginBottom: 14 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13.5, color: GRAY3, marginBottom: 6 }}>
+                <span>Subtotal</span>
+                <span>{money(total)}</span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13.5, color: GRAY3, marginBottom: 10 }}>
+                <span>Envío {modoEntrega === "local" ? "(retiro en local)" : modoEntrega === "puerta" ? "(puerta a puerta)" : sucursalSel ? `(${sucursalSel.nombre})` : ""}</span>
+                <span>{costoEnvioFinal > 0 ? money(costoEnvioFinal) : "Gratis"}</span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderTop: `1px solid ${GRAY2}`, paddingTop: 10 }}>
+                <span style={{ fontWeight: 700 }}>Total a pagar</span>
+                <span style={{ fontWeight: 900, fontSize: 22, color: RED }}>{money(totalConEnvio)}</span>
+              </div>
+            </div>
+
+            {/* MÉTODO DE PAGO */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 16 }}>
+              <div onClick={() => setMetodoPago("yappy")}
+                style={{ border: `2px solid ${metodoPago === "yappy" ? RED : GRAY2}`, background: metodoPago === "yappy" ? "#FFF5F5" : WHITE, borderRadius: 10, padding: 14, cursor: "pointer", textAlign: "center" }}>
+                <span style={{ background: "#00C2DE", borderRadius: 6, padding: "2px 8px", color: WHITE, fontWeight: 900, fontSize: 12 }}>YAPPY</span>
+                <div style={{ fontSize: 12, color: GRAY3, marginTop: 6 }}>Pago instantáneo</div>
+              </div>
+              <div onClick={() => setMetodoPago("tarjeta")}
+                style={{ border: `2px solid ${metodoPago === "tarjeta" ? RED : GRAY2}`, background: metodoPago === "tarjeta" ? "#FFF5F5" : WHITE, borderRadius: 10, padding: 14, cursor: "pointer", textAlign: "center" }}>
+                <CreditCard size={18} color={metodoPago === "tarjeta" ? RED : BLACK} style={{ marginBottom: 2 }} />
+                <div style={{ fontWeight: 800, fontSize: 13 }}>Tarjeta</div>
+                <div style={{ fontSize: 11, color: GRAY3 }}>Crédito o débito</div>
+              </div>
+            </div>
+
+            {metodoPago === "yappy" ? (
+              <>
+                <p style={{ fontSize: 13, color: GRAY3, marginBottom: 12 }}>
+                  Paga de forma segura con Yappy. Tu pedido se confirma apenas se reciba el pago.
+                </p>
+                <label style={{ ...S.label, display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+                  <span style={{ background: "#00C2DE", borderRadius: 6, padding: "2px 7px", color: WHITE, fontWeight: 900, fontSize: 11 }}>YAPPY</span>
+                  Número de Yappy para el cobro *
+                </label>
+                <input
+                  style={{ ...S.input, marginBottom: 12, fontWeight: 700, fontSize: 15 }}
+                  type="tel"
+                  inputMode="numeric"
+                  placeholder="Ej: 6700-0000"
+                  value={telefonoYappy}
+                  onChange={e => setTelefonoYappy(e.target.value)}
+                />
+                <p style={{ fontSize: 11, color: GRAY3, marginBottom: 14 }}>
+                  Escribe el número de teléfono registrado en tu app de Yappy. La solicitud de pago llegará a ese número.
+                </p>
+              </>
+            ) : (
+              <p style={{ fontSize: 13, color: GRAY3, marginBottom: 14, display: "flex", alignItems: "center", gap: 6 }}>
+                <Lock size={13} /> El formulario de tu tarjeta lo maneja directamente el banco — nunca vemos ni guardamos tu número de tarjeta.
+              </p>
+            )}
+
+            <button style={{ ...S.btnRed, width: "100%", justifyContent: "center", padding: 16, fontSize: 16, opacity: loading ? 0.7 : 1 }} onClick={handlePlace} disabled={loading}>
+              {loading ? "Procesando..." : <>Continuar al pago →</>}
+            </button>
+            <p style={{ fontSize: 11, color: GRAY3, textAlign: "center", marginTop: 10, lineHeight: 1.4 }}>
+              Este sitio está protegido por reCAPTCHA y se aplican la{" "}
+              <a href="https://policies.google.com/privacy" target="_blank" rel="noopener noreferrer" style={{ color: GRAY3 }}>Política de Privacidad</a>{" "}
+              y los <a href="https://policies.google.com/terms" target="_blank" rel="noopener noreferrer" style={{ color: GRAY3 }}>Términos de Servicio</a> de Google.
+            </p>
+          </>
+        ) : tarjetaPagoData ? (
+          <div ref={tarjetaContainerRef}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <div style={{ fontWeight: 800, fontSize: 14, display: "flex", alignItems: "center", gap: 6 }}><Lock size={14} color={RED} /> Pago seguro con tarjeta</div>
+              <button onClick={() => { setTarjetaPagoData(null); showToast("Pago cancelado. Puedes intentar de nuevo."); }} style={{ background: "none", border: "none", color: GRAY3, fontSize: 12, cursor: "pointer", textDecoration: "underline" }}>Cancelar</button>
+            </div>
+            <div style={{ border: `1px solid ${GRAY2}`, borderRadius: 10, overflow: "hidden" }}>
+              <iframe srcDoc={tarjetaPagoData.RedirectData} frameBorder="0" title="Pago con tarjeta" style={{ width: "100%", height: "750px", display: "block" }} />
+            </div>
+            {tarjetaProcesando && <p style={{ fontSize: 12, color: GRAY3, textAlign: "center", marginTop: 10 }}>Confirmando tu pago...</p>}
+          </div>
+        ) : (
+          <div style={{ background: `linear-gradient(135deg, ${RED} 0%, ${RED_D} 100%)`, borderRadius: 16, padding: 22, color: WHITE, textAlign: "center", boxShadow: "0 8px 24px rgba(227,30,36,0.25)" }}>
+            <div style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "rgba(255,255,255,0.18)", borderRadius: 20, padding: "4px 14px", fontSize: 12, fontWeight: 800, marginBottom: 12 }}>
+              <Lock size={13} /> PAGO SEGURO
+            </div>
+            <div style={{ fontSize: 13, opacity: 0.9 }}>Total a pagar</div>
+            <div style={{ fontSize: 34, fontWeight: 900, marginBottom: 18, letterSpacing: -0.5 }}>{money(pedidoPendiente.total)}</div>
+            <div style={{ background: WHITE, borderRadius: 12, padding: "16px 14px" }}>
+              <YappyButton
+                pedido={pedidoPendiente}
+                onExito={onPagoExitoso}
+                onCancelar={() => { setPedidoPendiente(null); showToast("Pago cancelado. Puedes intentar de nuevo."); }}
+              />
+            </div>
+            <p style={{ fontSize: 11, opacity: 0.85, marginTop: 12, display: "flex", alignItems: "center", justifyContent: "center", gap: 5 }}>
+              <CheckCircle2 size={12} /> Procesado de forma segura por Yappy
+            </p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  DASHBOARD CLIENTE
+// ═══════════════════════════════════════════════════════════════
+// Tarjeta chica y minimalista para las filas de "Comprar otra vez" / "Tus intereses"
+// en Mi Cuenta — al tocarla abre el detalle del producto para elegir cantidad y comprar.
+function MiniProductCard({ product }) {
+  const { setQuickView } = useApp();
+  const imgUrl = product.imagen_url ? imagenOptimizada(product.imagen_url, 240) : null;
+  return (
+    <div className="oft-mini-card" onClick={() => setQuickView(product)}>
+      <div className="oft-mini-card-img">
+        {imgUrl ? <img src={imgUrl} alt={product.nombre} loading="lazy" decoding="async" /> : <Package size={26} color={GRAY3} strokeWidth={1.4} />}
+      </div>
+      <div className="oft-mini-card-name">{product.nombre}</div>
+    </div>
+  );
+}
+
+function DashboardView() {
+  const { user, setUser, products, showToast } = useApp();
+  const [orders, setOrders] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState(null);
+  // Edición de datos de la cuenta
+  const [editandoPerfil, setEditandoPerfil] = useState(false);
+  const [perfilForm, setPerfilForm] = useState({ nombre: "", telefono: "" });
+  const [guardandoPerfil, setGuardandoPerfil] = useState(false);
+
+  const abrirEdicion = () => {
+    setPerfilForm({ nombre: user?.nombre || "", telefono: user?.telefono || "" });
+    setEditandoPerfil(true);
+  };
+  const guardarPerfil = async () => {
+    if (!perfilForm.nombre.trim()) { showToast("Escribe tu nombre"); return; }
+    if (!perfilForm.telefono.trim()) { showToast("Escribe tu celular"); return; }
+    if (!user?.email) { showToast("No se pudo identificar tu cuenta"); return; }
+    setGuardandoPerfil(true);
+    try {
+      // Buscar la fila REAL en la tabla usuarios por email (id confiable)
+      let fila = null;
+      try {
+        const filas = await sb.get("usuarios", `?email=eq.${encodeURIComponent(user.email)}&limit=1`);
+        fila = filas && filas[0] ? filas[0] : null;
+      } catch(e) {}
+
+      const cambios = { nombre: perfilForm.nombre.trim(), telefono: perfilForm.telefono.trim() };
+
+      if (fila && fila.id) {
+        // Actualizar la fila existente
+        const upd = await sb.patch("usuarios", fila.id, cambios);
+        if (!Array.isArray(upd) || !upd[0]) {
+          // La base de datos no devolvió la fila actualizada → posible bloqueo de permisos (RLS)
+          throw new Error("la base de datos no guardó el cambio (revisa permisos)");
+        }
+        setUser({ ...user, ...upd[0] });
+      } else {
+        // No existe la fila (puede pasar con cuentas viejas): crearla
+        const creado = await sb.post("usuarios", { ...cambios, email: user.email, es_admin: false, origen_cuenta: "web" });
+        const nuevo = Array.isArray(creado) && creado[0] ? creado[0] : { ...user, ...cambios };
+        setUser({ ...user, ...nuevo });
+      }
+      showToast("Datos actualizados");
+      setEditandoPerfil(false);
+    } catch(e) { showToast("Error al guardar: " + (e.message || "intenta de nuevo")); }
+    setGuardandoPerfil(false);
+  };
+
+  const loadOrders = async () => {
+    if (!user?.id) { setLoading(false); return; }
+    try {
+      // Solo mostramos pedidos pagados (o los viejos sin esta columna). Los no pagados quedan ocultos hasta que Yappy confirme.
+      const data = await sb.get("pedidos", `?usuario_id=eq.${user.id}&or=(pagado.is.null,pagado.is.true)&order=created_at.desc`);
+      const withItems = await Promise.all((data || []).map(async o => {
+        try {
+          const items = await sb.get("pedido_items", `?pedido_id=eq.${o.id}`);
+          return { ...o, items: items || [] };
+        } catch(e) {
+          return { ...o, items: [] }; // si fallan los items, igual mostramos el pedido
+        }
+      }));
+      setOrders(withItems);
+    } catch(e) {
+      console.error("Error cargando pedidos:", e);
+      setOrders([]); // muestra "sin pedidos" en vez de quedarse cargando
+    } finally {
+      setLoading(false); // SIEMPRE quita el spinner pase lo que pase
+    }
+  };
+
+  useEffect(() => {
+    loadOrders();
+    // refresco en vivo cada 30s (no muestra spinner, solo actualiza datos)
+    const interval = setInterval(() => {
+      if (user?.id) {
+        sb.get("pedidos", `?usuario_id=eq.${user.id}&or=(pagado.is.null,pagado.is.true)&order=created_at.desc`)
+          .then(async data => {
+            const withItems = await Promise.all((data || []).map(async o => {
+              try { const items = await sb.get("pedido_items", `?pedido_id=eq.${o.id}`); return { ...o, items: items || [] }; }
+              catch { return { ...o, items: [] }; }
+            }));
+            setOrders(withItems);
+          })
+          .catch(() => {});
+      }
+    }, 30000);
+    return () => clearInterval(interval);
+  }, [user]);
+
+  if (loading) return <Spinner />;
+
+  const money = (n) => "$" + Number(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const activos = orders.filter(o => o.estado < 3);
+  const entregados = orders.filter(o => o.estado === 3);
+
+  // Busca imagen de producto por id
+  const prodImg = (pid) => products.find(p => p.id === pid)?.imagen_url || null;
+
+  // "Comprar otra vez": productos que ya compró antes, del más reciente al más viejo
+  // "Tus intereses": otros productos de esas mismas categorías que todavía no ha comprado
+  const idsComprados = new Set();
+  const fechaMasReciente = new Map();
+  orders.forEach(o => {
+    (o.items || []).forEach(it => {
+      if (!it.producto_id) return;
+      idsComprados.add(it.producto_id);
+      if (!fechaMasReciente.has(it.producto_id) || o.created_at > fechaMasReciente.get(it.producto_id)) {
+        fechaMasReciente.set(it.producto_id, o.created_at);
+      }
+    });
+  });
+
+  const comprarOtraVez = [...fechaMasReciente.entries()]
+    .sort((a, b) => new Date(b[1]) - new Date(a[1]))
+    .map(([pid]) => products.find(p => p.id === pid))
+    .filter(p => p && p.activo && p.visible_web !== false)
+    .slice(0, 10);
+
+  const categoriasDeInteres = [...new Set(
+    [...idsComprados].map(pid => products.find(p => p.id === pid)?.categoria_id).filter(Boolean)
+  )];
+  const tusIntereses = products
+    .filter(p => p.activo && p.visible_web !== false && categoriasDeInteres.includes(p.categoria_id) && !idsComprados.has(p.id))
+    .slice(0, 10);
+
+  return (
+    <div className="oft-section" style={S.section}>
+      {/* CABECERA */}
+      <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 28 }}>
+        <div style={{ width: 54, height: 54, borderRadius: "50%", background: `linear-gradient(135deg, ${RED}, ${RED_D})`, display: "flex", alignItems: "center", justifyContent: "center", color: WHITE, flexShrink: 0 }}>
+          <User size={26} strokeWidth={2} />
+        </div>
+        <div>
+          <div style={{ fontSize: 22, fontWeight: 900 }}>Hola, {user?.nombre?.split(" ")[0] || "Cliente"} 👋</div>
+          <div style={{ fontSize: 13, color: GRAY3 }}>Bienvenido a tu cuenta</div>
+        </div>
+      </div>
+
+      {/* MÉTRICAS */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 14, marginBottom: 32 }} className="oft-prod-anim">
+        {[[Package, orders.length, "Pedidos totales", RED], [RefreshCw, activos.length, "En proceso", "#856404"], [CheckCircle2, entregados.length, "Entregados", "#155724"]].map(([Icon,num,label,color]) => (
+          <div key={label} style={{ background: WHITE, borderRadius: 14, padding: 20, border: `1px solid ${GRAY2}` }}>
+            <div style={{ background: color + "15", borderRadius: 10, padding: 8, display: "inline-flex", marginBottom: 8 }}><Icon size={22} color={color} strokeWidth={2} /></div>
+            <div style={{ fontSize: 30, fontWeight: 900, color }}>{num}</div>
+            <div style={{ fontSize: 13, color: GRAY3 }}>{label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* MIS DATOS */}
+      <div style={{ background: WHITE, borderRadius: 14, padding: 20, border: `1px solid ${GRAY2}`, marginBottom: 32 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: editandoPerfil ? 16 : 4 }}>
+          <div style={{ fontWeight: 800, fontSize: 16, display: "flex", alignItems: "center", gap: 8 }}><User size={18} color={RED} /> Mis datos</div>
+          {!editandoPerfil && (
+            <button onClick={abrirEdicion} className="oft-btn-press" style={{ background: "none", border: `1.5px solid ${BLACK}`, color: BLACK, borderRadius: 8, padding: "6px 12px", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 5 }}>
+              <PencilIcon size={14} /> Editar
+            </button>
+          )}
+        </div>
+
+        {!editandoPerfil ? (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 14, marginTop: 12 }}>
+            <div>
+              <div style={{ fontSize: 11, color: GRAY3, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>Nombre completo</div>
+              <div style={{ fontSize: 15, fontWeight: 700, marginTop: 2 }}>{user?.nombre || "—"}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: 11, color: GRAY3, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>WhatsApp / Celular</div>
+              <div style={{ fontSize: 15, fontWeight: 700, marginTop: 2 }}>{user?.telefono || "—"}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: 11, color: GRAY3, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>Correo electrónico</div>
+              <div style={{ fontSize: 15, fontWeight: 700, marginTop: 2, wordBreak: "break-all" }}>{user?.email || "—"}</div>
+              <div style={{ fontSize: 11, color: GRAY3, marginTop: 2 }}>El correo no se puede cambiar</div>
+            </div>
+          </div>
+        ) : (
+          <div>
+            <label style={S.label}>Nombre completo</label>
+            <input style={S.input} value={perfilForm.nombre} onChange={e => setPerfilForm({ ...perfilForm, nombre: e.target.value })} placeholder="Tu nombre completo" />
+            <label style={S.label}>WhatsApp / Celular</label>
+            <input style={S.input} value={perfilForm.telefono} onChange={e => setPerfilForm({ ...perfilForm, telefono: e.target.value })} placeholder="+507 0000-0000" />
+            <div style={{ display: "flex", gap: 10, marginTop: 6 }}>
+              <button onClick={guardarPerfil} disabled={guardandoPerfil} className="oft-btn-press" style={{ ...S.btnRed, justifyContent: "center", opacity: guardandoPerfil ? 0.7 : 1 }}>
+                {guardandoPerfil ? "Guardando..." : "Guardar cambios"}
+              </button>
+              <button onClick={() => setEditandoPerfil(false)} className="oft-btn-press" style={S.btnOutline}>Cancelar</button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* CAMBIAR CONTRASEÑA */}
+      <SeccionCambiarPassword />
+
+      {/* COMPRAR OTRA VEZ */}
+      {comprarOtraVez.length > 0 && (
+        <div style={{ marginBottom: 32 }}>
+          <div style={{ fontWeight: 800, fontSize: 16, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}>
+            <RefreshCw size={17} color={RED} strokeWidth={2.2} /> Comprar otra vez
+          </div>
+          <div className="oft-mini-row">
+            {comprarOtraVez.map(p => <MiniProductCard key={p.id} product={p} />)}
+          </div>
+        </div>
+      )}
+
+      {/* TUS INTERESES */}
+      {tusIntereses.length > 0 && (
+        <div style={{ marginBottom: 32 }}>
+          <div style={{ fontWeight: 800, fontSize: 16, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}>
+            <Sparkles size={17} color={RED} strokeWidth={2.2} /> Basado en tus intereses
+          </div>
+          <div className="oft-mini-row">
+            {tusIntereses.map(p => <MiniProductCard key={p.id} product={p} />)}
+          </div>
+        </div>
+      )}
+
+      {orders.length === 0 ? (
+        <div style={{ textAlign: "center", padding: "50px 0", color: GRAY3 }}>
+          <Package size={56} strokeWidth={1.2} style={{ margin: "0 auto 14px" }} />
+          <p style={{ fontWeight: 700, fontSize: 16, color: BLACK }}>Aún no tienes pedidos</p>
+          <p style={{ fontSize: 14 }}>Explora el catálogo y haz tu primer pedido</p>
+        </div>
+      ) : (
+        <>
+          {/* SEGUIMIENTO EN VIVO (pedidos activos) */}
+          {activos.length > 0 && (
+            <div style={{ marginBottom: 36 }}>
+              <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}>
+                <span className="oft-live-dot" style={{ width: 10, height: 10, borderRadius: "50%", background: "#22c55e", display: "inline-block" }} />
+                Seguimiento en vivo
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                {activos.map(o => (
+                  <div key={o.id} className="oft-prod-anim" style={{ background: WHITE, borderRadius: 16, padding: 22, border: `1px solid ${GRAY2}`, boxShadow: "0 2px 10px rgba(0,0,0,0.04)" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20, flexWrap: "wrap", gap: 8 }}>
+                      <div>
+                        <div style={{ fontWeight: 900, fontSize: 17, color: RED }}>{o.codigo}</div>
+                        <div style={{ fontSize: 12, color: GRAY3 }}>{new Date(o.created_at).toLocaleDateString("es-PA", { day: "2-digit", month: "long", year: "numeric" })}</div>
+                      </div>
+                      <div style={{ fontWeight: 900, fontSize: 18 }}>{money(o.total)}</div>
+                    </div>
+
+                    {/* BARRA DE PROGRESO ANIMADA */}
+                    <ProgressTracker estado={o.estado} retiro={o.retiro_local} />
+
+                    {/* INFO ENVÍO O RETIRO */}
+                    {o.retiro_local ? (
+                      <div style={{ marginTop: 18, fontSize: 13, color: "#856404", display: "flex", alignItems: "center", gap: 6, background: "#FFF3CD", borderRadius: 8, padding: "10px 12px", fontWeight: 700 }}>
+                        <Home size={15} /> Retiro en el local
+                      </div>
+                    ) : o.empresa_envio_nombre && (
+                      <div style={{ marginTop: 18, fontSize: 13, color: GRAY3, display: "flex", alignItems: "center", gap: 6, background: GRAY, borderRadius: 8, padding: "10px 12px" }}>
+                        <Truck size={15} color={RED} /> {o.empresa_envio_nombre}{o.sucursal_nombre ? ` · ${o.sucursal_nombre}` : ""}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* HISTORIAL DE COMPRAS */}
+          <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}><ClipboardList size={20} color={RED} /> Historial de compras</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {orders.map(o => {
+              const isOpen = selected === o.id;
+              return (
+                <div key={o.id} className="oft-card-hover" style={{ background: WHITE, borderRadius: 14, border: `1px solid ${isOpen ? RED : GRAY2}`, overflow: "hidden", transition: "border-color 0.2s" }}>
+                  {/* CABECERA CLICKEABLE */}
+                  <div onClick={() => setSelected(isOpen ? null : o.id)} style={{ padding: 16, display: "flex", alignItems: "center", gap: 14, cursor: "pointer" }}>
+                    {/* miniaturas de productos */}
+                    <div style={{ display: "flex", flexShrink: 0 }}>
+                      {(o.items || []).slice(0, 3).map((item, i) => {
+                        const img = prodImg(item.producto_id);
+                        return (
+                          <div key={i} style={{ width: 44, height: 44, borderRadius: 10, background: GRAY, border: `2px solid ${WHITE}`, marginLeft: i > 0 ? -12 : 0, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", boxShadow: "0 1px 4px rgba(0,0,0,0.1)" }}>
+                            {img ? <img src={img} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <Package size={18} color={GRAY3} />}
+                          </div>
+                        );
+                      })}
+                      {(o.items || []).length > 3 && (
+                        <div style={{ width: 44, height: 44, borderRadius: 10, background: BLACK, color: WHITE, border: `2px solid ${WHITE}`, marginLeft: -12, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 800 }}>
+                          +{(o.items).length - 3}
+                        </div>
+                      )}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 800, fontSize: 15, color: RED }}>{o.codigo}</div>
+                      <div style={{ fontSize: 12, color: GRAY3 }}>{new Date(o.created_at).toLocaleDateString("es-PA", { day: "2-digit", month: "short", year: "numeric" })} · {(o.items || []).length} producto(s)</div>
+                    </div>
+                    <div style={{ textAlign: "right", flexShrink: 0 }}>
+                      <div style={{ fontWeight: 900, fontSize: 15 }}>{money(o.total)}</div>
+                      <div style={{ marginTop: 4 }}><StatusBadge index={o.estado} retiro={o.retiro_local} /></div>
+                    </div>
+                    <div style={{ flexShrink: 0 }}>{isOpen ? <ChevronUp size={18} color={GRAY3} /> : <ChevronDown size={18} color={GRAY3} />}</div>
+                  </div>
+
+                  {/* DETALLE EXPANDIBLE */}
+                  {isOpen && (
+                    <div className="oft-detail-open" style={{ borderTop: `1px solid ${GRAY2}`, padding: 16, background: "#FAFAFA" }}>
+                      {/* progreso */}
+                      <ProgressTracker estado={o.estado} compact retiro={o.retiro_local} />
+
+                      {/* productos con imagen */}
+                      <div style={{ fontWeight: 700, fontSize: 14, margin: "18px 0 10px" }}>Productos</div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                        {(o.items || []).map((item, i) => {
+                          const img = prodImg(item.producto_id);
+                          return (
+                            <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, background: WHITE, borderRadius: 10, padding: 10, border: `1px solid ${GRAY2}` }}>
+                              <div style={{ width: 48, height: 48, borderRadius: 8, background: GRAY, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", flexShrink: 0 }}>
+                                {img ? <img src={img} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <Package size={20} color={GRAY3} />}
+                              </div>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ fontWeight: 700, fontSize: 14 }}>{item.nombre_producto}</div>
+                                <div style={{ fontSize: 12, color: GRAY3 }}>Cantidad: {item.cantidad}</div>
+                              </div>
+                              <div style={{ fontWeight: 800, fontSize: 14, color: RED }}>{money(item.subtotal)}</div>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {/* resumen */}
+                      <div style={{ marginTop: 16, background: WHITE, borderRadius: 10, padding: 14, border: `1px solid ${GRAY2}` }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 8 }}>
+                          <span style={{ color: GRAY3, display: "flex", alignItems: "center", gap: 6 }}><ClipboardList size={14} /> Fecha</span>
+                          <span style={{ fontWeight: 600 }}>{new Date(o.created_at).toLocaleDateString("es-PA", { day: "2-digit", month: "long", year: "numeric" })}</span>
+                        </div>
+                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 8 }}>
+                          <span style={{ color: GRAY3, display: "flex", alignItems: "center", gap: 6 }}><RefreshCw size={14} /> Estado</span>
+                          <StatusBadge index={o.estado} retiro={o.retiro_local} />
+                        </div>
+                        {o.retiro_local ? (
+                          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 8 }}>
+                            <span style={{ color: GRAY3, display: "flex", alignItems: "center", gap: 6 }}><Home size={14} /> Entrega</span>
+                            <span style={{ fontWeight: 700, color: "#856404" }}>Retiro en el local</span>
+                          </div>
+                        ) : o.empresa_envio_nombre && (
+                          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 8 }}>
+                            <span style={{ color: GRAY3, display: "flex", alignItems: "center", gap: 6 }}><Truck size={14} /> Envío</span>
+                            <span style={{ fontWeight: 600, textAlign: "right" }}>{o.empresa_envio_nombre}{o.sucursal_nombre ? <><br /><span style={{ fontSize: 11, color: GRAY3 }}>{o.sucursal_nombre}</span></> : ""}</span>
+                          </div>
+                        )}
+                        {o.direccion && (
+                          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 8 }}>
+                            <span style={{ color: GRAY3, display: "flex", alignItems: "center", gap: 6 }}><MapPin size={14} /> Dirección</span>
+                            <span style={{ fontWeight: 600, textAlign: "right", maxWidth: "60%" }}>{o.direccion}</span>
+                          </div>
+                        )}
+                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 16, fontWeight: 900, borderTop: `1px solid ${GRAY2}`, marginTop: 10, paddingTop: 10 }}>
+                          <span>Total</span><span style={{ color: RED }}>{money(o.total)}</span>
+                        </div>
+                      </div>
+
+                      {/* botón repetir / consultar */}
+                      <button style={{ ...S.btnWA, width: "100%", justifyContent: "center", marginTop: 14, padding: 12 }}
+                        onClick={() => { registrarEvento("consulta_whatsapp", null, "Consulta sobre un pedido"); window.open(`https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(`Hola Ofertodo, quiero consultar sobre mi pedido ${o.codigo}`)}`, "_blank"); }}>
+                        <MessageCircle size={16} /> Consultar este pedido
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ─── BARRA DE PROGRESO DEL PEDIDO ───────────────────────────────
+function ProgressTracker({ estado, compact, retiro = false }) {
+  const etiquetas = retiro ? ORDER_STATUS_RETIRO : ORDER_STATUS_ENVIO;
+  const iconos = retiro ? STATUS_ICONS_RETIRO : STATUS_ICONS_ENVIO;
+  const n = etiquetas.length;
+  // Con "flex: 1" cada paso ocupa una columna de ancho igual (100%/n), y su círculo
+  // queda centrado DENTRO de esa columna -- no a una distancia fija del borde. Por
+  // eso la línea tiene que ir de centro a centro en porcentajes, no en píxeles fijos:
+  // el círculo del paso i está en el (i + 0.5) / n de todo el ancho.
+  const offset = (50 / n); // % desde el borde hasta el centro del primer/último círculo
+  const pct = (estado / (n - 1)) * (100 - offset * 2);
+  return (
+    <div>
+      <div style={{ position: "relative", display: "flex", justifyContent: "space-between", marginTop: compact ? 8 : 4 }}>
+        {/* línea base -- va de centro del primer círculo a centro del último */}
+        <div style={{ position: "absolute", top: 18, left: `${offset}%`, right: `${offset}%`, height: 4, background: GRAY2, borderRadius: 2, zIndex: 0 }} />
+        {/* línea de progreso animada */}
+        <div className="oft-progress-fill" style={{ position: "absolute", top: 18, left: `${offset}%`, height: 4, background: `linear-gradient(90deg, ${RED}, ${RED_D})`, borderRadius: 2, zIndex: 1, width: `${pct}%` }} />
+        {/* pasos */}
+        {etiquetas.map((s, i) => {
+          const SIcon = iconos[i];
+          const done = i <= estado;
+          const current = i === estado;
+          return (
+            <div key={i} style={{ display: "flex", flexDirection: "column", alignItems: "center", zIndex: 2, flex: 1, position: "relative" }}>
+              <div className={current ? "oft-step-pulse" : ""} style={{
+                width: 36, height: 36, borderRadius: "50%",
+                background: done ? `linear-gradient(135deg, ${RED}, ${RED_D})` : WHITE,
+                border: done ? "none" : `2px solid ${GRAY2}`,
+                color: done ? WHITE : GRAY3,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                transition: "all 0.4s ease",
+                boxShadow: current ? `0 0 0 4px ${RED}25` : "none",
+              }}>
+                <SIcon size={17} strokeWidth={2.2} />
+              </div>
+              <div style={{ fontSize: 9.5, fontWeight: done ? 700 : 500, color: done ? BLACK : GRAY3, marginTop: 6, textAlign: "center", lineHeight: 1.2, maxWidth: 70 }}>{s}</div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  CREAR PEDIDO MANUAL (ADMIN)
+// ═══════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════
+//  FACTURA (genera PDF + PNG)
+// ═══════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════
+//  GUÍA DE ENVÍO INTERNA (para empaque y despacho — NO para el cliente)
+// ═══════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════
+//  AGREGAR CHIPS UNO POR UNO (tallas / colores)
+// ═══════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════
+//  EDITOR DE DISTRIBUCIÓN POR DOCENA (admin — talla o color)
+// ═══════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════
+//  CREAR / EDITAR CLIENTE (reutilizable — desde la sección Clientes
+//  o directo desde el formulario de Nuevo Pedido/Cotización)
+// ═══════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════
+//  APP ROOT — Estado global + carga de datos
+// ═══════════════════════════════════════════════════════════════
+export default function App() {
+  // Vista persiste en localStorage para que el refresh no regrese al inicio
+  const [view, setViewRaw] = useState(() => {
+    try {
+      const v = localStorage.getItem("oft_view");
+      // Solo las vistas "seguras" para persistir (no modales intermedios)
+      if (window.location.pathname.replace(/\/+$/, "") === "/ofertas") return "ofertas";
+      const permitidas = ["home", "catalog", "dashboard", "admin", "checkout"];
+      return (v && permitidas.includes(v)) ? v : "home";
+    } catch(e) { return "home"; }
+  });
+  const setView = (v) => {
+    setViewRaw(v);
+    try { localStorage.setItem("oft_view", v); } catch(e) {}
+    // Siempre empieza arriba de la página nueva, sin importar qué tan abajo
+    // estaba desplazado en la página anterior (ej. al elegir una categoría desde el inicio)
+    window.scrollTo({ top: 0, behavior: "instant" });
+  };
+
+  // La página de ofertas tiene su propio link (/ofertas) para compartirlo por WhatsApp, redes, etc.
+  useEffect(() => {
+    try {
+      const enOfertas = window.location.pathname.replace(/\/+$/, "") === "/ofertas";
+      if (view === "ofertas" && !enOfertas) window.history.replaceState(null, "", "/ofertas");
+      else if (view !== "ofertas" && enOfertas) window.history.replaceState(null, "", "/");
+    } catch (e) {}
+  }, [view]);
+
+  // El carrito se guarda en el navegador para que NO se pierda al iniciar sesión o recargar
+  const [cart, setCart] = useState(() => {
+    try { const g = localStorage.getItem("oft_cart"); return g ? JSON.parse(g) : []; } catch(e) { return []; }
+  });
+
+  // Usuario persiste en localStorage para no perder la sesión al hacer refresh
+  const [user, setUserRaw] = useState(() => {
+    try {
+      const u = localStorage.getItem("oft_user");
+      if (!u) return null;
+      const parsed = JSON.parse(u);
+      // Si el token venció Y no hay refresh_token para renovarlo solo, se cierra la sesión.
+      // Si sí hay refresh_token, se deja pasar: sb lo va a renovar solo en la próxima petición.
+      if (parsed?.expires_at && Date.now() / 1000 > parsed.expires_at && !parsed?.refresh_token) {
+        localStorage.removeItem("oft_user");
+        localStorage.removeItem("oft_view");
+        return null;
+      }
+      // Activa la sesión en el cliente sb para que las peticiones salgan autenticadas desde ya
+      sb.setSession({ access_token: parsed?.token, refresh_token: parsed?.refresh_token, expires_at: parsed?.expires_at });
+      return parsed;
+    } catch(e) { return null; }
+  });
+  const setUser = (u) => {
+    setUserRaw(u);
+    if (u) sb.setSession({ access_token: u.token, refresh_token: u.refresh_token, expires_at: u.expires_at });
+    else sb.clearSession();
+    try {
+      if (u) localStorage.setItem("oft_user", JSON.stringify(u));
+      else { localStorage.removeItem("oft_user"); localStorage.removeItem("oft_view"); }
+    } catch(e) {}
+  };
+
+  // AUTO SIGN OUT por inactividad (30 minutos sin tocar nada)
+  const INACTIVIDAD_MS = 30 * 60 * 1000; // 30 minutos
+  const ultimaActividad = useRef(Date.now());
+  const [toastMsg, setToastMsg] = useState("");
+  const showToast = (msg) => { setToastMsg(msg); setTimeout(() => setToastMsg(""), 3000); };
+
+  useEffect(() => {
+    if (!user) return; // Solo aplica si hay sesión
+    const actualizar = () => { ultimaActividad.current = Date.now(); };
+    const eventos = ["mousemove", "keydown", "click", "touchstart", "scroll"];
+    eventos.forEach(e => window.addEventListener(e, actualizar, { passive: true }));
+    const intervalo = setInterval(() => {
+      if (Date.now() - ultimaActividad.current > INACTIVIDAD_MS) {
+        setUser(null);
+        setView("home");
+        showToast("Sesión cerrada por inactividad");
+      }
+    }, 60 * 1000); // revisa cada minuto
+    return () => {
+      eventos.forEach(e => window.removeEventListener(e, actualizar));
+      clearInterval(intervalo);
+    };
+  }, [user]);
+  const [showLogin, setShowLogin] = useState(false);
+  const [showRegister, setShowRegister] = useState(false);
+  const [registerPrefill, setRegisterPrefill] = useState(null); // datos para rellenar el registro (ej. al terminar una compra de invitado)
+  const [showCart, setShowCart] = useState(false);
+  const [quickView, setQuickView] = useState(null); // producto a mostrar en detalle
+  const [pagoResultado, setPagoResultado] = useState(null); // resultado de un pago con tarjeta al volver de Powertranz
+  const [catalogCat, setCatalogCat] = useState(0); // categoría a abrir en el catálogo (0 = todas)
+  const [completeProfile, setCompleteProfile] = useState(null); // usuario de Google que debe completar sus datos
+  const [googleMfaPaso, setGoogleMfaPaso] = useState(null); // pide el código 2FA cuando el login fue con Google
+  const [recuperacionToken, setRecuperacionToken] = useState(null); // token del link de "olvidé mi contraseña", mientras el cliente escribe la nueva
+  const [pendingCheckout, setPendingCheckout] = useState(false); // el cliente quería pagar y tuvo que loguearse
+  const [products, setProducts] = useState([]);
+
+  // En vivo: cuando el stock de un producto cambia (la sincronización con Odoo
+  // corre cada 15 segundos), se actualiza solo en la pantalla de cualquier
+  // cliente que ya tenga la página abierta -- sin que tenga que refrescar para
+  // ver la disponibilidad real. "productos" es de lectura pública, así que esto
+  // funciona para cualquier visitante, esté o no logueado.
+  useEffect(() => {
+    const canal = supabaseRealtime
+      .channel("productos_stock_en_vivo")
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "productos" }, (payload) => {
+        setProducts(prev => prev.map(p => p.id === payload.new.id ? { ...p, ...payload.new } : p));
+      })
+      .subscribe();
+    return () => { supabaseRealtime.removeChannel(canal); };
+  }, []);
+
+  const [categories, setCategories] = useState([]);
+  const [flexpackGrupos, setFlexpackGrupos] = useState([]);
+  const [gruposCategorias, setGruposCategorias] = useState([]); // grupos generales (ej. "Ropa de Dama"), cada uno con su propio ícono
+  const [banners, setBanners] = useState([]); // banners promocionales del carrusel del inicio
+  const [popups, setPopups] = useState([]); // pop-ups promocionales (descuentos, eventos, anuncios)
+  const [empresas, setEmpresas] = useState([]);
+  const [sucursales, setSucursales] = useState([]);
+  const [localesRetiro, setLocalesRetiro] = useState([]); // locales propios donde se puede retirar
+  const [retiroLocalHabilitado, setRetiroLocalHabilitado] = useState(true); // si el cliente ve la opción en el checkout
+  const [loading, setLoading] = useState(true);
+
+  // Guarda el carrito en el navegador cada vez que cambia
+  useEffect(() => {
+    try { localStorage.setItem("oft_cart", JSON.stringify(cart)); } catch(e) {}
+  }, [cart]);
+
+  // Cuando el cliente inicia sesión teniendo un checkout pendiente, lo lleva directo a finalizar
+  useEffect(() => {
+    if (user && pendingCheckout) {
+      setPendingCheckout(false);
+      setShowLogin(false);
+      setShowRegister(false);
+      if (cart.length > 0) { setView("checkout"); showToast("¡Sesión iniciada! Continúa tu pedido"); }
+    }
+  }, [user, pendingCheckout]);
+
+  const [cartPulse, setCartPulse] = useState(0);
+
+  // ── OFERTAS: campaña activa + sus ofertas y combos ──
+  const [campanaActiva, setCampanaActiva] = useState(null); // { campana, items, combos } | null
+  const cargarOfertas = async () => {
+    try {
+      const cs = await sb.get("campanas_ofertas", "?activa=eq.true&limit=1");
+      const c = cs && cs[0];
+      const ahora = Date.now();
+      if (!c || (c.fecha_fin && new Date(c.fecha_fin).getTime() <= ahora) || (c.fecha_inicio && new Date(c.fecha_inicio).getTime() > ahora)) { setCampanaActiva(null); return null; }
+      const its = (await sb.get("ofertas_items", `?campana_id=eq.${c.id}&activo=eq.true&order=orden.asc,id.asc`)) || [];
+      const ids = its.map(i => i.id);
+      const cb = ids.length ? ((await sb.get("ofertas_combo_productos", `?oferta_id=in.(${ids.join(",")})`)) || []) : [];
+      const data = { campana: c, items: its, combos: cb };
+      setCampanaActiva(data);
+      return data;
+    } catch (e) { console.warn("Ofertas no cargadas:", e.message); return null; }
+  };
+
+  // Piezas de un producto que ya están en el carrito (sueltas, en Flex Pack o dentro de ofertas/combos)
+  const piezasEnCarritoDe = (productId, excluirOfertaId = null, incluirFlex = true) => cart.reduce((s, i) => {
+    if (i.esOferta) return i.ofertaId === excluirOfertaId ? s : s + i.lineas.filter(l => l.productId === productId).reduce((a, l) => a + l.piezas * i.unidades, 0);
+    if (i.esFlexPack) return !incluirFlex ? s : s + i.items.filter(it => it.productId === productId).reduce((a, it) => a + it.cantidad, 0);
+    return i.product.id === productId ? s + i.qty : s;
+  }, 0);
+
+  // Agrega `unidades` de una oferta/combo. Respeta stock real y el límite por pedido.
+  const agregarOfertaAlCarrito = (info, unidades) => {
+    const o = info.oferta;
+    const yaUni = cart.filter(i => i.esOferta && i.ofertaId === o.id).reduce((s, i) => s + i.unidades, 0);
+    let nuevas = unidades;
+    if (o.limite_por_pedido && yaUni + nuevas > o.limite_por_pedido) {
+      nuevas = o.limite_por_pedido - yaUni;
+      if (nuevas <= 0) { showToast(`Esta oferta permite máximo ${o.limite_por_pedido} por pedido`); return false; }
+      showToast(`Máximo ${o.limite_por_pedido} por pedido: se ajustó la cantidad`);
+    }
+    for (const l of info.lineas) {
+      const p = l.product;
+      if (!((!p.proveedor_id || p.tiene_stock_fisico) && p.stock_actualizado_at)) continue;
+      const libre = Math.max(0, stockWeb(p) - piezasEnCarritoDe(p.id, o.id));
+      const caben = Math.floor(libre / l.piezas) - yaUni;
+      if (caben < nuevas) {
+        if (caben <= 0) { showToast(`Ya no queda stock suficiente de "${p.nombre}" para esta oferta`); return false; }
+        nuevas = caben; showToast(`Solo hay stock para ${caben} de esta oferta: se ajustó la cantidad`);
+      }
+    }
+    const total = yaUni + nuevas;
+    setCart(prev => {
+      const sinEsta = prev.filter(i => !(i.esOferta && i.ofertaId === o.id));
+      return [...sinEsta, ofertaALineaCarrito(info, total)];
+    });
+    setCartPulse(p => p + 1);
+    registrarEvento("agregar_oferta", o.id, info.titulo, user?.id);
+    trackAgregarCarrito({ id: `oferta-${o.id}`, nombre: info.titulo, precio: info.precioOferta, cantidad: nuevas });
+    showToast(`${o.tipo === "combo" ? "Combo agregado" : "Oferta agregada"} a tu pedido`);
+    return true;
+  };
+
+  // Vuelve a leer la campaña y deja el carrito con los precios/ofertas vigentes de verdad.
+  const sincronizarOfertasCarrito = async () => {
+    const data = await cargarOfertas();
+    const porId = {}; products.forEach(p => { porId[p.id] = p; });
+    setCart(prev => prev.flatMap(i => {
+      if (!i.esOferta) return [i];
+      const of = data?.items.find(x => x.id === i.ofertaId);
+      const info = of ? ofertaInfo(of, porId, data.combos) : null;
+      if (!info) return []; // la oferta ya no existe o terminó
+      let uni = i.unidades;
+      if (of.limite_por_pedido) uni = Math.min(uni, of.limite_por_pedido);
+      if (Number.isFinite(info.stockMax)) uni = Math.min(uni, info.stockMax);
+      return uni > 0 ? [ofertaALineaCarrito(info, uni)] : [];
+    }));
+  };
+
+  const addToCart = (product, qty, pres = "pieza", count = qty) => {
+    let qtyFinal = qty, countFinal = count;
+    // No dejar agregar más de lo que hay en stock real (cuando el stock está
+    // sincronizado con Odoo) -- se suma lo que ya tiene el carrito de este
+    // MISMO producto, sin importar en qué presentación, ya que el stock se
+    // comparte entre pieza/media/docena de la misma referencia. Se ajusta
+    // siempre a un número completo de la unidad elegida (no medias docenas
+    // sueltas por quedar cortos de stock).
+    if (product.stock_actualizado_at) {
+      const stockDisponible = stockWeb(product);
+      const yaEnCarrito = piezasEnCarritoDe(product.id, null, false);
+      const disponibleParaAgregar = Math.max(0, stockDisponible - yaEnCarrito);
+      const esPerfumeria = product.modalidad_presentacion === "perfumeria";
+      const piezasPorUnidad = pres === "docena" ? (esPerfumeria ? 6 : 12) : pres === "media" ? (esPerfumeria ? 3 : 6) : 1;
+      const unidadesQueCaben = Math.floor(disponibleParaAgregar / piezasPorUnidad);
+      if (unidadesQueCaben <= 0) {
+        showToast(`Ya no queda stock disponible de "${product.nombre}" (${stockDisponible} en total, ya está todo en tu carrito)`);
+        return;
+      }
+      if (count > unidadesQueCaben) {
+        countFinal = unidadesQueCaben;
+        qtyFinal = unidadesQueCaben * piezasPorUnidad;
+        const etiquetaUnidad = pres === "docena" ? (esPerfumeria ? "6 piezas" : `docena${unidadesQueCaben !== 1 ? "s" : ""}`) : pres === "media" ? (esPerfumeria ? "3 piezas" : `media${unidadesQueCaben !== 1 ? "s" : ""} docena`) : `pieza${unidadesQueCaben !== 1 ? "s" : ""}`;
+        showToast(`Solo hay stock para ${unidadesQueCaben} ${etiquetaUnidad} de "${product.nombre}" -- se ajustó la cantidad`);
+      }
+    }
+    setCart(prev => {
+      // mismo producto Y misma presentación = se suman; si no, entrada nueva
+      const existing = prev.find(i => !i.esFlexPack && !i.esOferta && i.product.id === product.id && i.pres === pres);
+      if (existing) return prev.map(i => (!i.esFlexPack && !i.esOferta && i.product.id === product.id && i.pres === pres) ? { ...i, qty: i.qty + qtyFinal, count: (i.count || 0) + countFinal } : i);
+      return [...prev, { product, qty: qtyFinal, pres, count: countFinal }];
+    });
+    setCartPulse(p => p + 1); // dispara animación del carrito
+    registrarEvento("agregar_carrito", product.id, product.nombre, user?.id);
+    trackAgregarCarrito({ id: product.id, nombre: product.nombre, precio: product.precio_pieza, cantidad: qtyFinal });
+  };
+
+  // Un Flex Pack es una línea de carrito DISTINTA a un producto normal -- mezcla
+  // varios productos del mismo grupo, y el precio se calculó ya (en el panel)
+  // sumando lo que corresponde a cada producto según su propio precio de media
+  // docena/docena -- no hay un precio fijo de grupo.
+  const agregarFlexPackAlCarrito = (grupo, cantidades, productosDelGrupo, precioTotal, totalPiezas) => {
+    if (precioTotal == null || !totalPiezas) return;
+    const items = Object.entries(cantidades)
+      .filter(([, cantidad]) => cantidad > 0)
+      .map(([productId, cantidad]) => {
+        const prod = productosDelGrupo.find(p => p.id === Number(productId));
+        return { productId: Number(productId), nombre: prod?.nombre || "Producto", imagen_url: prod?.imagen_url || "", referencia: prod?.referencia || "", cantidad };
+      });
+    setCart(prev => [...prev, {
+      esFlexPack: true,
+      flexpackLineId: `fp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      grupoId: grupo.id, grupoNombre: grupo.nombre,
+      totalPiezas, precioTotal, items,
+      qty: totalPiezas, // para que el contador del carrito (que suma "qty" de cada línea) cuente bien
+    }]);
+    setCartPulse(p => p + 1);
+    registrarEvento("agregar_carrito", null, `Flex Pack ${grupo.nombre}`, user?.id);
+    showToast(`Flex Pack de ${grupo.nombre} agregado al pedido`);
+  };
+
+  // Cargar datos de Supabase al iniciar
+  useEffect(() => {
+    // Si volvemos de iniciar sesión con Google, la URL trae el token
+    const procesarRetornoGoogle = async () => {
+      const hash = window.location.hash || "";
+      const query = window.location.search || "";
+
+      // Link de "olvidé mi contraseña" -- también trae #access_token, pero con
+      // type=recovery. Hay que distinguirlo ANTES de que se trate como login de
+      // Google, o entraría a la cuenta directo sin dejar poner la contraseña nueva.
+      if (hash.includes("type=recovery") && hash.includes("access_token")) {
+        const hashParams = new URLSearchParams(hash.substring(1));
+        const tokenRecuperacion = hashParams.get("access_token");
+        window.history.replaceState(null, "", window.location.origin + window.location.pathname);
+        if (tokenRecuperacion) setRecuperacionToken(tokenRecuperacion);
+        return;
+      }
+
+      let token = null, refreshToken = null, expiresIn = null;
+
+      // ¿Hubo un error devuelto por Google/Supabase?
+      if (hash.includes("error") || query.includes("error=")) {
+        const params = new URLSearchParams((hash || query).replace(/^[#?]/, ""));
+        const desc = params.get("error_description") || params.get("error") || "Error desconocido";
+        alert("Google devolvió un error: " + decodeURIComponent(desc));
+        window.history.replaceState(null, "", window.location.origin + window.location.pathname);
+        return;
+      }
+
+      // Formato 1 (implicit): #access_token=...
+      if (hash.includes("access_token")) {
+        const hashParams = new URLSearchParams(hash.substring(1));
+        token = hashParams.get("access_token");
+        refreshToken = hashParams.get("refresh_token");
+        expiresIn = hashParams.get("expires_in");
+      }
+      // Formato 2 (PKCE): ?code=...
+      else if (query.includes("code=")) {
+        const code = new URLSearchParams(query).get("code");
+        const verifier = localStorage.getItem("oft_pkce_verifier");
+        if (code) {
+          try {
+            const body = { auth_code: code };
+            if (verifier) body.code_verifier = verifier;
+            const r = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=pkce`, {
+              method: "POST",
+              headers: { "apikey": SUPABASE_KEY, "Content-Type": "application/json" },
+              body: JSON.stringify(body),
+            });
+            const data = await r.json();
+            token = data.access_token || null;
+            refreshToken = data.refresh_token || null;
+            expiresIn = data.expires_in || null;
+            if (!token) alert("No se pudo completar el inicio con Google (código). Detalle: " + (data.error_description || data.msg || JSON.stringify(data)).toString().slice(0, 200));
+          } catch(e) { alert("Error de conexión al validar Google: " + e.message); }
+        }
+      }
+
+      if (token) {
+        // Activa la sesión YA, antes de buscar el perfil, para que esa consulta salga autenticada
+        sb.setSession({ access_token: token, refresh_token: refreshToken, expires_in: expiresIn });
+        try {
+          const r = await fetch(`${SUPABASE_URL}/auth/v1/user`, { headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${token}` } });
+          const gUser = await r.json();
+          window.history.replaceState(null, "", window.location.origin + window.location.pathname);
+          if (gUser && gUser.email) {
+            const nombre = gUser.user_metadata?.full_name || gUser.user_metadata?.name || gUser.email.split("@")[0];
+            let perfil = [];
+            try { perfil = await sb.get("usuarios", `?email=eq.${encodeURIComponent(gUser.email)}&limit=1`); } catch(e) {}
+            if (perfil && perfil.length > 0) {
+              let factorVerificado = null;
+              try {
+                const factores = await sb.mfaListFactors();
+                factorVerificado = factores.find(f => f.status === "verified") || null;
+              } catch(e) {}
+              if (factorVerificado) {
+                // Esta cuenta tiene 2FA activado: pide el código antes de terminar de entrar
+                setGoogleMfaPaso({ factorId: factorVerificado.id, gUser, perfil, token, refresh_token: refreshToken, expires_at: sb.session?.expires_at });
+              } else {
+                setUser({ ...gUser, ...perfil[0], token, refresh_token: refreshToken, expires_at: sb.session?.expires_at });
+                showToast(`¡Bienvenido de vuelta, ${perfil[0].nombre?.split(" ")[0] || ""}!`);
+              }
+            } else {
+              setCompleteProfile({ email: gUser.email, nombre, token, refresh_token: refreshToken, expires_at: sb.session?.expires_at, gUser });
+            }
+          } else {
+            alert("Google no devolvió un correo válido. Intenta de nuevo.");
+          }
+        } catch(e) { alert("Error obteniendo tu perfil de Google: " + e.message); }
+      }
+    };
+    procesarRetornoGoogle();
+
+    const init = async () => {
+      // Registra la visita apenas entra a la página (no bloquea nada, es "fire and forget")
+      registrarEvento("visita");
+
+      // Los banners se piden desde este mismo instante, en paralelo con todo lo
+      // demás -- así el carrusel del inicio no tiene que esperar a que termine de
+      // cargar categorías, productos, ni nada más. Apenas responda, se muestra.
+      sb.get("banners_promocionales", "?order=orden.asc")
+        .then(data => setBanners(data || []))
+        .catch(e => console.warn("Banners promocionales no cargados:", e.message));
+
+      // Los pop-ups también se piden desde ya, en paralelo -- así el que corresponda
+      // puede aparecer apenas cargue la página, sin esperar a nada más.
+      sb.get("popups_promocionales", "?order=orden.asc")
+        .then(data => setPopups(data || []))
+        .catch(e => console.warn("Pop-ups promocionales no cargados:", e.message));
+
+      // Píxeles de marketing (Meta/Google) -- solo se cargan si el admin puso un ID
+      // en el panel. Se piden desde ya, en paralelo, para que empiecen a medir apenas
+      // sea posible (incluye la primera "visita" de la sesión, si cargan a tiempo).
+      sb.get("configuracion", "?clave=in.(meta_pixel_id,google_pixel_id)")
+        .then(data => {
+          const mapa = {};
+          (data || []).forEach(c => { mapa[c.clave] = c.valor; });
+          if (mapa.meta_pixel_id) cargarMetaPixel(mapa.meta_pixel_id);
+          if (mapa.google_pixel_id) cargarGooglePixel(mapa.google_pixel_id);
+        })
+        .catch(e => console.warn("Píxeles de marketing no cargados:", e.message));
+
+      try {
+        const [cats, prods] = await Promise.all([
+          sb.get("categorias", "?activa=eq.true&order=orden.asc,id.asc"),
+          sb.get("productos", "?activo=eq.true&order=id"),
+        ]);
+        setCategories(cats);
+        setProducts(prods);
+        cargarOfertas();
+        sb.get("flexpack_grupos", "?activo=eq.true").then(d => setFlexpackGrupos(d || [])).catch(() => {});
+
+        // Link directo a un producto — reconoce tanto el formato nuevo y limpio
+        // (/producto/ID, el que ahora genera el botón de Compartir) como el formato
+        // viejo (?producto=ID, por si alguien todavía tiene guardado un link de esos).
+        // Al abrirlo, se muestra ese producto directo.
+        const coincideRutaLimpia = window.location.pathname.match(/^\/producto\/(\d+)/);
+        const idProductoLink = coincideRutaLimpia ? coincideRutaLimpia[1] : new URLSearchParams(window.location.search).get("producto");
+        if (idProductoLink) {
+          const prodEncontrado = prods.find(p => String(p.id) === idProductoLink);
+          if (prodEncontrado) {
+            setQuickView(prodEncontrado);
+          } else {
+            showToast("Ese producto ya no está disponible");
+          }
+          // Limpia la URL para que no se quede pegada al navegar (vuelve a la portada)
+          window.history.replaceState(null, "", window.location.origin + "/");
+        }
+
+        // Resultado de un pago con tarjeta (Powertranz redirige aquí tras el 3D-Secure)
+        const paramsPago = new URLSearchParams(window.location.search);
+        const resultadoPago = paramsPago.get("pago");
+        if (resultadoPago) {
+          const codigoPago = paramsPago.get("codigo");
+          if (resultadoPago === "exito" && codigoPago) {
+            // El pago con tarjeta se confirmó de verdad (llegamos hasta aquí porque el
+            // banco redirigió con éxito) -- se vacía el carrito, igual que ya se hacía
+            // para Yappy y para el modo de prueba, que antes se quedaba sin vaciar aquí.
+            setCart([]);
+            // Trae los datos reales del pedido para mostrar una pantalla de confirmación completa
+            try {
+              const pedidosEncontrados = await sb.get("pedidos", `?codigo=eq.${encodeURIComponent(codigoPago)}&limit=1`);
+              const pedido = pedidosEncontrados?.[0] || null;
+              if (pedido) {
+                const items = await sb.get("pedido_items", `?pedido_id=eq.${pedido.id}`).catch(() => []);
+                setPagoResultado({ tipo: "exito", codigo: codigoPago, pedido: { ...pedido, items: items || [] } });
+                trackCompra({
+                  codigo: codigoPago, total: pedido.total,
+                  items: (items || []).map(i => ({ id: i.producto_id, nombre: i.nombre_producto, precio: i.precio_unitario, cantidad: i.cantidad })),
+                });
+                try { localStorage.removeItem("oft_pago_tarjeta_pendiente"); } catch (e) {}
+              } else {
+                // Sin sesión (compra de invitado) el pedido no se puede leer desde aquí: se usa el resumen guardado al pagar
+                let resp = null;
+                try { const g = JSON.parse(localStorage.getItem("oft_pago_tarjeta_pendiente") || "null"); if (g && g.codigo === codigoPago) resp = g; } catch (e) {}
+                if (resp) {
+                  setPagoResultado({ tipo: "exito", codigo: codigoPago, pedido: resp.pedido, email: resp.email, nombre: resp.nombre, telefono: resp.telefono });
+                  trackCompra({ codigo: codigoPago, total: resp.pedido.total, items: resp.itemsTrack || [] });
+                  try { localStorage.removeItem("oft_pago_tarjeta_pendiente"); } catch (e) {}
+                } else {
+                  setPagoResultado({ tipo: "exito", codigo: codigoPago, pedido: null });
+                }
+              }
+            } catch (e) {
+              setPagoResultado({ tipo: "exito", codigo: codigoPago, pedido: null });
+            }
+            setView("pago-resultado");
+          } else if (resultadoPago === "rechazado") {
+            setPagoResultado({ tipo: "rechazado", codigo: codigoPago });
+            setView("pago-resultado");
+          } else {
+            setPagoResultado({ tipo: "error", codigo: codigoPago });
+            setView("pago-resultado");
+          }
+          window.history.replaceState(null, "", window.location.origin + window.location.pathname);
+        }
+        // Empresas de envío y sucursales (no críticas, si fallan se ignoran)
+        try {
+          const [emps, sucs] = await Promise.all([
+            sb.get("empresas_envio", "?order=id"),
+            sb.get("sucursales", "?order=id"),
+          ]);
+          setEmpresas(emps);
+          setSucursales(sucs);
+        } catch(e2) { console.warn("Empresas de envío no cargadas:", e2.message); }
+        // Retiro en el local: locales disponibles + si está habilitado para clientes
+        try {
+          const [locales, config] = await Promise.all([
+            sb.get("locales_retiro", "?activo=eq.true&order=id"),
+            sb.get("configuracion", "?clave=eq.retiro_local_habilitado&limit=1"),
+          ]);
+          setLocalesRetiro(locales || []);
+          if (config && config[0]) setRetiroLocalHabilitado(config[0].valor === true || config[0].valor === "true");
+        } catch(e3) { console.warn("Config de retiro en local no cargada:", e3.message); }
+        // Grupos de categorías (no crítico, si falla se ignora — los grupos simplemente no muestran ícono propio)
+        try {
+          const grupos = await sb.get("grupos_categorias", "?order=orden.asc,nombre.asc");
+          setGruposCategorias(grupos || []);
+        } catch(e4) { console.warn("Grupos de categorías no cargados:", e4.message); }
+      } catch(e) {
+        console.warn("⚠️ Supabase no configurado. Usando datos demo.", e.message);
+        // DATOS DEMO cuando Supabase no está configurado
+        setCategories([
+          { id: 1, nombre: "Jeans Hombre", icono: "👖", activa: true },
+          { id: 2, nombre: "Jeans Dama", icono: "👗", activa: true },
+          { id: 3, nombre: "Polo / Camisas", icono: "👕", activa: true },
+          { id: 4, nombre: "Calzado Dama", icono: "👠", activa: true },
+          { id: 5, nombre: "Calzado Hombre", icono: "👟", activa: true },
+          { id: 6, nombre: "Accesorios", icono: "🧢", activa: true },
+        ]);
+        setProducts([
+          { id: 1, referencia: "JT-001", nombre: "Jean Tumi Hombre", categoria_id: 1, descripcion: "Jean recto denim premium, cómodo y duradero.", precio_pieza: 7, precio_media_docena: 36, precio_docena: 84, activo: true, imagen_url: null, badge: "TOP" },
+          { id: 2, referencia: "JP-002", nombre: "Jean Pitbull Negro", categoria_id: 1, descripcion: "Stretch straight cut, ideal para reventa.", precio_pieza: 4, precio_media_docena: 21, precio_docena: 48, activo: true, imagen_url: null, badge: "" },
+          { id: 3, referencia: "JB-003", nombre: "Jean Britney Dama", categoria_id: 2, descripcion: "Skinny stretch, varios lavados disponibles.", precio_pieza: 8, precio_media_docena: 42, precio_docena: 96, activo: true, imagen_url: null, badge: "NUEVO" },
+          { id: 4, referencia: "PP-004", nombre: "Polo Piqué Hombre", categoria_id: 3, descripcion: "Polo clásico, varios colores, alta calidad.", precio_pieza: 7, precio_media_docena: 36, precio_docena: 84, activo: true, imagen_url: null, badge: "" },
+          { id: 5, referencia: "SD-005", nombre: "Sandalia Dama", categoria_id: 4, descripcion: "Varios modelos y colores, moda actual.", precio_pieza: 6.5, precio_media_docena: 33, precio_docena: 78, activo: true, imagen_url: null, badge: "OFERTA" },
+          { id: 6, referencia: "CH-006", nombre: "Chancla HPC Polo Club", categoria_id: 4, descripcion: "Marca reconocida, calidad premium.", precio_pieza: 9.17, precio_media_docena: 48, precio_docena: 110, activo: true, imagen_url: null, badge: "MARCA" },
+        ]);
+      }
+      setLoading(false);
+    };
+    init();
+  }, []);
+
+  // "Latido" para saber quién sigue activo en el sitio ahora mismo (visitas en vivo,
+  // panel de Analítica) -- uno cada 60 segundos mientras la pestaña siga abierta.
+  // Además de "sigue activo", cada latido dice EN QUÉ sección está (inicio / catálogo / ofertas...),
+  // así Analítica puede calcular cuánto tiempo pasan los clientes en cada una. Y cada vez que
+  // el cliente entra a una sección se registra una "vista de sección".
+  const vistaActualRef = useRef(view);
+  useEffect(() => {
+    vistaActualRef.current = view;
+    if (["home", "catalogo", "ofertas"].includes(view)) registrarEvento("ver_seccion", view, view === "home" ? "Inicio" : view === "catalogo" ? "Catálogo" : "Ofertas", user?.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view]);
+  useEffect(() => {
+    const latido = setInterval(() => registrarEvento("heartbeat", vistaActualRef.current), 60000);
+    // "salida" al cerrar/irse de la página y "activo" al volver: así el contador de visitas en
+    // vivo del admin baja y sube al momento, sin esperar a los latidos de cada minuto.
+    let ultimoActivo = 0;
+    const alSalir = () => registrarEvento("salida", vistaActualRef.current);
+    const alVolver = () => {
+      if (document.visibilityState !== "visible" || Date.now() - ultimoActivo < 15000) return;
+      ultimoActivo = Date.now();
+      registrarEvento("activo", vistaActualRef.current);
+    };
+    window.addEventListener("pagehide", alSalir);
+    window.addEventListener("pageshow", alVolver);
+    document.addEventListener("visibilitychange", alVolver);
+    return () => {
+      clearInterval(latido);
+      window.removeEventListener("pagehide", alSalir);
+      window.removeEventListener("pageshow", alVolver);
+      document.removeEventListener("visibilitychange", alVolver);
+    };
+  }, []);
+
+  const isAdmin = view === "admin";
+  const ctx = { view, setView, cart, setCart, addToCart, agregarFlexPackAlCarrito, campanaActiva, cargarOfertas, agregarOfertaAlCarrito, sincronizarOfertasCarrito, cartPulse, user, setUser, showLogin, setShowLogin, showRegister, setShowRegister, registerPrefill, setRegisterPrefill, showCart, setShowCart, quickView, setQuickView, pagoResultado, setPagoResultado, catalogCat, setCatalogCat, completeProfile, setCompleteProfile, googleMfaPaso, setGoogleMfaPaso, recuperacionToken, setRecuperacionToken, pendingCheckout, setPendingCheckout, products, setProducts, categories, setCategories, gruposCategorias, setGruposCategorias, banners, setBanners, popups, setPopups, empresas, setEmpresas, sucursales, setSucursales, localesRetiro, setLocalesRetiro, retiroLocalHabilitado, setRetiroLocalHabilitado, flexpackGrupos, loading, showToast };
+
+  return (
+    <AppCtx.Provider value={ctx}>
+      <style>{`
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .spin { animation: spin 0.8s linear infinite; }
+        /* Menú: Inicio · Catálogo · Ofertas se ven EXACTAMENTE igual (la página activa va en rojo con línea) */
+        .oft-nav-link { font-weight: 700; font-size: 14px; cursor: pointer; color: ${BLACK}; border-bottom: 2px solid transparent; padding: 4px 0 3px; white-space: nowrap; transition: color .18s, border-color .18s; }
+        .oft-nav-link:hover { color: ${RED}; }
+        .oft-nav-link.on { color: ${RED}; border-bottom-color: ${RED}; }
+        /* Encabezado de sección compartido: Inicio, Catálogo y Ofertas */
+        .oft-sec-head { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }
+        .oft-sec-head > span { width: 6px; height: 40px; border-radius: 4px; background: ${RED}; flex-shrink: 0; }
+        .oft-sec-head h2 { margin: 0; font-size: 24px; font-weight: 900; line-height: 1.15; letter-spacing: -0.2px; }
+        .oft-sec-head p { margin: 3px 0 0; font-size: 13px; color: ${GRAY3}; }
+        .oft-sec-head em { margin-left: auto; font-style: normal; font-size: 12px; font-weight: 800; color: ${GRAY3}; white-space: nowrap; }
+        /* Tarjeta de producto: misma cara que las ofertas (borde rojo + elevación al pasar el mouse o tocar) */
+        .oft-pcard { background: #fff; border: 1px solid ${GRAY2}; border-radius: 18px; overflow: hidden; box-shadow: 0 2px 10px rgba(0,0,0,0.05); transition: transform .25s, box-shadow .25s, border-color .25s; }
+        .oft-pcard [data-prod-img] img { transition: transform .5s; }
+        .oft-pcard:active { border-color: ${RED}; }
+        @media (hover: hover) {
+          .oft-pcard:hover { transform: translateY(-6px); box-shadow: 0 14px 30px rgba(0,0,0,0.13); border-color: ${RED}; }
+          .oft-pcard:hover [data-prod-img] img { transform: scale(1.06); }
+        }
+        .oft-pcard-name { font-size: 16px; font-weight: 900; line-height: 1.25; }
+        .oft-pcard-total { font-size: 26px; font-weight: 900; color: ${RED}; line-height: 1; letter-spacing: -0.5px; }
+        .oft-pcard-add { flex: 1; border: none; border-radius: 12px; background: ${RED}; color: #fff; font-weight: 800; font-size: 14px; min-height: 44px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 6px; white-space: nowrap; transition: background .2s, filter .2s; }
+        .oft-pcard-add:hover:not(:disabled) { filter: brightness(1.08); }
+        .oft-pcard-sq { width: 44px; min-height: 44px; border: none; border-radius: 12px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0; background: #25D366; color: #fff; }
+        .oft-pcard-sq.gray { background: ${GRAY2}; color: ${BLACK}; }
+        /* Barra de búsqueda del catálogo (igual a la de ofertas) */
+        .oft-tool { position: sticky; top: 60px; z-index: 40; background: #fff; border-top: 1px solid ${GRAY2}; border-bottom: 1px solid ${GRAY2}; padding: 12px 16px; box-shadow: 0 4px 14px rgba(0,0,0,0.05); }
+        .oft-tool-in { max-width: 1152px; margin: 0 auto; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+        .oft-tool-search { flex: 1 1 280px; position: relative; }
+        .oft-tool-search input { width: 100%; border: 2px solid ${GRAY2}; border-radius: 30px; padding: 11px 40px 11px 42px; font-size: 15px; outline: none; transition: border-color .2s, box-shadow .2s; }
+        .oft-tool-search input:focus { border-color: ${RED}; box-shadow: 0 0 0 4px ${RED}22; }
+        .oft-tool-search .ic { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: ${GRAY3}; }
+        .oft-tool-search .x { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); background: ${GRAY2}; border: none; width: 24px; height: 24px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+        .oft-tool .oft-cat-trigger { border-radius: 30px !important; border-width: 2px !important; padding: 5px 14px 5px 8px !important; width: auto !important; min-width: 230px; max-width: 320px; transition: border-color .2s; }
+        .oft-tool .oft-cat-trigger:hover { border-color: ${RED} !important; }
+        * { box-sizing: border-box; }
+        html, body { margin: 0; padding: 0; overflow-x: hidden; overflow-x: clip; max-width: 100%; font-family: Helvetica, Arial, sans-serif; }
+        input, button, textarea, select { font-family: inherit; }
+        img { max-width: 100%; }
+        /* La tabla nunca desborda: scroll horizontal dentro de su marco (web y celular) */
+        .oft-table-wrap { max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+        .oft-admin-main { max-width: 100%; }
+        /* Mostrar/ocultar según dispositivo */
+        .oft-only-mobile { display: none; }
+        /* Bloques de presentación: tamaño base (escritorio) */
+        .oft-pres-label { font-size: 12px; }
+        .oft-pres-price { font-size: 18px; letter-spacing: -0.3px; }
+        .oft-pres-big .oft-pres-label { font-size: 14px; }
+        .oft-pres-big .oft-pres-price { font-size: 22px; }
+        .oft-only-desktop { display: block; }
+        @media (max-width: 768px) {
+          .oft-only-mobile { display: flex; }
+          .oft-only-desktop { display: none !important; }
+        }
+        /* Evita el zoom automático del celular al tocar campos (iOS hace zoom si la fuente es <16px) */
+        @media (max-width: 768px) {
+          input, select, textarea { font-size: 16px !important; }
+        }
+
+        /* ── ANIMACIONES ── */
+        @keyframes fadeInUp { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes popIn { 0% { opacity: 0; transform: scale(0.92); } 60% { opacity: 1; transform: scale(1.02); } 100% { transform: scale(1); } }
+        @keyframes cartBounce { 0%,100% { transform: scale(1); } 30% { transform: scale(1.35); } 60% { transform: scale(0.9); } }
+        @keyframes flyToCart { 0% { opacity: 1; transform: scale(1) translate(0,0); } 100% { opacity: 0; transform: scale(0.3) translate(var(--fly-x), var(--fly-y)); } }
+        @keyframes checkPop { 0% { opacity: 0; transform: scale(0.4); } 50% { opacity: 1; transform: scale(1.15); } 100% { opacity: 0; transform: scale(1); } }
+        @keyframes badgePulse { 0% { box-shadow: 0 0 0 0 rgba(227,30,36,0.5); } 100% { box-shadow: 0 0 0 10px rgba(227,30,36,0); } }
+        @keyframes toastIn { from { opacity: 0; transform: translateX(-50%) translateY(-16px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
+        .oft-toast-in { animation: toastIn 0.3s ease both; }
+        @keyframes qvPop { 0% { opacity: 0; transform: scale(0.88); } 100% { opacity: 1; transform: scale(1); } }
+        .oft-qv-pop { animation: qvPop 0.28s cubic-bezier(0.34,1.4,0.5,1) both; }
+        @keyframes fadeInUp { 0% { opacity: 0; transform: translateY(8px); } 100% { opacity: 1; transform: translateY(0); } }
+        .oft-fade-in { animation: fadeInUp 0.4s cubic-bezier(0.16,1,0.3,1) both; }
+        @keyframes sheetSlideUp { 0% { opacity: 0; transform: translateY(40px); } 100% { opacity: 1; transform: translateY(0); } }
+        .oft-sheet-slide { animation: sheetSlideUp 0.32s cubic-bezier(0.16,1,0.3,1) both; }
+        @keyframes flexpackLogoIn { 0% { opacity: 0; transform: scale(0.5) rotate(-8deg); } 60% { opacity: 1; transform: scale(1.08) rotate(3deg); } 100% { opacity: 1; transform: scale(1) rotate(0deg); } }
+        .oft-flexpack-logo-intro { animation: flexpackLogoIn 0.7s cubic-bezier(0.34,1.4,0.5,1) both; }
+        @keyframes flexpackBarGlow { 0%,100% { box-shadow: 0 0 0 0 rgba(10,157,79,0.35); } 50% { box-shadow: 0 0 0 5px rgba(10,157,79,0); } }
+        .oft-flexpack-bar-completo { animation: flexpackBarGlow 1.1s ease-out 1; }
+        .oft-flexpack-badge { transition: transform 0.15s ease, box-shadow 0.15s ease; }
+        .oft-flexpack-badge:hover { transform: translateY(-1px); box-shadow: 0 4px 14px rgba(227,30,36,0.2); background: #FDECEC; }
+        @keyframes flexpackTrackIn { 0% { opacity: 0; transform: translateY(10px) scale(0.97); } 100% { opacity: 1; transform: translateY(0) scale(1); } }
+        .oft-flexpack-track-card {
+          display: flex; align-items: center; gap: 14px; width: 100%; padding: 16px; border-radius: 16px;
+          border: 1.5px solid ${GRAY2}; background: ${WHITE}; cursor: pointer; text-align: left;
+          animation: flexpackTrackIn 0.4s cubic-bezier(0.16,1,0.3,1) both;
+          transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+        }
+        .oft-flexpack-track-card:hover { border-color: ${BLACK}; box-shadow: 0 8px 20px rgba(0,0,0,0.1); transform: translateY(-2px); }
+        .oft-flexpack-track-num {
+          flex-shrink: 0; width: 56px; height: 56px; border-radius: 14px; background: linear-gradient(135deg, ${RED}, ${RED_D});
+          color: ${WHITE}; display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 15px; letter-spacing: -0.5px;
+          box-shadow: 0 4px 12px rgba(227,30,36,0.3);
+        }
+        .oft-flexpack-track-num span { opacity: 0.5; margin: 0 1px; font-weight: 500; }
+        @keyframes catChipPop { 0% { opacity: 0; transform: scale(0.85) translateY(6px); } 100% { opacity: 1; transform: scale(1) translateY(0); } }
+        .oft-cat-sheet-chip { animation: catChipPop 0.26s cubic-bezier(0.34,1.4,0.5,1) both; transition: border-color 0.15s, background 0.15s; }
+        .oft-cat-trigger { transition: border-color 0.15s, box-shadow 0.15s; }
+        .oft-cat-trigger:hover { border-color: ${RED}; box-shadow: 0 2px 10px rgba(227,30,36,0.12); }
+        @keyframes groupCardIn { 0% { opacity: 0; transform: translateY(16px); } 100% { opacity: 1; transform: translateY(0); } }
+        .oft-group-card {
+          position: relative; background: ${WHITE}; border: 1.5px solid ${GRAY2}; border-radius: 16px; padding: 18px 16px;
+          cursor: pointer; animation: groupCardIn 0.45s cubic-bezier(0.16,1,0.3,1) both;
+          transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+        }
+        .oft-group-card:hover { border-color: ${RED}; box-shadow: 0 8px 20px rgba(227,30,36,0.12); transform: translateY(-2px); }
+        .oft-group-card-icon {
+          width: 44px; height: 44px; border-radius: 12px; background: ${GRAY};
+          display: flex; align-items: center; justify-content: center; transition: background 0.2s ease;
+        }
+        .oft-group-card:hover .oft-group-card-icon { background: #FFF0EF; }
+        .oft-group-card-chevron { position: absolute; top: 16px; right: 14px; }
+        .oft-banner-thumb:hover .oft-banner-hover-overlay { opacity: 1 !important; }
+
+        /* ── "COMPRAR OTRA VEZ" / "TUS INTERESES" (Mi Cuenta) ── */
+        .oft-mini-row { display: flex; gap: 12px; overflow-x: auto; padding: 2px 2px 8px; scroll-snap-type: x proximity; -webkit-overflow-scrolling: touch; }
+        .oft-mini-row::-webkit-scrollbar { height: 5px; }
+        .oft-mini-row::-webkit-scrollbar-thumb { background: ${GRAY2}; border-radius: 10px; }
+        .oft-mini-card { flex: 0 0 116px; scroll-snap-align: start; cursor: pointer; transition: transform 0.18s ease; }
+        .oft-mini-card:hover { transform: translateY(-3px); }
+        .oft-mini-card-img { width: 116px; height: 116px; border-radius: 12px; background: ${GRAY}; display: flex; align-items: center; justify-content: center; overflow: hidden; margin-bottom: 8px; border: 1px solid ${GRAY2}; }
+        .oft-mini-card-img img { width: 100%; height: 100%; object-fit: contain; }
+        .oft-mini-card-name { font-size: 12px; font-weight: 600; color: ${BLACK}; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+
+        /* ── ANALÍTICA WEB (panel de admin) ── */
+        @keyframes analyticsBarGrow { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+        .oft-analytics-bar { transform-origin: left; animation: analyticsBarGrow 0.7s cubic-bezier(0.16,1,0.3,1) both; }
+        @keyframes lineChartDraw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+        .oft-linechart-line { stroke-dasharray: 1; animation: lineChartDraw 1.1s cubic-bezier(0.16,1,0.3,1) both; }
+        @keyframes areaFadeIn { from { opacity: 0; } to { opacity: 1; } }
+        .oft-linechart-area { animation: areaFadeIn 0.8s 0.35s ease both; }
+        @keyframes deltaPop { from { opacity: 0; transform: scale(0.7); } to { opacity: 1; transform: scale(1); } }
+        .oft-delta { display: inline-flex; align-items: center; gap: 2px; font-weight: 800; padding: 2px 7px; border-radius: 20px; animation: deltaPop 0.4s 0.3s cubic-bezier(0.34,1.4,0.5,1) both; }
+        .oft-delta-up { color: #0F6E56; background: #E6F7F1; }
+        .oft-delta-down { color: #B01519; background: #FDECEC; }
+        @keyframes kpiFadeUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .oft-kpi-card { animation: kpiFadeUp 0.45s ease both; }
+        @keyframes livePulse { 0% { box-shadow: 0 0 0 0 rgba(176,21,25,0.5); } 70% { box-shadow: 0 0 0 6px rgba(176,21,25,0); } 100% { box-shadow: 0 0 0 0 rgba(176,21,25,0); } }
+        .oft-live-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #B01519; animation: livePulse 1.8s infinite; }
+        /* Oculta la insignia flotante de reCAPTCHA -- a cambio, Google exige mostrar el
+           aviso de texto en algún lugar visible (ya está agregado en el checkout). */
+        .grecaptcha-badge { visibility: hidden; }
+        @keyframes overlayFade { from { opacity: 0; } to { opacity: 1; } }
+        .oft-overlay { animation: overlayFade 0.22s ease both; }
+        @keyframes authPop { 0% { opacity: 0; transform: translateY(18px) scale(0.94); } 60% { opacity: 1; transform: translateY(0) scale(1.015); } 100% { transform: translateY(0) scale(1); } }
+        .oft-auth-pop { animation: authPop 0.4s cubic-bezier(0.34,1.45,0.5,1) both; }
+        @keyframes qtyBump { 0% { transform: scale(1); } 40% { transform: scale(1.3); color: ${RED}; } 100% { transform: scale(1); } }
+        .oft-qty-bump { animation: qtyBump 0.28s ease; }
+        @keyframes chipPop { 0% { opacity: 0; transform: scale(0.6); } 100% { opacity: 1; transform: scale(1); } }
+        .oft-chip-pop { animation: chipPop 0.22s cubic-bezier(0.34,1.5,0.5,1) both; }
+        @keyframes totalPop { 0% { transform: scale(1); } 35% { transform: scale(1.18); } 100% { transform: scale(1); } }
+        .oft-total-pop { display: inline-block; animation: totalPop 0.3s ease; }
+        @keyframes calPop { 0% { opacity: 0; transform: translateY(-8px) scale(0.97); } 100% { opacity: 1; transform: translateY(0) scale(1); } }
+        .oft-cal-pop { animation: calPop 0.22s cubic-bezier(0.34,1.4,0.5,1) both; }
+        @keyframes widgetIn { 0% { opacity: 0; transform: translateY(14px) scale(0.98); } 100% { opacity: 1; transform: translateY(0) scale(1); } }
+        .oft-widget { animation: widgetIn 0.5s cubic-bezier(0.22,1,0.36,1) both; }
+        .oft-widget:hover { transform: translateY(-3px); box-shadow: 0 12px 28px rgba(0,0,0,0.10); }
+        @keyframes heroFadeUp { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: translateY(0); } }
+        .oft-infobar > div { animation: heroFadeUp 0.5s ease both; }
+
+        /* ── CARRUSEL DE PROMOCIONES ── */
+        .oft-carousel-section { background: #F5F4F0; }
+        .oft-carousel-wrap { max-width: 1320px; margin: 0 auto; padding: 24px 24px 0; }
+        @media (max-width: 640px) { .oft-carousel-wrap { padding: 14px 12px 0; } }
+        .oft-carousel { position: relative; width: 100%; aspect-ratio: 16 / 9; overflow: hidden; background: ${GRAY}; border-radius: 16px; box-shadow: 0 12px 32px -12px rgba(0,0,0,0.18); }
+        @media (max-width: 640px) { .oft-carousel { border-radius: 12px; box-shadow: 0 8px 20px -10px rgba(0,0,0,0.16); } }
+        @media (min-width: 641px) { .oft-carousel { max-height: 430px; } }
+        .oft-carousel-track { display: flex; height: 100%; transition: transform 0.55s cubic-bezier(0.65,0,0.35,1); touch-action: pan-y; }
+        .oft-carousel-slide { flex: 0 0 100%; height: 100%; position: relative; cursor: pointer; }
+        .oft-carousel-slide img { width: 100%; height: 100%; object-fit: cover; display: block; }
+        .oft-carousel-caption { position: absolute; left: 0; right: 0; bottom: 0; padding: 28px 28px 22px; background: linear-gradient(0deg, rgba(0,0,0,0.72) 0%, rgba(0,0,0,0) 100%); color: ${WHITE}; pointer-events: none; }
+        .oft-carousel-title { font-size: 22px; font-weight: 800; margin-bottom: 4px; letter-spacing: -0.2px; }
+        .oft-carousel-subtitle { font-size: 13px; color: rgba(255,255,255,0.82); }
+        .oft-carousel-dots { position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%); display: flex; gap: 6px; }
+        .oft-carousel-dot { width: 6px; height: 6px; border-radius: 50%; background: rgba(255,255,255,0.4); border: none; cursor: pointer; padding: 0; transition: all 0.25s ease; }
+        .oft-carousel-dot.active { width: 20px; border-radius: 3px; background: ${WHITE}; }
+
+        /* ── BARRA DE MARCA + BOTONES (debajo del carrusel) ── */
+        .oft-cta-bar { background: #F5F4F0; color: ${BLACK}; padding: 30px 24px 34px; text-align: center; position: relative; overflow: hidden; border-bottom: 1px solid ${GRAY2}; }
+        .oft-cta-bar::before { content: ""; position: absolute; top: 0; left: 50%; transform: translateX(-50%); width: 220px; height: 2px; background: linear-gradient(90deg, transparent, ${RED}, transparent); }
+        .oft-cta-tag { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: ${RED}; margin-bottom: 10px; }
+        .oft-cta-title { font-size: 22px; font-weight: 800; letter-spacing: -0.3px; margin-bottom: 22px; color: ${BLACK}; }
+        .oft-cta-title span { color: ${RED}; }
+        .oft-cta-actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+        .oft-cta-btn-primary { background: ${RED}; color: ${WHITE}; border: none; padding: 13px 30px; border-radius: 100px; font-weight: 700; font-size: 14px; cursor: pointer; transition: transform 0.15s ease, box-shadow 0.15s ease; font-family: inherit; }
+        .oft-cta-btn-primary:hover { transform: translateY(-1px); box-shadow: 0 6px 18px rgba(227,30,36,0.35); }
+        .oft-cta-btn-whatsapp { background: #25D366; color: ${WHITE}; border: none; padding: 12px 26px; border-radius: 100px; font-weight: 700; font-size: 14px; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; transition: transform 0.15s ease, box-shadow 0.15s ease; font-family: inherit; }
+        .oft-cta-btn-whatsapp:hover { transform: translateY(-1px); box-shadow: 0 6px 18px rgba(37,211,102,0.35); }
+
+        @keyframes barGrow { from { transform: scaleY(0); } to { transform: scaleY(1); } }
+        .oft-bar-grow { transform-origin: bottom; animation: barGrow 0.7s cubic-bezier(0.22,1,0.36,1) both; }
+        @keyframes lineDraw { from { stroke-dashoffset: 1000; } to { stroke-dashoffset: 0; } }
+        .oft-line-draw { stroke-dasharray: 1000; animation: lineDraw 1.4s ease forwards; }
+        @keyframes rowIn { from { opacity: 0; transform: translateX(-8px); } to { opacity: 1; transform: translateX(0); } }
+        .oft-row-in { animation: rowIn 0.45s ease both; }
+        .oft-cal-day { transition: background 0.15s ease, transform 0.1s ease; }
+        .oft-cal-day:hover { background: #FFE5E6 !important; }
+        .oft-cal-day:active { transform: scale(0.88); }
+        .oft-color-chip { transition: transform 0.15s ease, border-color 0.15s ease; }
+        .oft-color-chip:active { transform: scale(0.92) !important; }
+        .oft-qty-btn { transition: transform 0.12s ease, box-shadow 0.15s ease; }
+        .oft-qty-btn:active { transform: scale(0.88); }
+        .oft-qty-chip:active { transform: scale(0.93); }
+        @keyframes liveDot { 0%,100% { opacity: 1; box-shadow: 0 0 0 0 rgba(34,197,94,0.5); } 50% { opacity: 0.6; box-shadow: 0 0 0 6px rgba(34,197,94,0); } }
+        .oft-live-dot { animation: liveDot 1.5s ease-in-out infinite; }
+        @keyframes stepPulse { 0%,100% { box-shadow: 0 0 0 4px rgba(227,30,36,0.18); } 50% { box-shadow: 0 0 0 8px rgba(227,30,36,0.05); } }
+        .oft-step-pulse { animation: stepPulse 1.6s ease-in-out infinite; }
+        @keyframes progressGrow { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+        .oft-progress-fill { transform-origin: left; animation: progressGrow 0.8s ease both; }
+        @keyframes detailOpen { from { opacity: 0; max-height: 0; } to { opacity: 1; max-height: 2000px; } }
+        .oft-detail-open { animation: detailOpen 0.4s ease both; overflow: hidden; }
+        @keyframes tabAnim { 0% { opacity: 0; transform: translateY(10px); } 100% { opacity: 1; transform: translateY(0); } }
+        .oft-tab-anim { animation: tabAnim 0.35s cubic-bezier(0.22,1,0.36,1) both; }
+
+        .oft-prod-anim { animation: fadeInUp 0.45s ease both; }
+        .oft-cart-bounce { animation: cartBounce 0.5s ease; }
+        .oft-fly { position: fixed; z-index: 9999; pointer-events: none; animation: flyToCart 0.7s cubic-bezier(0.5,-0.3,0.7,1) forwards; }
+        .oft-check-pop { animation: checkPop 0.9s ease forwards; }
+        .oft-btn-press:active { transform: scale(0.94); }
+        .oft-card-hover { transition: transform 0.18s ease, box-shadow 0.18s ease; }
+        .oft-card-hover:hover { transform: translateY(-4px); box-shadow: 0 10px 28px rgba(0,0,0,0.12); }
+        .oft-cat-chip { transition: transform 0.15s ease, background 0.2s ease, border-color 0.2s ease; }
+        .oft-cat-chip:active { transform: scale(0.95); }
+
+        @media (max-width: 768px) {
+          .oft-nav { padding: 0 14px !important; }
+          .oft-nav-links { gap: 18px !important; }
+          .oft-nav-link { font-size: 13px; }
+          /* Con campaña de ofertas activa, el menú se reparte en dos filas en el celular: logo y botones arriba,
+             Inicio · Catálogo · Ofertas abajo, con el mismo espacio entre cada uno (nada queda apretado) */
+          .oft-nav-conofertas { height: auto !important; flex-wrap: wrap !important; row-gap: 0 !important; }
+          .oft-nav-conofertas > :nth-child(1) { order: 1; min-height: 54px; }
+          .oft-nav-conofertas > :nth-child(3) { order: 2; min-height: 54px; }
+          .oft-nav-conofertas .oft-nav-links { order: 3; flex: 0 0 100%; justify-content: space-evenly !important; gap: 0 !important; padding: 7px 0 8px; border-top: 1px solid #EEE; }
+          .oft-nav-conofertas .oft-nav-link { font-size: 14px; }
+          .oft-hero-title { font-size: 30px !important; }
+          .oft-hero { padding: 40px 18px 48px !important; }
+          .oft-infobar-item { border-right: none !important; border-bottom: 1px solid #E0E0E0; padding: 12px 16px !important; }
+          .oft-section { padding: 28px 16px !important; }
+          .oft-infobar { gap: 14px !important; font-size: 11px !important; padding: 10px 14px !important; }
+          .oft-admin-main { margin-left: 0 !important; padding: 18px 14px 80px !important; }
+          .oft-admin-sidebar { position: fixed !important; bottom: 0 !important; top: auto !important; left: 0 !important; right: 0 !important; width: 100% !important; min-height: auto !important; height: 62px !important; flex-direction: row !important; padding: 0 !important; z-index: 200 !important; border-right: none !important; border-top: 1px solid ${GRAY2} !important; box-shadow: 0 -2px 12px rgba(0,0,0,0.06); }
+          .oft-admin-brand { display: none !important; }
+          .oft-admin-tabs { display: flex !important; flex-direction: row !important; padding: 6px 4px !important; margin: 0 !important; width: 100%; justify-content: space-between; overflow-x: auto; gap: 2px; }
+          .oft-admin-tab { flex-direction: column !important; gap: 3px !important; padding: 6px 8px !important; margin-bottom: 0 !important; font-size: 9.5px !important; border-radius: 10px !important; text-align: center; justify-content: center; flex: 0 0 auto; min-width: 56px; white-space: nowrap; }
+          .oft-admin-tab.active { background: ${RED} !important; }
+          .oft-admin-bottom-btns { display: flex !important; flex-direction: row !important; border-top: none !important; margin-top: 0 !important; padding: 6px 4px !important; }
+          .oft-admin-divider { display: none !important; }
+          .oft-dash-grid-2 { grid-template-columns: 1fr !important; }
+          .oft-btn-text-hide { display: none !important; }
+          /* Admin: tablas con scroll horizontal y formularios apilados */
+          .oft-admin-main table { min-width: 540px; }
+          .oft-table-wrap { overflow-x: auto !important; -webkit-overflow-scrolling: touch; border-radius: 12px; }
+          .oft-form-grid { grid-template-columns: 1fr !important; }
+          .oft-admin-head { flex-direction: column !important; align-items: stretch !important; gap: 12px !important; }
+          .oft-admin-head > div:last-child { display: flex; gap: 8px; flex-wrap: wrap; }
+          .oft-admin-head button { flex: 1; justify-content: center; }
+          .oft-modal { padding: 22px 18px !important; max-width: 100% !important; border-radius: 16px !important; }
+          .oft-prod-grid { grid-template-columns: 1fr 1fr !important; gap: 10px !important; width: 100% !important; }
+          .oft-prod-grid > * { min-width: 0 !important; }
+          .oft-prod-grid > * > div { min-width: 0 !important; }
+          .oft-cat-grid { grid-template-columns: repeat(3, 1fr) !important; }
+          table { font-size: 12px !important; }
+          .oft-overlay { align-items: flex-end !important; padding: 0 !important; }
+          .oft-modal-sheet { border-radius: 18px 18px 0 0 !important; max-width: 100% !important; max-height: 92vh !important; }
+          /* Modales de documentos (factura, guía, editar cotización): centrados arriba, NO hoja inferior */
+          .oft-overlay-doc { align-items: flex-start !important; padding: 12px !important; overflow-y: auto !important; }
+          .oft-overlay-doc > div { margin: auto !important; width: 96% !important; max-width: 96% !important; }
+          /* PRECIOS más legibles en celular */
+          .oft-prod-body { padding: 12px !important; }
+          body.oft-has-campaign .oft-tool, body.oft-has-campaign .oft-of-bar { top: 97px; }
+          .oft-tool { padding: 10px 12px; position: static; box-shadow: none; }
+          .oft-tool .oft-cat-trigger { min-width: 0; width: 100% !important; max-width: none !important; }
+          .oft-pcard { border-radius: 16px; }
+          .oft-pcard-name { font-size: 14px; }
+          .oft-pcard-total { font-size: 22px; }
+          .oft-pcard-add { font-size: 13px; }
+          .oft-pcard-actions { gap: 6px !important; }
+          .oft-pcard-sq { width: 36px; }
+          .oft-pcard-add { padding: 0 6px; }
+          .oft-sec-head h2 { font-size: 21px; }
+          .oft-sec-head > span { height: 36px; }
+          .oft-price-table { padding: 10px 10px !important; }
+          .oft-price-row { font-size: 12px !important; padding: 4px 0 !important; gap: 6px !important; line-height: 1.25 !important; }
+          .oft-price-label { font-size: 12px !important; }
+          .oft-price-big { font-size: 14px !important; }
+          .oft-qty-row { flex-wrap: wrap !important; gap: 6px !important; }
+          /* Bloques de presentación: mismo tamaño de número y misma altura */
+          .oft-pres-chip { padding: 9px 1px !important; }
+          .oft-pres-label { font-size: 10.5px !important; }
+          .oft-pres-price { font-size: 14px !important; letter-spacing: -0.4px !important; }
+          .oft-pres-grid { gap: 4px !important; }
+          /* En el modal (vista detalle) hay más espacio: números más grandes */
+          .oft-pres-big .oft-pres-label { font-size: 12px !important; }
+          .oft-pres-big .oft-pres-price { font-size: 18px !important; letter-spacing: 0 !important; }
+        }
+        @media (max-width: 380px) {
+          /* En pantallas muy chicas, baja un poco pero TODOS por igual */
+          .oft-pres-price { font-size: 12.5px !important; }
+          .oft-pres-label { font-size: 9.5px !important; }
+        }
+        @media (max-width: 420px) {
+          .oft-cat-grid { grid-template-columns: repeat(2, 1fr) !important; }
+          .oft-pcard-add svg:not(.oft-check-pop) { display: none; }
+          .oft-prod-grid { gap: 8px !important; }
+          .oft-prod-body { padding: 10px !important; }
+          .oft-price-row { font-size: 11px !important; }
+          .oft-price-label { font-size: 11px !important; }
+        }
+      `}</style>
+      <div style={S.app}>
+        {!isAdmin && <NavBar />}
+        {view === "home" && <HomeView />}
+        {view === "catalogo" && <CatalogoView />}
+        {view === "ofertas" && <OfertasView />}
+        {(view === "terminos" || view === "devoluciones" || view === "privacidad") && <LegalPageView />}
+        {view === "checkout" && <CheckoutView />}
+        {view === "pago-resultado" && <PagoResultadoView />}
+        {view === "dashboard" && user && <DashboardView />}
+        {view === "admin" && user?.es_admin && (
+          <Suspense fallback={
+            <div style={{ ...S.section, textAlign: "center", padding: "80px 24px" }}>
+              <RefreshCw size={32} color={GRAY3} className="spin" style={{ margin: "0 auto 12px" }} />
+              <p style={{ color: GRAY3 }}>Cargando panel de administrador...</p>
+            </div>
+          }>
+            <AdminView />
+          </Suspense>
+        )}
+        {view === "admin" && !user?.es_admin && (
+          <div style={{ ...S.section, textAlign: "center" }}>
+            <div style={{ display: "flex", justifyContent: "center", marginBottom: 12 }}><Lock size={48} color={GRAY3} strokeWidth={1.5} /></div>
+            <p>Acceso restringido. <span style={{ color: RED, cursor: "pointer" }} onClick={() => setShowLogin(true)}>Iniciar sesión como admin</span></p>
+          </div>
+        )}
+        {view === "crm" && (user?.es_admin || user?.rol === "operador") && (
+          <Suspense fallback={
+            <div style={{ ...S.section, textAlign: "center", padding: "80px 24px" }}>
+              <RefreshCw size={32} color={GRAY3} className="spin" style={{ margin: "0 auto 12px" }} />
+              <p style={{ color: GRAY3 }}>Cargando CRM...</p>
+            </div>
+          }>
+            <CrmView />
+          </Suspense>
+        )}
+        {view === "crm" && !(user?.es_admin || user?.rol === "operador") && (
+          <div style={{ ...S.section, textAlign: "center" }}>
+            <div style={{ display: "flex", justifyContent: "center", marginBottom: 12 }}><Lock size={48} color={GRAY3} strokeWidth={1.5} /></div>
+            <p>Acceso restringido. <span style={{ color: RED, cursor: "pointer" }} onClick={() => setShowLogin(true)}>Iniciar sesión</span></p>
+          </div>
+        )}
+        {showCart && <CartModal />}
+        {showLogin && <LoginModal />}
+        {showRegister && <RegisterModal />}
+        {completeProfile && <CompleteProfileModal />}
+        {googleMfaPaso && <GoogleMfaModal />}
+        {recuperacionToken && <ResetPasswordModal />}
+        {quickView && <ProductModal />}
+        {!isAdmin && <PopupPromocional />}
+        {!isAdmin && <FloatingCart />}
+        <Toast msg={toastMsg} />
+      </div>
+    </AppCtx.Provider>
+  );
+}
