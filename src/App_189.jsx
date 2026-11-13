@@ -3639,7 +3639,12 @@ function CheckoutView() {
         // Guarda el pedido pendiente y muestra el botón de Yappy (el pago va primero)
         setPedidoPendiente({ id: pedidoId, codigo, yappyOrderId, total: totalConEnvio, telefono: telefonoYappy });
       }
-    } catch(e) { setAvisoValidacion("Error al guardar el pedido: " + e.message); }
+    } catch(e) {
+      const m = String((e && e.message) || "");
+      if (/CODIGO_USADO/.test(m)) setAvisoValidacion("Este código ya fue utilizado y no se puede usar otra vez. Quítalo para continuar con tu compra.");
+      else if (/CODIGO_EN_USO/.test(m)) setAvisoValidacion("Este código está siendo usado en otro pedido en este momento. Inténtalo más tarde o continúa sin el código.");
+      else setAvisoValidacion("Error al guardar el pedido: " + m);
+    }
     setLoading(false);
   };
 
