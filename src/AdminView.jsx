@@ -1301,13 +1301,13 @@ function TarjetaKPI({ icono: Icono, valor, valorAnterior, etiqueta, color, delay
 }
 
 // Barra horizontal animada, para los "Top 8" (categorías, productos, búsquedas...)
-function BarraTop({ etiqueta, valor, maximo, color, delay = 0 }) {
+function BarraTop({ etiqueta, valor, maximo, color, delay = 0, texto }) {
   const pct = maximo > 0 ? Math.max((valor / maximo) * 100, 4) : 0;
   return (
     <div style={{ marginBottom: 13 }}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 13, marginBottom: 4 }}>
         <span style={{ fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{etiqueta}</span>
-        <span style={{ fontWeight: 800, color, flexShrink: 0 }}>{valor}</span>
+        <span style={{ fontWeight: 800, color, flexShrink: 0 }}>{texto !== undefined ? texto : valor}</span>
       </div>
       <div style={{ height: 7, background: GRAY, borderRadius: 6, overflow: "hidden" }}>
         <div className="oft-analytics-bar" style={{ height: "100%", width: `${pct}%`, background: color, borderRadius: 6, animationDelay: `${delay}s` }} />
@@ -1668,7 +1668,7 @@ function EditorComision({ valorActual, onGuardado, showToast }) {
 }
 
 function AnalyticsPanel() {
-  const { showToast } = useApp();
+  const { showToast, products, categories } = useApp();
   const [rangoTipo, setRangoTipo] = useState("semana"); // dia | semana | mes | anio | todo | personalizado
   const [rangoInicioP, setRangoInicioP] = useState("");
   const [rangoFinP, setRangoFinP] = useState("");
@@ -1684,6 +1684,7 @@ function AnalyticsPanel() {
   const [cargando, setCargando] = useState(true);
   const [enVivo, setEnVivo] = useState(0);
   const [listaCompletaModal, setListaCompletaModal] = useState(null); // null | { titulo, Icono, color, datos, maximo }
+  const [modoCatVendida, setModoCatVendida] = useState("dinero"); // "dinero" | "unidades" -- cómo se ordena "Categoría más vendida"
   const [comisionPorcentaje, setComisionPorcentaje] = useState(1); // % que se le paga a cada operador por venta
 
   // Se carga aparte -- es una configuración general, no depende del rango de fechas elegido
@@ -1762,7 +1763,7 @@ function AnalyticsPanel() {
         // Pedidos pagados del rango (excluyendo cotizaciones -- una cotización no es una
         // venta comprometida, mismo criterio que ya usa el Dashboard), con sus items --
         // para "cómo compran", web vs. manuales, y también por operador (creado_por_usuario_id)
-        sb.get("pedidos", `?created_at=gte.${desdeISO}&created_at=lte.${hastaISO}&pagado=eq.true&tipo=neq.cotizacion&select=id,total,creado_por_admin,creado_por_usuario_id,pedido_items(cantidad,presentacion)`),
+        sb.get("pedidos", `?created_at=gte.${desdeISO}&created_at=lte.${hastaISO}&pagado=eq.true&tipo=neq.cotizacion&select=id,total,creado_por_admin,creado_por_usuario_id,pedido_items(cantidad,presentacion,producto_id,subtotal)`),
         // Cotizaciones CREADAS en este rango -- incluye tanto las que siguen pendientes
         // (tipo='cotizacion', usa su propio created_at) como las que ya se convirtieron
         // en venta (usa fecha_cotizacion_original, porque su created_at ya se sobreescribió
@@ -1971,6 +1972,36 @@ function AnalyticsPanel() {
   ].filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
   const maxPres = Math.max(1, ...topPresentacion.map(([, v]) => v));
 
+  // "Categoría más vendida": suma lo vendido (dinero y unidades) por categoría con los
+  // pedidos pagados del rango (web + manuales, sin cotizaciones). Cada artículo toma la
+  // categoría actual de su producto; si el producto ya no existe, cae en "Sin categoría".
+  const ventasPorCategoria = (() => {
+    const catDeProd = {};
+    (products || []).forEach(p => { catDeProd[p.id] = p.categoria_id; });
+    const nombreCat = {};
+    (categories || []).forEach(c => { nombreCat[c.id] = c.nombre; });
+    const mapa = {};
+    pedidosPres.forEach(pedido => {
+      const vistaEnPedido = new Set();
+      (pedido.pedido_items || []).forEach(item => {
+        const catId = catDeProd[item.producto_id];
+        const nombre = (catId != null && nombreCat[catId]) || "Sin categoría";
+        if (!mapa[nombre]) mapa[nombre] = { nombre, dinero: 0, unidades: 0, pedidos: 0 };
+        mapa[nombre].dinero += Number(item.subtotal) || 0;
+        mapa[nombre].unidades += Number(item.cantidad) || 0;
+        if (!vistaEnPedido.has(nombre)) { vistaEnPedido.add(nombre); mapa[nombre].pedidos += 1; }
+      });
+    });
+    return Object.values(mapa);
+  })();
+  const catVendidaOrdenada = [...ventasPorCategoria].sort((a, b) => (b[modoCatVendida === "dinero" ? "dinero" : "unidades"] - a[modoCatVendida === "dinero" ? "dinero" : "unidades"]) || (b.dinero - a.dinero));
+  const catVendidaTotal = ventasPorCategoria.reduce((t, c) => t + (modoCatVendida === "dinero" ? c.dinero : c.unidades), 0);
+  const catVendidaLider = catVendidaOrdenada[0] || null;
+  const fmtVentaCat = (c) => modoCatVendida === "dinero"
+    ? "$" + Math.round(c.dinero).toLocaleString("en-US")
+    : Math.round(c.unidades).toLocaleString("en-US") + " uds";
+  const valorVentaCat = (c) => (modoCatVendida === "dinero" ? c.dinero : c.unidades);
+
   // Ventas web (el cliente compró solo) vs. manuales (tú armaste el pedido) --
   // tanto en cantidad de pedidos como en monto total vendido
   const ventasWeb = pedidosPres.filter(p => !p.creado_por_admin);
@@ -2156,6 +2187,33 @@ function AnalyticsPanel() {
             <p style={{ fontSize: 10.5, color: GRAY3, marginTop: 12, lineHeight: 1.4 }}>
               El tiempo es aproximado: se mide cada minuto que el cliente sigue con la página abierta en esa sección (una visita de menos de un minuto cuenta como visita, pero no suma tiempo).
             </p>
+          </div>
+
+          {/* CATEGORÍA MÁS VENDIDA (ventas reales del rango, no clics) */}
+          <div style={{ background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 14, padding: 20, marginBottom: 18 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
+              <div style={{ fontWeight: 800, fontSize: 15, display: "flex", alignItems: "center", gap: 8 }}><TrendingUp size={17} color={RED} /> Categoría más vendida</div>
+              <div style={{ display: "flex", gap: 6 }}>
+                {[["dinero", "Por dinero"], ["unidades", "Por unidades"]].map(([k, l]) => (
+                  <button key={k} onClick={() => setModoCatVendida(k)} className="oft-btn-press" style={{ padding: "5px 12px", borderRadius: 20, border: `1px solid ${modoCatVendida === k ? RED : GRAY2}`, background: modoCatVendida === k ? RED : WHITE, color: modoCatVendida === k ? WHITE : GRAY3, fontWeight: 700, fontSize: 12, cursor: "pointer" }}>{l}</button>
+                ))}
+              </div>
+            </div>
+            {!catVendidaLider || catVendidaTotal <= 0 ? <p style={{ color: GRAY3, fontSize: 13 }}>Sin ventas pagadas en este rango.</p> : (
+              <>
+                <div style={{ display: "flex", alignItems: "baseline", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
+                  <span style={{ fontSize: 26, fontWeight: 900, color: RED, lineHeight: 1.1 }}>{catVendidaLider.nombre}</span>
+                  <span style={{ fontSize: 14, fontWeight: 700 }}>{fmtVentaCat(catVendidaLider)}</span>
+                  <span style={{ fontSize: 12.5, color: GRAY3 }}>{Math.round((valorVentaCat(catVendidaLider) / catVendidaTotal) * 100)}% de lo vendido · {catVendidaLider.pedidos} pedido{catVendidaLider.pedidos === 1 ? "" : "s"}</span>
+                </div>
+                {catVendidaOrdenada.slice(0, 8).map((c, i) => (
+                  <BarraTop key={c.nombre} etiqueta={c.nombre} valor={valorVentaCat(c)} texto={fmtVentaCat(c)} maximo={valorVentaCat(catVendidaOrdenada[0])} color={RED} delay={i * 0.04} />
+                ))}
+                <p style={{ fontSize: 10.5, color: GRAY3, marginTop: 8, lineHeight: 1.4 }}>
+                  Cuenta los pedidos pagados del rango elegido (web y manuales; las cotizaciones no cuentan). Es lo que se compró de verdad, a diferencia de "Categorías más vistas", que solo mide clics.
+                </p>
+              </>
+            )}
           </div>
 
           {/* TOP 4 LISTAS */}
