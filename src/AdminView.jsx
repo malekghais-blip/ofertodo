@@ -1668,7 +1668,7 @@ function EditorComision({ valorActual, onGuardado, showToast }) {
 }
 
 function AnalyticsPanel() {
-  const { showToast, products, categories } = useApp();
+  const { showToast } = useApp();
   const [rangoTipo, setRangoTipo] = useState("semana"); // dia | semana | mes | anio | todo | personalizado
   const [rangoInicioP, setRangoInicioP] = useState("");
   const [rangoFinP, setRangoFinP] = useState("");
@@ -1685,6 +1685,9 @@ function AnalyticsPanel() {
   const [enVivo, setEnVivo] = useState(0);
   const [listaCompletaModal, setListaCompletaModal] = useState(null); // null | { titulo, Icono, color, datos, maximo }
   const [modoCatVendida, setModoCatVendida] = useState("dinero"); // "dinero" | "unidades" -- cómo se ordena "Categoría más vendida"
+  const [canalCatVendida, setCanalCatVendida] = useState("todo"); // "todo" | "web" | "tienda"
+  const [filasCatVendida, setFilasCatVendida] = useState(null); // filas {canal, categoria, dinero, unidades, pedidos} del RPC; null = cargando; false = falló
+  const idPeticionCatRef = useRef(0);
   const [comisionPorcentaje, setComisionPorcentaje] = useState(1); // % que se le paga a cada operador por venta
 
   // Se carga aparte -- es una configuración general, no depende del rango de fechas elegido
@@ -1739,7 +1742,22 @@ function AnalyticsPanel() {
     return out;
   };
   const idPeticionRef = useRef(0);
+  // "Categoría más vendida": web + tienda física, por tipo de producto, del rango elegido.
+  // Va aparte del resto: si falla, el dashboard sigue funcionando y solo esa tarjeta avisa.
+  const cargarVentasCat = async (silencioso = false) => {
+    const miId = ++idPeticionCatRef.current;
+    try {
+      const filas = await rpcConReintento("dashboard_ventas_categoria", { p_desde: desde, p_hasta: hasta });
+      if (miId !== idPeticionCatRef.current) return;
+      setFilasCatVendida(Array.isArray(filas) ? filas : []);
+    } catch (e) {
+      if (miId !== idPeticionCatRef.current) return;
+      console.warn("Error cargando categoría más vendida:", e.message);
+      if (silencioso !== true) setFilasCatVendida(false);
+    }
+  };
   const cargarDatos = async (silencioso = false) => {
+    cargarVentasCat(silencioso === true);
     const miId = ++idPeticionRef.current;
     if (silencioso !== true) setCargando(true);
     try {
@@ -1763,7 +1781,7 @@ function AnalyticsPanel() {
         // Pedidos pagados del rango (excluyendo cotizaciones -- una cotización no es una
         // venta comprometida, mismo criterio que ya usa el Dashboard), con sus items --
         // para "cómo compran", web vs. manuales, y también por operador (creado_por_usuario_id)
-        sb.get("pedidos", `?created_at=gte.${desdeISO}&created_at=lte.${hastaISO}&pagado=eq.true&tipo=neq.cotizacion&select=id,total,creado_por_admin,creado_por_usuario_id,pedido_items(cantidad,presentacion,producto_id,subtotal)`),
+        sb.get("pedidos", `?created_at=gte.${desdeISO}&created_at=lte.${hastaISO}&pagado=eq.true&tipo=neq.cotizacion&select=id,total,creado_por_admin,creado_por_usuario_id,pedido_items(cantidad,presentacion)`),
         // Cotizaciones CREADAS en este rango -- incluye tanto las que siguen pendientes
         // (tipo='cotizacion', usa su propio created_at) como las que ya se convirtieron
         // en venta (usa fecha_cotizacion_original, porque su created_at ya se sobreescribió
@@ -1972,27 +1990,18 @@ function AnalyticsPanel() {
   ].filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
   const maxPres = Math.max(1, ...topPresentacion.map(([, v]) => v));
 
-  // "Categoría más vendida": suma lo vendido (dinero y unidades) por categoría con los
-  // pedidos pagados del rango (web + manuales, sin cotizaciones). Cada artículo toma la
-  // categoría actual de su producto; si el producto ya no existe, cae en "Sin categoría".
+  // "Categoría más vendida": usa el RPC (web + tienda física, mismas categorías para las dos).
+  // Con "Todo" se suman las dos filas de cada categoría.
   const ventasPorCategoria = (() => {
-    const catDeProd = {};
-    (products || []).forEach(p => { catDeProd[p.id] = p.categoria_id; });
-    const nombreCat = {};
-    (categories || []).forEach(c => { nombreCat[c.id] = c.nombre; });
+    if (!Array.isArray(filasCatVendida)) return [];
     const mapa = {};
-    pedidosPres.forEach(pedido => {
-      const vistaEnPedido = new Set();
-      (pedido.pedido_items || []).forEach(item => {
-        const catId = catDeProd[item.producto_id];
-        const nombre = (catId != null && nombreCat[catId]) || "Sin categoría";
-        if (!mapa[nombre]) mapa[nombre] = { nombre, dinero: 0, unidades: 0, pedidos: 0 };
-        mapa[nombre].dinero += Number(item.subtotal) || 0;
-        mapa[nombre].unidades += Number(item.cantidad) || 0;
-        if (!vistaEnPedido.has(nombre)) { vistaEnPedido.add(nombre); mapa[nombre].pedidos += 1; }
-      });
+    filasCatVendida.filter(f => canalCatVendida === "todo" || f.canal === canalCatVendida).forEach(f => {
+      if (!mapa[f.categoria]) mapa[f.categoria] = { nombre: f.categoria, dinero: 0, unidades: 0, pedidos: 0 };
+      mapa[f.categoria].dinero += Number(f.dinero) || 0;
+      mapa[f.categoria].unidades += Number(f.unidades) || 0;
+      mapa[f.categoria].pedidos += Number(f.pedidos) || 0; // pedidos de web y tickets de tienda no se cruzan, se pueden sumar
     });
-    return Object.values(mapa);
+    return Object.values(mapa).filter(c => c.dinero > 0 || c.unidades > 0);
   })();
   const catVendidaOrdenada = [...ventasPorCategoria].sort((a, b) => (b[modoCatVendida === "dinero" ? "dinero" : "unidades"] - a[modoCatVendida === "dinero" ? "dinero" : "unidades"]) || (b.dinero - a.dinero));
   const catVendidaTotal = ventasPorCategoria.reduce((t, c) => t + (modoCatVendida === "dinero" ? c.dinero : c.unidades), 0);
@@ -2193,24 +2202,28 @@ function AnalyticsPanel() {
           <div style={{ background: WHITE, border: `1px solid ${GRAY2}`, borderRadius: 14, padding: 20, marginBottom: 18 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
               <div style={{ fontWeight: 800, fontSize: 15, display: "flex", alignItems: "center", gap: 8 }}><TrendingUp size={17} color={RED} /> Categoría más vendida</div>
-              <div style={{ display: "flex", gap: 6 }}>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {[["todo", "Web + tienda"], ["web", "Solo web"], ["tienda", "Solo tienda"]].map(([k, l]) => (
+                  <button key={k} onClick={() => setCanalCatVendida(k)} className="oft-btn-press" style={{ padding: "5px 12px", borderRadius: 20, border: `1px solid ${canalCatVendida === k ? BLACK : GRAY2}`, background: canalCatVendida === k ? BLACK : WHITE, color: canalCatVendida === k ? WHITE : GRAY3, fontWeight: 700, fontSize: 12, cursor: "pointer" }}>{l}</button>
+                ))}
+                <span style={{ width: 8 }} />
                 {[["dinero", "Por dinero"], ["unidades", "Por unidades"]].map(([k, l]) => (
                   <button key={k} onClick={() => setModoCatVendida(k)} className="oft-btn-press" style={{ padding: "5px 12px", borderRadius: 20, border: `1px solid ${modoCatVendida === k ? RED : GRAY2}`, background: modoCatVendida === k ? RED : WHITE, color: modoCatVendida === k ? WHITE : GRAY3, fontWeight: 700, fontSize: 12, cursor: "pointer" }}>{l}</button>
                 ))}
               </div>
             </div>
-            {!catVendidaLider || catVendidaTotal <= 0 ? <p style={{ color: GRAY3, fontSize: 13 }}>Sin ventas pagadas en este rango.</p> : (
+            {filasCatVendida === null ? <p style={{ color: GRAY3, fontSize: 13 }}>Calculando…</p> : filasCatVendida === false ? <p style={{ color: GRAY3, fontSize: 13 }}>No se pudo cargar esta tarjeta. Prueba cambiar el rango de fechas para reintentar.</p> : !catVendidaLider || catVendidaTotal <= 0 ? <p style={{ color: GRAY3, fontSize: 13 }}>Sin ventas {canalCatVendida === "web" ? "de la web" : canalCatVendida === "tienda" ? "de la tienda" : "pagadas"} en este rango.</p> : (
               <>
                 <div style={{ display: "flex", alignItems: "baseline", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
                   <span style={{ fontSize: 26, fontWeight: 900, color: RED, lineHeight: 1.1 }}>{catVendidaLider.nombre}</span>
                   <span style={{ fontSize: 14, fontWeight: 700 }}>{fmtVentaCat(catVendidaLider)}</span>
-                  <span style={{ fontSize: 12.5, color: GRAY3 }}>{Math.round((valorVentaCat(catVendidaLider) / catVendidaTotal) * 100)}% de lo vendido · {catVendidaLider.pedidos} pedido{catVendidaLider.pedidos === 1 ? "" : "s"}</span>
+                  <span style={{ fontSize: 12.5, color: GRAY3 }}>{Math.round((valorVentaCat(catVendidaLider) / catVendidaTotal) * 100)}% de lo vendido · {catVendidaLider.pedidos} venta{catVendidaLider.pedidos === 1 ? "" : "s"}</span>
                 </div>
                 {catVendidaOrdenada.slice(0, 8).map((c, i) => (
                   <BarraTop key={c.nombre} etiqueta={c.nombre} valor={valorVentaCat(c)} texto={fmtVentaCat(c)} maximo={valorVentaCat(catVendidaOrdenada[0])} color={RED} delay={i * 0.04} />
                 ))}
                 <p style={{ fontSize: 10.5, color: GRAY3, marginTop: 8, lineHeight: 1.4 }}>
-                  Cuenta los pedidos pagados del rango elegido (web y manuales; las cotizaciones no cuentan). Es lo que se compró de verdad, a diferencia de "Categorías más vistas", que solo mide clics.
+                  Ventas reales del rango elegido: pedidos pagados de la web (incluye los manuales; las cotizaciones no cuentan) y ventas terminadas del POS de la tienda. Los productos se agrupan por tipo (Calzado, Jeans, Perfumes…) igual en las dos, para poder sumarlas. A diferencia de "Categorías más vistas", esto no mide clics.
                 </p>
               </>
             )}
@@ -5075,7 +5088,11 @@ function AnalisisStockPanel({ categories = [], ingresoPorCategoria = [], ventasP
     return Number(b.vendido_periodo || 0) - Number(a.vendido_periodo || 0);
   };
   const texto = q.trim().toLowerCase();
-  const filas = (porVista[vista] || []).filter(p =>
+  // Con texto en el buscador se busca en TODOS los productos, sin importar la pestaña:
+  // antes solo buscaba dentro de la pestaña activa (ej. "Comprar"), y un producto que estaba
+  // "ok" (stock suficiente) o en "observación" parecía no existir aunque sí estaba en el análisis.
+  const buscandoEnTodos = !!texto && vista !== "todo";
+  const filas = ((texto ? prods : porVista[vista]) || []).filter(p =>
     (prov === "todos" || provDe(p) === prov) &&
     (canal === "todos" || p.origen === canal) &&
     (!texto || String(p.nombre || "").toLowerCase().includes(texto) || String(p.ref || "").toLowerCase().includes(texto))
@@ -5194,6 +5211,7 @@ function AnalisisStockPanel({ categories = [], ingresoPorCategoria = [], ventasP
                 <option value="margen">Orden: mayor margen</option>
                 <option value="capital">Orden: más dinero en bodega</option>
               </select>
+              {buscandoEnTodos && <div style={{ flexBasis: "100%", fontSize: 12.5, color: MT.texto2 }}>Buscando “{q.trim()}” en <b>todos los productos</b>, sin importar la pestaña elegida ({numM(filas.length)} resultado{filas.length === 1 ? "" : "s"}).</div>}
               {vista === "comprar" && nComprar > 0 && (
                 <button className="met-chip" onClick={descargarLista} style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 6 }}>
                   <Download size={14} /> Descargar lista de compra
@@ -5217,7 +5235,7 @@ function AnalisisStockPanel({ categories = [], ingresoPorCategoria = [], ventasP
             <div style={{ overflowX: "auto", borderTop: `1px solid ${MT.rejilla}` }}>
               <table className="stk-tabla">
                 <thead><tr>
-                  <th>Producto</th><th>Stock</th><th>Se vende</th><th>Alcanza para</th><th>Última compra</th><th>{vista === "comprar" ? "Comprar" : "Qué hacer"}</th><th>Margen</th>
+                  <th>Producto</th><th>Stock</th><th>Se vende</th><th>Alcanza para</th><th>Última compra</th><th>{vista === "comprar" && !texto ? "Comprar" : "Qué hacer"}</th><th>Margen</th>
                 </tr></thead>
                 <tbody>
                   {visibles.map(p => {
@@ -5281,7 +5299,7 @@ function AnalisisStockPanel({ categories = [], ingresoPorCategoria = [], ventasP
                   })}
                   {visibles.length === 0 && (
                     <tr><td colSpan={7} style={{ textAlign: "center", padding: "36px 12px", color: MT.texto2 }}>
-                      {vista === "comprar" ? "No hay productos por comprar con estos filtros." : "No hay productos en esta lista con estos filtros."}
+                      {vista === "comprar" && !texto ? "No hay productos por comprar con estos filtros." : "No hay productos en esta lista con estos filtros."}
                     </td></tr>
                   )}
                 </tbody>
