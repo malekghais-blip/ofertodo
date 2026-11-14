@@ -473,6 +473,26 @@ function NavBar() {
   const cartCount = cart.reduce((s, i) => s + i.qty, 0);
   const [bounce, setBounce] = useState(false);
 
+  // CRM: cantidad de chats con mensajes sin leer (número rojo junto a "CRM" para el vendedor)
+  const veCrm = !!(user && (user.es_admin || user.rol === "operador"));
+  const [crmPendientes, setCrmPendientes] = useState(0);
+  useEffect(() => {
+    if (!veCrm) { setCrmPendientes(0); return; }
+    let vivo = true;
+    const revisar = async () => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      try {
+        const filas = await sb.get("crm_conversaciones", "?select=id&no_leidos=gt.0&limit=1000");
+        if (vivo && Array.isArray(filas)) setCrmPendientes(filas.length);
+      } catch (e) { /* si falla, deja el número anterior; nunca rompe el menú */ }
+    };
+    revisar();
+    const t = setInterval(revisar, 10000);
+    const alVolver = () => { if (!document.hidden) revisar(); };
+    document.addEventListener("visibilitychange", alVolver);
+    return () => { vivo = false; clearInterval(t); document.removeEventListener("visibilitychange", alVolver); };
+  }, [veCrm, view]);
+
   // Marca el body cuando hay campaña activa: en celular el menú tiene dos filas y las barras fijas bajan un poco
   useEffect(() => {
     document.body.classList.toggle("oft-has-campaign", !!campanaActiva);
@@ -496,7 +516,7 @@ function NavBar() {
         ))}
         {user && <span onClick={() => setView("dashboard")} className={"oft-nav-link" + (view === "dashboard" ? " on" : "")}>Mi Cuenta</span>}
         {user?.es_admin && <span onClick={() => setView("admin")} className={"oft-nav-link" + (view === "admin" ? " on" : "")}>Admin</span>}
-        {(user?.es_admin || user?.rol === "operador") && <span onClick={() => setView("crm")} className={"oft-nav-link" + (view === "crm" ? " on" : "")}>CRM</span>}
+        {(user?.es_admin || user?.rol === "operador") && <span onClick={() => setView("crm")} className={"oft-nav-link" + (view === "crm" ? " on" : "")}>CRM{crmPendientes > 0 && <span title={crmPendientes + (crmPendientes === 1 ? " chat por responder" : " chats por responder")} style={{ background: RED, color: WHITE, borderRadius: 9, fontSize: 10, fontWeight: 800, minWidth: 16, height: 16, padding: "0 5px", display: "inline-flex", alignItems: "center", justifyContent: "center", marginLeft: 6, verticalAlign: "middle", lineHeight: 1, boxSizing: "border-box" }}>{crmPendientes > 99 ? "99+" : crmPendientes}</span>}</span>}
       </div>
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
         <button className={bounce ? "oft-cart-bounce oft-btn-press" : "oft-btn-press"} style={{ ...S.btnOutline, position: "relative", display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 12px" }} onClick={() => setShowCart(true)}>
