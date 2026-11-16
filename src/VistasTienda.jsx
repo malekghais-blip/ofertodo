@@ -624,6 +624,11 @@ export function CheckoutView() {
   // Calcula cuánto se descuenta según el tipo (tienda o productos seleccionados)
   const montoDescuento = (() => {
     if (!descuentoAplicado) return 0;
+    // Código por MONTO fijo (ej. nota de crédito): se resta del total, sin pasar del valor del pedido
+    // (siempre queda al menos $0.01 por pagar para que el cobro no falle con total en cero)
+    if (descuentoAplicado.monto != null && descuentoAplicado.monto !== "") {
+      return Math.max(Math.min(Number(descuentoAplicado.monto) || 0, subtotalBruto - 0.01), 0);
+    }
     const pct = Number(descuentoAplicado.porcentaje) / 100;
     if (descuentoAplicado.tipo_aplicacion === "tienda") {
       // Las ofertas y combos ya tienen su precio rebajado: el código no se acumula con ellas
@@ -645,12 +650,33 @@ export function CheckoutView() {
     setValidandoCodigo(true);
     setErrorCodigo("");
     try {
-      const res = await sb.get("descuentos", `?codigo=eq.${encodeURIComponent(code)}&activo=eq.true`);
+      let res = await sb.get("descuentos", `?codigo=eq.${encodeURIComponent(code)}&activo=eq.true`);
+      // Los códigos por monto (notas de crédito) no se pueden listar: se consultan uno a uno con el código exacto
+      if (!res || res.length === 0) {
+        try {
+          const rr = await fetch(`${SUPABASE_URL}/rest/v1/rpc/consultar_codigo_monto`, { method: "POST", headers: sb.dataHeaders(), body: JSON.stringify({ p_codigo: code }) });
+          if (rr.ok) { const d1 = await rr.json(); if (d1 && d1.codigo) res = [d1]; }
+        } catch (e2) { /* si falla, se muestra "no válido" como antes */ }
+      }
       if (!res || res.length === 0) {
         setErrorCodigo("Código no válido o inactivo");
         setDescuentoAplicado(null);
       } else {
         const d = res[0];
+        // Código de un solo uso que ya se gastó
+        if (d.usos_max != null && Number(d.usos || 0) >= Number(d.usos_max)) {
+          setErrorCodigo("Este código ya fue utilizado");
+          setDescuentoAplicado(null);
+          setValidandoCodigo(false);
+          return;
+        }
+        // Código por monto: el pedido tiene que valer más que el crédito para no perder el sobrante
+        if (d.monto != null && Number(d.monto) >= subtotalBruto) {
+          setErrorCodigo(`Este código es de $${Number(d.monto).toFixed(2)}. Agrega productos por más de ese monto para usarlo completo.`);
+          setDescuentoAplicado(null);
+          setValidandoCodigo(false);
+          return;
+        }
         // Si es por productos, verifica que el carrito tenga al menos uno incluido
         if (d.tipo_aplicacion === "productos") {
           const ids = d.productos_ids || [];
@@ -663,7 +689,7 @@ export function CheckoutView() {
           }
         }
         setDescuentoAplicado(d);
-        showToast(`¡Código ${code} aplicado! ${d.porcentaje}% de descuento`);
+        showToast(d.monto != null ? `¡Código ${code} aplicado! −$${Number(d.monto).toFixed(2)} de descuento` : `¡Código ${code} aplicado! ${d.porcentaje}% de descuento`);
       }
     } catch(e) {
       setErrorCodigo("No se pudo validar el código");
@@ -922,7 +948,12 @@ export function CheckoutView() {
         // Guarda el pedido pendiente y muestra el botón de Yappy (el pago va primero)
         setPedidoPendiente({ id: pedidoId, codigo, yappyOrderId, total: totalConEnvio, telefono: telefonoYappy });
       }
-    } catch(e) { setAvisoValidacion("Error al guardar el pedido: " + e.message); }
+    } catch(e) {
+      const m = String((e && e.message) || "");
+      if (/CODIGO_USADO/.test(m)) setAvisoValidacion("Este código ya fue utilizado y no se puede usar otra vez. Quítalo para continuar con tu compra.");
+      else if (/CODIGO_EN_USO/.test(m)) setAvisoValidacion("Este código está siendo usado en otro pedido en este momento. Inténtalo más tarde o continúa sin el código.");
+      else setAvisoValidacion("Error al guardar el pedido: " + m);
+    }
     setLoading(false);
   };
 
@@ -1036,7 +1067,7 @@ export function CheckoutView() {
                 <CheckCircle2 size={16} color="#2E7D32" />
                 <div>
                   <div style={{ fontWeight: 800, fontSize: 13, color: "#2E7D32" }}>{descuentoAplicado.codigo}</div>
-                  <div style={{ fontSize: 11, color: "#2E7D32" }}>{descuentoAplicado.porcentaje}% de descuento aplicado</div>
+                  <div style={{ fontSize: 11, color: "#2E7D32" }}>{descuentoAplicado.monto != null ? `$${Number(descuentoAplicado.monto).toFixed(2)} de descuento aplicado` : `${descuentoAplicado.porcentaje}% de descuento aplicado`}</div>
                 </div>
               </div>
               <button onClick={quitarCodigo} style={{ background: "none", border: "none", cursor: "pointer", color: "#2E7D32", display: "flex" }}><X size={18} /></button>
@@ -1051,7 +1082,7 @@ export function CheckoutView() {
               <span>Subtotal</span><span>${subtotalBruto.toFixed(2)}</span>
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", fontSize: 14, marginTop: 6, color: "#2E7D32", fontWeight: 700 }}>
-              <span>Descuento ({descuentoAplicado.porcentaje}%)</span><span>−${montoDescuento.toFixed(2)}</span>
+              <span>{descuentoAplicado.monto != null ? "Descuento (crédito)" : `Descuento (${descuentoAplicado.porcentaje}%)`}</span><span>−${montoDescuento.toFixed(2)}</span>
             </div>
           </>
         )}
