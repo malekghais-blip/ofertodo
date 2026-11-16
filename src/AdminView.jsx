@@ -9,7 +9,7 @@ import {
   TrendingUp, Wallet, ShoppingBag, Pencil as PencilIcon, Save,
   Building2, MapPin as MapPinIcon, Send, FilePlus, Download, FileText, Receipt,
   Calendar as CalendarIcon, Eye, EyeOff, Share2, AlertTriangle, ChevronRight,
-  ArrowUpRight, ArrowDownRight, MousePointerClick, Target, Printer, Boxes, GitMerge, Droplets
+  ArrowUpRight, ArrowDownRight, MousePointerClick, Target, Printer, Boxes, GitMerge, Droplets, Timer
 } from "lucide-react";
 import {
   BLACK, CategoryIcon, ChipAdder, ClienteFormModal, CrearPedidoView, SelectorColores,
@@ -3637,8 +3637,36 @@ function OfertasAdmin() {
     const ahora = Date.now();
     if (c.fecha_fin && new Date(c.fecha_fin).getTime() < ahora) return { txt: c.activa ? "ACTIVA · VENCIDA" : "VENCIDA", bg: "#FDE2E2", color: "#9B1C1C" };
     if (c.activa && c.fecha_inicio && new Date(c.fecha_inicio).getTime() > ahora) return { txt: "PROGRAMADA", bg: "#FFF3CD", color: "#856404" };
+    if (c.activa && c.fecha_fin_original && new Date(c.fecha_fin_original).getTime() < ahora) return { txt: "ACTIVA · EXTENDIDA", bg: "#FFE9C7", color: "#8A4B00" };
     if (c.activa) return { txt: "ACTIVA", bg: "#D4EDDA", color: "#155724" };
     return { txt: "BORRADOR", bg: GRAY2, color: GRAY3 };
+  };
+
+  // ── Tiempo extra: mueve el fin de la campaña y guarda el fin original (la tienda muestra "Oferta extendida") ──
+  const [extra, setExtra] = useState(null); // { mins, custom }
+  const textoDuracion = (mins) => { const d = Math.floor(mins / 1440), h = Math.floor((mins % 1440) / 60), m = mins % 60; return [d && `${d} día${d > 1 ? "s" : ""}`, h && `${h} h`, m && `${m} min`].filter(Boolean).join(" ") || "0 min"; };
+  const minsExtra = () => { if (!extra) return 0; const c = parseFloat(String(extra.custom).replace(",", ".")); return extra.custom !== "" && c > 0 ? Math.round(c * 60) : extra.mins; };
+  const nuevoFinExtra = () => { if (!sel || !sel.fecha_fin) return null; return new Date(Math.max(Date.now(), new Date(sel.fecha_fin).getTime()) + minsExtra() * 60000); };
+  const guardarExtra = async () => {
+    const nuevo = nuevoFinExtra(); const mins = minsExtra();
+    if (!nuevo || mins <= 0) { alert("Elige cuánto tiempo extra quieres agregar."); return; }
+    if (mins > 60 * 24 * 30) { alert("El tiempo extra máximo es 30 días."); return; }
+    setGuardando(true);
+    try {
+      await sb.patch("campanas_ofertas", sel.id, { fecha_fin: nuevo.toISOString(), fecha_fin_original: sel.fecha_fin_original || sel.fecha_fin });
+      setExtra(null); showToast("Tiempo extra agregado: la tienda muestra \"Oferta extendida\""); await cargar();
+    } catch (e) { alert("No se pudo agregar el tiempo extra: " + e.message); }
+    setGuardando(false);
+  };
+  const quitarExtra = async () => {
+    if (!sel || !sel.fecha_fin_original) return;
+    if (!confirm("¿Quitar el tiempo extra? La campaña terminará en su fecha original" + (new Date(sel.fecha_fin_original).getTime() < Date.now() ? " (que ya pasó, así que dejará de verse en la tienda)." : "."))) return;
+    setGuardando(true);
+    try {
+      await sb.patch("campanas_ofertas", sel.id, { fecha_fin: sel.fecha_fin_original, fecha_fin_original: null });
+      setExtra(null); showToast("Tiempo extra quitado"); await cargar();
+    } catch (e) { alert("Error: " + e.message); }
+    setGuardando(false);
   };
 
   // ── Campañas ──
@@ -3651,6 +3679,8 @@ function OfertasAdmin() {
     setGuardando(true);
     try {
       const body = { prefijo: campForm.prefijo.trim(), nombre: campForm.nombre.trim(), subtitulo: campForm.subtitulo.trim() || null, color_principal: campForm.color_principal, color_secundario: campForm.color_secundario, fecha_inicio: ini, fecha_fin: fin };
+      const actualC = campForm.id ? campanas.find(x => x.id === campForm.id) : null;
+      if (actualC && (!fin || !actualC.fecha_fin || new Date(fin).getTime() !== new Date(actualC.fecha_fin).getTime())) body.fecha_fin_original = null; // cambiaste la fecha a mano: ya no es "extendida"
       if (campForm.id) await sb.patch("campanas_ofertas", campForm.id, body);
       else { const r = await sb.post("campanas_ofertas", body); setSelId(r[0].id); }
       setCampForm(null); showToast("Campaña guardada"); await cargar();
@@ -3908,6 +3938,7 @@ function OfertasAdmin() {
                   </div>
                   <div style={{ fontSize: 12, color: GRAY3, marginTop: 6 }}>{n} oferta{n !== 1 ? "s" : ""}</div>
                   {(c.fecha_inicio || c.fecha_fin) && <div style={{ fontSize: 11, color: GRAY3, marginTop: 2 }}>{c.fecha_inicio ? fechaCortaPanama(c.fecha_inicio) : "ya"} → {c.fecha_fin ? fechaCortaPanama(c.fecha_fin) : "sin fin"}</div>}
+                  {c.fecha_fin_original && new Date(c.fecha_fin_original).getTime() < new Date(c.fecha_fin).getTime() && <div style={{ fontSize: 11, color: "#8A4B00", marginTop: 2, fontWeight: 700 }}>Tiempo extra agregado (fin original: {fechaCortaPanama(c.fecha_fin_original)})</div>}
                 </div>
               );
             })}
@@ -3921,6 +3952,7 @@ function OfertasAdmin() {
                   {sel.activa
                     ? <button onClick={() => desactivarCampana(sel)} className="oft-btn-press" style={{ background: WHITE, border: `1.5px solid ${GRAY2}`, borderRadius: 8, padding: "8px 14px", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>Desactivar</button>
                     : <button onClick={() => activarCampana(sel)} className="oft-btn-press" style={{ ...S.btnRed, padding: "8px 14px", fontSize: 13 }}><Zap size={14} /> Activar campaña</button>}
+                  {sel.activa && sel.fecha_fin && <button onClick={() => setExtra({ mins: 180, custom: "" })} className="oft-btn-press" style={{ background: BLACK, color: WHITE, border: "none", borderRadius: 8, padding: "8px 14px", fontWeight: 700, fontSize: 13, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}><Timer size={14} /> Agregar tiempo extra</button>}
                   {sel.activa && <a href="/ofertas" target="_blank" rel="noreferrer" style={{ background: WHITE, border: `1.5px solid ${GRAY2}`, borderRadius: 8, padding: "8px 14px", fontWeight: 700, fontSize: 13, color: BLACK, textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 5 }}><ArrowUpRight size={14} /> Ver página</a>}
                   <button onClick={() => editarCampana(sel)} className="oft-btn-press" style={{ background: WHITE, border: `1.5px solid ${GRAY2}`, borderRadius: 8, padding: "8px 12px", cursor: "pointer", display: "flex", alignItems: "center", gap: 5, fontWeight: 700, fontSize: 13 }}><PencilIcon size={14} /> Editar</button>
                   <button onClick={() => duplicarCampana(sel)} className="oft-btn-press" style={{ background: WHITE, border: `1.5px solid ${GRAY2}`, borderRadius: 8, padding: "8px 12px", cursor: "pointer", fontWeight: 700, fontSize: 13 }}>Duplicar</button>
@@ -3940,6 +3972,47 @@ function OfertasAdmin() {
             </div>
           )}
         </>
+      )}
+
+      {/* MODAL TIEMPO EXTRA */}
+      {extra && sel && createPortal(
+        <div className="oft-overlay" style={{ ...S.overlay, alignItems: "flex-start", overflowY: "auto", padding: "20px 16px" }} onClick={() => !guardando && setExtra(null)}>
+          <div className="oft-qv-pop" style={{ background: WHITE, borderRadius: 16, maxWidth: 440, width: "100%", margin: "20px auto", padding: 24 }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+              <div style={{ fontWeight: 800, fontSize: 18, display: "flex", alignItems: "center", gap: 8 }}><Timer size={18} color={RED} /> Agregar tiempo extra</div>
+              <button onClick={() => setExtra(null)} style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}><X size={22} /></button>
+            </div>
+            <p style={{ fontSize: 12.5, color: GRAY3, margin: "0 0 14px" }}>
+              Cuando se acabe el tiempo normal, el cronómetro de la tienda se queda en cero y aparece <strong>"Oferta extendida"</strong> con un cronómetro pequeño con el tiempo extra.
+            </p>
+            <div style={{ fontSize: 12.5, marginBottom: 12, background: GRAY, borderRadius: 10, padding: "8px 12px" }}>
+              {sel.fecha_fin_original && <div>Fin original: <strong>{fechaCortaPanama(sel.fecha_fin_original)}</strong></div>}
+              <div>Fin actual: <strong>{fechaCortaPanama(sel.fecha_fin)}</strong>{new Date(sel.fecha_fin).getTime() < Date.now() && <span style={{ color: RED, fontWeight: 700 }}> (ya venció: el tiempo extra cuenta desde ahora)</span>}</div>
+            </div>
+            <label style={S.label}>¿Cuánto tiempo extra?</label>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
+              {[[60, "1 hora"], [180, "3 horas"], [360, "6 horas"], [720, "12 horas"], [1440, "24 horas"], [2880, "48 horas"]].map(([m, t]) => {
+                const on = extra.custom === "" && extra.mins === m;
+                return <button key={m} type="button" onClick={() => setExtra({ mins: m, custom: "" })} className="oft-btn-press" style={{ background: on ? BLACK : WHITE, color: on ? WHITE : BLACK, border: `1.5px solid ${on ? BLACK : GRAY2}`, borderRadius: 8, padding: "8px 12px", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>{t}</button>;
+              })}
+            </div>
+            <label style={S.label}>O escribe las horas (ej: 2.5)</label>
+            <input style={S.input} inputMode="decimal" placeholder="Ej: 2.5" value={extra.custom} onChange={e => setExtra({ ...extra, custom: e.target.value.replace(/[^0-9.,]/g, "") })} />
+            {nuevoFinExtra() && minsExtra() > 0 && (
+              <div style={{ background: "#FFF5F5", border: `1px solid ${RED}`, borderRadius: 10, padding: "10px 12px", fontSize: 13, marginBottom: 14 }}>
+                Se agregan <strong>{textoDuracion(minsExtra())}</strong>. La oferta extendida terminará el <strong>{fechaCortaPanama(nuevoFinExtra().toISOString())}</strong>.
+              </div>
+            )}
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={() => setExtra(null)} disabled={guardando} className="oft-btn-press" style={{ ...S.btnOutline, flex: 1, justifyContent: "center" }}>Cancelar</button>
+              <button onClick={guardarExtra} disabled={guardando} className="oft-btn-press" style={{ ...S.btnRed, flex: 1, justifyContent: "center", opacity: guardando ? 0.7 : 1 }}>{guardando ? "Guardando…" : "Agregar tiempo"}</button>
+            </div>
+            {sel.fecha_fin_original && (
+              <button onClick={quitarExtra} disabled={guardando} style={{ background: "none", border: "none", color: GRAY3, textDecoration: "underline", cursor: "pointer", fontSize: 12, marginTop: 12, padding: 0 }}>Quitar el tiempo extra y volver al fin original</button>
+            )}
+          </div>
+        </div>,
+        document.body
       )}
 
       {/* MODAL CAMPAÑA */}
