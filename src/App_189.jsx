@@ -2422,6 +2422,11 @@ function OfertasView() {
   const todas = (campanaActiva?.items || []).map(it => ofertaInfo(it, productosPorId, campanaActiva.combos)).filter(Boolean);
   const restante = c?.fecha_fin ? tiempoRestante(c.fecha_fin, ahora) : null;
   const vigente = !!c && !(restante && restante.terminado);
+  // Tiempo extra: fecha_fin es el nuevo fin; fecha_fin_original es el fin normal. Al llegar el fin normal el cronómetro grande queda en cero
+  // y se muestra "Oferta extendida" con un cronómetro pequeño hacia el nuevo fin.
+  const finNormal = (c?.fecha_fin_original && c?.fecha_fin && new Date(c.fecha_fin_original).getTime() < new Date(c.fecha_fin).getTime()) ? c.fecha_fin_original : null;
+  const enExtension = !!finNormal && ahora >= new Date(finNormal).getTime();
+  const tGrande = enExtension ? { d: 0, h: 0, m: 0, s: 0 } : (finNormal ? tiempoRestante(finNormal, ahora) : restante);
 
   if (loading && !campanaActiva) return <Spinner />;
 
@@ -2492,6 +2497,12 @@ function OfertasView() {
         .oft-of-count b { display: block; font-size: 28px; font-weight: 900; font-variant-numeric: tabular-nums; }
         .oft-of-count small { font-size: 10px; letter-spacing: 1px; text-transform: uppercase; opacity: 0.75; }
         .oft-of-count .s b { animation: ofTick .5s ease both; }
+        @keyframes ofDot { 0%,100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.35; transform: scale(0.7); } }
+        .oft-of-ext { margin-top: 16px; display: flex; flex-direction: column; align-items: center; gap: 7px; animation: ofIn .6s both; }
+        .oft-of-ext .lbl { display: inline-flex; align-items: center; gap: 8px; padding: 6px 16px; border-radius: 30px; font-weight: 900; font-size: 14px; letter-spacing: .4px; background: ${A}; color: #fff; box-shadow: 0 4px 16px rgba(0,0,0,0.25); }
+        .oft-of-ext .lbl i { width: 8px; height: 8px; border-radius: 50%; background: #fff; animation: ofDot 1.2s ease-in-out infinite; }
+        .oft-of-ext .mini { font-size: 15px; font-weight: 800; font-variant-numeric: tabular-nums; background: rgba(255,255,255,0.14); border: 1px solid rgba(255,255,255,0.25); border-radius: 10px; padding: 3px 12px; }
+        .oft-of-ext .mini small { font-weight: 600; opacity: 0.8; margin-right: 6px; font-size: 11px; }
         .oft-of-maxpct { display: inline-block; margin-top: 18px; padding: 6px 16px; border-radius: 30px; font-weight: 900; font-size: 14px; animation: ofIn .7s .4s both; }
         .oft-of-bar { position: sticky; top: 60px; z-index: 40; background: #fff; border-bottom: 1px solid ${GRAY2}; padding: 12px 16px; box-shadow: 0 4px 14px rgba(0,0,0,0.05); }
         .oft-of-bar-in { max-width: 1152px; margin: 0 auto; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
@@ -2573,13 +2584,19 @@ function OfertasView() {
         {c.subtitulo && <div className="oft-of-sub">{c.subtitulo}</div>}
         {restante && !restante.terminado && (
           <div style={{ display: "block" }}>
-            <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: 2, marginTop: 20, opacity: 0.8 }}>TERMINA EN</div>
+            <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: 2, marginTop: 20, opacity: 0.8 }}>{enExtension ? "TIEMPO NORMAL" : "TERMINA EN"}</div>
             <div className="oft-of-count" style={{ marginTop: 8 }}>
-              {restante.d > 0 && <div><b>{pad(restante.d)}</b><small>días</small></div>}
-              <div><b>{pad(restante.h)}</b><small>horas</small></div>
-              <div><b>{pad(restante.m)}</b><small>min</small></div>
-              <div className="s"><b key={restante.s}>{pad(restante.s)}</b><small>seg</small></div>
+              {tGrande.d > 0 && <div><b>{pad(tGrande.d)}</b><small>días</small></div>}
+              <div><b>{pad(tGrande.h)}</b><small>horas</small></div>
+              <div><b>{pad(tGrande.m)}</b><small>min</small></div>
+              <div className="s"><b key={tGrande.s}>{pad(tGrande.s)}</b><small>seg</small></div>
             </div>
+            {enExtension && (
+              <div className="oft-of-ext">
+                <span className="lbl"><i />Oferta extendida</span>
+                <span className="mini"><small>Quedan</small>{restante.d > 0 ? `${restante.d}d ` : ""}{pad(restante.h)}:{pad(restante.m)}:{pad(restante.s)}</span>
+              </div>
+            )}
           </div>
         )}
         {maxPct > 0 && <div><span className="oft-of-maxpct" style={{ background: A }}>Hasta {maxPct}% de descuento</span></div>}
