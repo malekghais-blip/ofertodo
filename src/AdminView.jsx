@@ -5431,8 +5431,8 @@ function AnalisisStockPanel({ categories = [], ingresoPorCategoria = [], ventasP
   const descargarLista = () => {
     const lista = porVista.comprar.filter(p => (prov === "todos" || provDe(p) === prov) && (cat === "todas" || tipoDe(p) === cat) && (canal === "todos" || p.origen === canal))
       .sort((a, b) => tipoDe(a).localeCompare(tipoDe(b)) || provDe(a).localeCompare(provDe(b)) || prioridad(a) - prioridad(b) || Number(b.ganancia_dia || 0) - Number(a.ganancia_dia || 0));
-    const cab = ["Categoría", "Proveedor", "Referencia", "Producto", "Dónde se vende", "Prioridad", "Stock", "Por llegar", "Se vende por día", "Días que alcanza", "Comprar (uds)", "Costo unitario", "Inversión", "Última compra (uds)", "Margen %"];
-    const cuerpo = lista.map(p => [tipoDe(p), provDe(p), p.ref, p.nombre, p.origen === "tienda" ? "Solo tienda" : "Catálogo web", p.accion === "comprar_ya" ? "Comprar ya" : "Comprar pronto", p.stock ?? "", p.pendiente ?? 0, p.vel_dia ?? "", p.dias_cobertura ?? "", p.sugerido, p.costo ?? "", p.inversion_sugerida ?? "", p.ultima_compra_qty ?? "", p.margen_pct ?? ""]);
+    const cab = ["Categoría", "Proveedor", "Referencia", "Producto", "Dónde se vende", "Prioridad", "Stock", "Por llegar", "Se vende por día", "Días que alcanza", "Comprar (uds)", "Costo unitario", "Inversión", "Última compra (uds)", "Último precio de compra", "Fecha última compra", "Precio compra anterior", "Fecha compra anterior", "Proveedor compra anterior", "Margen %"];
+    const cuerpo = lista.map(p => [tipoDe(p), provDe(p), p.ref, p.nombre, p.origen === "tienda" ? "Solo tienda" : "Catálogo web", p.accion === "comprar_ya" ? "Comprar ya" : "Comprar pronto", p.stock ?? "", p.pendiente ?? 0, p.vel_dia ?? "", p.dias_cobertura ?? "", p.sugerido, p.costo ?? "", p.inversion_sugerida ?? "", p.ultima_compra_qty ?? "", p.ultima_compra_costo ?? "", p.ultima_compra_fecha ?? "", p.anterior_compra_costo ?? "", p.anterior_compra_fecha ?? "", p.anterior_compra_proveedor ?? "", p.margen_pct ?? ""]);
     const csv = "﻿" + [cab, ...cuerpo].map(f => f.map(csvCelda).join(";")).join("\r\n");
     const a = document.createElement("a");
     a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
@@ -5582,7 +5582,7 @@ function AnalisisStockPanel({ categories = [], ingresoPorCategoria = [], ventasP
             <div style={{ overflowX: "auto", borderTop: `1px solid ${MT.rejilla}` }}>
               <table className="stk-tabla">
                 <thead><tr>
-                  <th>Producto</th><th>Stock</th><th>Se vende</th><th>Alcanza para</th><th>Última compra</th><th>{vista === "comprar" && !texto ? "Comprar" : "Qué hacer"}</th><th>Margen</th>
+                  <th>Producto</th><th>Stock</th><th>Se vende</th><th>Alcanza para</th><th>Último precio de compra</th><th>{vista === "comprar" && !texto ? "Comprar" : "Qué hacer"}</th><th>Margen</th>
                 </tr></thead>
                 <tbody>
                   {visibles.map(p => {
@@ -5615,8 +5615,19 @@ function AnalisisStockPanel({ categories = [], ingresoPorCategoria = [], ventasP
                         <td>
                           {p.ultima_compra_qty ? (
                             <>
-                              <div style={{ fontWeight: 700 }}>{numM(Math.round(p.ultima_compra_qty))} uds</div>
-                              <div className="stk-sub">{fechaCortaM(p.ultima_compra_fecha)}{p.ultima_compra_costo ? ` · a ${usdM(p.ultima_compra_costo)}` : ""}</div>
+                              {p.ultima_compra_costo ? <div style={{ fontWeight: 800, fontSize: 15 }}>{usdM(p.ultima_compra_costo)} <span style={{ fontWeight: 600, fontSize: 11.5, color: MT.suave }}>c/u</span></div> : null}
+                              <div className="stk-sub">{numM(Math.round(p.ultima_compra_qty))} uds · {fechaCortaM(p.ultima_compra_fecha)}</div>
+                              {p.proveedor && <div className="stk-sub">{p.proveedor}</div>}
+                              {p.anterior_compra_costo && p.ultima_compra_costo ? (() => {
+                                const v = ((p.ultima_compra_costo - p.anterior_compra_costo) / p.anterior_compra_costo) * 100;
+                                const igual = Math.abs(v) < 1;
+                                return (
+                                  <div className="stk-sub" style={{ color: igual ? MT.suave : v > 0 ? MT.malo : MT.bueno, fontWeight: 700 }}>
+                                    {igual ? "= igual que la compra anterior" : `${v > 0 ? "▲ subió" : "▼ bajó"} ${Math.abs(v).toFixed(Math.abs(v) < 10 ? 1 : 0)}% vs. anterior`}
+                                    <span style={{ fontWeight: 500, color: MT.suave }}>{` (${usdM(p.anterior_compra_costo)}, ${fechaCortaM(p.anterior_compra_fecha)}${p.anterior_compra_proveedor && p.anterior_compra_proveedor !== p.proveedor ? ", " + p.anterior_compra_proveedor : ""})`}</span>
+                                  </div>
+                                );
+                              })() : null}
                               {p.vendido_desde_compra_pct !== undefined && <div className="stk-sub" style={{ color: p.vendido_desde_compra_pct >= 80 ? MT.bueno : p.vendido_desde_compra_pct < 35 ? MT.malo : MT.suave, fontWeight: 700 }}>vendido {p.vendido_desde_compra_pct}% desde entonces</div>}
                             </>
                           ) : <span className="stk-sub">Sin compras en Odoo</span>}
