@@ -5487,8 +5487,8 @@ function AnalisisStockPanel({ categories = [], ingresoPorCategoria = [], ventasP
               <Cifra valor={Number(r.inversion_sugerida)} f={(v) => usdM(v, 0)} />
             </Kpi>
             <Kpi retraso={70} etiqueta={`Compraste en ${dias} días`}
-              formula={`Compras confirmadas en Odoo de productos con referencia (web y tienda): ${usdM(compradoCat, 0)}. El total de órdenes del periodo es ${usdM(r.comprado_periodo, 0)} en ${numM(r.ordenes_periodo)} órdenes (incluye líneas sin referencia, como fletes o servicios). Lo vendido está a costo, para comparar manzanas con manzanas.`}
-              pie={<div style={{ fontSize: 12.5, color: MT.texto2 }}>Vendiste a costo <b style={{ color: MT.texto }}>{usdM(vendidoCosto, 0)}</b>{compradoCat > 0 ? ` · ${Math.round((vendidoCosto / compradoCat) * 100)}% de lo comprado` : ""}</div>}>
+              formula={`Compras confirmadas en Odoo de productos con referencia (web y tienda): ${usdM(compradoCat, 0)}. El total de órdenes del periodo es ${usdM(r.comprado_periodo, 0)} en ${numM(r.ordenes_periodo)} órdenes (incluye líneas sin referencia, como fletes o servicios). “Lo que vendiste te costó” es lo que te costó la mercancía que salió en el periodo (unidades vendidas por tienda y web × costo unitario), no lo que cobraste por ella. Se compara contra lo comprado al mismo costo, para comparar manzanas con manzanas.`}
+              pie={<div style={{ fontSize: 12.5, color: MT.texto2 }}>Lo que vendiste te costó <b style={{ color: MT.texto }}>{usdM(vendidoCosto, 0)}</b>{compradoCat > 0 ? ` · equivale al ${Math.round((vendidoCosto / compradoCat) * 100)}% de lo que compraste` : ""}{compradoCat > vendidoCosto ? <><br />Entró {usdM(compradoCat - vendidoCosto, 0)} más de lo que salió: ese dinero quedó en bodega</> : null}</div>}>
               <Cifra valor={compradoCat} f={(v) => usdM(v, 0)} />
             </Kpi>
             <Kpi retraso={140} etiqueta="Dinero parado en productos a no recomprar"
