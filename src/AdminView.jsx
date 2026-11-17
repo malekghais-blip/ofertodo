@@ -5338,6 +5338,7 @@ function AnalisisStockPanel({ categories = [], ingresoPorCategoria = [], ventasP
   const [actualizado, setActualizado] = useState(null);
   const [vista, setVista] = useState("comprar");
   const [prov, setProv] = useState("todos");
+  const [cat, setCat] = useState("todas"); // tipo de producto (Perfumes, Calzado, Jeans...)
   const [q, setQ] = useState("");
   const [orden, setOrden] = useState("prioridad");
   const [canal, setCanal] = useState("todos"); // todos | web | tienda
@@ -5373,6 +5374,7 @@ function AnalisisStockPanel({ categories = [], ingresoPorCategoria = [], ventasP
   const lead = (r && r.lead_dias) || 7;
   const hora = actualizado ? actualizado.toLocaleTimeString("es-PA", { timeZone: "America/Panama", hour: "2-digit", minute: "2-digit" }) : "";
   const provDe = (p) => p.proveedor || "Sin proveedor";
+  const tipoDe = (p) => p.tipo || "Otros";
   const catDe = (id) => ((categories || []).find(c => c.id === id) || {}).nombre || "";
 
   const esComprar = (p) => p.accion === "comprar_ya" || p.accion === "comprar_pronto";
@@ -5384,17 +5386,23 @@ function AnalisisStockPanel({ categories = [], ingresoPorCategoria = [], ventasP
   };
   const nComprar = porVista.comprar.length, nNo = porVista.no_recomprar.length, nNuevo = porVista.nuevo.length;
 
-  // Proveedores con lo que hay que comprarles (para la lista de compra por proveedor)
-  const porProv = (() => {
+  // Suma lo que hay que comprar agrupado por proveedor o por categoría
+  const acumular = (lista, claveDe) => {
     const m = {};
-    porVista.comprar.filter(p => canal === "todos" || p.origen === canal).forEach(p => {
-      const k = provDe(p);
-      if (!m[k]) m[k] = { nombre: k, inversion: 0, unidades: 0, productos: 0, ya: 0 };
+    lista.forEach(p => {
+      const k = claveDe(p);
+      if (!m[k]) m[k] = { nombre: k, inversion: 0, unidades: 0, productos: 0, ya: 0, provs: new Set() };
       m[k].inversion += Number(p.inversion_sugerida || 0); m[k].unidades += Number(p.sugerido || 0); m[k].productos += 1;
+      m[k].provs.add(provDe(p));
       if (p.accion === "comprar_ya") m[k].ya += 1;
     });
     return Object.values(m).sort((a, b) => b.inversion - a.inversion);
-  })();
+  };
+  const comprarCanal = porVista.comprar.filter(p => canal === "todos" || p.origen === canal);
+  // Por proveedor: respeta la categoría elegida (ej. en Perfumes, cuánto comprarle a cada proveedor)
+  const porProv = acumular(comprarCanal.filter(p => cat === "todas" || tipoDe(p) === cat), provDe);
+  // Por categoría: respeta el proveedor elegido
+  const porCat = acumular(comprarCanal.filter(p => prov === "todos" || provDe(p) === prov), tipoDe);
 
   const prioridad = (p) => (p.accion === "comprar_ya" ? 0 : 1);
   const ordenar = (a, b) => {
@@ -5414,20 +5422,21 @@ function AnalisisStockPanel({ categories = [], ingresoPorCategoria = [], ventasP
   const buscandoEnTodos = !!texto && vista !== "todo";
   const filas = ((texto ? prods : porVista[vista]) || []).filter(p =>
     (prov === "todos" || provDe(p) === prov) &&
+    (cat === "todas" || tipoDe(p) === cat) &&
     (canal === "todos" || p.origen === canal) &&
     (!texto || String(p.nombre || "").toLowerCase().includes(texto) || String(p.ref || "").toLowerCase().includes(texto))
   ).sort(ordenar);
   const visibles = filas.slice(0, limite);
 
   const descargarLista = () => {
-    const lista = porVista.comprar.filter(p => (prov === "todos" || provDe(p) === prov) && (canal === "todos" || p.origen === canal))
-      .sort((a, b) => provDe(a).localeCompare(provDe(b)) || prioridad(a) - prioridad(b) || Number(b.ganancia_dia || 0) - Number(a.ganancia_dia || 0));
-    const cab = ["Proveedor", "Referencia", "Producto", "Dónde se vende", "Prioridad", "Stock", "Por llegar", "Se vende por día", "Días que alcanza", "Comprar (uds)", "Costo unitario", "Inversión", "Última compra (uds)", "Margen %"];
-    const cuerpo = lista.map(p => [provDe(p), p.ref, p.nombre, p.origen === "tienda" ? "Solo tienda" : "Catálogo web", p.accion === "comprar_ya" ? "Comprar ya" : "Comprar pronto", p.stock ?? "", p.pendiente ?? 0, p.vel_dia ?? "", p.dias_cobertura ?? "", p.sugerido, p.costo ?? "", p.inversion_sugerida ?? "", p.ultima_compra_qty ?? "", p.margen_pct ?? ""]);
+    const lista = porVista.comprar.filter(p => (prov === "todos" || provDe(p) === prov) && (cat === "todas" || tipoDe(p) === cat) && (canal === "todos" || p.origen === canal))
+      .sort((a, b) => tipoDe(a).localeCompare(tipoDe(b)) || provDe(a).localeCompare(provDe(b)) || prioridad(a) - prioridad(b) || Number(b.ganancia_dia || 0) - Number(a.ganancia_dia || 0));
+    const cab = ["Categoría", "Proveedor", "Referencia", "Producto", "Dónde se vende", "Prioridad", "Stock", "Por llegar", "Se vende por día", "Días que alcanza", "Comprar (uds)", "Costo unitario", "Inversión", "Última compra (uds)", "Margen %"];
+    const cuerpo = lista.map(p => [tipoDe(p), provDe(p), p.ref, p.nombre, p.origen === "tienda" ? "Solo tienda" : "Catálogo web", p.accion === "comprar_ya" ? "Comprar ya" : "Comprar pronto", p.stock ?? "", p.pendiente ?? 0, p.vel_dia ?? "", p.dias_cobertura ?? "", p.sugerido, p.costo ?? "", p.inversion_sugerida ?? "", p.ultima_compra_qty ?? "", p.margen_pct ?? ""]);
     const csv = "﻿" + [cab, ...cuerpo].map(f => f.map(csvCelda).join(";")).join("\r\n");
     const a = document.createElement("a");
     a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
-    a.download = `lista-de-compra-${fechaPanama()}.csv`;
+    a.download = `lista-de-compra${cat !== "todas" ? "-" + cat.toLowerCase().replace(/[^a-z0-9áéíóúñ]+/g, "-") : ""}-${fechaPanama()}.csv`;
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 4000);
   };
@@ -5519,6 +5528,10 @@ function AnalisisStockPanel({ categories = [], ingresoPorCategoria = [], ventasP
                 <option value="todos">Todos los proveedores</option>
                 {[...new Set(prods.map(provDe))].sort((a, b) => a.localeCompare(b)).map(n => <option key={n} value={n}>{n}</option>)}
               </select>
+              <select className="stk-sel" value={cat} onChange={e => { setCat(e.target.value); setLimite(25); }} aria-label="Filtrar por categoría">
+                <option value="todas">Todas las categorías</option>
+                {[...new Set(prods.map(tipoDe))].sort((a, b) => a.localeCompare(b)).map(n => <option key={n} value={n}>{n}</option>)}
+              </select>
               <select className="stk-sel" value={canal} onChange={e => { setCanal(e.target.value); setLimite(25); }} aria-label="Dónde se vende">
                 <option value="todos">Web y tienda física</option>
                 <option value="web">Catálogo web (y tienda)</option>
@@ -5539,16 +5552,30 @@ function AnalisisStockPanel({ categories = [], ingresoPorCategoria = [], ventasP
               )}
             </div>
 
-            {vista === "comprar" && porProv.length > 0 && (
+            {vista === "comprar" && porCat.length > 0 && (
               <div style={{ padding: "4px 18px 16px", borderTop: `1px solid ${MT.rejilla}` }}>
-                <div className="met-lbl" style={{ margin: "14px 0 8px" }}>Cuánto comprarle a cada proveedor <span style={{ fontWeight: 500, color: MT.suave }}>· toca uno para filtrar</span></div>
+                <div className="met-lbl" style={{ margin: "14px 0 8px" }}>Cuánto comprar por categoría <span style={{ fontWeight: 500, color: MT.suave }}>· toca una para ver y filtrar sus proveedores{prov !== "todos" ? ` · solo lo de ${prov}` : ""}</span></div>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,320px),1fr))", gap: "2px 18px" }}>
-                  {porProv.slice(0, 8).map((p, i) => (
-                    <button key={p.nombre} className={"stk-prov" + (prov === p.nombre ? " on" : "")} onClick={() => { setProv(prov === p.nombre ? "todos" : p.nombre); setLimite(25); }} aria-pressed={prov === p.nombre}>
-                      <BarraH etiqueta={p.nombre} valor={p.inversion} maximo={maxProv} color={MT.rojo} texto={usdM(p.inversion, 0)} sub={`${numM(p.productos)} prod. · ${numM(p.unidades)} uds${p.ya ? ` · ${p.ya} urgente${p.ya === 1 ? "" : "s"}` : ""}`} retraso={i * 70} />
+                  {porCat.slice(0, 14).map((c, i) => (
+                    <button key={c.nombre} className={"stk-prov" + (cat === c.nombre ? " on" : "")} onClick={() => { setCat(cat === c.nombre ? "todas" : c.nombre); setLimite(25); }} aria-pressed={cat === c.nombre}>
+                      <BarraH etiqueta={c.nombre} valor={c.inversion} maximo={porCat[0].inversion || 1} color={MT.rojo} texto={usdM(c.inversion, 0)} sub={`${numM(c.productos)} prod. · ${numM(c.unidades)} uds · ${c.provs.size} proveedor${c.provs.size === 1 ? "" : "es"}${c.ya ? ` · ${c.ya} urgente${c.ya === 1 ? "" : "s"}` : ""}`} retraso={i * 50} />
                     </button>
                   ))}
                 </div>
+              </div>
+            )}
+
+            {vista === "comprar" && porProv.length > 0 && (
+              <div style={{ padding: "4px 18px 16px", borderTop: `1px solid ${MT.rejilla}` }}>
+                <div className="met-lbl" style={{ margin: "14px 0 8px" }}>{cat !== "todas" ? <>En <b>{cat}</b>: cuánto comprarle a cada proveedor</> : "Cuánto comprarle a cada proveedor"} <span style={{ fontWeight: 500, color: MT.suave }}>· toca uno para filtrar{cat !== "todas" ? " · se muestra el costo promedio por unidad para comparar" : ""}</span></div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,320px),1fr))", gap: "2px 18px" }}>
+                  {porProv.slice(0, 8).map((p, i) => (
+                    <button key={p.nombre} className={"stk-prov" + (prov === p.nombre ? " on" : "")} onClick={() => { setProv(prov === p.nombre ? "todos" : p.nombre); setLimite(25); }} aria-pressed={prov === p.nombre}>
+                      <BarraH etiqueta={p.nombre} valor={p.inversion} maximo={maxProv} color={MT.rojo} texto={usdM(p.inversion, 0)} sub={`${numM(p.productos)} prod. · ${numM(p.unidades)} uds${cat !== "todas" && p.unidades > 0 ? ` · prom. ${usdM(p.inversion / p.unidades)} c/u` : ""}${p.ya ? ` · ${p.ya} urgente${p.ya === 1 ? "" : "s"}` : ""}`} retraso={i * 70} />
+                    </button>
+                  ))}
+                </div>
+                {cat !== "todas" && <div style={{ marginTop: 8, fontSize: 12, color: MT.suave }}>El proveedor de cada producto es el de su última compra en Odoo.</div>}
               </div>
             )}
 
@@ -5567,7 +5594,7 @@ function AnalisisStockPanel({ categories = [], ingresoPorCategoria = [], ventasP
                             <FotoProd url={imgs[p.ref]} size={56} />
                             <div style={{ minWidth: 0 }}>
                               <div className="stk-nom">{p.nombre}</div>
-                              <div className="stk-sub">{p.ref}{provDe(p) !== "Sin proveedor" ? ` · ${provDe(p)}` : ""}{catDe(p.categoria_id) ? ` · ${catDe(p.categoria_id)}` : ""}{p.origen === "tienda" ? " · solo tienda física" : ""}</div>
+                              <div className="stk-sub">{p.ref}{provDe(p) !== "Sin proveedor" ? ` · ${provDe(p)}` : ""}{` · ${tipoDe(p)}`}{p.origen === "tienda" ? " · solo tienda física" : ""}</div>
                               <div className="stk-why">{explicarStock(p, lead)}</div>
                             </div>
                           </div>
