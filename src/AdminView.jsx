@@ -6050,8 +6050,8 @@ function FinResumen({ desde, hasta, irA }) {
         <Kpi retraso={0} etiqueta="Ventas del periodo" formula={`Ventas de productos ${usdM(E.ventasProd)} + envíos cobrados ${usdM(E.envio)}. ${canal === "tienda" ? "Son las ventas del punto de venta de Odoo (sin restar reembolsos)." : canal === "web" ? `Suma de ${numM(r.pedidos)} pedidos pagados.` : "Web + tienda física."}`}>
           <Cifra valor={E.ventasTotales} f={(v) => usdM(v, 0)} />
         </Kpi>
-        <Kpi retraso={60} etiqueta="Utilidad bruta (estimada)" formula={`Ventas netas (después de reembolsos) − costo de la mercancía vendida. Margen de los productos con costo: ${E.margen === null ? "—" : pctM(E.margen * 100)}.`}
-          pie={<div style={{ fontSize: 12, color: MT.suave }}>Margen {E.margen === null ? "—" : pctM(E.margen * 100)}{canal !== "tienda" ? ` · costo cargado en ${pctM(cobWeb, 0)} de las ventas web` : ""}</div>}>
+        <Kpi retraso={60} etiqueta="Utilidad bruta (estimada)" formula={`Ventas netas (productos + envíos cobrados − reembolsos) − costo de la mercancía vendida. El margen bruto es esa utilidad ÷ las ventas del periodo. Si solo miras los productos (sin envíos), el margen es ${E.margen === null ? "—" : pctM(E.margen * 100)}; la utilidad bruta es un poco mayor porque los envíos que cobras a los clientes no tienen costo de mercancía.`}
+          pie={<div style={{ fontSize: 12, color: MT.suave }}>Margen {E.utilidadBruta === null || !(base > 0) ? "—" : pctM((E.utilidadBruta / base) * 100)} de las ventas{E.margen !== null ? ` (${pctM(E.margen * 100)} solo en productos)` : ""}{canal !== "tienda" ? ` · costo cargado en ${pctM(cobWeb, 0)} de las ventas web` : ""}</div>}>
           {E.utilidadBruta === null ? <span style={{ fontSize: 15, color: MT.suave }}>Carga costos para verla</span> : <Cifra valor={E.utilidadBruta} f={(v) => usdM(v, 0)} />}
         </Kpi>
         <Kpi retraso={120} etiqueta="Gastos, anuncios y comisiones" formula={`Gastos operativos ${usdM(E.gastos)} + anuncios Meta ${usdM(E.ads)} + comisiones ${usdM(E.comisiones)}. No incluye compras de mercancía (esas ya están en el costo de lo vendido).`}>
