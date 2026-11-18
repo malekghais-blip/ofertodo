@@ -6537,22 +6537,82 @@ function ComisionesOdooAsientos() {
 }
 
 // ── Margen por producto y categoría ──
+// Márgenes por canal: cada bloque trae { u: piezas, v: ventas sin ITBMS, vcc: ventas que tienen costo, co: costo de esas ventas }.
+const mcSuma = (a, b) => ({ u: (Number(a?.u) || 0) + (Number(b?.u) || 0), v: (Number(a?.v) || 0) + (Number(b?.v) || 0), vcc: (Number(a?.vcc) || 0) + (Number(b?.vcc) || 0), co: (Number(a?.co) || 0) + (Number(b?.co) || 0) });
+const mcPct = (x) => (x && Number(x.vcc) > 0 ? 100 * (1 - Number(x.co) / Number(x.vcc)) : null);
+const mcGan = (x) => { const p = mcPct(x); return p === null ? null : (Number(x.v) * p) / 100; };
+const mcCob = (x) => (x && Number(x.v) > 0 ? (100 * Number(x.vcc)) / Number(x.v) : null);
+const mcColorPct = (p) => (p === null ? MT.suave : p < 20 ? MT.malo : MT.texto);
+
 function FinMargen({ desde, hasta, irA }) {
   const { datos: d, error, cargando } = useFinDatos("fin_productos_margen", { p_desde: desde, p_hasta: hasta }, [desde, hasta]);
+  const { datos: c, error: errC } = useFinDatos("fin_margen_canales", { p_desde: desde, p_hasta: hasta }, [desde, hasta]);
   const [orden, setOrden] = useState("ingreso");
   const [solo, setSolo] = useState("todos");
+  const [canal, setCanal] = useState("unificado");
   if (error) return <AvisoFin malo>{error}</AvisoFin>;
   if (!d) return <div style={{ padding: "50px 0", textAlign: "center", color: MT.texto2 }}>Calculando márgenes…</div>;
   const cats = d.categorias || [];
   const maxC = Math.max(1, ...cats.map(c => Number(c.ingreso)));
+  // ── Web vs tienda vs unificado ──
+  const pick = (x) => (canal === "web" ? x?.web : canal === "tienda" ? x?.tienda : mcSuma(x?.web, x?.tienda));
+  const cWeb = c ? c.web : null, cTie = c ? c.tienda : null, cUni = c ? mcSuma(c.web, c.tienda) : null;
+  const filasCanal = c ? (c.productos || []).map(p => ({ ...p, m: pick(p) })).filter(p => Number(p.m.v) !== 0 || Number(p.m.u) !== 0) : [];
+  let filasC = filasCanal;
+  if (solo === "sin") filasC = filasC.filter(p => !(Number(p.m.vcc) > 0));
+  if (solo === "bajo") filasC = filasC.filter(p => { const pc = mcPct(p.m); return pc !== null && pc < 20; });
+  filasC = [...filasC].sort((a, b) => orden === "margen_pct" ? ((mcPct(a.m) ?? 1e9) - (mcPct(b.m) ?? 1e9)) : orden === "margen" ? ((mcGan(b.m) ?? -1e9) - (mcGan(a.m) ?? -1e9)) : Number(b.m.v) - Number(a.m.v));
+  // Respaldo: si por algo no cargan los márgenes por canal, se sigue viendo la tabla de la web de siempre
   let filas = [...(d.productos || [])];
   if (solo === "sin") filas = filas.filter(p => p.costo_unit === null || p.costo_unit === undefined);
   if (solo === "bajo") filas = filas.filter(p => p.margen_pct !== null && p.margen_pct !== undefined && Number(p.margen_pct) < 20);
   filas.sort((a, b) => orden === "margen_pct" ? (Number(a.margen_pct ?? 1e9) - Number(b.margen_pct ?? 1e9)) : orden === "margen" ? (Number(b.margen ?? -1e9) - Number(a.margen ?? -1e9)) : Number(b.ingreso) - Number(a.ingreso));
+  const tarjetaCanal = (rotulo, x, acento, retraso, texto) => (
+    <Kpi acento={acento} retraso={retraso} etiqueta={`Margen · ${rotulo}`} formula={texto}
+      pie={x ? <div style={{ fontSize: 12, color: MT.suave }}>{usdM(x.v, 0)} en ventas · {mcGan(x) === null ? "sin costos" : `${usdM(mcGan(x), 0)} de ganancia`}{mcCob(x) !== null ? ` · costo en ${pctM(mcCob(x), 0)} de las ventas` : ""}</div> : null}>
+      {!x ? <span style={{ fontSize: 15, color: MT.suave }}>Cargando…</span> : mcPct(x) === null ? <span style={{ fontSize: 15, color: MT.suave }}>Faltan costos</span> : <Cifra valor={mcPct(x)} f={(v) => pctM(v, 1)} />}
+    </Kpi>
+  );
   return (
     <div style={{ opacity: cargando ? 0.7 : 1 }}>
+      <div className="met-sec">Margen por canal</div>
+      {errC ? <AvisoFin>No se pudo cargar el margen de la tienda y el unificado: {errC}</AvisoFin> : <>
+        <div className="met-grid" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(230px,1fr))" }}>
+          {tarjetaCanal("Web", cWeb, false, 0, "Pedidos pagados de la web y de tus vendedores (sin cotizaciones), sin ITBMS y ya sin lo devuelto. Margen = 1 − costo ÷ ventas de los productos que tienen costo cargado en Finanzas.")}
+          {tarjetaCanal("Tienda física", cTie, false, 60, "Ventas del punto de venta de Odoo, sin ITBMS y con los reembolsos restados. Margen = 1 − costo ÷ ventas de las líneas que tienen costo en Odoo.")}
+          {tarjetaCanal("Unificado", cUni, true, 120, "Web + tienda física juntas: se suman las ventas y los costos de ambos canales. Margen = 1 − costo total ÷ ventas con costo de los dos canales.")}
+        </div>
+        {c && <div style={{ fontSize: 11.5, color: MT.suave, marginTop: 8, lineHeight: 1.55 }}>Todas las cifras son ventas sin ITBMS y no descuentan gastos operativos. La ganancia es una estimación: aplica el margen de los productos con costo a todas las ventas del canal.</div>}
+      </>}
+      {c && (c.tipos || []).length > 0 && (
+        <>
+          <div className="met-sec">Margen por tipo de producto: web, tienda y unificado</div>
+          <div className="met-card" style={{ padding: 0, overflowX: "auto" }}>
+            <table className="met-tabla" style={{ minWidth: 640 }}>
+              <thead><tr><th>Tipo</th><th>Web · ventas</th><th>Web · margen</th><th>Tienda · ventas</th><th>Tienda · margen</th><th>Unificado · ventas</th><th>Unificado · margen</th></tr></thead>
+              <tbody>
+                {c.tipos.map(t => {
+                  const uni = mcSuma(t.web, t.tienda); const pw = mcPct(t.web), pt = mcPct(t.tienda), pu = mcPct(uni);
+                  return (
+                    <tr key={t.tipo}>
+                      <td style={{ textAlign: "left" }}><b>{t.tipo}</b></td>
+                      <td>{Number(t.web.v) ? usdM(t.web.v, 0) : <span style={{ color: MT.suave }}>—</span>}</td>
+                      <td style={{ color: mcColorPct(pw) }}>{pw === null ? "—" : pctM(pw, 0)}</td>
+                      <td>{Number(t.tienda.v) ? usdM(t.tienda.v, 0) : <span style={{ color: MT.suave }}>—</span>}</td>
+                      <td style={{ color: mcColorPct(pt) }}>{pt === null ? "—" : pctM(pt, 0)}</td>
+                      <td><b>{usdM(uni.v, 0)}</b></td>
+                      <td><b style={{ color: mcColorPct(pu) }}>{pu === null ? "—" : pctM(pu, 0)}</b></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <div style={{ fontSize: 11.5, color: MT.suave, marginTop: 8, lineHeight: 1.55 }}>El tipo se asigna igual en los dos canales (por la categoría del producto en la web o por su nombre), así se pueden comparar.</div>
+        </>
+      )}
       {Number(d.vendidos_sin_costo) > 0 && <AvisoFin>{d.vendidos_sin_costo} de los {d.vendidos_total} productos vendidos en este periodo no tienen costo cargado; no aparecen con margen. Quedan {d.activos_sin_costo} de {d.activos_total} productos activos sin costo. <button className="met-chip" style={{ padding: "2px 10px" }} onClick={() => irA("costos")}>Cargar costos</button></AvisoFin>}
-      <div className="met-sec">Margen por categoría</div>
+      <div className="met-sec">Margen por categoría de la web</div>
       <div className="met-card">
         {cats.length === 0 ? <div style={{ fontSize: 13, color: MT.texto2 }}>No hay ventas en este periodo.</div> : cats.map((c, i) => (
           <BarraH key={c.categoria} etiqueta={c.categoria} valor={Number(c.ingreso)} maximo={maxC} color={c.margen_pct === null || c.margen_pct === undefined ? MT.suave : MT.rojo}
@@ -6561,10 +6621,38 @@ function FinMargen({ desde, hasta, irA }) {
       </div>
       <div className="met-sec">Productos</div>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+        {c && <>{[["unificado", "Unificado"], ["web", "Web"], ["tienda", "Tienda física"]].map(([k, l]) => <button key={k} className={"met-chip" + (canal === k ? " on" : "")} onClick={() => setCanal(k)}>{l}</button>)}
+        <span style={{ width: 10 }} /></>}
         {[["ingreso", "Más vendidos"], ["margen", "Más ganancia"], ["margen_pct", "Menor margen %"]].map(([k, l]) => <button key={k} className={"met-chip" + (orden === k ? " on" : "")} onClick={() => setOrden(k)}>{l}</button>)}
         <span style={{ width: 10 }} />
         {[["todos", "Todos"], ["bajo", "Margen menor a 20%"], ["sin", "Sin costo"]].map(([k, l]) => <button key={k} className={"met-chip" + (solo === k ? " on" : "")} onClick={() => setSolo(k)}>{l}</button>)}
       </div>
+      {c ? (
+        <>
+          <div className="met-card" style={{ padding: 0, overflowX: "auto" }}>
+            <table className="met-tabla">
+              <thead><tr>{["Producto", "Tipo", "Piezas", "Ventas", "Costo", "Ganancia", "Margen"].map(h => <th key={h}>{h}</th>)}</tr></thead>
+              <tbody>
+                {filasC.length === 0 && <tr><td colSpan={7} style={{ padding: 18, color: MT.texto2 }}>Nada para mostrar con este filtro.</td></tr>}
+                {filasC.slice(0, 150).map(p => {
+                  const pc = mcPct(p.m); const sinCosto = !(Number(p.m.vcc) > 0);
+                  return (
+                    <tr key={p.k}>
+                      <td><b>{p.nombre}</b>{p.k && !String(p.k).startsWith("n:") ? <span style={{ color: MT.suave }}> · {p.k}</span> : null}</td>
+                      <td>{p.tipo}</td><td>{numM(Math.round(Number(p.m.u) || 0))}</td><td>{usdM(p.m.v, 0)}</td>
+                      <td>{sinCosto ? <span style={{ color: MT.suave }}>sin costo</span> : usdM(p.m.co, 0)}</td>
+                      <td>{sinCosto ? "—" : usdM(Number(p.m.vcc) - Number(p.m.co), 0)}</td>
+                      <td><b style={{ color: pc === null ? MT.suave : pc < 20 ? MT.malo : MT.bueno }}>{pc === null ? "—" : pctM(pc, 0)}</b></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          {filasC.length > 150 && <div style={{ fontSize: 12, color: MT.suave, marginTop: 8 }}>Se muestran los primeros 150 de {filasC.length}.</div>}
+          <div style={{ fontSize: 11.5, color: MT.suave, marginTop: 8, lineHeight: 1.55 }}>Los 400 productos con más ventas entre web y tienda. En “Unificado”, un mismo producto suma lo que vendió en los dos canales (se reconoce por su referencia). La ganancia de cada producto es sobre las ventas que tienen costo.</div>
+        </>
+      ) : (
       <div className="met-card" style={{ padding: 0, overflowX: "auto" }}>
         <table className="met-tabla">
           <thead><tr>{["Producto", "Categoría", "Piezas", "Ventas", "Costo", "Ganancia", "Margen"].map(h => <th key={h}>{h}</th>)}</tr></thead>
@@ -6582,7 +6670,8 @@ function FinMargen({ desde, hasta, irA }) {
           </tbody>
         </table>
       </div>
-      {filas.length > 150 && <div style={{ fontSize: 12, color: MT.suave, marginTop: 8 }}>Se muestran los primeros 150 de {filas.length}.</div>}
+      )}
+      {!c && filas.length > 150 && <div style={{ fontSize: 12, color: MT.suave, marginTop: 8 }}>Se muestran los primeros 150 de {filas.length}.</div>}
     </div>
   );
 }
