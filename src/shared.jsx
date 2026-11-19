@@ -927,22 +927,27 @@ export function destinosDeEnvio(pedidos, empresas, sucursales, localesRetiro) {
 // Ofertas de PRODUCTO vigentes (campaña activa y dentro de fechas) para un producto.
 // Sirve para que el vendedor vea y use el precio en promoción al armar pedidos a mano.
 export function ofertasVigentesDeProducto(campanaActiva, p) {
-  const c = campanaActiva?.campana;
-  if (!c || !p) return [];
+  // Puede haber 2 campañas activas a la vez (campanaActiva.campanas). Si solo hay una, funciona igual que siempre.
+  const camps = (campanaActiva?.campanas && campanaActiva.campanas.length) ? campanaActiva.campanas : (campanaActiva?.campana ? [campanaActiva.campana] : []);
+  if (!camps.length || !p) return [];
   const ahora = Date.now();
-  if ((c.fecha_fin && new Date(c.fecha_fin).getTime() <= ahora) || (c.fecha_inicio && new Date(c.fecha_inicio).getTime() > ahora)) return [];
-  return (campanaActiva.items || [])
-    .filter(o => o.activo !== false && o.tipo === "producto" && o.producto_id === p.id && Number(o.precio_oferta) > 0)
-    .map(o => {
-      const pres = o.presentacion || "pieza";
-      const manual = Number(o.precio_normal_manual);
-      return {
-        id: o.id, pres, precio: Number(o.precio_oferta),
-        normal: manual > 0 ? manual : presUnitPrice(p, pres),
-        limite: o.limite_por_pedido || null,
-        nombre: `${c.prefijo || ""} ${c.nombre || ""}`.trim() || "Oferta",
-      };
-    });
+  const out = [];
+  for (const c of camps) {
+    if ((c.fecha_fin && new Date(c.fecha_fin).getTime() <= ahora) || (c.fecha_inicio && new Date(c.fecha_inicio).getTime() > ahora)) continue;
+    (campanaActiva.items || [])
+      .filter(o => (camps.length === 1 || o.campana_id === c.id) && o.activo !== false && o.tipo === "producto" && o.producto_id === p.id && Number(o.precio_oferta) > 0)
+      .forEach(o => {
+        const pres = o.presentacion || "pieza";
+        const manual = Number(o.precio_normal_manual);
+        out.push({
+          id: o.id, pres, precio: Number(o.precio_oferta),
+          normal: manual > 0 ? manual : presUnitPrice(p, pres),
+          limite: o.limite_por_pedido || null,
+          nombre: `${c.prefijo || ""} ${c.nombre || ""}`.trim() || "Oferta",
+        });
+      });
+  }
+  return out;
 }
 
 export function ModalElegirPresentacion({ producto, onElegir, onCerrar, ofertas = [] }) {
