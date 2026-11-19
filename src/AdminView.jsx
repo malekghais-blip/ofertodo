@@ -3600,7 +3600,7 @@ function fechaCortaPanama(iso) {
 }
 
 function OfertasAdmin() {
-  const { products, showToast } = useApp();
+  const { products, categories, showToast } = useApp();
   const [campanas, setCampanas] = useState([]);
   const [items, setItems] = useState([]);       // ofertas de TODAS las campañas
   const [comboRows, setComboRows] = useState([]);
@@ -3611,6 +3611,8 @@ function OfertasAdmin() {
   const [guardando, setGuardando] = useState(false);
   const [subiendoImg, setSubiendoImg] = useState(false);
   const [busquedaProd, setBusquedaProd] = useState("");
+  const [catProd, setCatProd] = useState("");         // filtro por categoría al elegir producto de una oferta
+  const [soloFaltan, setSoloFaltan] = useState(false); // ocultar los productos que ya están en la campaña
   const [busquedaOferta, setBusquedaOferta] = useState(""); // buscador de la lista de ofertas de la campaña
   const imgRef = useRef(null);
   const portadaRef = useRef(null);
@@ -3900,12 +3902,77 @@ function OfertasAdmin() {
     );
   };
 
-  const productosFiltrados = (() => {
-    const q = busquedaProd.trim().toLowerCase();
-    const base = products.filter(p => p.activo !== false);
-    if (!q) return base.slice(0, 40);
-    return base.filter(p => `${p.nombre} ${p.referencia || ""}`.toLowerCase().includes(q)).slice(0, 40);
+  // Dónde está ya cada producto dentro de ESTA campaña (como oferta suelta o dentro de un combo).
+  // No cuenta la oferta que se está editando.
+  const presTxt = (p, pres) => pres === "pieza" ? "Pieza" : (p?.modalidad_presentacion === "perfumeria" ? (pres === "media" ? "3 piezas" : "6 piezas") : (pres === "media" ? "Media docena" : "Docena"));
+  const yaEnCampana = (() => {
+    const m = {};
+    const poner = (pid, x) => { (m[pid] = m[pid] || []).push(x); };
+    itemsSel.forEach(o => {
+      if (ofForm && ofForm.id === o.id) return;
+      const pausa = o.activo ? "" : " (pausada)";
+      if (o.tipo === "producto" && o.producto_id) poner(o.producto_id, `${o.seccion === "detal" ? "Detal" : "Mayor"} · ${presTxt(productosPorId[o.producto_id], o.presentacion)}${pausa}`);
+      else if (o.tipo === "combo") comboRows.filter(r => r.oferta_id === o.id).forEach(r => poner(r.producto_id, `Combo "${o.titulo || "sin nombre"}"${pausa}`));
+    });
+    return m;
   })();
+  const catNombre = (id) => (categories || []).find(c => c.id === id)?.nombre || "";
+  const productosActivos = products.filter(p => p.activo !== false);
+  const conteoCat = {};
+  productosActivos.forEach(p => { conteoCat[p.categoria_id] = (conteoCat[p.categoria_id] || 0) + 1; });
+  const categoriasConProductos = [...(categories || [])].filter(c => conteoCat[c.id]).sort((a, b) => String(a.nombre).localeCompare(String(b.nombre)));
+  const filtroProdActivo = !!(busquedaProd.trim() || catProd || soloFaltan);
+  const productosCoinciden = (() => {
+    const palabras = sinAcentos(busquedaProd).split(/\s+/).filter(Boolean);
+    return productosActivos.filter(p => {
+      if (catProd && String(p.categoria_id) !== String(catProd)) return false;
+      if (soloFaltan && yaEnCampana[p.id]) return false;
+      if (palabras.length === 0) return true;
+      const texto = sinAcentos(`${p.nombre} ${p.referencia || ""} ${catNombre(p.categoria_id)}`);
+      return palabras.every(w => texto.includes(w));
+    });
+  })();
+  const LIMITE_PROD = 60;
+  const productosFiltrados = productosCoinciden.slice(0, LIMITE_PROD);
+  // Barra de filtros + fila de producto (con foto y aviso "ya está en la campaña")
+  const filtrosProducto = (
+    <>
+      <input style={{ ...S.input, marginBottom: 6 }} placeholder="Buscar por nombre, referencia o categoría…" value={busquedaProd} onChange={e => setBusquedaProd(e.target.value)} />
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 6 }}>
+        <select style={{ ...S.input, marginBottom: 0, padding: "8px 10px", flex: "1 1 180px", minWidth: 0 }} value={catProd} onChange={e => setCatProd(e.target.value)}>
+          <option value="">Todas las categorías</option>
+          {categoriasConProductos.map(c => <option key={c.id} value={c.id}>{c.nombre} ({conteoCat[c.id]})</option>)}
+        </select>
+        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
+          <input type="checkbox" checked={soloFaltan} onChange={e => setSoloFaltan(e.target.checked)} /> Ocultar los ya agregados
+        </label>
+      </div>
+      <div style={{ fontSize: 11, color: GRAY3, marginBottom: 6 }}>
+        {productosCoinciden.length === 0 ? "Sin resultados" : `${productosCoinciden.length > LIMITE_PROD ? `Mostrando ${LIMITE_PROD} de ${productosCoinciden.length}: escribe o elige una categoría para acotar` : `${productosCoinciden.length} producto${productosCoinciden.length === 1 ? "" : "s"}`}`}
+        {filtroProdActivo && <button type="button" onClick={() => { setBusquedaProd(""); setCatProd(""); setSoloFaltan(false); }} style={{ marginLeft: 8, background: "none", border: "none", color: RED, fontWeight: 700, fontSize: 11, cursor: "pointer", padding: 0 }}>Limpiar filtros</button>}
+      </div>
+    </>
+  );
+  const filaProducto = (p, onClick, mas = false) => {
+    const ya = yaEnCampana[p.id];
+    return (
+      <div key={p.id} onClick={onClick} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", cursor: "pointer", borderBottom: `1px solid ${GRAY}`, fontSize: 13, background: ya ? "#F3FBF5" : "transparent" }}>
+        <div style={{ width: 42, height: 42, borderRadius: 6, background: GRAY, overflow: "hidden", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          {p.imagen_url ? <img src={imagenOptimizada(p.imagen_url, 150)} alt="" loading="lazy" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <Package size={18} color={GRAY3} />}
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{mas ? "+ " : ""}{p.nombre}</div>
+          <div style={{ color: GRAY3, fontSize: 11 }}>{p.referencia}{catNombre(p.categoria_id) ? ` · ${catNombre(p.categoria_id)}` : ""}</div>
+        </div>
+        {ya && (
+          <div title={ya.join(" | ")} style={{ flexShrink: 0, maxWidth: 150, textAlign: "right" }}>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 4, background: "#D4EDDA", color: "#155724", borderRadius: 999, padding: "2px 8px", fontSize: 11, fontWeight: 800 }}><CheckCircle2 size={12} /> Ya en la campaña</span>
+            <div style={{ fontSize: 10, color: "#155724", marginTop: 2, lineHeight: 1.2 }}>{ya.slice(0, 2).join(" · ")}{ya.length > 2 ? ` +${ya.length - 2}` : ""}</div>
+          </div>
+        )}
+      </div>
+    );
+  };
   const res = ofForm ? resumenForm(ofForm) : null;
   // Precios "de antes" que se pueden mostrar tachados: los de la web del producto
   const opcionesAntes = (() => {
@@ -4110,16 +4177,17 @@ function OfertasAdmin() {
                 {ofForm.producto_id ? (
                   <div style={{ display: "flex", alignItems: "center", gap: 10, border: `1.5px solid ${GRAY2}`, borderRadius: 8, padding: 8, marginBottom: 14 }}>
                     <div style={{ width: 40, height: 40, borderRadius: 6, background: GRAY, overflow: "hidden" }}>{productosPorId[ofForm.producto_id]?.imagen_url && <img src={productosPorId[ofForm.producto_id].imagen_url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />}</div>
-                    <div style={{ flex: 1, fontWeight: 700, fontSize: 13 }}>{productosPorId[ofForm.producto_id]?.nombre || "Producto"}</div>
+                    <div style={{ flex: 1, fontWeight: 700, fontSize: 13 }}>{productosPorId[ofForm.producto_id]?.nombre || "Producto"}
+                      {yaEnCampana[ofForm.producto_id] && <div style={{ fontSize: 11, color: "#8A4B00", fontWeight: 700, marginTop: 2 }}>⚠ Ya está en esta campaña: {yaEnCampana[ofForm.producto_id].join(" · ")}</div>}
+                    </div>
                     <button onClick={() => setOfForm({ ...ofForm, producto_id: null })} style={{ background: "none", border: "none", cursor: "pointer", color: RED, fontWeight: 700, fontSize: 12 }}>Cambiar</button>
                   </div>
                 ) : (
                   <div style={{ marginBottom: 14 }}>
-                    <input style={{ ...S.input, marginBottom: 6 }} placeholder="Buscar por nombre o referencia…" value={busquedaProd} onChange={e => setBusquedaProd(e.target.value)} />
-                    <div style={{ border: `1px solid ${GRAY2}`, borderRadius: 10, maxHeight: 200, overflowY: "auto" }}>
-                      {productosFiltrados.map(p => (
-                        <div key={p.id} onClick={() => setOfForm({ ...ofForm, producto_id: p.id })} style={{ padding: "8px 12px", cursor: "pointer", borderBottom: `1px solid ${GRAY}`, fontSize: 13 }}>{p.nombre} <span style={{ color: GRAY3, fontSize: 11 }}>{p.referencia}</span></div>
-                      ))}
+                    {filtrosProducto}
+                    <div style={{ border: `1px solid ${GRAY2}`, borderRadius: 10, maxHeight: 300, overflowY: "auto" }}>
+                      {productosFiltrados.map(p => filaProducto(p, () => setOfForm({ ...ofForm, producto_id: p.id })))}
+                      {productosFiltrados.length === 0 && <div style={{ padding: 16, textAlign: "center", color: GRAY3, fontSize: 12 }}>Ningún producto coincide.</div>}
                     </div>
                   </div>
                 )}
@@ -4137,17 +4205,17 @@ function OfertasAdmin() {
                 <label style={S.label}>Productos del combo ({ofForm.combo.length})</label>
                 {ofForm.combo.map((c, idx) => (
                   <div key={c.producto_id} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                    <div style={{ width: 34, height: 34, borderRadius: 6, background: GRAY, overflow: "hidden", flexShrink: 0 }}>{productosPorId[c.producto_id]?.imagen_url && <img src={imagenOptimizada(productosPorId[c.producto_id].imagen_url, 100)} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />}</div>
                     <div style={{ flex: 1, fontSize: 13, fontWeight: 700 }}>{productosPorId[c.producto_id]?.nombre || "Producto"}</div>
                     <input type="number" min="1" style={{ ...inputChico, width: 70 }} value={c.cantidad} onChange={e => setOfForm({ ...ofForm, combo: ofForm.combo.map((x, i) => i === idx ? { ...x, cantidad: e.target.value } : x) })} />
                     <span style={{ fontSize: 12, color: GRAY3 }}>pzs</span>
                     <button onClick={() => setOfForm({ ...ofForm, combo: ofForm.combo.filter((_, i) => i !== idx) })} style={{ background: "none", border: "none", cursor: "pointer", color: RED, display: "flex" }}><X size={16} /></button>
                   </div>
                 ))}
-                <input style={{ ...S.input, marginBottom: 6 }} placeholder="Buscar producto para agregar al combo…" value={busquedaProd} onChange={e => setBusquedaProd(e.target.value)} />
-                <div style={{ border: `1px solid ${GRAY2}`, borderRadius: 10, maxHeight: 160, overflowY: "auto", marginBottom: 14 }}>
-                  {productosFiltrados.filter(p => !ofForm.combo.some(c => c.producto_id === p.id)).map(p => (
-                    <div key={p.id} onClick={() => setOfForm({ ...ofForm, combo: [...ofForm.combo, { producto_id: p.id, cantidad: "1" }] })} style={{ padding: "8px 12px", cursor: "pointer", borderBottom: `1px solid ${GRAY}`, fontSize: 13 }}>+ {p.nombre} <span style={{ color: GRAY3, fontSize: 11 }}>{p.referencia}</span></div>
-                  ))}
+                {filtrosProducto}
+                <div style={{ border: `1px solid ${GRAY2}`, borderRadius: 10, maxHeight: 280, overflowY: "auto", marginBottom: 14 }}>
+                  {productosFiltrados.filter(p => !ofForm.combo.some(c => c.producto_id === p.id)).map(p => filaProducto(p, () => setOfForm({ ...ofForm, combo: [...ofForm.combo, { producto_id: p.id, cantidad: "1" }] }), true))}
+                  {productosFiltrados.length === 0 && <div style={{ padding: 16, textAlign: "center", color: GRAY3, fontSize: 12 }}>Ningún producto coincide.</div>}
                 </div>
                 <label style={S.label}>Descripción corta (opcional)</label>
                 <input style={S.input} value={ofForm.descripcion} onChange={e => setOfForm({ ...ofForm, descripcion: e.target.value })} placeholder="Todo lo que necesitas en un solo paquete" />
