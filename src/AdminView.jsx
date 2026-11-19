@@ -3580,7 +3580,7 @@ function ClientesDuplicadosPanel({ users, orders, abierto, setAbierto, onFusiona
 // ═══════════════════════════════════════════════════════════════
 //  OFERTAS — campañas ("Ofertas de Black Weekend"), ofertas de un producto
 //  y combos fijos, separados en sección Detal y sección Mayor.
-//  Solo UNA campaña puede estar activa a la vez (la base de datos lo exige).
+//  Pueden estar activas hasta 2 campañas a la vez (la tienda muestra las dos en grande).
 // ═══════════════════════════════════════════════════════════════
 
 // Fecha de un <input type="datetime-local"> <-> timestamp, siempre en hora de Panamá (UTC-5)
@@ -3613,6 +3613,8 @@ function OfertasAdmin() {
   const [busquedaProd, setBusquedaProd] = useState("");
   const [busquedaOferta, setBusquedaOferta] = useState(""); // buscador de la lista de ofertas de la campaña
   const imgRef = useRef(null);
+  const portadaRef = useRef(null);
+  const [subiendoPortada, setSubiendoPortada] = useState(false);
 
   const productosPorId = {};
   products.forEach(p => { productosPorId[p.id] = p; });
@@ -3670,15 +3672,15 @@ function OfertasAdmin() {
   };
 
   // ── Campañas ──
-  const nuevaCampana = () => setCampForm({ prefijo: "Ofertas de", nombre: "", subtitulo: "", color_principal: "#E31E24", color_secundario: "#111111", fecha_inicio: "", fecha_fin: "" });
-  const editarCampana = (c) => setCampForm({ id: c.id, prefijo: c.prefijo || "", nombre: c.nombre || "", subtitulo: c.subtitulo || "", color_principal: c.color_principal || "#E31E24", color_secundario: c.color_secundario || "#111111", fecha_inicio: aInputPanama(c.fecha_inicio), fecha_fin: aInputPanama(c.fecha_fin) });
+  const nuevaCampana = () => setCampForm({ prefijo: "Ofertas de", nombre: "", subtitulo: "", color_principal: "#E31E24", color_secundario: "#111111", fecha_inicio: "", fecha_fin: "", imagen_portada_url: "" });
+  const editarCampana = (c) => setCampForm({ id: c.id, prefijo: c.prefijo || "", nombre: c.nombre || "", subtitulo: c.subtitulo || "", color_principal: c.color_principal || "#E31E24", color_secundario: c.color_secundario || "#111111", fecha_inicio: aInputPanama(c.fecha_inicio), fecha_fin: aInputPanama(c.fecha_fin), imagen_portada_url: c.imagen_portada_url || "" });
   const guardarCampana = async () => {
     if (!campForm.nombre.trim()) { alert("Escribe el nombre de la campaña (ej. Black Weekend)."); return; }
     const ini = desdeInputPanama(campForm.fecha_inicio), fin = desdeInputPanama(campForm.fecha_fin);
     if (ini && fin && new Date(fin) <= new Date(ini)) { alert("La fecha de fin debe ser después de la de inicio."); return; }
     setGuardando(true);
     try {
-      const body = { prefijo: campForm.prefijo.trim(), nombre: campForm.nombre.trim(), subtitulo: campForm.subtitulo.trim() || null, color_principal: campForm.color_principal, color_secundario: campForm.color_secundario, fecha_inicio: ini, fecha_fin: fin };
+      const body = { prefijo: campForm.prefijo.trim(), nombre: campForm.nombre.trim(), subtitulo: campForm.subtitulo.trim() || null, color_principal: campForm.color_principal, color_secundario: campForm.color_secundario, fecha_inicio: ini, fecha_fin: fin, imagen_portada_url: campForm.imagen_portada_url || null };
       const actualC = campForm.id ? campanas.find(x => x.id === campForm.id) : null;
       if (actualC && (!fin || !actualC.fecha_fin || new Date(fin).getTime() !== new Date(actualC.fecha_fin).getTime())) body.fecha_fin_original = null; // cambiaste la fecha a mano: ya no es "extendida"
       if (campForm.id) await sb.patch("campanas_ofertas", campForm.id, body);
@@ -3695,11 +3697,18 @@ function OfertasAdmin() {
     try { return txt ? JSON.parse(txt) : null; } catch (e) { return null; } // activar_campana no devuelve nada
   };
   const activarCampana = async (c) => {
-    const hayOtra = campanas.find(x => x.activa && x.id !== c.id);
+    const otras = campanas.filter(x => x.activa && x.id !== c.id);
     const nItems = items.filter(i => i.campana_id === c.id && i.activo).length;
     if (nItems === 0 && !confirm("Esta campaña no tiene ofertas activas todavía. ¿Activarla de todas formas?")) return;
-    if (hayOtra && !confirm(`Solo puede haber una campaña activa. Se desactivará "${hayOtra.prefijo} ${hayOtra.nombre}". ¿Continuar?`)) return;
-    try { await rpc("activar_campana", { p_id: c.id }); showToast("Campaña activada: ya se ve en la tienda"); await cargar(); }
+    // Pueden estar activas 2 campañas a la vez: la tienda muestra las dos en grande.
+    let juntas = false;
+    if (otras.length >= 2) { alert(`Ya hay 2 campañas activas ("${otras[0].nombre}" y "${otras[1].nombre}"). Desactiva una primero.`); return; }
+    if (otras.length === 1) {
+      const o = otras[0];
+      if (confirm(`Ya está activa "${o.prefijo} ${o.nombre}".\n\n¿Activar esta campaña TAMBIÉN, para que las dos salgan juntas en grande en la tienda?\n\nAceptar = las dos juntas\nCancelar = otras opciones`)) juntas = true;
+      else if (!confirm(`¿Entonces reemplazar "${o.prefijo} ${o.nombre}" por esta? (quedaría una sola campaña activa)`)) return;
+    }
+    try { await rpc(juntas ? "activar_campana_junta" : "activar_campana", { p_id: c.id }); showToast(juntas ? "Campaña activada junto a la otra: la tienda muestra las dos" : "Campaña activada: ya se ve en la tienda"); await cargar(); }
     catch (e) { alert("No se pudo activar: " + e.message); }
   };
   const desactivarCampana = async (c) => {
@@ -3800,6 +3809,20 @@ function OfertasAdmin() {
       setOfForm(prev => ({ ...prev, imagen_url: `${sb.publicUrl("banners", path)}?t=${Date.now()}` }));
     } catch (err) { alert("Error subiendo la imagen: " + err.message); }
     setSubiendoImg(false);
+  };
+
+  const subirPortada = async (e) => {
+    const file = e.target.files[0]; e.target.value = "";
+    if (!file) return;
+    setSubiendoPortada(true);
+    try {
+      const fileComprimido = await comprimirImagen(file, 1800, 0.82);
+      const limpio = file.name.normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-zA-Z0-9.\-_]/g, "_").replace(/\.[^.]+$/, "") + ".jpg";
+      const path = `portadas/${Date.now()}_${limpio}`;
+      await sb.upload("banners", path, fileComprimido);
+      setCampForm(prev => ({ ...prev, imagen_portada_url: `${sb.publicUrl("banners", path)}?t=${Date.now()}` }));
+    } catch (err) { alert("Error subiendo la portada: " + err.message); }
+    setSubiendoPortada(false);
   };
 
   const money = (n) => "$" + Number(n).toFixed(2);
@@ -4034,6 +4057,18 @@ function OfertasAdmin() {
               <div><label style={S.label}>Color principal</label><input type="color" value={campForm.color_principal} onChange={e => setCampForm({ ...campForm, color_principal: e.target.value })} style={{ width: "100%", height: 40, border: `1.5px solid ${GRAY2}`, borderRadius: 8, marginBottom: 14, padding: 2 }} /></div>
               <div><label style={S.label}>Color de fondo</label><input type="color" value={campForm.color_secundario} onChange={e => setCampForm({ ...campForm, color_secundario: e.target.value })} style={{ width: "100%", height: 40, border: `1.5px solid ${GRAY2}`, borderRadius: 8, marginBottom: 14, padding: 2 }} /></div>
             </div>
+            <label style={S.label}>Imagen de portada (opcional)</label>
+            <div style={{ border: `1.5px dashed ${GRAY2}`, borderRadius: 12, padding: 10, marginBottom: 6, display: "flex", gap: 12, alignItems: "center" }}>
+              <div style={{ width: 132, height: 84, borderRadius: 10, background: campForm.color_secundario, overflow: "hidden", flexShrink: 0, position: "relative" }}>
+                {campForm.imagen_portada_url ? <img src={campForm.imagen_portada_url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", opacity: 0.55, fontSize: 11, fontWeight: 700, textAlign: "center", padding: 6 }}>Sin imagen: usa los colores</div>}
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-start" }}>
+                <input ref={portadaRef} type="file" accept="image/*" onChange={subirPortada} style={{ display: "none" }} />
+                <button onClick={() => portadaRef.current?.click()} disabled={subiendoPortada} className="oft-btn-press" style={{ ...S.btnOutline, padding: "8px 14px", fontSize: 13, display: "inline-flex", alignItems: "center", gap: 6 }}><Upload size={14} /> {subiendoPortada ? "Subiendo…" : campForm.imagen_portada_url ? "Cambiar imagen" : "Subir imagen"}</button>
+                {campForm.imagen_portada_url && <button onClick={() => setCampForm({ ...campForm, imagen_portada_url: "" })} style={{ background: "none", border: "none", cursor: "pointer", color: GRAY3, fontSize: 12, padding: 0 }}>Quitar imagen</button>}
+              </div>
+            </div>
+            <div style={{ fontSize: 12, color: GRAY3, marginBottom: 14 }}>Se ve de fondo en la portada de la campaña en la tienda. Mejor una foto horizontal (ej. 1600×1000) con lo importante en el centro; el texto de la campaña se escribe encima.</div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
               <div><label style={S.label}>Empieza (hora de Panamá)</label><input type="datetime-local" style={S.input} value={campForm.fecha_inicio} onChange={e => setCampForm({ ...campForm, fecha_inicio: e.target.value })} /></div>
               <div><label style={S.label}>Termina</label><input type="datetime-local" style={S.input} value={campForm.fecha_fin} onChange={e => setCampForm({ ...campForm, fecha_fin: e.target.value })} /></div>
