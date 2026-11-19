@@ -2117,7 +2117,7 @@ function aclararHex(hex, f = 0.55) {
 
 // Portada grande de una campaña (se usa cuando hay DOS campañas activas a la vez).
 // Foto de portada opcional: si no hay, se arma con los colores de la campaña.
-function PortadaCampana({ d, onVer }) {
+function PortadaCampana({ d, onVer, elegida = false, atenuada = false }) {
   const { c, todas, maxPct, t } = d;
   const A = c.color_principal || RED, B = c.color_secundario || BLACK;
   const pad = (n) => String(n).padStart(2, "0");
@@ -2132,7 +2132,7 @@ function PortadaCampana({ d, onVer }) {
   };
   const soltar = (e) => { const el = e.currentTarget; el.style.setProperty("--ry", "0deg"); el.style.setProperty("--rx", "0deg"); el.style.setProperty("--mx", "50%"); el.style.setProperty("--my", "40%"); };
   return (
-    <div role="button" tabIndex={0} className="oft-dx-card" onClick={onVer} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onVer(); } }} onPointerMove={mover} onPointerLeave={soltar}
+    <div role="button" tabIndex={0} className={"oft-dx-card" + (elegida ? " elegida" : "") + (atenuada ? " atenuada" : "")} onClick={onVer} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onVer(); } }} onPointerMove={mover} onPointerLeave={soltar}
       aria-label={`Ver ${c.prefijo || ""} ${c.nombre}`}
       style={{ "--oa": A, "--ob": B, "--oaL": aclararHex(A, 0.6), "--oa55": A + "55", "--oa99": A + "99", "--ob99": B + "99", "--obF2": B + "F2" }}>
       <div className="oft-dx-in">
@@ -2163,7 +2163,7 @@ function PortadaCampana({ d, onVer }) {
           ) : (
             <div className="oft-dx-time"><span className="oft-dx-time-l">Por tiempo limitado · hasta agotar existencias</span></div>
           )}
-          <span className="oft-dx-go">Ver las ofertas <ChevronDown size={18} /></span>
+          <span className="oft-dx-go">{elegida ? <>Estás viendo estas ofertas <CheckCircle2 size={18} /></> : <>Ver las ofertas <ChevronDown size={18} /></>}</span>
         </div>
       </div>
     </div>
@@ -2176,7 +2176,7 @@ function OfertasView() {
   const [seccion, setSeccion] = useState("todas");
   const [tipo, setTipo] = useState("todo");
   const [orden, setOrden] = useState("destacado");
-  const [campSel, setCampSel] = useState("todas"); // con dos campañas: "todas" o el id de una
+  const [campSel, setCampSel] = useState(null); // con dos campañas: null = solo las 2 portadas; o el id de la campaña elegida
   const [ahora, setAhora] = useState(Date.now());
   // En celular, la barra de búsqueda/filtros se esconde al bajar (para ver bien los productos) y reaparece al subir
   const [barOculta, setBarOculta] = useState(false);
@@ -2213,6 +2213,9 @@ function OfertasView() {
     })
     .filter(d => d.t.vigente);
   const dual = datos.length >= 2;
+  // Con dos campañas activas solo se ven las 2 portadas; las ofertas aparecen al elegir una.
+  const elegida = dual && campSel !== null && datos.some(d => String(d.c.id) === String(campSel)) ? datos.find(d => String(d.c.id) === String(campSel)) : null;
+  const soloPortadas = dual && !elegida;
 
   if (loading && !campanaActiva) return <Spinner />;
 
@@ -2248,7 +2251,7 @@ function OfertasView() {
   };
   // Cada campaña con sus ofertas ya filtradas/ordenadas
   const bloques = datos
-    .filter(d => !dual || campSel === "todas" || String(d.c.id) === String(campSel))
+    .filter(d => !dual || (elegida && d.c.id === elegida.c.id))
     .map(d => {
       const filtradas = d.todas.filter(i => coincide(i) && (tipo === "todo" || i.oferta.tipo === tipo));
       return {
@@ -2257,7 +2260,7 @@ function OfertasView() {
         mayor: ordenar(filtradas.filter(i => i.oferta.seccion === "mayor")),
       };
     });
-  const baseChips = dual && campSel !== "todas" ? (datos.find(d => String(d.c.id) === String(campSel))?.todas || []) : todasLasOfertas;
+  const baseChips = dual ? (elegida ? elegida.todas : []) : todasLasOfertas;
   const cntDetal = baseChips.filter(i => i.oferta.seccion === "detal").length;
   const cntMayor = baseChips.filter(i => i.oferta.seccion === "mayor").length;
   const hayDetal = (b) => seccion !== "mayor" && b.detal.length > 0;
@@ -2266,12 +2269,14 @@ function OfertasView() {
   const pad = (n) => String(n).padStart(2, "0");
 
   const verCampana = (id) => {
-    if (campSel !== "todas" && String(campSel) !== String(id)) setCampSel("todas");
+    setCampSel(id);
+    setSeccion("todas");
     setTimeout(() => {
-      const el = document.getElementById("oft-camp-" + id);
-      if (el) { const y = el.getBoundingClientRect().top + window.scrollY - 118; window.scrollTo({ top: y, behavior: "smooth" }); }
-    }, 60);
+      const el = document.getElementById("oft-barra-ofertas");
+      if (el) { const y = el.getBoundingClientRect().top + window.scrollY - 62; window.scrollTo({ top: y, behavior: "smooth" }); }
+    }, 80);
   };
+  const volverAPortadas = () => { setCampSel(null); setQ(""); setSeccion("todas"); setTipo("todo"); window.scrollTo({ top: 0, behavior: "smooth" }); };
 
   const seccionHtml = (titulo, sub, lista, clave, camp, vig) => (
     <div className="oft-of-seccion" key={clave}>
@@ -2385,6 +2390,10 @@ function OfertasView() {
         .oft-dx-hint { font-size: 14px; opacity: .72; }
         .oft-dx-grid { max-width: 1200px; margin: 0 auto; display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
         .oft-dx-card { --rx: 0deg; --ry: 0deg; --mx: 50%; --my: 40%; position: relative; display: block; width: 100%; text-align: left; font: inherit; color: #fff; cursor: pointer; padding: 2px; border: none; border-radius: 28px; background: linear-gradient(120deg, var(--oa), rgba(255,255,255,.12) 35%, var(--oa) 70%, rgba(255,255,255,.12)); background-size: 250% 100%; animation: ofShine 6s linear infinite, ofIn .7s both; transform: perspective(1000px) rotateX(var(--rx)) rotateY(var(--ry)); transition: transform .18s ease-out, box-shadow .3s; box-shadow: 0 18px 50px -12px var(--oa55); }
+        .oft-dx-card.atenuada { opacity: .6; filter: saturate(.7); }
+        .oft-dx-card.atenuada:hover { opacity: .95; filter: none; }
+        .oft-dx-card.elegida { box-shadow: 0 0 0 3px #fff, 0 26px 70px -10px var(--oa99); }
+        .oft-dx-card.elegida .oft-dx-go svg { animation: none; }
         .oft-dx-card:nth-child(2) { animation-delay: 0s, .12s; }
         .oft-dx-card:hover { box-shadow: 0 26px 70px -10px var(--oa99); }
         .oft-dx-card:focus-visible { outline: 3px solid #fff; outline-offset: 4px; }
@@ -2459,10 +2468,10 @@ function OfertasView() {
         <div className="oft-dx" style={{ "--g1": (datos[0].c.color_principal || RED) + "55", "--g2": (datos[1].c.color_principal || RED) + "55" }}>
           <div className="oft-dx-head">
             <span className="oft-dx-live"><i /> {datos.length} campañas activas ahora</span>
-            <span className="oft-dx-hint">Toca una campaña para ver sus ofertas</span>
+            <span className="oft-dx-hint">{elegida ? "Toca la otra campaña para cambiar" : "Toca una campaña para ver sus ofertas"}</span>
           </div>
           <div className="oft-dx-grid">
-            {datos.map(d => <PortadaCampana key={d.c.id} d={d} onVer={() => verCampana(d.c.id)} />)}
+            {datos.map(d => <PortadaCampana key={d.c.id} d={d} onVer={() => verCampana(d.c.id)} elegida={!!elegida && elegida.c.id === d.c.id} atenuada={!!elegida && elegida.c.id !== d.c.id} />)}
           </div>
         </div>
       ) : (
@@ -2498,7 +2507,10 @@ function OfertasView() {
         </div>
       )}
 
-      <div className={"oft-of-bar" + (barOculta ? " oculta" : "")}>
+      {soloPortadas ? (
+        <div style={{ textAlign: "center", fontSize: 12, color: GRAY3, padding: "22px 16px 70px" }}>Los precios de oferta no se combinan con códigos de descuento. Hasta agotar existencias.</div>
+      ) : (<>
+      <div id="oft-barra-ofertas" className={"oft-of-bar" + (barOculta ? " oculta" : "")}>
         <div className="oft-of-bar-in">
           <div className="oft-of-search">
             <Search size={18} className="ic" />
@@ -2507,11 +2519,11 @@ function OfertasView() {
           </div>
           {dual && (
             <>
-              <button className={"oft-of-chip" + (campSel === "todas" ? " on" : "")} onClick={() => setCampSel("todas")}>Las dos campañas</button>
+              <button className="oft-of-chip" onClick={volverAPortadas} title="Volver a las dos campañas">← Las dos campañas</button>
               {datos.map(d => (
-                <button key={d.c.id} className="oft-of-chip" onClick={() => setCampSel(String(campSel) === String(d.c.id) ? "todas" : d.c.id)}
-                  style={String(campSel) === String(d.c.id) ? { background: d.c.color_principal || RED, borderColor: d.c.color_principal || RED, color: "#fff", transform: "scale(1.04)" } : undefined}>
-                  <span className="dot" style={{ background: d.c.color_principal || RED }} />{d.c.nombre}
+                <button key={d.c.id} className="oft-of-chip" onClick={() => { setCampSel(d.c.id); setSeccion("todas"); }}
+                  style={elegida && elegida.c.id === d.c.id ? { background: d.c.color_principal || RED, borderColor: d.c.color_principal || RED, color: "#fff", transform: "scale(1.04)" } : undefined}>
+                  <span className="dot" style={{ background: elegida && elegida.c.id === d.c.id ? "#fff" : (d.c.color_principal || RED) }} />{d.c.nombre}
                 </button>
               ))}
             </>
@@ -2538,7 +2550,7 @@ function OfertasView() {
             <div style={{ fontWeight: 900, fontSize: 20, marginBottom: 6 }}>No encontramos ofertas{nq ? ` para "${q}"` : ""}</div>
             <p style={{ color: GRAY3, marginBottom: 18 }}>Prueba con otra palabra o quita los filtros.</p>
             <div style={{ display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap" }}>
-              <button className="oft-btn-press" style={{ ...S.btnRed, padding: "11px 22px", background: A }} onClick={() => { setQ(""); setSeccion("todas"); setTipo("todo"); setCampSel("todas"); }}>Ver todas las ofertas</button>
+              <button className="oft-btn-press" style={{ ...S.btnRed, padding: "11px 22px", background: A }} onClick={() => { setQ(""); setSeccion("todas"); setTipo("todo"); }}>Ver todas las ofertas</button>
               <button className="oft-btn-press" style={{ ...S.btnOutline, padding: "9px 20px" }} onClick={() => { setCatalogCat(0); setView("catalogo"); }}>Buscar en el catálogo</button>
             </div>
           </div>
@@ -2563,6 +2575,7 @@ function OfertasView() {
         )}
         <div style={{ textAlign: "center", fontSize: 12, color: GRAY3, marginTop: 10 }}>Los precios de oferta no se combinan con códigos de descuento. Hasta agotar existencias.</div>
       </div>
+      </>)}
     </div>
   );
 }
