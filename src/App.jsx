@@ -2094,12 +2094,89 @@ function OfertaCard({ info, delay, vigente, campana }) {
   );
 }
 
+// Tiempo de una campaña: cronómetro grande, y si tiene "tiempo extra", el cronómetro pequeño hacia el nuevo fin.
+// fecha_fin es el nuevo fin; fecha_fin_original es el fin normal. Al llegar el fin normal el cronómetro grande
+// queda en cero y se muestra "Oferta extendida".
+function tiempoCampana(c, ahora) {
+  const restante = c?.fecha_fin ? tiempoRestante(c.fecha_fin, ahora) : null;
+  const vigente = !!c && !(restante && restante.terminado);
+  const finNormal = (c?.fecha_fin_original && c?.fecha_fin && new Date(c.fecha_fin_original).getTime() < new Date(c.fecha_fin).getTime()) ? c.fecha_fin_original : null;
+  const enExtension = !!finNormal && ahora >= new Date(finNormal).getTime();
+  const tGrande = enExtension ? { d: 0, h: 0, m: 0, s: 0 } : (finNormal ? tiempoRestante(finNormal, ahora) : restante);
+  return { restante, vigente, finNormal, enExtension, tGrande };
+}
+
+// Mezcla un color #rrggbb con blanco (f = 0..1) para textos legibles sobre cualquier fondo de campaña.
+function aclararHex(hex, f = 0.55) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || "").trim());
+  if (!m) return "#ffffff";
+  const n = parseInt(m[1], 16), r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+  const mix = (v) => Math.round(v + (255 - v) * f).toString(16).padStart(2, "0");
+  return "#" + mix(r) + mix(g) + mix(b);
+}
+
+// Portada grande de una campaña (se usa cuando hay DOS campañas activas a la vez).
+// Foto de portada opcional: si no hay, se arma con los colores de la campaña.
+function PortadaCampana({ d, onVer }) {
+  const { c, todas, maxPct, t } = d;
+  const A = c.color_principal || RED, B = c.color_secundario || BLACK;
+  const pad = (n) => String(n).padStart(2, "0");
+  const mover = (e) => {
+    if (e.pointerType && e.pointerType !== "mouse") return;
+    const el = e.currentTarget, r = el.getBoundingClientRect();
+    const x = (e.clientX - r.left) / r.width - 0.5, y = (e.clientY - r.top) / r.height - 0.5;
+    el.style.setProperty("--ry", (x * 7).toFixed(2) + "deg");
+    el.style.setProperty("--rx", (-y * 5).toFixed(2) + "deg");
+    el.style.setProperty("--mx", ((x + 0.5) * 100).toFixed(1) + "%");
+    el.style.setProperty("--my", ((y + 0.5) * 100).toFixed(1) + "%");
+  };
+  const soltar = (e) => { const el = e.currentTarget; el.style.setProperty("--ry", "0deg"); el.style.setProperty("--rx", "0deg"); el.style.setProperty("--mx", "50%"); el.style.setProperty("--my", "40%"); };
+  return (
+    <div role="button" tabIndex={0} className="oft-dx-card" onClick={onVer} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onVer(); } }} onPointerMove={mover} onPointerLeave={soltar}
+      aria-label={`Ver ${c.prefijo || ""} ${c.nombre}`}
+      style={{ "--oa": A, "--ob": B, "--oaL": aclararHex(A, 0.6), "--oa55": A + "55", "--oa99": A + "99", "--ob99": B + "99", "--obF2": B + "F2" }}>
+      <div className="oft-dx-in">
+        {c.imagen_portada_url
+          ? <img className="oft-dx-cover" src={c.imagen_portada_url} alt="" loading="eager" />
+          : <div className="oft-dx-nocover"><i style={{ background: A }} /><i style={{ background: "#fff" }} /><i style={{ background: A }} /></div>}
+        <div className="oft-dx-fade" />
+        <div className="oft-dx-glare" />
+        <div className="oft-dx-body">
+          <div className="oft-dx-pre">{c.prefijo}</div>
+          <h2 className="oft-dx-name">{c.nombre}</h2>
+          {c.subtitulo && <p className="oft-dx-sub">{c.subtitulo}</p>}
+          <div className="oft-dx-chips">
+            <span className="oft-dx-chip">{todas.length} {todas.length === 1 ? "oferta" : "ofertas"}</span>
+            {maxPct > 0 && <span className="oft-dx-chip hot"><Sparkles size={13} /> Hasta {maxPct}% de descuento</span>}
+          </div>
+          {t.restante && !t.restante.terminado ? (
+            <div className="oft-dx-time">
+              <span className="oft-dx-time-l">{t.enExtension ? "Oferta extendida" : "Termina en"}</span>
+              <div className="oft-dx-cd">
+                {t.tGrande.d > 0 && <div><b>{pad(t.tGrande.d)}</b><small>días</small></div>}
+                <div><b>{pad(t.tGrande.h)}</b><small>horas</small></div>
+                <div><b>{pad(t.tGrande.m)}</b><small>min</small></div>
+                <div><b key={t.tGrande.s}>{pad(t.tGrande.s)}</b><small>seg</small></div>
+              </div>
+              {t.enExtension && <div className="oft-dx-ext">Quedan {t.restante.d > 0 ? `${t.restante.d}d ` : ""}{pad(t.restante.h)}:{pad(t.restante.m)}:{pad(t.restante.s)}</div>}
+            </div>
+          ) : (
+            <div className="oft-dx-time"><span className="oft-dx-time-l">Por tiempo limitado · hasta agotar existencias</span></div>
+          )}
+          <span className="oft-dx-go">Ver las ofertas <ChevronDown size={18} /></span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function OfertasView() {
   const { campanaActiva, products, cargarOfertas, setView, setCatalogCat, loading } = useApp();
   const [q, setQ] = useState("");
   const [seccion, setSeccion] = useState("todas");
   const [tipo, setTipo] = useState("todo");
   const [orden, setOrden] = useState("destacado");
+  const [campSel, setCampSel] = useState("todas"); // con dos campañas: "todas" o el id de una
   const [ahora, setAhora] = useState(Date.now());
   // En celular, la barra de búsqueda/filtros se esconde al bajar (para ver bien los productos) y reaparece al subir
   const [barOculta, setBarOculta] = useState(false);
@@ -2124,21 +2201,22 @@ function OfertasView() {
   }, []);
   useEffect(() => { const t = setInterval(() => setAhora(Date.now()), 1000); return () => clearInterval(t); }, []);
 
-  const c = campanaActiva?.campana;
   const productosPorId = {};
   products.forEach(p => { productosPorId[p.id] = p; });
-  const todas = (campanaActiva?.items || []).map(it => ofertaInfo(it, productosPorId, campanaActiva.combos)).filter(Boolean);
-  const restante = c?.fecha_fin ? tiempoRestante(c.fecha_fin, ahora) : null;
-  const vigente = !!c && !(restante && restante.terminado);
-  // Tiempo extra: fecha_fin es el nuevo fin; fecha_fin_original es el fin normal. Al llegar el fin normal el cronómetro grande queda en cero
-  // y se muestra "Oferta extendida" con un cronómetro pequeño hacia el nuevo fin.
-  const finNormal = (c?.fecha_fin_original && c?.fecha_fin && new Date(c.fecha_fin_original).getTime() < new Date(c.fecha_fin).getTime()) ? c.fecha_fin_original : null;
-  const enExtension = !!finNormal && ahora >= new Date(finNormal).getTime();
-  const tGrande = enExtension ? { d: 0, h: 0, m: 0, s: 0 } : (finNormal ? tiempoRestante(finNormal, ahora) : restante);
+  // Campañas activas (hasta 2). Con una sola, la página se ve como siempre.
+  const camps = (campanaActiva?.campanas && campanaActiva.campanas.length) ? campanaActiva.campanas : (campanaActiva?.campana ? [campanaActiva.campana] : []);
+  const itemsDe = (c) => (campanaActiva?.items || []).filter(it => camps.length === 1 || it.campana_id === c.id);
+  const datos = camps
+    .map(c => {
+      const todas = itemsDe(c).map(it => ofertaInfo(it, productosPorId, campanaActiva.combos)).filter(Boolean);
+      return { c, todas, maxPct: todas.reduce((m, i) => Math.max(m, i.pct), 0), t: tiempoCampana(c, ahora) };
+    })
+    .filter(d => d.t.vigente);
+  const dual = datos.length >= 2;
 
   if (loading && !campanaActiva) return <Spinner />;
 
-  if (!c || !vigente) {
+  if (datos.length === 0) {
     return (
       <div className="oft-section" style={{ ...S.section, textAlign: "center", padding: "80px 24px" }}>
         <Tag size={56} color={GRAY3} strokeWidth={1.3} style={{ margin: "0 auto 14px" }} />
@@ -2149,15 +2227,18 @@ function OfertasView() {
     );
   }
 
+  const prim = datos[0];
+  const c = prim.c;
   const A = c.color_principal || RED, B = c.color_secundario || BLACK;
-  const maxPct = todas.reduce((m, i) => Math.max(m, i.pct), 0);
+  const t1 = prim.t;
+  const maxPct = prim.maxPct;
+  const todasLasOfertas = datos.flatMap(d => d.todas);
   const nq = esc(q).trim();
   const coincide = (i) => {
     if (!nq) return true;
     const texto = esc([i.titulo, i.oferta.descripcion, i.oferta.etiqueta, ...i.lineas.flatMap(l => [l.product.nombre, l.product.referencia])].join(" "));
     return nq.split(/\s+/).every(w => texto.includes(w));
   };
-  const filtradas = todas.filter(i => coincide(i) && (tipo === "todo" || i.oferta.tipo === tipo));
   const ordenar = (arr) => {
     const a = [...arr];
     if (orden === "descuento") a.sort((x, y) => y.pct - x.pct);
@@ -2165,29 +2246,49 @@ function OfertasView() {
     else if (orden === "mayor") a.sort((x, y) => y.precioOferta - x.precioOferta);
     return agruparOfertasPorFlexPack(a);
   };
-  const detal = ordenar(filtradas.filter(i => i.oferta.seccion === "detal"));
-  const mayor = ordenar(filtradas.filter(i => i.oferta.seccion === "mayor"));
-  const cntDetal = todas.filter(i => i.oferta.seccion === "detal").length;
-  const cntMayor = todas.filter(i => i.oferta.seccion === "mayor").length;
-  const verDetal = seccion !== "mayor" && detal.length > 0;
-  const verMayor = seccion !== "detal" && mayor.length > 0;
-  const sinResultados = !verDetal && !verMayor;
+  // Cada campaña con sus ofertas ya filtradas/ordenadas
+  const bloques = datos
+    .filter(d => !dual || campSel === "todas" || String(d.c.id) === String(campSel))
+    .map(d => {
+      const filtradas = d.todas.filter(i => coincide(i) && (tipo === "todo" || i.oferta.tipo === tipo));
+      return {
+        ...d,
+        detal: ordenar(filtradas.filter(i => i.oferta.seccion === "detal")),
+        mayor: ordenar(filtradas.filter(i => i.oferta.seccion === "mayor")),
+      };
+    });
+  const baseChips = dual && campSel !== "todas" ? (datos.find(d => String(d.c.id) === String(campSel))?.todas || []) : todasLasOfertas;
+  const cntDetal = baseChips.filter(i => i.oferta.seccion === "detal").length;
+  const cntMayor = baseChips.filter(i => i.oferta.seccion === "mayor").length;
+  const hayDetal = (b) => seccion !== "mayor" && b.detal.length > 0;
+  const hayMayor = (b) => seccion !== "detal" && b.mayor.length > 0;
+  const sinResultados = !bloques.some(b => hayDetal(b) || hayMayor(b));
   const pad = (n) => String(n).padStart(2, "0");
 
-  const seccionHtml = (titulo, sub, lista, clave) => (
+  const verCampana = (id) => {
+    if (campSel !== "todas" && String(campSel) !== String(id)) setCampSel("todas");
+    setTimeout(() => {
+      const el = document.getElementById("oft-camp-" + id);
+      if (el) { const y = el.getBoundingClientRect().top + window.scrollY - 118; window.scrollTo({ top: y, behavior: "smooth" }); }
+    }, 60);
+  };
+
+  const seccionHtml = (titulo, sub, lista, clave, camp, vig) => (
     <div className="oft-of-seccion" key={clave}>
-      <div className="oft-of-sec-head"><span style={{ background: A }} />
+      <div className="oft-of-sec-head"><span style={{ background: "var(--oa)" }} />
         <div><h2>{titulo}</h2><p>{sub}</p></div>
         <em>{lista.length} {lista.length === 1 ? "oferta" : "ofertas"}</em>
       </div>
       <div className="oft-of-grid">
-        {lista.map((i, idx) => <OfertaCard key={i.oferta.id} info={i} delay={idx} vigente={vigente} campana={c} />)}
+        {lista.map((i, idx) => <OfertaCard key={i.oferta.id} info={i} delay={idx} vigente={vig} campana={camp} />)}
       </div>
     </div>
   );
 
+  const varsDe = (cc) => { const a = cc.color_principal || RED, b = cc.color_secundario || BLACK; return { "--oa": a, "--ob": b, "--oa22": a + "22", "--oa66": a + "66" }; };
+
   return (
-    <div className="oft-of-page">
+    <div className="oft-of-page" style={varsDe(c)}>
       <style>{`
         @keyframes ofShine { 0% { background-position: 0% 50%; } 100% { background-position: 200% 50%; } }
         @keyframes ofFloat { 0%,100% { transform: translateY(0) rotate(0deg); } 50% { transform: translateY(-14px) rotate(6deg); } }
@@ -2195,7 +2296,15 @@ function OfertasView() {
         @keyframes ofIn { from { opacity: 0; transform: translateY(22px) scale(0.97); } to { opacity: 1; transform: none; } }
         @keyframes ofTick { 0% { transform: translateY(-6px); opacity: 0.2; } 100% { transform: none; opacity: 1; } }
         @keyframes ofOk { 0% { transform: scale(0.9); } 50% { transform: scale(1.06); } 100% { transform: scale(1); } }
+        @keyframes ofKen { 0% { transform: scale(1.02); } 100% { transform: scale(1.12); } }
+        @keyframes ofBob { 0%,100% { transform: translateY(0); } 50% { transform: translateY(4px); } }
+        @keyframes ofGlow { 0%,100% { box-shadow: 0 0 0 0 var(--oa99); } 55% { box-shadow: 0 0 0 8px transparent; } }
+        @keyframes ofSweep { 0% { transform: translateX(-120%); } 100% { transform: translateX(120%); } }
         .oft-of-hero { position: relative; overflow: hidden; padding: 48px 20px 40px; text-align: center; color: #fff; }
+        .oft-of-hero > *:not(.blob):not(.oft-of-cover):not(.oft-of-coverfade) { position: relative; z-index: 2; }
+        .oft-of-hero.conportada { min-height: 380px; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+        .oft-of-cover { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; animation: ofKen 14s ease-in-out infinite alternate; }
+        .oft-of-coverfade { position: absolute; inset: 0; }
         .oft-of-hero .blob { position: absolute; border-radius: 50%; opacity: 0.18; animation: ofFloat 7s ease-in-out infinite; pointer-events: none; }
         .oft-of-pre { font-weight: 800; letter-spacing: 3px; text-transform: uppercase; font-size: 14px; opacity: 0.85; animation: ofIn .6s both; }
         .oft-of-name { font-weight: 900; font-size: clamp(38px, 9vw, 84px); line-height: 1.02; margin: 6px 0 10px; background-size: 200% auto; -webkit-background-clip: text; background-clip: text; color: transparent; animation: ofShine 4s linear infinite, ofIn .7s .1s both; }
@@ -2207,7 +2316,7 @@ function OfertasView() {
         .oft-of-count .s b { animation: ofTick .5s ease both; }
         @keyframes ofDot { 0%,100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.35; transform: scale(0.7); } }
         .oft-of-ext { margin-top: 16px; display: flex; flex-direction: column; align-items: center; gap: 7px; animation: ofIn .6s both; }
-        .oft-of-ext .lbl { display: inline-flex; align-items: center; gap: 8px; padding: 6px 16px; border-radius: 30px; font-weight: 900; font-size: 14px; letter-spacing: .4px; background: ${A}; color: #fff; box-shadow: 0 4px 16px rgba(0,0,0,0.25); }
+        .oft-of-ext .lbl { display: inline-flex; align-items: center; gap: 8px; padding: 6px 16px; border-radius: 30px; font-weight: 900; font-size: 14px; letter-spacing: .4px; background: var(--oa); color: #fff; box-shadow: 0 4px 16px rgba(0,0,0,0.25); }
         .oft-of-ext .lbl i { width: 8px; height: 8px; border-radius: 50%; background: #fff; animation: ofDot 1.2s ease-in-out infinite; }
         .oft-of-ext .mini { font-size: 15px; font-weight: 800; font-variant-numeric: tabular-nums; background: rgba(255,255,255,0.14); border: 1px solid rgba(255,255,255,0.25); border-radius: 10px; padding: 3px 12px; }
         .oft-of-ext .mini small { font-weight: 600; opacity: 0.8; margin-right: 6px; font-size: 11px; }
@@ -2216,12 +2325,13 @@ function OfertasView() {
         .oft-of-bar-in { max-width: 1152px; margin: 0 auto; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
         .oft-of-search { flex: 1 1 260px; position: relative; }
         .oft-of-search input { width: 100%; border: 2px solid ${GRAY2}; border-radius: 30px; padding: 11px 40px 11px 42px; font-size: 15px; outline: none; transition: border-color .2s, box-shadow .2s; }
-        .oft-of-search input:focus { border-color: ${A}; box-shadow: 0 0 0 4px ${A}22; }
+        .oft-of-search input:focus { border-color: var(--oa); box-shadow: 0 0 0 4px var(--oa22); }
         .oft-of-search .ic { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: ${GRAY3}; }
         .oft-of-search .x { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); background: ${GRAY2}; border: none; width: 24px; height: 24px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; }
         .oft-of-chip { border: 2px solid ${GRAY2}; background: #fff; border-radius: 30px; padding: 8px 14px; font-weight: 700; font-size: 13px; cursor: pointer; transition: all .18s; white-space: nowrap; }
-        .oft-of-chip:hover { border-color: ${A}; }
-        .oft-of-chip.on { background: ${A}; border-color: ${A}; color: #fff; transform: scale(1.04); }
+        .oft-of-chip:hover { border-color: var(--oa); }
+        .oft-of-chip.on { background: var(--oa); border-color: var(--oa); color: #fff; transform: scale(1.04); }
+        .oft-of-chip .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 7px; vertical-align: 0; }
         .oft-of-sel { border: 2px solid ${GRAY2}; border-radius: 30px; padding: 8px 12px; font-size: 13px; font-weight: 700; background: #fff; }
         .oft-of-wrap { max-width: 1200px; margin: 0 auto; padding: 34px 24px 110px; }
         .oft-of-seccion { margin-bottom: 40px; }
@@ -2232,7 +2342,7 @@ function OfertasView() {
         .oft-of-sec-head em { margin-left: auto; font-style: normal; font-size: 12px; font-weight: 800; color: ${GRAY3}; }
         .oft-of-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 18px; }
         .oft-of-card { background: #fff; border: 1px solid ${GRAY2}; border-radius: 18px; overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 2px 10px rgba(0,0,0,0.05); animation: ofIn .55s cubic-bezier(.16,1,.3,1) both; transition: transform .25s, box-shadow .25s, border-color .25s; }
-        .oft-of-card:hover { transform: translateY(-6px); box-shadow: 0 14px 30px rgba(0,0,0,0.13); border-color: ${A}; }
+        .oft-of-card:hover { transform: translateY(-6px); box-shadow: 0 14px 30px rgba(0,0,0,0.13); border-color: var(--oa); }
         .oft-of-img { position: relative; aspect-ratio: 1 / 1; background: ${GRAY}; overflow: hidden; }
         .oft-of-img > img { width: 100%; height: 100%; object-fit: cover; transition: transform .5s; }
         .oft-of-card:hover .oft-of-img > img, .oft-of-card:hover .oft-of-collage img { transform: scale(1.07); }
@@ -2240,8 +2350,8 @@ function OfertasView() {
         .oft-of-collage { display: grid; width: 100%; height: 100%; gap: 2px; }
         .oft-of-collage.c2 { grid-template-columns: 1fr 1fr; } .oft-of-collage.c3 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; } .oft-of-collage.c3 img:first-child { grid-row: span 2; } .oft-of-collage.c4 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
         .oft-of-collage img { width: 100%; height: 100%; object-fit: cover; transition: transform .5s; min-height: 0; }
-        .oft-of-pct { position: absolute; top: 10px; right: 10px; background: ${A}; color: #fff; font-weight: 900; font-size: 15px; padding: 7px 11px; border-radius: 12px; animation: ofPulse 2.2s ease-in-out infinite; box-shadow: 0 4px 12px ${A}66; }
-        .oft-of-combo-tag { position: absolute; top: 10px; left: 10px; background: ${B}; color: #fff; font-weight: 800; font-size: 11px; padding: 5px 9px; border-radius: 8px; display: flex; align-items: center; gap: 4px; }
+        .oft-of-pct { position: absolute; top: 10px; right: 10px; background: var(--oa); color: #fff; font-weight: 900; font-size: 15px; padding: 7px 11px; border-radius: 12px; animation: ofPulse 2.2s ease-in-out infinite; box-shadow: 0 4px 12px var(--oa66); }
+        .oft-of-combo-tag { position: absolute; top: 10px; left: 10px; background: var(--ob); color: #fff; font-weight: 800; font-size: 11px; padding: 5px 9px; border-radius: 8px; display: flex; align-items: center; gap: 4px; }
         .oft-of-ribbon { position: absolute; bottom: 10px; left: 10px; background: #FFD43B; color: #111; font-weight: 900; font-size: 11px; padding: 4px 10px; border-radius: 8px; }
         .oft-of-agotado { position: absolute; inset: 0; background: rgba(255,255,255,0.7); display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 20px; letter-spacing: 2px; color: #333; }
         .oft-of-body { padding: 14px; display: flex; flex-direction: column; gap: 6px; flex: 1; }
@@ -2250,7 +2360,7 @@ function OfertasView() {
         .oft-of-linea { font-size: 12.5px; line-height: 1.5; }
         .oft-of-prices { display: flex; align-items: baseline; gap: 10px; margin-top: auto; padding-top: 4px; flex-wrap: wrap; }
         .oft-of-old { text-decoration: line-through; color: ${GRAY3}; font-size: 15px; font-weight: 600; }
-        .oft-of-new { color: ${A}; font-weight: 900; font-size: 28px; line-height: 1; }
+        .oft-of-new { color: var(--oa); font-weight: 900; font-size: 28px; line-height: 1; }
         .oft-of-save { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 800; color: #0A7D3B; background: #E3F7EA; border-radius: 8px; padding: 3px 9px; align-self: flex-start; }
         .oft-of-last { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 800; color: #B45309; }
         .oft-of-actions { display: flex; gap: 8px; margin-top: 6px; }
@@ -2258,17 +2368,79 @@ function OfertasView() {
         .oft-of-stepper button { width: 34px; height: 100%; min-height: 42px; border: none; background: ${GRAY}; font-size: 18px; font-weight: 800; cursor: pointer; }
         .oft-of-stepper button:disabled { opacity: 0.35; cursor: default; }
         .oft-of-stepper span { min-width: 30px; text-align: center; font-weight: 900; }
-        .oft-of-add { flex: 1; border: none; border-radius: 12px; background: ${A}; color: #fff; font-weight: 800; font-size: 14px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px; min-height: 42px; transition: background .2s, transform .15s; }
+        .oft-of-add { flex: 1; border: none; border-radius: 12px; background: var(--oa); color: #fff; font-weight: 800; font-size: 14px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px; min-height: 42px; transition: background .2s, transform .15s; }
         .oft-of-add:hover:not(:disabled) { filter: brightness(1.08); }
         .oft-of-add.oft-of-wa { background: #25D366; }
         .oft-of-variantes { border-top: 1px dashed #E0E0E0; padding-top: 8px; margin-top: 2px; }
         .oft-of-add.ok { background: #0A9D4F; animation: ofOk .4s ease; }
         .oft-of-add:disabled { background: ${GRAY2}; color: ${GRAY3}; cursor: default; }
+
+        /* ── DOS CAMPAÑAS ACTIVAS: portadas grandes ── */
+        .oft-dx { position: relative; overflow: hidden; background: #08080d; color: #fff; padding: 40px 20px 52px; isolation: isolate; }
+        .oft-dx::before { content: ""; position: absolute; inset: 0; z-index: -2; background: radial-gradient(55% 60% at 12% 0%, var(--g1) 0%, transparent 70%), radial-gradient(55% 60% at 92% 8%, var(--g2) 0%, transparent 70%); }
+        .oft-dx::after { content: ""; position: absolute; inset: 0; z-index: -1; opacity: .5; background-image: linear-gradient(rgba(255,255,255,.05) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.05) 1px, transparent 1px); background-size: 44px 44px; -webkit-mask-image: radial-gradient(70% 80% at 50% 30%, #000 20%, transparent 80%); mask-image: radial-gradient(70% 80% at 50% 30%, #000 20%, transparent 80%); }
+        .oft-dx-head { max-width: 1200px; margin: 0 auto 26px; display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; animation: ofIn .6s both; }
+        .oft-dx-live { display: inline-flex; align-items: center; gap: 9px; padding: 7px 16px; border-radius: 30px; font-weight: 800; font-size: 13px; background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.18); backdrop-filter: blur(6px); }
+        .oft-dx-live i { width: 8px; height: 8px; border-radius: 50%; background: #3DF08C; box-shadow: 0 0 10px #3DF08C; animation: ofDot 1.3s ease-in-out infinite; }
+        .oft-dx-hint { font-size: 14px; opacity: .72; }
+        .oft-dx-grid { max-width: 1200px; margin: 0 auto; display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
+        .oft-dx-card { --rx: 0deg; --ry: 0deg; --mx: 50%; --my: 40%; position: relative; display: block; width: 100%; text-align: left; font: inherit; color: #fff; cursor: pointer; padding: 2px; border: none; border-radius: 28px; background: linear-gradient(120deg, var(--oa), rgba(255,255,255,.12) 35%, var(--oa) 70%, rgba(255,255,255,.12)); background-size: 250% 100%; animation: ofShine 6s linear infinite, ofIn .7s both; transform: perspective(1000px) rotateX(var(--rx)) rotateY(var(--ry)); transition: transform .18s ease-out, box-shadow .3s; box-shadow: 0 18px 50px -12px var(--oa55); }
+        .oft-dx-card:nth-child(2) { animation-delay: 0s, .12s; }
+        .oft-dx-card:hover { box-shadow: 0 26px 70px -10px var(--oa99); }
+        .oft-dx-card:focus-visible { outline: 3px solid #fff; outline-offset: 4px; }
+        .oft-dx-in { position: relative; overflow: hidden; border-radius: 26px; min-height: 470px; background: var(--ob); display: flex; }
+        .oft-dx-cover { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; animation: ofKen 16s ease-in-out infinite alternate; }
+        .oft-dx-nocover { position: absolute; inset: 0; background: linear-gradient(145deg, var(--ob) 0%, var(--ob) 45%, var(--oa55) 100%); overflow: hidden; }
+        .oft-dx-nocover i { position: absolute; border-radius: 50%; opacity: .22; animation: ofFloat 8s ease-in-out infinite; }
+        .oft-dx-nocover i:nth-child(1) { width: 260px; height: 260px; top: -80px; right: -60px; }
+        .oft-dx-nocover i:nth-child(2) { width: 120px; height: 120px; top: 40%; left: 8%; animation-delay: 2s; opacity: .12; }
+        .oft-dx-nocover i:nth-child(3) { width: 180px; height: 180px; bottom: 18%; right: 10%; animation-delay: 4s; }
+        .oft-dx-fade { position: absolute; inset: 0; background: linear-gradient(to top, var(--obF2) 0%, var(--ob99) 48%, transparent 100%); }
+        .oft-dx-glare { position: absolute; inset: 0; pointer-events: none; background: radial-gradient(420px circle at var(--mx) var(--my), rgba(255,255,255,.16), transparent 60%); mix-blend-mode: soft-light; opacity: 0; transition: opacity .25s; }
+        .oft-dx-card:hover .oft-dx-glare { opacity: 1; }
+        .oft-dx-in::after { content: ""; position: absolute; top: 0; bottom: 0; width: 40%; left: 0; background: linear-gradient(100deg, transparent, rgba(255,255,255,.10), transparent); animation: ofSweep 5.5s ease-in-out infinite; pointer-events: none; }
+        .oft-dx-body { position: relative; z-index: 2; margin-top: auto; padding: 30px 28px 28px; width: 100%; display: flex; flex-direction: column; gap: 10px; }
+        .oft-dx-pre { font-weight: 800; letter-spacing: 3px; text-transform: uppercase; font-size: 13px; opacity: .85; }
+        .oft-dx-name { margin: 0; font-weight: 900; font-size: clamp(40px, 5.2vw, 68px); line-height: 1; letter-spacing: -1px; background: linear-gradient(90deg, #fff, var(--oaL), #fff, var(--oaL)); background-size: 200% auto; -webkit-background-clip: text; background-clip: text; color: transparent; animation: ofShine 5s linear infinite; filter: drop-shadow(0 2px 14px rgba(0,0,0,.38)); }
+        .oft-dx-sub { margin: 0; font-size: 15px; line-height: 1.45; opacity: .92; max-width: 46ch; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+        .oft-dx-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 2px; }
+        .oft-dx-chip { display: inline-flex; align-items: center; gap: 6px; padding: 6px 13px; border-radius: 30px; font-weight: 800; font-size: 13px; background: rgba(255,255,255,.14); border: 1px solid rgba(255,255,255,.26); backdrop-filter: blur(6px); }
+        .oft-dx-chip.hot { background: var(--oa); border-color: transparent; animation: ofGlow 2.2s ease-out infinite; }
+        .oft-dx-time { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
+        .oft-dx-time-l { font-size: 12.5px; font-weight: 700; opacity: .8; }
+        .oft-dx-cd { display: flex; gap: 8px; }
+        .oft-dx-cd div { min-width: 58px; text-align: center; padding: 7px 6px; border-radius: 12px; background: rgba(0,0,0,.38); border: 1px solid rgba(255,255,255,.2); backdrop-filter: blur(6px); }
+        .oft-dx-cd b { display: block; font-size: 24px; font-weight: 900; line-height: 1.1; font-variant-numeric: tabular-nums; animation: ofTick .5s ease both; }
+        .oft-dx-cd small { font-size: 10px; letter-spacing: 1px; text-transform: uppercase; opacity: .72; }
+        .oft-dx-ext { font-size: 13px; font-weight: 800; font-variant-numeric: tabular-nums; opacity: .9; }
+        .oft-dx-go { box-sizing: border-box; align-self: flex-start; margin-top: 10px; display: inline-flex; align-items: center; gap: 8px; padding: 12px 22px; border-radius: 30px; background: #fff; color: var(--ob); font-weight: 900; font-size: 15px; transition: transform .2s, box-shadow .2s; box-shadow: 0 6px 22px rgba(0,0,0,.35); }
+        .oft-dx-go svg { color: var(--oa); animation: ofBob 1.6s ease-in-out infinite; }
+        .oft-dx-card:hover .oft-dx-go { transform: translateY(-2px); box-shadow: 0 10px 28px rgba(0,0,0,.45); }
+
+        /* ── Cabecera de cada campaña en la lista ── */
+        .oft-of-camp { scroll-margin-top: 120px; margin-bottom: 14px; }
+        .oft-of-camphead { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; border-radius: 20px; padding: 18px 22px; margin-bottom: 26px; color: #fff; background: linear-gradient(120deg, var(--ob) 0%, var(--ob) 55%, var(--oa66) 100%); position: relative; overflow: hidden; }
+        .oft-of-camphead::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 6px; background: var(--oa); box-shadow: 0 0 18px var(--oa); }
+        .oft-of-camphead h2 { margin: 0; font-size: 28px; font-weight: 900; line-height: 1.1; }
+        .oft-of-camphead h2 small { display: block; font-size: 12px; font-weight: 800; letter-spacing: 2px; text-transform: uppercase; opacity: .75; margin-bottom: 3px; }
+        .oft-of-camphead .cnt { margin-left: auto; font-weight: 800; font-size: 13px; padding: 6px 14px; border-radius: 30px; background: rgba(255,255,255,.14); border: 1px solid rgba(255,255,255,.24); white-space: nowrap; }
+        .oft-of-camphead .cnt b { font-variant-numeric: tabular-nums; }
+
+        @media (max-width: 900px) {
+          .oft-dx-grid { grid-template-columns: 1fr; gap: 18px; }
+          .oft-dx-in { min-height: 400px; }
+        }
         @media (max-width: 768px) {
           .oft-of-bar { transition: transform .28s ease, box-shadow .28s; }
           .oft-of-bar.oculta { transform: translateY(-110%); box-shadow: none; }
         }
         @media (max-width: 520px) {
+          .oft-dx { padding: 28px 14px 36px; }
+          .oft-dx-body { padding: 22px 18px 20px; }
+          .oft-dx-in { min-height: 380px; }
+          .oft-dx-cd div { min-width: 50px; } .oft-dx-cd b { font-size: 20px; }
+          .oft-dx-go { width: 100%; justify-content: center; }
+          .oft-of-camphead { padding: 14px 16px; } .oft-of-camphead h2 { font-size: 22px; }
           .oft-of-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
           .oft-of-count b { font-size: 22px; } .oft-of-count div { min-width: 54px; }
           .oft-of-body { padding: 10px; }
@@ -2280,35 +2452,51 @@ function OfertasView() {
           .oft-of-wrap { padding: 26px 16px 100px; }
           .oft-of-sec-head h2 { font-size: 21px; } .oft-of-sec-head > span { height: 36px !important; }
         }
-        @media (prefers-reduced-motion: reduce) { .oft-of-page * { animation: none !important; transition: none !important; } }
+        @media (prefers-reduced-motion: reduce) { .oft-of-page * { animation: none !important; transition: none !important; } .oft-dx-card { transform: none !important; } }
       `}</style>
 
-      <div className="oft-of-hero" style={{ background: `linear-gradient(135deg, ${B} 0%, ${B} 55%, ${A}55 100%)` }}>
-        <div className="blob" style={{ width: 220, height: 220, background: A, top: -60, left: -50 }} />
-        <div className="blob" style={{ width: 150, height: 150, background: A, bottom: -40, right: "8%", animationDelay: "1.5s" }} />
-        <div className="blob" style={{ width: 90, height: 90, background: "#fff", top: 30, right: "22%", animationDelay: "3s" }} />
-        <div className="oft-of-pre">{c.prefijo}</div>
-        <h1 className="oft-of-name" style={{ backgroundImage: `linear-gradient(90deg, #fff, ${A}, #fff, ${A})` }}>{c.nombre}</h1>
-        {c.subtitulo && <div className="oft-of-sub">{c.subtitulo}</div>}
-        {restante && !restante.terminado && (
-          <div style={{ display: "block" }}>
-            <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: 2, marginTop: 20, opacity: 0.8 }}>{enExtension ? "TIEMPO NORMAL" : "TERMINA EN"}</div>
-            <div className="oft-of-count" style={{ marginTop: 8 }}>
-              {tGrande.d > 0 && <div><b>{pad(tGrande.d)}</b><small>días</small></div>}
-              <div><b>{pad(tGrande.h)}</b><small>horas</small></div>
-              <div><b>{pad(tGrande.m)}</b><small>min</small></div>
-              <div className="s"><b key={tGrande.s}>{pad(tGrande.s)}</b><small>seg</small></div>
-            </div>
-            {enExtension && (
-              <div className="oft-of-ext">
-                <span className="lbl"><i />Oferta extendida</span>
-                <span className="mini"><small>Quedan</small>{restante.d > 0 ? `${restante.d}d ` : ""}{pad(restante.h)}:{pad(restante.m)}:{pad(restante.s)}</span>
-              </div>
-            )}
+      {dual ? (
+        <div className="oft-dx" style={{ "--g1": (datos[0].c.color_principal || RED) + "55", "--g2": (datos[1].c.color_principal || RED) + "55" }}>
+          <div className="oft-dx-head">
+            <span className="oft-dx-live"><i /> {datos.length} campañas activas ahora</span>
+            <span className="oft-dx-hint">Toca una campaña para ver sus ofertas</span>
           </div>
-        )}
-        {maxPct > 0 && <div><span className="oft-of-maxpct" style={{ background: A }}>Hasta {maxPct}% de descuento</span></div>}
-      </div>
+          <div className="oft-dx-grid">
+            {datos.map(d => <PortadaCampana key={d.c.id} d={d} onVer={() => verCampana(d.c.id)} />)}
+          </div>
+        </div>
+      ) : (
+        <div className={"oft-of-hero" + (c.imagen_portada_url ? " conportada" : "")} style={{ background: `linear-gradient(135deg, ${B} 0%, ${B} 55%, ${A}55 100%)` }}>
+          {c.imagen_portada_url && <>
+            <img className="oft-of-cover" src={c.imagen_portada_url} alt="" loading="eager" />
+            <div className="oft-of-coverfade" style={{ background: `linear-gradient(to top, ${B}F0 0%, ${B}AA 55%, ${B}66 100%)` }} />
+          </>}
+          <div className="blob" style={{ width: 220, height: 220, background: A, top: -60, left: -50 }} />
+          <div className="blob" style={{ width: 150, height: 150, background: A, bottom: -40, right: "8%", animationDelay: "1.5s" }} />
+          <div className="blob" style={{ width: 90, height: 90, background: "#fff", top: 30, right: "22%", animationDelay: "3s" }} />
+          <div className="oft-of-pre">{c.prefijo}</div>
+          <h1 className="oft-of-name" style={{ backgroundImage: `linear-gradient(90deg, #fff, ${A}, #fff, ${A})` }}>{c.nombre}</h1>
+          {c.subtitulo && <div className="oft-of-sub">{c.subtitulo}</div>}
+          {t1.restante && !t1.restante.terminado && (
+            <div style={{ display: "block" }}>
+              <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: 2, marginTop: 20, opacity: 0.8 }}>{t1.enExtension ? "TIEMPO NORMAL" : "TERMINA EN"}</div>
+              <div className="oft-of-count" style={{ marginTop: 8 }}>
+                {t1.tGrande.d > 0 && <div><b>{pad(t1.tGrande.d)}</b><small>días</small></div>}
+                <div><b>{pad(t1.tGrande.h)}</b><small>horas</small></div>
+                <div><b>{pad(t1.tGrande.m)}</b><small>min</small></div>
+                <div className="s"><b key={t1.tGrande.s}>{pad(t1.tGrande.s)}</b><small>seg</small></div>
+              </div>
+              {t1.enExtension && (
+                <div className="oft-of-ext">
+                  <span className="lbl"><i />Oferta extendida</span>
+                  <span className="mini"><small>Quedan</small>{t1.restante.d > 0 ? `${t1.restante.d}d ` : ""}{pad(t1.restante.h)}:{pad(t1.restante.m)}:{pad(t1.restante.s)}</span>
+                </div>
+              )}
+            </div>
+          )}
+          {maxPct > 0 && <div><span className="oft-of-maxpct" style={{ background: A }}>Hasta {maxPct}% de descuento</span></div>}
+        </div>
+      )}
 
       <div className={"oft-of-bar" + (barOculta ? " oculta" : "")}>
         <div className="oft-of-bar-in">
@@ -2317,7 +2505,18 @@ function OfertasView() {
             <input value={q} onChange={e => setQ(e.target.value)} placeholder="Buscar una oferta: bolsos, combo, perfume…" aria-label="Buscar ofertas" />
             {q && <button className="x" onClick={() => setQ("")} aria-label="Borrar búsqueda"><X size={14} /></button>}
           </div>
-          <button className={"oft-of-chip" + (seccion === "todas" ? " on" : "")} onClick={() => setSeccion("todas")}>Todas ({todas.length})</button>
+          {dual && (
+            <>
+              <button className={"oft-of-chip" + (campSel === "todas" ? " on" : "")} onClick={() => setCampSel("todas")}>Las dos campañas</button>
+              {datos.map(d => (
+                <button key={d.c.id} className="oft-of-chip" onClick={() => setCampSel(String(campSel) === String(d.c.id) ? "todas" : d.c.id)}
+                  style={String(campSel) === String(d.c.id) ? { background: d.c.color_principal || RED, borderColor: d.c.color_principal || RED, color: "#fff", transform: "scale(1.04)" } : undefined}>
+                  <span className="dot" style={{ background: d.c.color_principal || RED }} />{d.c.nombre}
+                </button>
+              ))}
+            </>
+          )}
+          <button className={"oft-of-chip" + (seccion === "todas" ? " on" : "")} onClick={() => setSeccion("todas")}>Todas ({baseChips.length})</button>
           {cntDetal > 0 && <button className={"oft-of-chip" + (seccion === "detal" ? " on" : "")} onClick={() => setSeccion("detal")}>Al detal ({cntDetal})</button>}
           {cntMayor > 0 && <button className={"oft-of-chip" + (seccion === "mayor" ? " on" : "")} onClick={() => setSeccion("mayor")}>Al mayor ({cntMayor})</button>}
           <button className={"oft-of-chip" + (tipo === "combo" ? " on" : "")} onClick={() => setTipo(tipo === "combo" ? "todo" : "combo")}>Solo combos</button>
@@ -2331,7 +2530,7 @@ function OfertasView() {
       </div>
 
       <div className="oft-of-wrap">
-        {todas.length === 0 ? (
+        {todasLasOfertas.length === 0 ? (
           <div style={{ textAlign: "center", padding: "60px 0", color: GRAY3 }}>Estamos cargando las ofertas de la campaña…</div>
         ) : sinResultados ? (
           <div style={{ textAlign: "center", padding: "60px 16px" }}>
@@ -2339,15 +2538,28 @@ function OfertasView() {
             <div style={{ fontWeight: 900, fontSize: 20, marginBottom: 6 }}>No encontramos ofertas{nq ? ` para "${q}"` : ""}</div>
             <p style={{ color: GRAY3, marginBottom: 18 }}>Prueba con otra palabra o quita los filtros.</p>
             <div style={{ display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap" }}>
-              <button className="oft-btn-press" style={{ ...S.btnRed, padding: "11px 22px", background: A }} onClick={() => { setQ(""); setSeccion("todas"); setTipo("todo"); }}>Ver todas las ofertas</button>
+              <button className="oft-btn-press" style={{ ...S.btnRed, padding: "11px 22px", background: A }} onClick={() => { setQ(""); setSeccion("todas"); setTipo("todo"); setCampSel("todas"); }}>Ver todas las ofertas</button>
               <button className="oft-btn-press" style={{ ...S.btnOutline, padding: "9px 20px" }} onClick={() => { setCatalogCat(0); setView("catalogo"); }}>Buscar en el catálogo</button>
             </div>
           </div>
         ) : (
-          <>
-            {verDetal && seccionHtml("Ofertas al detal", "Para llevar pocas piezas a precio especial", detal, "detal")}
-            {verMayor && seccionHtml("Ofertas al mayor", "Docenas, medias docenas y combos de volumen", mayor, "mayor")}
-          </>
+          bloques.map(b => {
+            const mostrarDetal = hayDetal(b), mostrarMayor = hayMayor(b);
+            if (!mostrarDetal && !mostrarMayor) return null;
+            const t = b.t;
+            return (
+              <section key={b.c.id} id={"oft-camp-" + b.c.id} className="oft-of-camp" style={varsDe(b.c)}>
+                {dual && (
+                  <div className="oft-of-camphead">
+                    <h2><small>{b.c.prefijo}</small>{b.c.nombre}</h2>
+                    <span className="cnt"><b>{b.todas.length}</b> {b.todas.length === 1 ? "oferta" : "ofertas"}{t.restante && !t.restante.terminado ? <> · termina en <b>{t.tGrande.d > 0 ? `${t.tGrande.d}d ` : ""}{pad(t.tGrande.h)}:{pad(t.tGrande.m)}:{pad(t.tGrande.s)}</b></> : null}</span>
+                  </div>
+                )}
+                {mostrarDetal && seccionHtml("Ofertas al detal", "Para llevar pocas piezas a precio especial", b.detal, "detal-" + b.c.id, b.c, b.t.vigente)}
+                {mostrarMayor && seccionHtml("Ofertas al mayor", "Docenas, medias docenas y combos de volumen", b.mayor, "mayor-" + b.c.id, b.c, b.t.vigente)}
+              </section>
+            );
+          })
         )}
         <div style={{ textAlign: "center", fontSize: 12, color: GRAY3, marginTop: 10 }}>Los precios de oferta no se combinan con códigos de descuento. Hasta agotar existencias.</div>
       </div>
@@ -3040,14 +3252,23 @@ export default function App() {
   const [campanaActiva, setCampanaActiva] = useState(null); // { campana, items, combos } | null
   const cargarOfertas = async () => {
     try {
-      const cs = await sb.get("campanas_ofertas", "?activa=eq.true&limit=1");
-      const c = cs && cs[0];
+      // Pueden estar activas hasta 2 campañas a la vez (ej. Black Month + Día de la Madre).
+      // `campana` = la principal (la que termina primero), `campanas` = todas las vigentes, `items` = ofertas de todas.
+      const cs = (await sb.get("campanas_ofertas", "?activa=eq.true&limit=4")) || [];
       const ahora = Date.now();
-      if (!c || (c.fecha_fin && new Date(c.fecha_fin).getTime() <= ahora) || (c.fecha_inicio && new Date(c.fecha_inicio).getTime() > ahora)) { setCampanaActiva(null); return null; }
-      const its = (await sb.get("ofertas_items", `?campana_id=eq.${c.id}&activo=eq.true&order=orden.asc,id.asc`)) || [];
+      const vigentes = cs
+        .filter(x => !(x.fecha_fin && new Date(x.fecha_fin).getTime() <= ahora) && !(x.fecha_inicio && new Date(x.fecha_inicio).getTime() > ahora))
+        .sort((a, b) => {
+          const fa = a.fecha_fin ? new Date(a.fecha_fin).getTime() : Infinity, fb = b.fecha_fin ? new Date(b.fecha_fin).getTime() : Infinity;
+          return fa !== fb ? fa - fb : a.id - b.id;
+        })
+        .slice(0, 2);
+      const c = vigentes[0];
+      if (!c) { setCampanaActiva(null); return null; }
+      const its = (await sb.get("ofertas_items", `?campana_id=in.(${vigentes.map(x => x.id).join(",")})&activo=eq.true&order=orden.asc,id.asc`)) || [];
       const ids = its.map(i => i.id);
       const cb = ids.length ? ((await sb.get("ofertas_combo_productos", `?oferta_id=in.(${ids.join(",")})`)) || []) : [];
-      const data = { campana: c, items: its, combos: cb };
+      const data = { campana: c, campanas: vigentes, items: its, combos: cb };
       setCampanaActiva(data);
       return data;
     } catch (e) { console.warn("Ofertas no cargadas:", e.message); return null; }
