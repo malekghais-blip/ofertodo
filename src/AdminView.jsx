@@ -9423,8 +9423,8 @@ function AdminView() {
     if (rangoVentas === "todo") return true;
     if (rangoVentas === "dia") return f.toDateString() === hoy.toDateString();
     if (rangoVentas === "semana") {
-      const hace7 = new Date(); hace7.setDate(hoy.getDate() - 7);
-      return f >= hace7;
+      const desde7 = new Date(); desde7.setHours(0, 0, 0, 0); desde7.setDate(desde7.getDate() - 6); // últimos 7 días contando hoy
+      return f >= desde7;
     }
     if (rangoVentas === "mes") return f.getMonth() === hoy.getMonth() && f.getFullYear() === hoy.getFullYear();
     if (rangoVentas === "anio") return f.getFullYear() === hoy.getFullYear();
@@ -9442,7 +9442,7 @@ function AdminView() {
     const sumaDias = (str, n) => { const d = new Date(str + "T12:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
     const aStr = (v) => { const d = new Date(v); return Number.isNaN(d.getTime()) ? null : fechaPanama(d); };
     if (rangoVentas === "dia") return [hoyStr, hoyStr];
-    if (rangoVentas === "semana") return [sumaDias(hoyStr, -7), hoyStr];
+    if (rangoVentas === "semana") return [sumaDias(hoyStr, -6), hoyStr]; // últimos 7 días contando hoy
     if (rangoVentas === "mes") return [hoyStr.slice(0, 8) + "01", hoyStr];
     if (rangoVentas === "anio") return [hoyStr.slice(0, 5) + "01-01", hoyStr];
     if (rangoVentas === "personalizado" && fechaPersonalizada) { const f = aStr(fechaPersonalizada); if (f) return [f, f]; }
@@ -9565,7 +9565,7 @@ function AdminView() {
     const hoyP = fechaPanama();
     const [aa, mm] = hoyP.split("-");
     if (rangoVentas === "dia") return [hoyP, hoyP];
-    if (rangoVentas === "semana") return [sumarDiasISO(hoyP, -7), hoyP];
+    if (rangoVentas === "semana") return [sumarDiasISO(hoyP, -6), hoyP]; // últimos 7 días contando hoy (igual que un rango de 7 días)
     if (rangoVentas === "mes") return [`${aa}-${mm}-01`, hoyP];
     if (rangoVentas === "anio") return [`${aa}-01-01`, hoyP];
     if (rangoVentas === "personalizado" && fechaPersonalizada) { const d = isoLocal(fechaPersonalizada); return [d, d]; }
