@@ -5213,7 +5213,7 @@ function explicarStock(p, lead) {
   const cob = p.dias_cobertura;
   switch (p.accion) {
     case "comprar_ya":
-      if (!(Number(p.stock) > 0) && !(Number(p.pendiente) > 0)) return `Agotado y se vende ${ritmo}. Cada día sin stock es venta perdida.`;
+      if (!(Number(p.stock) > 0) && !(Number(p.pendiente) > 0)) return `Agotado${Number(p.muestra) > 0 ? " (solo queda la pieza de muestra, que no se vende)" : ""} y se vende ${ritmo}. Cada día sin stock es venta perdida.`;
       return `Con ${ritmo} te alcanza ${cob} día${cob === 1 ? "" : "s"} y tu proveedor tarda ${lead}. Pide ya para no quedarte sin producto.`;
     case "comprar_pronto":
       return `Se vende ${ritmo}; te alcanza ${cob} días. Conviene pedir esta semana.`;
@@ -5613,6 +5613,7 @@ function AnalisisStockPanel({ categories = [], ingresoPorCategoria = [], ventasP
 
           {Number(r.stock_negativo) > 0 && <div className="met-aviso">{numM(r.stock_negativo)} producto{r.stock_negativo === 1 ? "" : "s"} tienen stock negativo en Odoo (se cuentan como 0). Conviene ajustar el inventario en Odoo para que las sugerencias sean exactas.</div>}
           {r.tienda && Number(r.tienda.unidades_sin_ref) > 0 && <div className="met-aviso">{numM(r.tienda.unidades_sin_ref)} unidades ({usdM(r.tienda.ingreso_sin_ref, 0)}) vendidas en la tienda no tienen referencia en Odoo, así que solo se ven por nombre y no se les puede calcular stock ni sugerencia. Asígnales una referencia en Odoo para incluirlos.</div>}
+          {Number(r.productos_con_muestra) > 0 && <div className="met-aviso">{numM(r.unidades_muestra)} pieza{Number(r.unidades_muestra) === 1 ? "" : "s"} de muestra abierta en {numM(r.productos_con_muestra)} producto{Number(r.productos_con_muestra) === 1 ? "" : "s"}: no cuentan como stock para vender, así que las existencias, los días que alcanzan y las compras sugeridas ya las descuentan.</div>}
           {Number(r.sin_costo) > 0 && <div className="met-aviso">{numM(r.sin_costo)} producto{r.sin_costo === 1 ? "" : "s"} no tienen costo cargado: se analizan, pero sin margen ni inversión.</div>}
           {Number(r.sin_stock) > 0 && <div className="met-aviso">{numM(r.sin_stock)} producto{r.sin_stock === 1 ? "" : "s"} se venden pero no tienen stock sincronizado desde Odoo, por eso no tienen sugerencia.</div>}
 
@@ -5704,6 +5705,7 @@ function AnalisisStockPanel({ categories = [], ingresoPorCategoria = [], ventasP
                         </td>
                         <td>
                           <div style={{ fontWeight: 800, color: Number(p.stock) > 0 ? MT.texto : MT.rojo }}>{p.stock === undefined || p.stock === null ? "—" : numM(Math.round(p.stock))}</div>
+                          {Number(p.muestra) > 0 && <div className="stk-sub" style={{ color: "#92400E", fontWeight: 700 }} title="Pieza abierta de muestra: está en bodega pero no se vende como stock normal">{numM(p.stock_fisico)} en bodega − {numM(p.muestra)} muestra</div>}
                           {p.stock_negativo && <div className="stk-sub" style={{ color: MT.malo }}>negativo en Odoo</div>}
                           {Number(p.pendiente) > 0 && <div className="stk-sub">+{numM(Math.round(p.pendiente))} por llegar</div>}
                         </td>
@@ -9683,7 +9685,7 @@ function AdminView() {
       const margen = costoUnit > 0 ? m.ingreso - (costoUnit * m.cantidad) : null; // null = sin dato de costo
       // Stock actual (si está sincronizado con Odoo)
       const tieneStock = !!prod.stock_actualizado_at;
-      const stockActual = tieneStock ? Number(prod.stock || 0) : null;
+      const stockActual = tieneStock ? Math.max(0, Number(prod.stock || 0) - Math.min(Number(prod.piezas_muestra) || 0, Math.max(0, Number(prod.stock || 0)))) : null; // sin las piezas de muestra abierta
       // Días hasta agotar stock, según velocidad de venta reciente
       const diasHastaAgotar = (tieneStock && velocidadDiaria > 0) ? Math.floor(stockActual / velocidadDiaria) : null;
       // Sugerencia de compra: cubrir ventas del lead time + un colchón de seguridad (otro lead time)
