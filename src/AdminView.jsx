@@ -5463,6 +5463,7 @@ function AnalisisStockPanel({ categories = [], ingresoPorCategoria = [], ventasP
   const [canal, setCanal] = useState("todos"); // todos | web | tienda
   const [limite, setLimite] = useState(25);
   const [tiendaTodo, setTiendaTodo] = useState(false);
+  const [rotOrden, setRotOrden] = useState("ganancia"); // sección "Rotación y ganancia por categoría": ganancia | margen | rotacion | retorno
   const [stockPor, setStockPor] = useState("dinero"); // sección "Stock por categoría": barras por dinero o por unidades
   const [imgs, setImgs] = useState({}); // referencia -> url de la foto
   const peticion = useRef(0);
@@ -5576,6 +5577,41 @@ function AnalisisStockPanel({ categories = [], ingresoPorCategoria = [], ventasP
     return Object.values(m).sort((a, b) => stockPor === "unidades" ? b.unidades - a.unidades : b.valor - a.valor || b.unidades - a.unidades);
   })();
   const stockTot = stockCat.reduce((t, c) => ({ unidades: t.unidades + c.unidades, valor: t.valor + c.valor, productos: t.productos + c.productos, muestra: t.muestra + c.muestra, sinCosto: t.sinCosto + c.sinCosto }), { unidades: 0, valor: 0, productos: 0, muestra: 0, sinCosto: 0 });
+  // Rotación y ganancia por categoría (ventas del periodo elegido arriba, a costo y precio reales)
+  const rotCat = (() => {
+    const m = {};
+    prods.forEach(p => {
+      const k = tipoDe(p);
+      if (!m[k]) m[k] = { nombre: k, uds: 0, ing: 0, costoV: 0, stockValor: 0, productos: 0 };
+      const ud = Number(p.vendido_periodo || 0);
+      if (ud > 0) {
+        m[k].uds += ud; m[k].productos += 1;
+        if (p.costo !== undefined && p.costo !== null && Number(p.precio) > 0) { m[k].ing += ud * Number(p.precio); m[k].costoV += ud * Number(p.costo); }
+      }
+      m[k].stockValor += Number(p.valor_stock || 0);
+    });
+    return Object.values(m).filter(c => c.uds > 0).map(c => {
+      const ganancia = c.ing - c.costoV;
+      return {
+        ...c, ganancia,
+        margen: c.ing > 0 ? (100 * ganancia / c.ing) : null,
+        diasInv: c.costoV > 0 && c.stockValor > 0 ? c.stockValor / (c.costoV / dias) : null, // cada cuántos días se vende todo el stock
+        retorno: c.stockValor > 0 && c.ing > 0 ? (100 * ganancia / c.stockValor) : null,      // ganancia del periodo por cada $100 en stock
+      };
+    });
+  })();
+  const rotElegibles = rotCat.filter(c => c.uds >= 5);
+  const mejorDe = (lista, f, mayor = true) => lista.filter(c => f(c) !== null && f(c) !== undefined).sort((a, b) => mayor ? f(b) - f(a) : f(a) - f(b))[0] || null;
+  const rotRapida = mejorDe(rotElegibles, c => c.diasInv, false);
+  const rotGana = mejorDe(rotElegibles, c => c.ing > 0 ? c.ganancia : null);
+  const rotMargen = mejorDe(rotElegibles, c => c.margen);
+  const rotRetorno = mejorDe(rotElegibles, c => c.retorno);
+  const gananciaTotalCat = rotCat.reduce((t, c) => t + (c.ing > 0 ? c.ganancia : 0), 0);
+  const rotOrdenada = [...rotCat].sort((a, b) => {
+    const v = (c) => rotOrden === "margen" ? c.margen : rotOrden === "rotacion" ? (c.diasInv === null ? null : -c.diasInv) : rotOrden === "retorno" ? c.retorno : (c.ing > 0 ? c.ganancia : null);
+    const x = v(a), y = v(b);
+    return (y === null ? -Infinity : y) - (x === null ? -Infinity : x);
+  });
   const COLORES_CAT = ["#E31E24", "#1F2937", "#F59E0B", "#0A9D4F", "#2563EB", "#8B5CF6", "#0891B2"];
   const colorCat = (() => {
     const m = {};
@@ -5730,6 +5766,59 @@ function AnalisisStockPanel({ categories = [], ingresoPorCategoria = [], ventasP
                   </div>
                 </div>
                 {stockTot.sinCosto > 0 && <div style={{ marginTop: 10, fontSize: 12, color: MT.suave }}>{numM(stockTot.sinCosto)} unidades no tienen costo cargado: aparecen en unidades pero no suman al dinero.</div>}
+              </div>
+            </>
+          )}
+
+          {/* ── Qué categoría rota mejor y gana más ── */}
+          {rotCat.length > 0 && (
+            <>
+              <div className="met-sec">Qué categoría rota mejor y gana más</div>
+              <div className="met-card met-in" style={{ "--d": "80ms", padding: "16px 18px 12px" }} data-testid="rotacion-por-categoria">
+                <div style={{ fontSize: 12, color: MT.suave, marginBottom: 12 }}>Con las ventas de los últimos {dias} días (web y tienda), al costo y precio reales. Solo compiten las categorías con 5 o más unidades vendidas.</div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: 12, marginBottom: 16 }}>
+                  {[
+                    ["Rota más rápido", rotRapida, c => `Vende todo su stock cada ${numM(Math.round(c.diasInv))} día${Math.round(c.diasInv) === 1 ? "" : "s"}`, "Menos días = el dinero vuelve más rápido"],
+                    ["Gana más dinero", rotGana, c => `${usdM(c.ganancia, 0)} de ganancia${gananciaTotalCat > 0 ? ` · ${pctM(100 * c.ganancia / gananciaTotalCat, 0)} del total` : ""}`, "Ingresos menos costo de lo vendido"],
+                    ["Mejor margen", rotMargen, c => `${pctM(c.margen, 1)} de margen`, "Ganancia por cada $100 que vendes"],
+                    ["Mejor rendimiento del stock", rotRetorno, c => `Gana ${usdM(c.retorno, 0)} por cada $100 en stock`, `En ${dias} días`],
+                  ].map(([tit, c, lineaDe, nota]) => (
+                    <div key={tit} style={{ border: `1px solid ${MT.rejilla}`, borderRadius: 12, padding: "12px 14px", background: "rgba(17,17,17,0.02)" }}>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: MT.texto2 }}>{tit}</div>
+                      {c ? (
+                        <>
+                          <div style={{ fontSize: 20, fontWeight: 900, color: MT.texto, margin: "4px 0 2px", display: "flex", alignItems: "center", gap: 8 }}><i style={{ width: 10, height: 10, borderRadius: 3, background: colorCat[c.nombre] || "#9CA3AF", display: "inline-block", flexShrink: 0 }} />{c.nombre}</div>
+                          <div style={{ fontSize: 13, color: MT.texto, fontWeight: 700 }}>{lineaDe(c)}</div>
+                          <div style={{ fontSize: 11.5, color: MT.suave, marginTop: 2 }}>{nota}</div>
+                        </>
+                      ) : <div style={{ fontSize: 13, color: MT.suave, marginTop: 6 }}>Sin datos suficientes</div>}
+                    </div>
+                  ))}
+                </div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 8 }}>
+                  <span style={{ fontSize: 12.5, color: MT.texto2, fontWeight: 600, marginRight: 4 }}>Ordenar por:</span>
+                  {[["ganancia", "Ganancia"], ["margen", "Margen"], ["rotacion", "Rotación"], ["retorno", "Rendimiento del stock"]].map(([k, t]) => (
+                    <button key={k} className={"met-chip" + (rotOrden === k ? " on" : "")} onClick={() => setRotOrden(k)} aria-pressed={rotOrden === k}>{t}</button>
+                  ))}
+                </div>
+                <div style={{ overflowX: "auto" }}>
+                  <table className="stk-tabla" style={{ minWidth: 640 }}>
+                    <thead><tr><th style={{ textAlign: "left" }}>Categoría</th><th>Vendido</th><th>Ganancia</th><th>Margen</th><th>Vende su stock cada</th><th>Gana por $100 en stock</th></tr></thead>
+                    <tbody>
+                      {rotOrdenada.map(c => (
+                        <tr key={c.nombre}>
+                          <td style={{ textAlign: "left" }}><b style={{ color: MT.texto }}><i style={{ width: 9, height: 9, borderRadius: 3, background: colorCat[c.nombre] || "#9CA3AF", display: "inline-block", marginRight: 7 }} />{c.nombre}</b>{c.uds < 5 && <div className="stk-sub">pocas ventas</div>}</td>
+                          <td>{numM(Math.round(c.uds))} uds</td>
+                          <td style={{ fontWeight: 800, color: c.ing > 0 ? (c.ganancia >= 0 ? MT.bueno : MT.malo) : MT.suave }}>{c.ing > 0 ? usdM(c.ganancia, 0) : "sin costo"}</td>
+                          <td>{c.margen !== null ? pctM(c.margen, 1) : "—"}</td>
+                          <td>{c.diasInv !== null ? `${numM(Math.round(c.diasInv))} días` : <span className="stk-sub">{c.stockValor > 0 ? "—" : "sin stock"}</span>}</td>
+                          <td>{c.retorno !== null ? usdM(c.retorno, 0) : "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div style={{ marginTop: 10, fontSize: 12, color: MT.suave }}>Ganancia = lo vendido menos lo que costó, solo de productos con costo cargado. “Vende su stock cada” = valor del stock ÷ lo que vendes por día a costo. “Gana por $100 en stock” = ganancia del periodo ÷ valor del stock × 100.</div>
               </div>
             </>
           )}
