@@ -5139,19 +5139,22 @@ function MetricasPanel({ desde, hasta, filtro }) {
 // Une compras (Odoo), costos, márgenes, stock y ventas (web + tienda) para decir QUÉ comprar, CUÁNTO y qué NO volver a traer.
 // Todo el cálculo vive en la función privada analisis_compras_stock del servidor (solo la puede ejecutar el dueño).
 const ESTILO_STK = `
-.stk-cat-h,.stk-cat-f{display:grid;grid-template-columns:minmax(150px,1.5fr) minmax(80px,2fr) 80px 100px 70px;gap:12px;align-items:center}
+.stk-cat-h,.stk-cat-f{display:grid;grid-template-columns:minmax(150px,1.4fr) minmax(70px,1.6fr) 70px 78px 92px 78px;gap:12px;align-items:center}
 .stk-cat-h{font-size:12px;font-weight:700;color:${MT.texto2};padding:0 0 8px;border-bottom:1px solid ${MT.rejilla}}
 .stk-cat-h span:nth-child(n+3),.stk-cat-u,.stk-cat-v,.stk-cat-p{text-align:right}
+.stk-cat-pila{display:flex;height:26px;border-radius:7px;overflow:hidden;background:rgba(17,17,17,0.07)}
+.stk-cat-pila div{display:flex;align-items:center;justify-content:center;color:#fff;font-size:11.5px;font-weight:800;min-width:2px;transition:width 900ms cubic-bezier(.2,.7,.2,1);white-space:nowrap;overflow:hidden}
+.stk-cat-n .stk-cat-mob{display:none}
 .stk-cat-f{padding:10px 0;border-bottom:1px solid ${MT.rejilla};font-size:13px}
 .stk-cat-n b{display:block;font-weight:800;color:${MT.texto}}
 .stk-cat-n span{display:block;font-size:11.5px;color:${MT.suave};margin-top:2px}
 .stk-cat-b{height:10px;border-radius:6px;background:rgba(17,17,17,0.07);overflow:hidden}
-.stk-cat-b i{display:block;height:100%;border-radius:6px;background:${MT.rojo};transition:width 900ms cubic-bezier(.2,.7,.2,1)}
+.stk-cat-b i{display:block;height:100%;border-radius:6px;transition:width 900ms cubic-bezier(.2,.7,.2,1)}
 .stk-cat-v{font-weight:800;color:${MT.texto}}
 .stk-cat-u,.stk-cat-p{color:${MT.texto2}}
 .stk-cat-t{border-bottom:0;border-top:2px solid ${MT.texto};font-weight:800}
 .stk-cat-t .stk-cat-u,.stk-cat-t .stk-cat-p{color:${MT.texto}}
-@media (max-width:640px){.stk-cat-h{display:none}.stk-cat-f{grid-template-columns:1fr auto auto;row-gap:6px}.stk-cat-n{grid-column:1 / 2}.stk-cat-b{grid-column:1 / -1;order:5}.stk-cat-t .stk-cat-b{display:none}.stk-cat-p{display:none}}
+@media (max-width:640px){.stk-cat-h{display:none}.stk-cat-f{grid-template-columns:1fr auto auto;row-gap:6px}.stk-cat-n{grid-column:1 / 2}.stk-cat-b{grid-column:1 / -1;order:5}.stk-cat-t .stk-cat-b{display:none}.stk-cat-p{display:none}.stk-cat-n .stk-cat-mob{display:block}.stk-cat-t .stk-cat-n .stk-cat-mob{display:none}}
 .stk-tabla{width:100%;border-collapse:collapse;font-size:13px;min-width:900px}
 .stk-tabla th{padding:10px 12px;text-align:right;font-weight:700;color:${MT.texto2};border-bottom:1px solid ${MT.rejilla};white-space:nowrap;font-size:12.5px}
 .stk-tabla td{padding:12px;text-align:right;border-bottom:1px solid ${MT.rejilla};font-variant-numeric:tabular-nums;vertical-align:top}
@@ -5573,10 +5576,17 @@ function AnalisisStockPanel({ categories = [], ingresoPorCategoria = [], ventasP
     return Object.values(m).sort((a, b) => stockPor === "unidades" ? b.unidades - a.unidades : b.valor - a.valor || b.unidades - a.unidades);
   })();
   const stockTot = stockCat.reduce((t, c) => ({ unidades: t.unidades + c.unidades, valor: t.valor + c.valor, productos: t.productos + c.productos, muestra: t.muestra + c.muestra, sinCosto: t.sinCosto + c.sinCosto }), { unidades: 0, valor: 0, productos: 0, muestra: 0, sinCosto: 0 });
+  const COLORES_CAT = ["#E31E24", "#1F2937", "#F59E0B", "#0A9D4F", "#2563EB", "#8B5CF6", "#0891B2"];
+  const colorCat = (() => {
+    const m = {};
+    [...stockCat].sort((a, b) => b.valor - a.valor || b.unidades - a.unidades).forEach((c, i) => { m[c.nombre] = i < COLORES_CAT.length ? COLORES_CAT[i] : "#9CA3AF"; });
+    return m;
+  })();
+  const pctDe = (parte, total) => total > 0 ? (100 * parte / total) : 0;
   const descargarStockCat = () => {
-    const cab = ["Categoría", "Productos con stock", "Unidades en bodega", "De esas, muestras abiertas", "Valor a costo (USD)", "% del valor", "Unidades sin costo cargado"];
-    const cuerpo = stockCat.map(c => [c.nombre, c.productos, c.unidades, c.muestra, c.valor.toFixed(2), stockTot.valor > 0 ? (100 * c.valor / stockTot.valor).toFixed(1) : "", c.sinCosto]);
-    cuerpo.push(["TOTAL", stockTot.productos, stockTot.unidades, stockTot.muestra, stockTot.valor.toFixed(2), "100", stockTot.sinCosto]);
+    const cab = ["Categoría", "Productos con stock", "Unidades en bodega", "% de las unidades", "De esas, muestras abiertas", "Valor a costo (USD)", "% del valor", "Unidades sin costo cargado"];
+    const cuerpo = stockCat.map(c => [c.nombre, c.productos, c.unidades, pctDe(c.unidades, stockTot.unidades).toFixed(1), c.muestra, c.valor.toFixed(2), stockTot.valor > 0 ? pctDe(c.valor, stockTot.valor).toFixed(1) : "", c.sinCosto]);
+    cuerpo.push(["TOTAL", stockTot.productos, stockTot.unidades, "100", stockTot.muestra, stockTot.valor.toFixed(2), "100", stockTot.sinCosto]);
     const csv = "﻿" + [cab, ...cuerpo].map(f => f.map(csvCelda).join(";")).join("\r\n");
     const a = document.createElement("a");
     a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
@@ -5670,22 +5680,43 @@ function AnalisisStockPanel({ categories = [], ingresoPorCategoria = [], ventasP
                   <button className="met-chip" onClick={descargarStockCat} style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 6 }}><Download size={14} /> Descargar</button>
                 </div>
                 <div style={{ fontSize: 12, color: MT.suave, marginBottom: 12 }}>Existencias físicas en bodega valoradas a costo (Finanzas / Odoo). Incluye las muestras abiertas porque siguen siendo plata invertida.</div>
+                {/* Análisis vertical: cómo se reparte el 100% del stock entre categorías */}
+                {[["En dinero", "valor", stockTot.valor], ["En unidades", "unidades", stockTot.unidades]].map(([tit, campo, tot]) => (
+                  <div key={campo} style={{ marginBottom: 10 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: MT.texto2, marginBottom: 4 }}>{tit}: así se reparte el 100%</div>
+                    <div className="stk-cat-pila" role="img" aria-label={`${tit}: ` + stockCat.map(c => `${c.nombre} ${pctDe(c[campo], tot).toFixed(0)}%`).join(", ")}>
+                      {stockCat.filter(c => c[campo] > 0).sort((a, b) => b[campo] - a[campo]).map(c => {
+                        const pc = pctDe(c[campo], tot);
+                        return <div key={c.nombre} title={`${c.nombre}: ${pctM(pc, 1)}`} style={{ width: pc + "%", background: colorCat[c.nombre] }}>{pc >= 8 ? pctM(pc, 0) : ""}</div>;
+                      })}
+                    </div>
+                  </div>
+                ))}
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 14px", margin: "8px 0 14px", fontSize: 12, color: MT.texto2 }}>
+                  {[...stockCat].sort((a, b) => b.valor - a.valor || b.unidades - a.unidades).map(c => (
+                    <span key={c.nombre} style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><i style={{ width: 10, height: 10, borderRadius: 3, background: colorCat[c.nombre], display: "inline-block" }} />{c.nombre}</span>
+                  ))}
+                </div>
                 <div className="stk-cat">
-                  <div className="stk-cat-h"><span>Categoría</span><span /><span>Unidades</span><span>Valor a costo</span><span>% del valor</span></div>
+                  <div className="stk-cat-h"><span>Categoría</span><span /><span>Unidades</span><span>% unidades</span><span>Valor a costo</span><span>% del valor</span></div>
                   {stockCat.map(c => {
                     const maximo = stockPor === "unidades" ? stockCat[0].unidades : stockCat[0].valor;
                     const valorBarra = stockPor === "unidades" ? c.unidades : c.valor;
                     const pct = maximo > 0 ? Math.max(valorBarra > 0 ? 1.5 : 0, (valorBarra / maximo) * 100) : 0;
+                    const pU = pctDe(c.unidades, stockTot.unidades);
+                    const pV = stockTot.valor > 0 && c.conCosto > 0 ? pctDe(c.valor, stockTot.valor) : null;
                     return (
                       <div className="stk-cat-f" key={c.nombre}>
                         <div className="stk-cat-n">
-                          <b>{c.nombre}</b>
+                          <b><i style={{ width: 9, height: 9, borderRadius: 3, background: colorCat[c.nombre], display: "inline-block", marginRight: 7 }} />{c.nombre}</b>
                           <span>{numM(c.productos)} producto{c.productos === 1 ? "" : "s"}{c.muestra > 0 ? ` · ${numM(c.muestra)} de muestra` : ""}{c.sinCosto > 0 ? ` · ${numM(c.sinCosto)} uds sin costo` : ""}</span>
+                          <span className="stk-cat-mob">{pctM(pU, 1)} de las unidades{pV !== null ? ` · ${pctM(pV, 1)} del dinero` : ""}</span>
                         </div>
-                        <div className="stk-cat-b"><i style={{ width: pct + "%" }} /></div>
+                        <div className="stk-cat-b"><i style={{ width: pct + "%", background: colorCat[c.nombre] }} /></div>
                         <div className="stk-cat-u">{numM(c.unidades)}</div>
+                        <div className="stk-cat-p">{pctM(pU, 1)}</div>
                         <div className="stk-cat-v">{c.conCosto > 0 ? usdM(c.valor, 0) : <span style={{ fontWeight: 600, color: MT.suave }}>sin costo</span>}</div>
-                        <div className="stk-cat-p">{stockTot.valor > 0 && c.conCosto > 0 ? pctM(100 * c.valor / stockTot.valor, 1) : "—"}</div>
+                        <div className="stk-cat-p">{pV !== null ? pctM(pV, 1) : "—"}</div>
                       </div>
                     );
                   })}
@@ -5693,6 +5724,7 @@ function AnalisisStockPanel({ categories = [], ingresoPorCategoria = [], ventasP
                     <div className="stk-cat-n"><b>Total</b><span>{numM(stockTot.productos)} productos con stock</span></div>
                     <div className="stk-cat-b" />
                     <div className="stk-cat-u">{numM(stockTot.unidades)}</div>
+                    <div className="stk-cat-p">100%</div>
                     <div className="stk-cat-v">{usdM(stockTot.valor, 0)}</div>
                     <div className="stk-cat-p">100%</div>
                   </div>
