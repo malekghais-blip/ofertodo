@@ -5139,6 +5139,19 @@ function MetricasPanel({ desde, hasta, filtro }) {
 // Une compras (Odoo), costos, márgenes, stock y ventas (web + tienda) para decir QUÉ comprar, CUÁNTO y qué NO volver a traer.
 // Todo el cálculo vive en la función privada analisis_compras_stock del servidor (solo la puede ejecutar el dueño).
 const ESTILO_STK = `
+.stk-cat-h,.stk-cat-f{display:grid;grid-template-columns:minmax(150px,1.5fr) minmax(80px,2fr) 80px 100px 70px;gap:12px;align-items:center}
+.stk-cat-h{font-size:12px;font-weight:700;color:${MT.texto2};padding:0 0 8px;border-bottom:1px solid ${MT.rejilla}}
+.stk-cat-h span:nth-child(n+3),.stk-cat-u,.stk-cat-v,.stk-cat-p{text-align:right}
+.stk-cat-f{padding:10px 0;border-bottom:1px solid ${MT.rejilla};font-size:13px}
+.stk-cat-n b{display:block;font-weight:800;color:${MT.texto}}
+.stk-cat-n span{display:block;font-size:11.5px;color:${MT.suave};margin-top:2px}
+.stk-cat-b{height:10px;border-radius:6px;background:rgba(17,17,17,0.07);overflow:hidden}
+.stk-cat-b i{display:block;height:100%;border-radius:6px;background:${MT.rojo};transition:width 900ms cubic-bezier(.2,.7,.2,1)}
+.stk-cat-v{font-weight:800;color:${MT.texto}}
+.stk-cat-u,.stk-cat-p{color:${MT.texto2}}
+.stk-cat-t{border-bottom:0;border-top:2px solid ${MT.texto};font-weight:800}
+.stk-cat-t .stk-cat-u,.stk-cat-t .stk-cat-p{color:${MT.texto}}
+@media (max-width:640px){.stk-cat-h{display:none}.stk-cat-f{grid-template-columns:1fr auto auto;row-gap:6px}.stk-cat-n{grid-column:1 / 2}.stk-cat-b{grid-column:1 / -1;order:5}.stk-cat-t .stk-cat-b{display:none}.stk-cat-p{display:none}}
 .stk-tabla{width:100%;border-collapse:collapse;font-size:13px;min-width:900px}
 .stk-tabla th{padding:10px 12px;text-align:right;font-weight:700;color:${MT.texto2};border-bottom:1px solid ${MT.rejilla};white-space:nowrap;font-size:12.5px}
 .stk-tabla td{padding:12px;text-align:right;border-bottom:1px solid ${MT.rejilla};font-variant-numeric:tabular-nums;vertical-align:top}
@@ -5447,6 +5460,7 @@ function AnalisisStockPanel({ categories = [], ingresoPorCategoria = [], ventasP
   const [canal, setCanal] = useState("todos"); // todos | web | tienda
   const [limite, setLimite] = useState(25);
   const [tiendaTodo, setTiendaTodo] = useState(false);
+  const [stockPor, setStockPor] = useState("dinero"); // sección "Stock por categoría": barras por dinero o por unidades
   const [imgs, setImgs] = useState({}); // referencia -> url de la foto
   const peticion = useRef(0);
 
@@ -5544,6 +5558,33 @@ function AnalisisStockPanel({ categories = [], ingresoPorCategoria = [], ventasP
     setTimeout(() => URL.revokeObjectURL(a.href), 4000);
   };
 
+  // Stock por categoría: lo que hay físicamente en bodega (incluye muestras abiertas) y cuánto vale a costo
+  const stockCat = (() => {
+    const m = {};
+    prods.forEach(p => {
+      const fis = Number(p.stock_fisico ?? p.stock ?? 0);
+      if (!(fis > 0)) return;
+      const k = tipoDe(p);
+      if (!m[k]) m[k] = { nombre: k, unidades: 0, valor: 0, productos: 0, muestra: 0, sinCosto: 0, conCosto: 0 };
+      m[k].unidades += fis; m[k].productos += 1; m[k].muestra += Number(p.muestra || 0);
+      if (p.valor_stock === undefined || p.valor_stock === null) m[k].sinCosto += fis;
+      else { m[k].valor += Number(p.valor_stock); m[k].conCosto += fis; }
+    });
+    return Object.values(m).sort((a, b) => stockPor === "unidades" ? b.unidades - a.unidades : b.valor - a.valor || b.unidades - a.unidades);
+  })();
+  const stockTot = stockCat.reduce((t, c) => ({ unidades: t.unidades + c.unidades, valor: t.valor + c.valor, productos: t.productos + c.productos, muestra: t.muestra + c.muestra, sinCosto: t.sinCosto + c.sinCosto }), { unidades: 0, valor: 0, productos: 0, muestra: 0, sinCosto: 0 });
+  const descargarStockCat = () => {
+    const cab = ["Categoría", "Productos con stock", "Unidades en bodega", "De esas, muestras abiertas", "Valor a costo (USD)", "% del valor", "Unidades sin costo cargado"];
+    const cuerpo = stockCat.map(c => [c.nombre, c.productos, c.unidades, c.muestra, c.valor.toFixed(2), stockTot.valor > 0 ? (100 * c.valor / stockTot.valor).toFixed(1) : "", c.sinCosto]);
+    cuerpo.push(["TOTAL", stockTot.productos, stockTot.unidades, stockTot.muestra, stockTot.valor.toFixed(2), "100", stockTot.sinCosto]);
+    const csv = "﻿" + [cab, ...cuerpo].map(f => f.map(csvCelda).join(";")).join("\r\n");
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    a.download = `stock-por-categoria-${fechaPanama()}.csv`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  };
+
   // Cifras de arriba
   const compradoCat = prods.reduce((s, p) => s + Number(p.comprado_periodo_usd || 0), 0);
   const vendidoCosto = r ? Number(r.vendido_costo || 0) : 0;
@@ -5616,6 +5657,50 @@ function AnalisisStockPanel({ categories = [], ingresoPorCategoria = [], ventasP
           {Number(r.productos_con_muestra) > 0 && <div className="met-aviso">{numM(r.unidades_muestra)} pieza{Number(r.unidades_muestra) === 1 ? "" : "s"} de muestra abierta en {numM(r.productos_con_muestra)} producto{Number(r.productos_con_muestra) === 1 ? "" : "s"}: no cuentan como stock para vender, así que las existencias, los días que alcanzan y las compras sugeridas ya las descuentan.</div>}
           {Number(r.sin_costo) > 0 && <div className="met-aviso">{numM(r.sin_costo)} producto{r.sin_costo === 1 ? "" : "s"} no tienen costo cargado: se analizan, pero sin margen ni inversión.</div>}
           {Number(r.sin_stock) > 0 && <div className="met-aviso">{numM(r.sin_stock)} producto{r.sin_stock === 1 ? "" : "s"} se venden pero no tienen stock sincronizado desde Odoo, por eso no tienen sugerencia.</div>}
+
+          {/* ── Stock por categoría: dinero y unidades ── */}
+          {stockCat.length > 0 && (
+            <>
+              <div className="met-sec">Cuánto stock tienes por categoría</div>
+              <div className="met-card met-in" style={{ "--d": "60ms", padding: "16px 18px 12px" }} data-testid="stock-por-categoria">
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 6 }}>
+                  <span style={{ fontSize: 12.5, color: MT.texto2, fontWeight: 600, marginRight: 4 }}>Barras por:</span>
+                  <button className={"met-chip" + (stockPor === "dinero" ? " on" : "")} onClick={() => setStockPor("dinero")} aria-pressed={stockPor === "dinero"}>Dinero</button>
+                  <button className={"met-chip" + (stockPor === "unidades" ? " on" : "")} onClick={() => setStockPor("unidades")} aria-pressed={stockPor === "unidades"}>Unidades</button>
+                  <button className="met-chip" onClick={descargarStockCat} style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 6 }}><Download size={14} /> Descargar</button>
+                </div>
+                <div style={{ fontSize: 12, color: MT.suave, marginBottom: 12 }}>Existencias físicas en bodega valoradas a costo (Finanzas / Odoo). Incluye las muestras abiertas porque siguen siendo plata invertida.</div>
+                <div className="stk-cat">
+                  <div className="stk-cat-h"><span>Categoría</span><span /><span>Unidades</span><span>Valor a costo</span><span>% del valor</span></div>
+                  {stockCat.map(c => {
+                    const maximo = stockPor === "unidades" ? stockCat[0].unidades : stockCat[0].valor;
+                    const valorBarra = stockPor === "unidades" ? c.unidades : c.valor;
+                    const pct = maximo > 0 ? Math.max(valorBarra > 0 ? 1.5 : 0, (valorBarra / maximo) * 100) : 0;
+                    return (
+                      <div className="stk-cat-f" key={c.nombre}>
+                        <div className="stk-cat-n">
+                          <b>{c.nombre}</b>
+                          <span>{numM(c.productos)} producto{c.productos === 1 ? "" : "s"}{c.muestra > 0 ? ` · ${numM(c.muestra)} de muestra` : ""}{c.sinCosto > 0 ? ` · ${numM(c.sinCosto)} uds sin costo` : ""}</span>
+                        </div>
+                        <div className="stk-cat-b"><i style={{ width: pct + "%" }} /></div>
+                        <div className="stk-cat-u">{numM(c.unidades)}</div>
+                        <div className="stk-cat-v">{c.conCosto > 0 ? usdM(c.valor, 0) : <span style={{ fontWeight: 600, color: MT.suave }}>sin costo</span>}</div>
+                        <div className="stk-cat-p">{stockTot.valor > 0 && c.conCosto > 0 ? pctM(100 * c.valor / stockTot.valor, 1) : "—"}</div>
+                      </div>
+                    );
+                  })}
+                  <div className="stk-cat-f stk-cat-t">
+                    <div className="stk-cat-n"><b>Total</b><span>{numM(stockTot.productos)} productos con stock</span></div>
+                    <div className="stk-cat-b" />
+                    <div className="stk-cat-u">{numM(stockTot.unidades)}</div>
+                    <div className="stk-cat-v">{usdM(stockTot.valor, 0)}</div>
+                    <div className="stk-cat-p">100%</div>
+                  </div>
+                </div>
+                {stockTot.sinCosto > 0 && <div style={{ marginTop: 10, fontSize: 12, color: MT.suave }}>{numM(stockTot.sinCosto)} unidades no tienen costo cargado: aparecen en unidades pero no suman al dinero.</div>}
+              </div>
+            </>
+          )}
 
           {/* ── Qué comprar ── */}
           <div className="met-sec">Qué comprar, cuánto y qué no volver a traer</div>
