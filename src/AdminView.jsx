@@ -965,7 +965,7 @@ function InsigniaCotizacion({ o }) {
 const METODOS_RESERVA_ABONO = [["yappy", "Yappy"], ["efectivo", "Efectivo"], ["transferencia", "Transferencia"], ["tarjeta", "Tarjeta"], ["otro", "Otro"]];
 const usd2 = (n) => "$" + Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-function AbonosPedido({ pedido }) {
+function AbonosPedido({ pedido, onCambio }) {
   const [lista, setLista] = useState(null); // null = cargando · "error" = no se pudo leer
   const [abierto, setAbierto] = useState(false);
   const [verHistorial, setVerHistorial] = useState(false);
@@ -1006,13 +1006,14 @@ function AbonosPedido({ pedido }) {
       await sb.post("reserva_abonos", { pedido_id: pedido.id, monto: m, metodo, nota: nota.trim() || null });
       setMonto(""); setNota(""); setAbierto(false);
       await cargar();
+      if (onCambio) onCambio();
     } catch (e) {
       alert("No se pudo guardar el abono: " + String(e.message || e).slice(0, 220));
     } finally { setGuardando(false); }
   };
   const anular = async (a) => {
     if (!confirm(`¿Anular el abono de ${usd2(a.monto)} (${etiquetaMetodo(a.metodo)})?\n\nQuedará en el historial como anulado y el saldo se recalcula.`)) return;
-    try { await sb.patch("reserva_abonos", a.id, { anulado: true }); await cargar(); }
+    try { await sb.patch("reserva_abonos", a.id, { anulado: true }); await cargar(); if (onCambio) onCambio(); }
     catch (e) { alert("No se pudo anular el abono: " + String(e.message || e).slice(0, 220)); }
   };
 
@@ -1052,6 +1053,28 @@ function AbonosPedido({ pedido }) {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+// Filtro de cotizaciones/reservas por estado de pago (usa el total abonado de cada una)
+const estadoAbonoDe = (o, abonosMap) => {
+  const pagado = Math.round((Number(abonosMap?.[o.id]) || 0) * 100) / 100;
+  if (pagado <= 0) return "sin";
+  return (Number(o.total) || 0) - pagado > 0.004 ? "parcial" : "pagado";
+};
+function FiltroAbonosChips({ valor, onChange, cuentas }) {
+  const opciones = [["todas", "Todas"], ["parcial", "Con abono (falta saldo)"], ["pagado", "Pagadas completas"], ["sin", "Sin abonos"]];
+  return (
+    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>
+      {opciones.map(([k, l]) => {
+        const on = valor === k;
+        return (
+          <button key={k} onClick={() => onChange(k)} style={{ border: `1.5px solid ${on ? BLACK : GRAY2}`, background: on ? BLACK : WHITE, color: on ? WHITE : BLACK, borderRadius: 20, padding: "6px 12px", fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>
+            {l} <span style={{ opacity: 0.7, fontWeight: 600 }}>({cuentas[k] ?? 0})</span>
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -9489,6 +9512,17 @@ function AdminView() {
   }, [descForm && !descForm.id, descForm && descForm.tipo_valor, descForm && descForm.porcentaje, descuentos.length, semillaSug]);
   const [descProductosOpen, setDescProductosOpen] = useState(false); // selector de productos en el form
   const [busquedaCotizacion, setBusquedaCotizacion] = useState(""); // buscar cotización por nombre de cliente
+  const [filtroAbonoCot, setFiltroAbonoCot] = useState("todas"); // todas | parcial | pagado | sin
+  const [abonosMap, setAbonosMap] = useState({}); // { pedido_id: total abonado (sin anulados) }
+  const cargarAbonosMap = async () => {
+    try {
+      const r = await sb.get("reserva_abonos", "?anulado=eq.false&select=pedido_id,monto&limit=5000");
+      const m = {};
+      (Array.isArray(r) ? r : []).forEach(a => { m[a.pedido_id] = (m[a.pedido_id] || 0) + Number(a.monto || 0); });
+      setAbonosMap(m);
+    } catch (e) { /* si falla, el filtro simplemente no muestra abonos; nada más se afecta */ }
+  };
+  useEffect(() => { cargarAbonosMap(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   // ── RETORNOS ──
   const [retornos, setRetornos] = useState([]);
   const [proveedores, setProveedores] = useState([]); // proveedores externos (productos que no son propios)
@@ -11704,14 +11738,17 @@ function AdminView() {
                     )}
                   </div>
                   <div style={{ fontSize: 12, color: GRAY3, marginBottom: 16 }}>Las cotizaciones no cuentan como ventas</div>
+                  {cotizaciones.length > 0 && <FiltroAbonosChips valor={filtroAbonoCot} onChange={setFiltroAbonoCot} cuentas={(() => { const c = { todas: cotizaciones.length, parcial: 0, pagado: 0, sin: 0 }; cotizaciones.forEach(o => { c[estadoAbonoDe(o, abonosMap)]++; }); return c; })()} />}
                   {(() => {
                     const q = busquedaCotizacion.trim().toLowerCase();
-                    const cotizacionesFiltradas = q
+                    const porTexto = q
                       ? cotizaciones.filter(o => (o.nombre_cliente || "").toLowerCase().includes(q) || (o.codigo || "").toLowerCase().includes(q))
                       : cotizaciones;
+                    const cotizacionesFiltradas = filtroAbonoCot === "todas" ? porTexto : porTexto.filter(o => estadoAbonoDe(o, abonosMap) === filtroAbonoCot);
+                    const verTodas = !!q || filtroAbonoCot !== "todas";
                     if (cotizaciones.length === 0) return <div style={{ textAlign: "center", padding: 30, color: GRAY3, fontSize: 13 }}>Aún no hay cotizaciones</div>;
-                    if (cotizacionesFiltradas.length === 0) return <div style={{ textAlign: "center", padding: 30, color: GRAY3, fontSize: 13 }}>No se encontró ninguna cotización de "{busquedaCotizacion}"</div>;
-                    return (q ? cotizacionesFiltradas : cotizacionesFiltradas.slice(0, 5)).map(o => {
+                    if (cotizacionesFiltradas.length === 0) return <div style={{ textAlign: "center", padding: 30, color: GRAY3, fontSize: 13 }}>No se encontró ninguna cotización{q ? <> de "{busquedaCotizacion}"</> : ""}{filtroAbonoCot !== "todas" ? " en este filtro" : ""}</div>;
+                    return (verTodas ? cotizacionesFiltradas : cotizacionesFiltradas.slice(0, 5)).map(o => {
                     const firstItem = (o.items || [])[0];
                     const prod = firstItem ? products.find(p => p.id === firstItem.producto_id) : null;
                     return (
@@ -11743,7 +11780,7 @@ function AdminView() {
                         <button onClick={() => alternarReserva(o)} className="oft-btn-press" style={{ width: "100%", justifyContent: "center", marginTop: 8, background: o.reservada ? "#EDE9FE" : "none", color: "#5B21B6", border: "1.5px solid #7C3AED", borderRadius: 8, padding: "8px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
                           <Lock size={14} /> {o.reservada ? "Liberar reserva (las piezas vuelven a estar a la venta)" : "Reservar estas piezas"}
                         </button>
-                        <AbonosPedido pedido={o} />
+                        <AbonosPedido pedido={o} onCambio={cargarAbonosMap} />
                       </div>
                     );
                   });
@@ -11818,14 +11855,17 @@ function AdminView() {
                       )}
                     </div>
                     <div style={{ fontSize: 12, color: GRAY3, marginBottom: 16 }}>Las cotizaciones no cuentan como ventas</div>
+                    {cotizaciones.length > 0 && <FiltroAbonosChips valor={filtroAbonoCot} onChange={setFiltroAbonoCot} cuentas={(() => { const c = { todas: cotizaciones.length, parcial: 0, pagado: 0, sin: 0 }; cotizaciones.forEach(o => { c[estadoAbonoDe(o, abonosMap)]++; }); return c; })()} />}
                     {(() => {
                       const q = busquedaCotizacion.trim().toLowerCase();
-                      const cotizacionesFiltradas = q
+                      const porTexto = q
                         ? cotizaciones.filter(o => (o.nombre_cliente || "").toLowerCase().includes(q) || (o.codigo || "").toLowerCase().includes(q))
                         : cotizaciones;
+                      const cotizacionesFiltradas = filtroAbonoCot === "todas" ? porTexto : porTexto.filter(o => estadoAbonoDe(o, abonosMap) === filtroAbonoCot);
+                      const verTodas = !!q || filtroAbonoCot !== "todas";
                       if (cotizaciones.length === 0) return <div style={{ textAlign: "center", padding: 30, color: GRAY3, fontSize: 13 }}>Aún no hay cotizaciones</div>;
-                      if (cotizacionesFiltradas.length === 0) return <div style={{ textAlign: "center", padding: 30, color: GRAY3, fontSize: 13 }}>No se encontró ninguna cotización de "{busquedaCotizacion}"</div>;
-                      return (q ? cotizacionesFiltradas : cotizacionesFiltradas.slice(0, 5)).map(o => {
+                      if (cotizacionesFiltradas.length === 0) return <div style={{ textAlign: "center", padding: 30, color: GRAY3, fontSize: 13 }}>No se encontró ninguna cotización{q ? <> de "{busquedaCotizacion}"</> : ""}{filtroAbonoCot !== "todas" ? " en este filtro" : ""}</div>;
+                      return (verTodas ? cotizacionesFiltradas : cotizacionesFiltradas.slice(0, 5)).map(o => {
                       const firstItem = (o.items || [])[0];
                       const prod = firstItem ? products.find(p => p.id === firstItem.producto_id) : null;
                       return (
@@ -11857,7 +11897,7 @@ function AdminView() {
                           <button onClick={() => alternarReserva(o)} className="oft-btn-press" style={{ width: "100%", justifyContent: "center", marginTop: 8, background: o.reservada ? "#EDE9FE" : "none", color: "#5B21B6", border: "1.5px solid #7C3AED", borderRadius: 8, padding: "8px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
                             <Lock size={14} /> {o.reservada ? "Liberar reserva (las piezas vuelven a estar a la venta)" : "Reservar estas piezas"}
                           </button>
-                          <AbonosPedido pedido={o} />
+                          <AbonosPedido pedido={o} onCambio={cargarAbonosMap} />
                         </div>
                       );
                     });
