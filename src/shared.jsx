@@ -845,9 +845,20 @@ export const nombreColorLimpio = (nombre) => (nombre || "").replace(/\s*\(#([0-9
 // muestra (siguen contando en Odoo, que mantiene el inventario real, pero la web no las vende).
 // No toca el campo stock. El personal en el pedido manual del admin sigue viendo el stock real.
 export const stockWeb = (p) => Math.max(0, (Number(p?.stock) || 0) - (Number(p?.piezas_muestra) || 0) - (Number(p?.piezas_reservadas) || 0));
-// Etiqueta "· N reservadas" para listas de productos del personal (solo si hay piezas reservadas)
-export const EtiquetaReservadas = ({ p }) => Number(p?.piezas_reservadas) > 0
-  ? <span style={{ fontWeight: 800, color: "#7C3AED" }}> · {Number(p.piezas_reservadas)} reservadas</span> : null;
+// Piezas contra las que se puede RESERVAR: el stock que hay + lo que viene en camino en órdenes de compra
+// de Odoo (piezas_por_llegar, se calcula solo). Solo para reservas del personal; la web sigue vendiendo
+// únicamente lo que hay en stock (stockWeb), así que lo que viene en camino nunca se le ofrece al cliente.
+export const stockParaReservar = (p) => (Number(p?.stock) || 0) + Math.max(0, Number(p?.piezas_por_llegar) || 0);
+// Etiquetas "· N reservadas" y "· N por llegar" para listas de productos del personal (solo si hay)
+export const EtiquetaReservadas = ({ p }) => {
+  const res = Number(p?.piezas_reservadas) || 0;
+  const llegar = Number(p?.piezas_por_llegar) || 0;
+  if (res <= 0 && llegar <= 0) return null;
+  return (<>
+    {res > 0 && <span style={{ fontWeight: 800, color: "#7C3AED" }}> · {res} reservadas</span>}
+    {llegar > 0 && <span style={{ fontWeight: 800, color: "#0F766E" }}> · {llegar} por llegar</span>}
+  </>);
+};
 
 // Aviso de stock insuficiente al armar un pedido manual -- reemplaza el confirm()
 // del navegador por algo consistente con el resto de la web, con su misma animación.
@@ -862,7 +873,7 @@ function ModalAvisoStock({ aviso, onConfirmar, onCancelar }) {
         <div style={{ fontSize: 17, fontWeight: 900, marginBottom: 8 }}>{aviso.reservado ? "Piezas reservadas" : aviso.esMuestra ? "Estás vendiendo una muestra" : "Stock insuficiente"}</div>
         <div style={{ fontSize: 13.5, color: GRAY3, lineHeight: 1.5, marginBottom: 20 }}>
           {aviso.reservado ? (
-            <>"<strong style={{ color: BLACK }}>{aviso.producto}</strong>" tiene <strong style={{ color: BLACK }}>{aviso.stockDisponible}</strong> en stock, pero <strong style={{ color: "#7C3AED" }}>{aviso.reservadas}</strong> {aviso.reservadas === 1 ? "pieza está reservada" : "piezas están reservadas"} para otros clientes. Disponibles para vender: <strong style={{ color: BLACK }}>{aviso.libres}</strong>
+            <>"<strong style={{ color: BLACK }}>{aviso.producto}</strong>" tiene <strong style={{ color: BLACK }}>{aviso.stockDisponible}</strong> {aviso.porLlegar > 0 ? "entre stock y piezas por llegar" : "en stock"}, pero <strong style={{ color: "#7C3AED" }}>{aviso.reservadas}</strong> {aviso.reservadas === 1 ? "pieza está reservada" : "piezas están reservadas"} para otros clientes. Disponibles para vender: <strong style={{ color: BLACK }}>{aviso.libres}</strong>
             {aviso.yaEnCarrito > 0 && <> (ya hay {aviso.yaEnCarrito} en este pedido)</>}, y con esto llevaría <strong style={{ color: BLACK }}>{aviso.totalConEsto}</strong>.
             {aviso.bloqueado && <div style={{ marginTop: 8 }}>No se puede agregar. Para usar esas piezas, libera o convierte la reserva primero.</div>}</>
           ) : aviso.esMuestra ? (
@@ -872,7 +883,7 @@ function ModalAvisoStock({ aviso, onConfirmar, onCancelar }) {
           ) : aviso.stockDisponible <= 0 ? (
             <>"<strong style={{ color: BLACK }}>{aviso.producto}</strong>" muestra <strong style={{ color: BLACK }}>0</strong> en stock, según la última sincronización.</>
           ) : (
-            <>"<strong style={{ color: BLACK }}>{aviso.producto}</strong>" tiene <strong style={{ color: BLACK }}>{aviso.stockDisponible}</strong> en stock
+            <>"<strong style={{ color: BLACK }}>{aviso.producto}</strong>" tiene <strong style={{ color: BLACK }}>{aviso.stockDisponible}</strong> {aviso.porLlegar > 0 ? "entre stock y piezas por llegar" : "en stock"}
             {aviso.yaEnCarrito > 0 && <> (ya hay {aviso.yaEnCarrito} en este pedido)</>}, y esto lo dejaría en <strong style={{ color: BLACK }}>{aviso.totalConEsto}</strong> piezas.</>
           )}
           {!aviso.esMuestra && aviso.muestra > 0 && <div style={{ marginTop: 8 }}>Además, {aviso.muestra === 1 ? "1 pieza de este producto está abierta" : `${aviso.muestra} piezas de este producto están abiertas`} como <strong style={{ color: BLACK }}>muestra</strong>.</div>}
@@ -1254,7 +1265,9 @@ export function CrearPedidoView({ onCreado } = {}) {
   // así que la acción real se guarda en "avisoStock" y se ejecuta solo si se confirma).
   const checarStock = (product, piezasNuevas, excluirIdx = -1, excluirFlex = null) => {
     if (!product.stock_actualizado_at) return { excede: false };
-    const stockDisponible = Number(product.stock || 0);
+    // En una RESERVA se puede apartar también lo que viene en camino (órdenes de compra de Odoo)
+    const porLlegar = reservar ? Math.max(0, Number(product.piezas_por_llegar) || 0) : 0;
+    const stockDisponible = Number(product.stock || 0) + porLlegar;
     const yaEnCarrito = piezasYaEnCarrito(product.id, excluirIdx, excluirFlex);
     const totalConEsto = yaEnCarrito + piezasNuevas;
     const muestra = Number(product.piezas_muestra) || 0;
@@ -1263,7 +1276,7 @@ export function CrearPedidoView({ onCreado } = {}) {
     if (reservadas > 0 && totalConEsto > stockDisponible - reservadas) {
       return {
         excede: true, reservado: true, bloqueado: tipo === "pedido" || reservar, productId: product.id, producto: product.nombre,
-        stockDisponible, reservadas, libres: Math.max(0, stockDisponible - reservadas), yaEnCarrito, totalConEsto, muestra,
+        stockDisponible, porLlegar, reservadas, libres: Math.max(0, stockDisponible - reservadas), yaEnCarrito, totalConEsto, muestra,
       };
     }
     // Dentro de lo vendible (sin contar la muestra): sin aviso
@@ -1275,7 +1288,7 @@ export function CrearPedidoView({ onCreado } = {}) {
       return { excede: true, esMuestra: true, productId: product.id, muestra, producto: product.nombre, stockDisponible, disponiblesSinMuestra: Math.max(0, stockDisponible - muestra), yaEnCarrito, totalConEsto };
     }
     return {
-      excede: true, productId: product.id, muestra, producto: product.nombre, stockDisponible, yaEnCarrito, totalConEsto,
+      excede: true, productId: product.id, muestra, producto: product.nombre, stockDisponible, porLlegar, yaEnCarrito, totalConEsto,
     };
   };
 
@@ -1385,7 +1398,8 @@ export function CrearPedidoView({ onCreado } = {}) {
         const p = products.find(x => String(x.id) === String(id));
         const res = Number(p?.piezas_reservadas) || 0;
         if (!p || !p.stock_actualizado_at || res <= 0) continue;
-        const libres = Math.max(0, Number(p.stock || 0) - res);
+        // En una reserva cuenta también lo que viene en camino; en un pedido, solo el stock real
+        const libres = Math.max(0, (reservar ? stockParaReservar(p) : Number(p.stock || 0)) - res);
         if (porProducto[id] > libres) conflictos.push(`• ${p.nombre}: llevas ${porProducto[id]}, pero solo hay ${libres} sin reservar (${res} reservadas para otros clientes)`);
       }
       if (conflictos.length) { alert("No se puede continuar -- hay piezas reservadas para otros clientes:\n\n" + conflictos.join("\n") + "\n\nBaja la cantidad, o libera/convierte la reserva primero."); return; }
