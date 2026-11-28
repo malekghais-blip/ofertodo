@@ -957,6 +957,106 @@ function InsigniaCotizacion({ o }) {
 }
 
 // ═══════════════════════════════════════════════════════════════
+//  ABONOS DE UNA RESERVA / COTIZACIÓN
+//  Lo que el cliente ya pagó (completo o por partes) antes de que llegue la mercancía.
+//  Es solo un registro para el equipo: no toca Finanzas, Odoo ni el stock. Un abono nunca
+//  se borra: si hubo un error se anula y queda en el historial.
+// ═══════════════════════════════════════════════════════════════
+const METODOS_RESERVA_ABONO = [["yappy", "Yappy"], ["efectivo", "Efectivo"], ["transferencia", "Transferencia"], ["tarjeta", "Tarjeta"], ["otro", "Otro"]];
+const usd2 = (n) => "$" + Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+function AbonosPedido({ pedido }) {
+  const [lista, setLista] = useState(null); // null = cargando · "error" = no se pudo leer
+  const [abierto, setAbierto] = useState(false);
+  const [verHistorial, setVerHistorial] = useState(false);
+  const [monto, setMonto] = useState("");
+  const [metodo, setMetodo] = useState("yappy");
+  const [nota, setNota] = useState("");
+  const [guardando, setGuardando] = useState(false);
+
+  const cargar = async () => {
+    try {
+      const r = await sb.get("reserva_abonos", `?pedido_id=eq.${pedido.id}&order=created_at.asc&select=id,monto,metodo,nota,fecha,anulado,created_at`);
+      setLista(Array.isArray(r) ? r : []);
+    } catch (e) { setLista("error"); }
+  };
+  useEffect(() => { cargar(); }, [pedido.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (lista === null) return <div style={{ marginTop: 8, fontSize: 11.5, color: GRAY3 }}>Cargando abonos…</div>;
+  if (lista === "error") return <div style={{ marginTop: 8, fontSize: 11.5, color: GRAY3 }}>No se pudieron cargar los abonos de esta reserva.</div>;
+
+  const activos = lista.filter(a => !a.anulado);
+  const pagado = Math.round(activos.reduce((s, a) => s + Number(a.monto || 0), 0) * 100) / 100;
+  const total = Number(pedido.total) || 0;
+  const saldo = Math.round((total - pagado) * 100) / 100;
+  const etiquetaMetodo = (m) => (METODOS_RESERVA_ABONO.find(x => x[0] === m) || [m, m])[1];
+
+  let chip;
+  if (pagado <= 0) chip = { t: "Sin abonos", bg: "#F1F1F1", c: "#666" };
+  else if (saldo > 0.004) chip = { t: `Abonó ${usd2(pagado)} · Faltan ${usd2(saldo)}`, bg: "#FEF3C7", c: "#92400E" };
+  else if (saldo < -0.004) chip = { t: `Pagó ${usd2(pagado)} · Saldo a favor ${usd2(-saldo)}`, bg: "#EDE9FE", c: "#5B21B6" };
+  else chip = { t: `Pagado completo · ${usd2(pagado)}`, bg: "#D4EDDA", c: "#155724" };
+
+  const guardar = async () => {
+    const m = Math.round(Number(String(monto).replace(",", ".")) * 100) / 100;
+    if (!(m > 0)) { alert("Escribe cuánto pagó el cliente (más de $0)."); return; }
+    if (m > saldo + 0.005) { alert(`El abono (${usd2(m)}) es mayor que lo que falta por cobrar (${usd2(Math.max(0, saldo))}).`); return; }
+    setGuardando(true);
+    try {
+      await sb.post("reserva_abonos", { pedido_id: pedido.id, monto: m, metodo, nota: nota.trim() || null });
+      setMonto(""); setNota(""); setAbierto(false);
+      await cargar();
+    } catch (e) {
+      alert("No se pudo guardar el abono: " + String(e.message || e).slice(0, 220));
+    } finally { setGuardando(false); }
+  };
+  const anular = async (a) => {
+    if (!confirm(`¿Anular el abono de ${usd2(a.monto)} (${etiquetaMetodo(a.metodo)})?\n\nQuedará en el historial como anulado y el saldo se recalcula.`)) return;
+    try { await sb.patch("reserva_abonos", a.id, { anulado: true }); await cargar(); }
+    catch (e) { alert("No se pudo anular el abono: " + String(e.message || e).slice(0, 220)); }
+  };
+
+  const btn = { background: "none", border: `1.5px solid ${BLACK}`, color: BLACK, borderRadius: 8, padding: "6px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer" };
+  const inp = { border: `1.5px solid ${GRAY2}`, borderRadius: 8, padding: "7px 9px", fontSize: 13, background: WHITE, minWidth: 0 };
+  return (
+    <div style={{ marginTop: 8, background: "#F8FAFC", border: `1px solid ${GRAY2}`, borderRadius: 10, padding: "9px 10px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <span style={{ background: chip.bg, color: chip.c, fontSize: 11.5, fontWeight: 800, padding: "3px 9px", borderRadius: 8 }}>{chip.t}</span>
+        <span style={{ flex: 1 }} />
+        {saldo > 0.004 && !abierto && <button onClick={() => { setAbierto(true); setMonto(String(saldo.toFixed(2))); }} style={btn}>+ Registrar abono</button>}
+        {lista.length > 0 && <button onClick={() => setVerHistorial(v => !v)} style={{ ...btn, border: `1.5px solid ${GRAY2}`, color: GRAY3, fontWeight: 600 }}>{verHistorial ? "Ocultar" : "Historial"} ({lista.length})</button>}
+      </div>
+      {abierto && (
+        <div style={{ marginTop: 8, display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+          <input style={{ ...inp, width: 90 }} inputMode="decimal" placeholder="Monto $" value={monto} onChange={e => setMonto(e.target.value.replace(",", "."))} autoFocus />
+          <select style={inp} value={metodo} onChange={e => setMetodo(e.target.value)}>
+            {METODOS_RESERVA_ABONO.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+          </select>
+          <input style={{ ...inp, flex: 1, minWidth: 120 }} placeholder="Nota (opcional)" value={nota} onChange={e => setNota(e.target.value)} maxLength={120} />
+          <button onClick={() => setMonto(String(saldo.toFixed(2)))} style={{ ...btn, border: `1.5px solid ${GRAY2}`, color: GRAY3, fontWeight: 600 }}>Todo el saldo ({usd2(saldo)})</button>
+          <button onClick={guardar} disabled={guardando} style={{ ...btn, background: guardando ? GRAY2 : RED, border: "none", color: guardando ? GRAY3 : WHITE }}>{guardando ? "Guardando…" : "Guardar abono"}</button>
+          <button onClick={() => { setAbierto(false); setMonto(""); setNota(""); }} disabled={guardando} style={{ ...btn, border: `1.5px solid ${GRAY2}`, color: GRAY3, fontWeight: 600 }}>Cancelar</button>
+        </div>
+      )}
+      {verHistorial && lista.length > 0 && (
+        <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 4 }}>
+          {lista.map(a => (
+            <div key={a.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: a.anulado ? "#9CA3AF" : BLACK, textDecoration: a.anulado ? "line-through" : "none" }}>
+              <span style={{ minWidth: 70 }}>{a.fecha ? new Date(a.fecha + "T12:00:00").toLocaleDateString() : ""}</span>
+              <strong>{usd2(a.monto)}</strong>
+              <span>{etiquetaMetodo(a.metodo)}</span>
+              <span style={{ flex: 1, color: GRAY3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.nota || ""}</span>
+              {a.anulado ? <span style={{ textDecoration: "none", fontSize: 10.5, fontWeight: 800 }}>ANULADO</span>
+                : <button onClick={() => anular(a)} style={{ background: "none", border: "none", color: "#B91C1C", fontSize: 11.5, fontWeight: 700, cursor: "pointer", padding: 0 }}>Anular</button>}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
 //  EDITAR COTIZACIÓN
 // ═══════════════════════════════════════════════════════════════
 function EditCotizacionModal({ cotizacion, empresas, sucursales, onClose, onSaved, showToast }) {
@@ -10068,7 +10168,19 @@ function AdminView() {
     if (convirtiendoRef.current.has(cot.id)) return;
     convirtiendoRef.current.add(cot.id);
     try {
-      const ok = confirm(`¿Convertir la cotización ${cot.codigo} en un pedido real?\n\nSe registrará como venta de HOY y aparecerá en Pedidos.`);
+      // Si el cliente ya abonó algo, el aviso lo dice (cuánto pagó y cuánto debe todavía)
+      let avisoAbonos = "";
+      try {
+        const ab = await sb.get("reserva_abonos", `?pedido_id=eq.${cot.id}&anulado=eq.false&select=monto`);
+        const abonado = Math.round((Array.isArray(ab) ? ab : []).reduce((s, a) => s + Number(a.monto || 0), 0) * 100) / 100;
+        if (abonado > 0) {
+          const debe = Math.round((Number(cot.total || 0) - abonado) * 100) / 100;
+          avisoAbonos = debe > 0.004
+            ? `\n\n⚠️ Este cliente abonó ${usd2(abonado)} y todavía debe ${usd2(debe)}.`
+            : `\n\n✓ Este cliente ya pagó el total (${usd2(abonado)}).`;
+        }
+      } catch (e) { /* si no se pudieron leer los abonos, la conversión sigue normal */ }
+      const ok = confirm(`¿Convertir la cotización ${cot.codigo} en un pedido real?\n\nSe registrará como venta de HOY y aparecerá en Pedidos.${avisoAbonos}`);
       if (!ok) return;
       setConvirtiendoId(cot.id);
       // La lista que se ve en pantalla puede estar desactualizada (otro celular, otra pestaña u
@@ -11631,6 +11743,7 @@ function AdminView() {
                         <button onClick={() => alternarReserva(o)} className="oft-btn-press" style={{ width: "100%", justifyContent: "center", marginTop: 8, background: o.reservada ? "#EDE9FE" : "none", color: "#5B21B6", border: "1.5px solid #7C3AED", borderRadius: 8, padding: "8px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
                           <Lock size={14} /> {o.reservada ? "Liberar reserva (las piezas vuelven a estar a la venta)" : "Reservar estas piezas"}
                         </button>
+                        <AbonosPedido pedido={o} />
                       </div>
                     );
                   });
@@ -11744,6 +11857,7 @@ function AdminView() {
                           <button onClick={() => alternarReserva(o)} className="oft-btn-press" style={{ width: "100%", justifyContent: "center", marginTop: 8, background: o.reservada ? "#EDE9FE" : "none", color: "#5B21B6", border: "1.5px solid #7C3AED", borderRadius: 8, padding: "8px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
                             <Lock size={14} /> {o.reservada ? "Liberar reserva (las piezas vuelven a estar a la venta)" : "Reservar estas piezas"}
                           </button>
+                          <AbonosPedido pedido={o} />
                         </div>
                       );
                     });
