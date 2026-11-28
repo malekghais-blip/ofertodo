@@ -18,7 +18,7 @@ import {
   Spinner, StatusBadge, WHITE, comprimirImagen, estadosDe,
   imagenOptimizada, resolverAreaVenta, sb, useApp, useLockBodyScroll, useRefrescoPeriodico,
   agregarCanvasComoPaginasPdf, ofertaInfo, precioNormalPiezas, piezasDePresentacion, presUnitPrice, idVisitante,
-  normalizarEnvioPerfumes, METODOS_PAGO, BadgeMetodoPago, stockWeb, asegurarLibsPdf, ModalElegirPresentacion, EtiquetaReservadas, ofertasVigentesDeProducto,
+  normalizarEnvioPerfumes, METODOS_PAGO, BadgeMetodoPago, stockWeb, stockParaReservar, asegurarLibsPdf, ModalElegirPresentacion, EtiquetaReservadas, ofertasVigentesDeProducto,
 } from "./shared.jsx";
 import { useCambiosEnVivo } from "./clienteEnVivo.jsx";
 
@@ -1045,7 +1045,7 @@ function EditCotizacionModal({ cotizacion, empresas, sucursales, onClose, onSave
         const p = products.find(x => String(x.id) === String(id));
         if (!p || !p.stock_actualizado_at) continue;
         const deOtros = Math.max(0, (Number(p.piezas_reservadas) || 0) - (antes[id] || 0));
-        const libres = Math.max(0, Number(p.stock || 0) - deOtros);
+        const libres = Math.max(0, stockParaReservar(p) - deOtros); // stock + lo que viene en camino
         if (ahora[id] > libres) conflictos.push(`• ${p.nombre}: la reserva lleva ${ahora[id]} y solo hay ${libres} sin reservar por otros`);
       }
       if (conflictos.length) { alert("No se puede reservar -- no hay suficientes piezas libres:\n\n" + conflictos.join("\n")); return; }
@@ -10048,8 +10048,8 @@ function AdminView() {
       for (const id of Object.keys(porProducto)) {
         const p = products.find(x => String(x.id) === String(id));
         if (!p || !p.stock_actualizado_at) continue;
-        const libres = Math.max(0, Number(p.stock || 0) - (Number(p.piezas_reservadas) || 0));
-        if (porProducto[id] > libres) conflictos.push(`• ${p.nombre}: la cotización lleva ${porProducto[id]} y solo hay ${libres} sin reservar`);
+        const libres = Math.max(0, stockParaReservar(p) - (Number(p.piezas_reservadas) || 0)); // stock + lo que viene en camino
+        if (porProducto[id] > libres) conflictos.push(`• ${p.nombre}: la cotización lleva ${porProducto[id]} y solo hay ${libres} sin reservar${Number(p.piezas_por_llegar) > 0 ? ` (contando ${Number(p.piezas_por_llegar)} por llegar)` : ""}`);
       }
       if (conflictos.length) { alert("No se puede reservar -- no hay suficientes piezas libres:\n\n" + conflictos.join("\n")); return; }
       if (!confirm(`¿Reservar las piezas de ${cot.codigo}?\n\nNadie más podrá venderlas (ni en la web ni en pedidos manuales) hasta que la liberes o la conviertas en pedido.`)) return;
